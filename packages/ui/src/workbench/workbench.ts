@@ -30,6 +30,7 @@ import {
   type UndoResult,
   type ClipState,
   sceneSourceOf,
+  startingFiles,
   elsewhereOf,
   type ObjectRef,
   type ProjectState,
@@ -2256,7 +2257,7 @@ export class Workbench {
       const project = imported
         ? { ...imported.project, manifest: { ...imported.project.manifest, name } }
         : createProject({ name, format });
-      const store = ProjectStore.create(project, imported?.sources);
+      const store = ProjectStore.create(project, imported ? imported.sources : startingFiles());
       const made = { state: store.encodeWhole(), projectId: store.getState().manifest.id };
       store.destroy();
       return made;

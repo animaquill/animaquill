@@ -135,6 +135,7 @@ const ENGLISH: Readonly<Record<string, string>> = {
     "timelines: sections, tracks, clips, transitions, joins, effects, properties and keyframes",
   "format/差异": "versions: overrides by language and format",
   "format/场景和声音": "scenes and sounds",
+  "format/agents.md": "AGENTS.md: the instructions for AI that a project keeps",
   "format/素材": "assets",
   "format/字符串表": "string tables, for translations",
   "format/库": "libraries",

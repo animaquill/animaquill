@@ -3021,6 +3021,7 @@ describe("changing the project from the keyboard and menus", () => {
 
       it("a new one comes with its files and a clip, in one step", async () => {
         const { editor, clips, store, selection } = await withAssets();
+        const before = store.getState().files;
         editor.createScene();
         const clip = clips()[0] as ClipState;
         const id = clip.source["scene" as never] as string;
@@ -3033,7 +3034,7 @@ describe("changing the project from the keyboard and menus", () => {
         store.undo();
         expect(clips()).toEqual([]);
         expect(store.getState().scenes).toEqual({});
-        expect(store.getState().files).toEqual({});
+        expect(store.getState().files).toEqual(before);
       });
 
       it("a new one gets the next number, in the words of the editor", async () => {

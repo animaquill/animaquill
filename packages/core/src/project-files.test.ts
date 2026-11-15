@@ -27,6 +27,7 @@ describe("the files of a project", () => {
       "sounds/beep/main.js",
       "code/shared.js",
       "locales/zh-CN.json",
+      "AGENTS.md",
     ])
       expect(isProjectFile(path), path).toBe(true);
   });
@@ -34,7 +35,8 @@ describe("the files of a project", () => {
   test("are not what else a folder or a repository has", () => {
     for (const path of [
       "README.md",
-      "AGENTS.md",
+      "制作笔记/AGENTS.md",
+      "timelines/AGENTS.md",
       ".gitattributes",
       ".github/workflows/ci.yml",
       ".animaquill/cloud.json",

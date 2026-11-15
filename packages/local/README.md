@@ -32,12 +32,58 @@ AnimaQuill 0.1.0 已启动：http://animaquill.localhost:7651/
 
 ```
 animaquill [--port <端口>] [--no-open]
+animaquill mcp|check|describe|guide [--project <项目文件夹>]
 ```
 
 - `--port <端口>`：默认 7651。浏览器把项目、设置和 AI 的 key 按地址（包括端口）分开存，换了端口就看不到原来端口下存在浏览器里的项目（文件夹项目还在文件夹里，重新打开即可）。平时不要改。
 - `--no-open`：不自动打开浏览器。
 
 端口被占用时服务器不会自动换一个，而是报错退出：可能编辑器已经在运行，直接打开地址即可。
+
+## 让电脑上的 AI 工具改项目（MCP）
+
+Claude Code、Codex 这类在你电脑上运行的 AI 工具，可以通过 AnimaQuill 的工具读、改项目文件夹，用的是它们自己的订阅和额度。`animaquill mcp` 是一个 MCP 服务器，只经 stdio 和启动它的程序通信，不联网，只读写项目文件夹里的文件。
+
+**Claude Code：** 装一次插件，工具和“怎么做”的说明（技能）一起装好：
+
+```bash
+claude plugin marketplace add animaquill/animaquill
+claude plugin install animaquill@animaquill
+```
+
+只装工具：
+
+```bash
+claude mcp add --scope user animaquill -- npx -y animaquill@latest mcp
+```
+
+以后在项目文件夹里打开终端，输入 `claude` 就能用。
+
+**Codex：**
+
+```bash
+codex mcp add animaquill -- npx -y animaquill@latest mcp
+```
+
+Codex 默认只等服务器启动 10 秒，第一次要下载时可能来不及：先运行一次 `npm install -g animaquill`，再把命令里的 `npx -y animaquill@latest` 换成 `animaquill`。以后在项目文件夹里输入 `codex`。
+
+**别的 AI 工具：** 命令是 `npx -y animaquill@latest mcp`。在项目文件夹（或者它里面的文件夹）里启动时，它往上找有 `animaquill.json` 的文件夹；不在项目文件夹里启动的工具（比如 Claude 桌面版），加上 `--project <项目文件夹的路径>`。
+
+要知道的：
+
+- 编辑器开着同一个文件夹时，AI 的改动马上并入编辑器，可以整批撤销；你同时改了同一处，留下你的，AI 下一次调用工具时会知道你改了什么。
+- 编辑器没开时，AI 照样改文件夹，下次打开项目时并入。
+- 时间轴、片段和关键帧经 AnimaQuill 的工具改（它们检查格式和别人的改动），场景代码可以直接当文本改。新建的项目里有一份 `AGENTS.md`，Claude Code 和 Codex 打开文件夹时会读它。
+- 看画面、听声音还要在编辑器里：这些工具现在出不了画面。
+- 它在项目的 `.animaquill/` 里记下每批改动是哪个工具做的（`batches/`），以及现在连着的工具（`mcp/`）；这个文件夹不进 Git。
+
+## 命令行
+
+在项目文件夹里，或者加 `--project <项目文件夹>`：
+
+- `npx animaquill check`：检查项目，列出问题；有错误时退出码是 1，没有项目时是 2，适合放进脚本。`--json` 输出 JSON。
+- `npx animaquill describe`：项目概要和每条时间轴。
+- `npx animaquill guide [<主题>]`：手册，比如 `guide ops/clip.move`、`guide howto/keyframes`；`--query <词>` 按关键词找。
 
 ## 它是怎么工作的
 

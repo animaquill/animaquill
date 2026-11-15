@@ -283,7 +283,8 @@ export {
   type TrialResult,
   type TrialSaved,
 } from "./trial.ts";
-export { isSourceFile } from "./import-file.ts";
+export { INSTRUCTIONS_FILE, isSourceFile } from "./import-file.ts";
+export { INSTRUCTIONS_START, startingFiles } from "./instructions.ts";
 export {
   PROJECT_FOLDERS,
   inRanks,

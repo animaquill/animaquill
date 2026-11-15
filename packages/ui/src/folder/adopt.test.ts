@@ -102,9 +102,7 @@ function runIt(
 
 /** The project files of the folder, without what belongs to tools. */
 function projectFilesOn(disk: MemoryDisk): Map<string, string> {
-  return new Map(
-    [...filesOf(disk)].filter(([path]) => !path.startsWith(".animaquill/") && path !== "AGENTS.md"),
-  );
+  return new Map([...filesOf(disk)].filter(([path]) => !path.startsWith(".animaquill/")));
 }
 
 const exported = (store: ProjectStore) => store.exportFiles().files;

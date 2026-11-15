@@ -665,7 +665,7 @@ describe("importing", () => {
     const report = await importFrom(window, memorySource("示例", files));
     expect(report?.name).toBe("原子是什么");
 
-    expect(report?.skipped).toEqual(["AGENTS.md", "制作笔记/分镜.md"]);
+    expect(report?.skipped).toEqual(["制作笔记/分镜.md"]);
     // What can come from where it is kept is not missing. An address alone is not enough: nothing
     // could check what came from there.
     expect(report?.missing).toEqual([
@@ -682,11 +682,7 @@ describe("importing", () => {
 
     const { target } = await exportTo(window, new MemoryTarget());
     // All of it comes out as it went in, apart from what the project has no place for.
-    const {
-      "AGENTS.md": _notes,
-      "制作笔记/分镜.md": _more,
-      ...expected
-    } = Object.fromEntries(files);
+    const { "制作笔记/分镜.md": _notes, ...expected } = Object.fromEntries(files);
     expect(Object.fromEntries(await target.texts())).toEqual(expected);
   });
 

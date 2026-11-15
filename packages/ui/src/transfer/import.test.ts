@@ -1,4 +1,4 @@
-import { isFolderProblem, readFolder, type FolderReading } from "@animaquill/core";
+import { isFolderProblem, isSourceFile, readFolder, type FolderReading } from "@animaquill/core";
 import { diskFolder } from "@animaquill/core/disk-folder";
 import { documentSchema, type Problem } from "@animaquill/schema";
 import {
@@ -76,8 +76,9 @@ describe("a folder on a disk", () => {
     expectSame(folder, reading);
     expect(reading.project.manifest.name).toBe("原子是什么");
     expect(reading.lost).toEqual([]);
-    expect(reading.skipped).toEqual(["AGENTS.md", "制作笔记/分镜.md"]);
+    expect(reading.skipped).toEqual(["制作笔记/分镜.md"]);
     expect(Object.keys(reading.sources).toSorted()).toEqual([
+      "AGENTS.md",
       "code/animate.js",
       "scenes/title/index.html",
       "sounds/impacts/main.js",
@@ -120,7 +121,7 @@ describe("a folder on a disk", () => {
     expectSame(folder, reading);
 
     expect(reading.root).toBe("原子是什么/");
-    expect(reading.skipped).toEqual(["AGENTS.md", "README.md", "code/bad.js", "制作笔记/分镜.md"]);
+    expect(reading.skipped).toEqual(["README.md", "code/bad.js", "制作笔记/分镜.md"]);
     expect(reading.sources["scenes/title/index.html"]?.startsWith("\uFEFF")).toBe(true);
     expect(reading.sources["code/link.js"]).toBeUndefined();
     expect(reading.project.assets).toBeDefined();
@@ -248,7 +249,7 @@ describe("what people get to read", () => {
     await readProjectFolder(memorySource("示例", files), t, { onStep: (step) => steps.push(step) });
     const opened = files
       .map(([path]) => path.slice("备份/".length))
-      .filter((path) => documentSchema(path) !== undefined || /^(scenes|sounds|code)\//.test(path));
+      .filter((path) => documentSchema(path) !== undefined || isSourceFile(path));
     expect(steps).toEqual(
       [...files.map(([path]) => path), ...opened].map((file) => ({ file, done: 0, total: 0 })),
     );

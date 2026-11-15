@@ -222,8 +222,12 @@ export function localHandler(options: LocalServerOptions, sites: Sites = localSi
 
 /** The port is taken, by another program or another copy of this one. */
 export class PortInUse extends Error {
-  constructor(readonly port: number) {
+  // Written out, so that Node runs this file as it is, as the tests of the command line do.
+  readonly port: number;
+
+  constructor(port: number) {
     super(`Port ${port} is in use`);
+    this.port = port;
   }
 }
 

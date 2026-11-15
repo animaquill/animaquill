@@ -478,7 +478,7 @@ describe("files that cannot come in", () => {
     const store = open();
     const before = store.getState();
     const paths = [
-      "AGENTS.md",
+      "README.md",
       ".animaquill/recovered/x.json",
       "assets/new.png",
       "scenes/title/index.html.crswap",

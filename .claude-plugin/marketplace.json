@@ -1,0 +1,31 @@
+{
+  "name": "animaquill",
+  "description": "AnimaQuill for Claude Code: the tools of an AnimaQuill project folder, and how to work with them",
+  "owner": {
+    "name": "AnimaQuill",
+    "url": "https://github.com/animaquill"
+  },
+  "plugins": [
+    {
+      "name": "animaquill",
+      "displayName": "AnimaQuill",
+      "source": "./",
+      "description": "Read and change AnimaQuill video projects in their folders: timelines, clips, keyframes, scenes and checks, through the animaquill MCP server, with a skill on how to do common tasks",
+      "author": {
+        "name": "AnimaQuill",
+        "url": "https://github.com/animaquill"
+      },
+      "homepage": "https://github.com/animaquill/animaquill/tree/main/packages/local#readme",
+      "repository": "https://github.com/animaquill/animaquill",
+      "license": "AGPL-3.0-only",
+      "keywords": ["video", "animation", "mcp"],
+      "skills": ["./skills/animaquill"],
+      "mcpServers": {
+        "animaquill": {
+          "command": "npx",
+          "args": ["-y", "animaquill@latest", "mcp"]
+        }
+      }
+    }
+  ]
+}

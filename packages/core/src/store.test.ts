@@ -117,12 +117,13 @@ describe("files", () => {
     for (const [path, text] of files) expect(text, path).toBe(original.get(path));
   });
 
-  it("keeps scene, sound and shared code as text, and leaves other files out", () => {
+  it("keeps scene, sound and shared code and AGENTS.md as text, and leaves other files out", () => {
     const { files } = open().exportFiles();
     expect(files.has("scenes/title/index.html")).toBe(true);
     expect(files.has("sounds/impacts/main.js")).toBe(true);
     expect(files.has("code/animate.js")).toBe(true);
-    expect(files.has("AGENTS.md")).toBe(false);
+    expect(files.get("AGENTS.md")).toBe(loadFixture("v1").get("AGENTS.md"));
+    expect(files.has("制作笔记/分镜.md")).toBe(false);
   });
 
   it("writes valid files after changes", () => {
@@ -2278,7 +2279,7 @@ describe("files changed outside of the editor", () => {
 
   it("ignore files the project does not keep", () => {
     const store = open();
-    const result = success(store.importFile("AGENTS.md", "别的内容", { origin: USER }));
+    const result = success(store.importFile("README.md", "别的内容", { origin: USER }));
     expect(result.patches).toEqual([]);
   });
 

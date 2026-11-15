@@ -39,9 +39,18 @@ import type { Path } from "./structure.ts";
 /** Only the person at the editor is one: an AI task, a tool or anything else is not. */
 export const isUser = (origin: string) => origin === USER;
 
-/** Whether a file holds code that belongs to the project, kept as text. */
+/**
+ * What AI reads of a project before anything else: what the project is, where the manual is, and
+ * the ways of this project. Codex reads a file of this name in the folder it works in, and Claude
+ * Code does when there is no CLAUDE.md, so one file does for every AI. It is part of the project,
+ * kept as text like code: it goes along with syncing and into Git.
+ */
+export const INSTRUCTIONS_FILE = "AGENTS.md";
+
+/** Whether a file holds text that belongs to the project: code, or the instructions for AI. */
 export const isSourceFile = (path: string): boolean =>
-  /^(scenes|sounds|code)\//.test(path) && documentSchema(path) === undefined;
+  path === INSTRUCTIONS_FILE ||
+  (/^(scenes|sounds|code)\//.test(path) && documentSchema(path) === undefined);
 
 /** Keeps the positions of tracks and sections when their order did not change. */
 function keepOrder(current: TimelineState, next: TimelineState): TimelineState {

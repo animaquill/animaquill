@@ -270,6 +270,7 @@ describe("a project on a disk", () => {
     expect(fromDisk.lost).toEqual(fromMemory.lost);
     expect(fromDisk.warnings).toEqual(fromMemory.warnings);
     expect(fromDisk.files.toSorted()).toEqual([...fixture.keys()].toSorted());
-    expect(fromDisk.skipped).toEqual(["AGENTS.md", "制作笔记/分镜.md"]);
+    expect(fromDisk.skipped).toEqual(["制作笔记/分镜.md"]);
+    expect(fromDisk.sources["AGENTS.md"]).toBe(fixture.get("AGENTS.md"));
   });
 });

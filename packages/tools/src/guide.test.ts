@@ -120,3 +120,13 @@ describe("the manual", () => {
     expect(contents).not.toContain("more lines left out");
   });
 });
+
+describe("the table of contents", () => {
+  it("says in English what every section of the two documents is about", async () => {
+    const { call } = toolsOn();
+    const { text } = await call("aq_guide", {});
+    const sections = text.split("\n").filter((line) => /^(format|scene-runtime)\//.test(line));
+    expect(sections.length).toBeGreaterThan(10);
+    for (const line of sections) expect(line, line).not.toMatch(/ — \s*\(/);
+  });
+});

@@ -1,0 +1,3338 @@
+[
+  {
+    "name": "aq_project_status",
+    "title": "Project overview",
+    "description": "Overview of the open AnimaQuill project: its name, frame rate, picture formats and languages; each timeline with its length and its numbers of tracks and clips; its scenes, sounds, assets and shared code files (up to 30 of each; aq_search finds the rest); whether it can be changed; and how many problems it has. It does not list clips or keyframes: those are in aq_timeline_read and aq_object_read. Like every result, it starts with the project revision; the tools keep track of revisions themselves, so no call needs it back.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Project overview",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    },
+    "_meta": {
+      "anthropic/alwaysLoad": true
+    }
+  },
+  {
+    "name": "aq_timeline_read",
+    "title": "Read a timeline",
+    "description": "What is on one timeline: one compact line per clip, sorted by start, with its id, name, track, start..end in seconds, what it shows (asset=, scene=, sound=, color=, text=), the transitions at its edges, its effects, and how many properties it sets and how many of them are animated. The result also lists the sections the timeline is made of, its tracks from the back of the picture forward, joins (transitions between two clips that touch) and markers. from and to (seconds) and tracks narrow it; cursor pages through long timelines; without timeline it reads the first timeline of the project. It has no property values or keyframes: every field of a clip is in aq_object_read. The clips it lists count as read for the conflict check of aq_edit.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "timeline": {
+          "description": "Timeline id, as aq_project_status lists it. Without it, the first timeline of the project.",
+          "type": "string"
+        },
+        "from": {
+          "type": "string",
+          "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$",
+          "description": "Only clips that end after this moment. Seconds as a string, such as \"12.5\"."
+        },
+        "to": {
+          "type": "string",
+          "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$",
+          "description": "Only clips that start before this moment. Seconds as a string, such as \"12.5\"."
+        },
+        "tracks": {
+          "description": "Only clips on these tracks, by track id.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "limit": {
+          "description": "How many clips at most, 1 to 500; 200 by default.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "cursor": {
+          "description": "Where to go on, as the last line of an earlier result of this call says.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Read a timeline",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "aq_object_read",
+    "title": "Read objects",
+    "description": "Objects of the project by id, with every field as the project format writes it: clips with their source, transitions, effects, properties and keyframes; tracks, sections, joins, markers, scenes, sounds, assets, timelines, or \"project\" for the project settings. The JSON has the same shape that aq_edit operations take. fields (dotted paths such as \"properties.transform.x\" or \"effects\") limits the result to those fields. For a clip that shows a scene, it also lists the properties the scene describes, with their type, unit, range and default; these are the paths property.edit takes. Clip ids are unique only within a timeline; timeline picks one when several timelines have the same id. Up to 20 objects per call; response_format \"concise\" gives one line per object and a summary of its top-level fields instead of the full JSON.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "minItems": 1,
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Ids of clips, tracks, sections, joins, markers, scenes, sounds, assets or timelines, or \"project\", 1 to 20."
+        },
+        "timeline": {
+          "description": "Timeline id, for ids that several timelines have.",
+          "type": "string"
+        },
+        "fields": {
+          "description": "Dotted paths to read only these fields, such as \"start\", \"properties.transform.x\" or \"effects\".",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "response_format": {
+          "description": "\"detailed\" gives every field as JSON, \"concise\" one line per object and its top-level fields; \"detailed\" by default.",
+          "type": "string",
+          "enum": [
+            "detailed",
+            "concise"
+          ]
+        }
+      },
+      "required": [
+        "ids"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Read objects",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "aq_search",
+    "title": "Find objects",
+    "description": "Finds objects in the project by id, name, kind or text: clips that show a given asset or scene, tracks, markers, scenes, sounds, assets, files by path, and text inside the code of scenes and sounds (kind \"text\" answers with path:line and the line). Matching ignores case and finds the query anywhere in the id, name, path or source. Without query it lists everything of the given kinds. Results are compact lines with ids that the other tools take.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "description": "Text to find, any case, in ids, names, paths, sources, or the text of code files (kind text).",
+          "type": "string"
+        },
+        "kinds": {
+          "description": "Only these kinds of objects; every kind but text by default.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "clip",
+              "track",
+              "section",
+              "marker",
+              "join",
+              "scene",
+              "sound",
+              "asset",
+              "file",
+              "text"
+            ]
+          }
+        },
+        "timeline": {
+          "description": "Only objects of this timeline, by its id.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "How many results at most, 1 to 200; 50 by default.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "cursor": {
+          "description": "Where to go on, as the last line of an earlier result of this call says.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Find objects",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "aq_file_read",
+    "title": "Read a code file",
+    "description": "A code file of the project: the HTML, CSS and JavaScript of a scene (under scenes/<id>/), the code of a sound (under sounds/<id>/), or shared code (under code/). Lines come numbered as \"   12→text\"; the numbers are not part of the file. offset (the first line) and limit (how many lines) read a long file in parts. aq_file_write replaces an existing file only if all its lines were read here in this conversation. Project settings, timelines, scenes' manifests and assets are not files here: they are in aq_object_read.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path of a code file, such as \"scenes/title/index.html\", as aq_project_status or aq_search lists it."
+        },
+        "offset": {
+          "description": "The first line to read, from 1; 1 by default.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "limit": {
+          "description": "How many lines at most, 1 to 2000; 2000 by default.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Read a code file",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "aq_selection_read",
+    "title": "What the user selected",
+    "description": "What the user points at in the editor: the timeline, the playhead time, the version shown, the selected clips (ids and one line each, as they are now) and the selected transition. The editor keeps these as they were when each message of the user was sent. at \"sent\" gives them for one message, which is what \"this\" or \"here\" in it points at, even after the user selected something else; at \"now\" gives those of now. One call gives one, such as {\"at\": \"sent\"} for the message this task started with, {\"at\": \"sent\", \"messages_back\": 1} for the one before, or {\"at\": \"now\"}. Clips selected then and gone since are listed by id. It has only what the user chose to share, and no whole objects: those are in aq_object_read.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "string",
+          "enum": [
+            "now",
+            "sent"
+          ],
+          "description": "\"sent\": as a message of the user was sent, see messages_back. \"now\": as the editor is now."
+        },
+        "messages_back": {
+          "description": "Only with at \"sent\": which message of the user, counted back from the latest: 0 (the default) is the latest, the one this task started with, 1 the one before it.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000
+        }
+      },
+      "required": [
+        "at"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "What the user selected",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "aq_guide",
+    "title": "Read the manual",
+    "description": "The AnimaQuill manual: short pages on how the editor does things (topics \"howto/…\", such as \"howto/keyframes\", \"howto/times\" and \"howto/transitions\"), a reference page for every operation of aq_edit (topic \"ops/<operation>\", such as \"ops/property.edit\": parameters and the fields inside them, what it returns, its errors and examples), the types that operations share (topics \"types/…\", such as \"types/ClipSource\"), the project format (topics \"format/…\": times, ids, world coordinates, clips, transitions, effects, properties and keyframes), and how scene code talks to the editor (topics \"scene-runtime/…\"); the format and scene runtime pages are in Chinese. Without arguments it gives the table of contents; topic gives one page; query searches the titles and text by keywords.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "topic": {
+          "description": "One page, such as \"ops/clip.move\", \"howto/keyframes\", \"types/ClipSource\", \"format/animaquill.json\" or \"scene-runtime/aq\"; \":2\" after it for its next part. Without topic and query, the table of contents.",
+          "type": "string"
+        },
+        "query": {
+          "description": "Words to look for in titles and pages; it gives up to 10 topics, each with a line of what it says.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Read the manual",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "aq_edit",
+    "title": "Change the project",
+    "description": "Changes the open project with a batch of operations — the same operations the editor's own commands use — on timelines, sections, tracks, clips, transitions, joins, effects, properties and keyframes, markers, scenes, sounds and assets. It does not change the text of code files; aq_file_edit and aq_file_write do. scene.add and sound.add take the first files of a new scene or sound.\n\nAll operations of one call succeed together or nothing is written, and the batch is one step the user can undo. Operations run in order, so a later one can refer to an object that an earlier one created with an id given in the batch, such as \"clip_title2\". Times are strings in seconds, such as \"12.5\" or \"1001/30000\"; positions and sizes are in world units, with the origin at the center of the picture. Ids of existing objects come from the reading tools; an id that does not exist fails with not-found.\n\nChanges are checked against what you have read: a change to an object that the user changed after you last read it fails with conflict, and a change to an existing object before anything was read in this conversation fails with not-read; in both cases nothing is written. dry_run: true checks the batch and reports everything it would change or remove, including what uses those objects, without writing. A failed call says which operation failed, why, the correct shape and an example.\n\nThe result lists the objects that changed, the ids of new objects, and the problems this batch introduced or resolved. summary is one short sentence that the user sees for this batch, saying what it does.\n\nOperations, by what they change. Each operation's parameters are in the schema; aq_guide topic \"ops/<operation>\" has its full page with examples.\nproject: project.rename, project.setFrameRate, project.setDescription, project.setCredits, project.setFormats, project.setLanguages, project.setCover\ntimeline: timeline.rename, timeline.setBackground, timeline.setDefault, section.add, section.update, section.remove\ntrack: track.add, track.update, track.move, track.remove\nclip: source.replace, clip.add, clip.remove, clip.update, clip.move, clip.trim, clip.split\ntransition: clip.setTransition, join.add, join.update, join.remove\neffect: effect.add, effect.remove, effect.move, effect.update\nproperty: property.edit, property.rename\nmarker: marker.add, marker.update, marker.remove\nscene: scene.add, scene.update, scene.remove\nsound: sound.add, sound.update, sound.remove\nasset: asset.update, asset.remove\nfile: file.remove, file.rename\n\nExamples of operations (illustrative; their ids come from a sample project, not from the open one):\n[{\"op\":\"clip.add\",\"timeline\":\"main\",\"track\":\"track_video\",\"id\":\"clip_title2\",\"start\":\"31\",\"duration\":\"4\",\"source\":{\"kind\":\"scene\",\"scene\":\"title\"}},{\"op\":\"property.edit\",\"timeline\":\"main\",\"edits\":[{\"owner\":{\"clip\":\"clip_title2\"},\"path\":\"transform.y\",\"op\":\"set\",\"value\":{\"keys\":[{\"time\":\"0\",\"value\":-200},{\"time\":\"0.6\",\"value\":0}]}}]}]\n[{\"op\":\"clip.move\",\"timeline\":\"main\",\"clips\":[{\"clip\":\"clip_lottie\",\"start\":\"7\"},{\"clip\":\"clip_idea\",\"start\":\"12\"}]}]",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "operations": {
+          "type": "array",
+          "description": "The operations, run in order as one batch: each one {\"op\": \"<operation>\", …its parameters}. 1 to 100.",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "anyOf": [
+              {
+                "type": "object",
+                "description": "Renames the project.",
+                "properties": {
+                  "op": {
+                    "const": "project.rename"
+                  },
+                  "name": {
+                    "description": "Name people see.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "name"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Sets the frame rate the timeline counts frames by.",
+                "properties": {
+                  "op": {
+                    "const": "project.setFrameRate"
+                  },
+                  "fps": {
+                    "description": "Frames per second, such as \"30\" or \"30000/1001\".",
+                    "type": "string",
+                    "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$"
+                  }
+                },
+                "required": [
+                  "op",
+                  "fps"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Sets the description of the project.",
+                "properties": {
+                  "op": {
+                    "const": "project.setDescription"
+                  },
+                  "description": {
+                    "description": "Text people read about the project; empty takes it away.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "description"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Sets the credits of the project.",
+                "properties": {
+                  "op": {
+                    "const": "project.setCredits"
+                  },
+                  "credits": {
+                    "description": "Each {\"role\",\"name\"}, the whole list.",
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "role": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "role",
+                        "name"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "credits"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Sets the picture formats, the first the master.",
+                "properties": {
+                  "op": {
+                    "const": "project.setFormats"
+                  },
+                  "formats": {
+                    "description": "Picture formats, the whole list; the first is the master.",
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "width": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 16384
+                        },
+                        "height": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 16384
+                        },
+                        "fps": {
+                          "type": "string",
+                          "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$"
+                        },
+                        "safeArea": {
+                          "type": "object",
+                          "properties": {
+                            "top": {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 1
+                            },
+                            "right": {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 1
+                            },
+                            "bottom": {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 1
+                            },
+                            "left": {
+                              "type": "number",
+                              "minimum": 0,
+                              "maximum": 1
+                            }
+                          },
+                          "required": [
+                            "top",
+                            "right",
+                            "bottom",
+                            "left"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name",
+                        "width",
+                        "height",
+                        "fps"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "formats"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Sets the languages, the first the master.",
+                "properties": {
+                  "op": {
+                    "const": "project.setLanguages"
+                  },
+                  "languages": {
+                    "description": "Languages, the whole list; the first is the master.",
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "font": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "name"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "languages"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Sets the moment the cover of the project shows.",
+                "properties": {
+                  "op": {
+                    "const": "project.setCover"
+                  },
+                  "cover": {
+                    "description": "A moment, {\"timeline\",\"time\"}; null for none.",
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "timeline": {
+                            "type": "string"
+                          },
+                          "time": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "timeline",
+                          "time"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "cover"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Renames an asset or changes its tags.",
+                "properties": {
+                  "op": {
+                    "const": "asset.update"
+                  },
+                  "asset": {
+                    "description": "Asset id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "changes": {
+                    "description": "Fields to change; the rest stay.",
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "tags": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "asset",
+                  "changes"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Removes an asset, and with withUses the clips that use it.",
+                "properties": {
+                  "op": {
+                    "const": "asset.remove"
+                  },
+                  "asset": {
+                    "description": "Asset id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "withUses": {
+                    "description": "true also removes what uses it; without, it fails while used.",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "op",
+                  "asset"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Creates a scene (HTML, CSS and JavaScript that draw a picture) with its files.",
+                "properties": {
+                  "op": {
+                    "const": "scene.add"
+                  },
+                  "id": {
+                    "description": "New id, to use later in the batch; optional.",
+                    "type": "string"
+                  },
+                  "manifest": {
+                    "description": "As its manifest file: name, entry (first file), runtime 1, params, presets.",
+                    "$ref": "#/properties/operations/$defs/SceneManifest"
+                  },
+                  "files": {
+                    "description": "Its files by path in its folder, with their text: {\"index.html\":\"…\"}. Has the entry.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "manifest",
+                  "files"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Changes the manifest of a scene: name, entry, params, presets.",
+                "properties": {
+                  "op": {
+                    "const": "scene.update"
+                  },
+                  "scene": {
+                    "description": "Scene id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "changes": {
+                    "type": "object",
+                    "description": "The fields of the SceneManifest to change; the rest stay."
+                  },
+                  "clear": {
+                    "description": "Fields to take away.",
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "description",
+                        "params",
+                        "presets",
+                        "tags"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "scene",
+                  "changes"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Removes a scene and its files, and with withUses the clips that use it.",
+                "properties": {
+                  "op": {
+                    "const": "scene.remove"
+                  },
+                  "scene": {
+                    "description": "Scene id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "withUses": {
+                    "description": "true also removes what uses it; without, it fails while used.",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "op",
+                  "scene"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Creates a sound made by code, with its files.",
+                "properties": {
+                  "op": {
+                    "const": "sound.add"
+                  },
+                  "id": {
+                    "description": "New id, to use later in the batch; optional.",
+                    "type": "string"
+                  },
+                  "manifest": {
+                    "description": "As its manifest file: name, entry (first file), runtime 1, params, presets.",
+                    "$ref": "#/properties/operations/$defs/SoundManifest"
+                  },
+                  "files": {
+                    "description": "Its files by path in its folder, with their text: {\"index.html\":\"…\"}. Has the entry.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "manifest",
+                  "files"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Changes the manifest of a sound: name, entry, params, outputs.",
+                "properties": {
+                  "op": {
+                    "const": "sound.update"
+                  },
+                  "sound": {
+                    "description": "Sound id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "changes": {
+                    "type": "object",
+                    "description": "The fields of the SoundManifest to change; the rest stay."
+                  },
+                  "clear": {
+                    "description": "Fields to take away.",
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "description",
+                        "params",
+                        "outputs",
+                        "tags"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "sound",
+                  "changes"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Removes a sound and its files, and with withUses the clips that use it.",
+                "properties": {
+                  "op": {
+                    "const": "sound.remove"
+                  },
+                  "sound": {
+                    "description": "Sound id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "withUses": {
+                    "description": "true also removes what uses it; without, it fails while used.",
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "op",
+                  "sound"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Makes every clip that uses an asset, scene or sound use another one of the same kind.",
+                "properties": {
+                  "op": {
+                    "const": "source.replace"
+                  },
+                  "kind": {
+                    "description": "\"asset\", \"scene\" or \"sound\".",
+                    "type": "string",
+                    "enum": [
+                      "asset",
+                      "scene",
+                      "sound"
+                    ]
+                  },
+                  "from": {
+                    "description": "Id of what clips use now.",
+                    "type": "string"
+                  },
+                  "to": {
+                    "description": "Id to use instead, same kind.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "kind",
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Removes a code file that is no entry.",
+                "properties": {
+                  "op": {
+                    "const": "file.remove"
+                  },
+                  "path": {
+                    "description": "Code file path, such as \"scenes/title/main.js\".",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "path"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Renames or moves a code file.",
+                "properties": {
+                  "op": {
+                    "const": "file.rename"
+                  },
+                  "from": {
+                    "description": "Path now.",
+                    "type": "string"
+                  },
+                  "to": {
+                    "description": "New path.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Renames a timeline.",
+                "properties": {
+                  "op": {
+                    "const": "timeline.rename"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "name": {
+                    "description": "Name people see.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "name"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Sets the background color of a timeline.",
+                "properties": {
+                  "op": {
+                    "const": "timeline.setBackground"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "background": {
+                    "description": "Color: \"#101830\"; null for black.",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "background"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Makes a timeline open first.",
+                "properties": {
+                  "op": {
+                    "const": "timeline.setDefault"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Adds a section to a timeline, which makes it longer.",
+                "properties": {
+                  "op": {
+                    "const": "section.add"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "id": {
+                    "description": "New id, to use later in the batch; optional.",
+                    "type": "string"
+                  },
+                  "duration": {
+                    "description": "Length, seconds as a string: \"2.5\".",
+                    "type": "string"
+                  },
+                  "name": {
+                    "description": "Name people see.",
+                    "type": "string"
+                  },
+                  "before": {
+                    "description": "Id of the one it goes before; leave out for last.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "duration"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Changes the duration or name of a section.",
+                "properties": {
+                  "op": {
+                    "const": "section.update"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "section": {
+                    "description": "Section id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "duration": {
+                    "description": "Length, seconds as a string: \"2.5\".",
+                    "type": "string"
+                  },
+                  "name": {
+                    "description": "Name people see.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "section"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Removes a section; a timeline keeps at least one.",
+                "properties": {
+                  "op": {
+                    "const": "section.remove"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "section": {
+                    "description": "Section id (aq_timeline_read).",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "section"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Adds a video, audio or caption track.",
+                "properties": {
+                  "op": {
+                    "const": "track.add"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "id": {
+                    "description": "New id, to use later in the batch; optional.",
+                    "type": "string"
+                  },
+                  "kind": {
+                    "description": "\"video\", \"audio\" or \"caption\".",
+                    "type": "string",
+                    "enum": [
+                      "video",
+                      "audio",
+                      "caption"
+                    ]
+                  },
+                  "name": {
+                    "description": "Name people see.",
+                    "type": "string"
+                  },
+                  "before": {
+                    "description": "Id of the track it goes right behind (tracks go from the back of the picture forward); without it, in front of all.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "kind"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Changes the name, hidden, muted, solo, locked, group or role of a track.",
+                "properties": {
+                  "op": {
+                    "const": "track.update"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "track": {
+                    "description": "Track id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "changes": {
+                    "description": "Fields to change; the rest stay.",
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "locked": {
+                        "type": "boolean"
+                      },
+                      "group": {
+                        "type": "string"
+                      },
+                      "hidden": {
+                        "type": "boolean"
+                      },
+                      "muted": {
+                        "type": "boolean"
+                      },
+                      "solo": {
+                        "type": "boolean"
+                      },
+                      "role": {
+                        "type": "string",
+                        "enum": [
+                          "voice",
+                          "music",
+                          "effects"
+                        ]
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "track",
+                  "changes"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Moves a track behind another one, or in front of all.",
+                "properties": {
+                  "op": {
+                    "const": "track.move"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "track": {
+                    "description": "Track id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "before": {
+                    "description": "Id of the track it goes right behind (tracks go from the back of the picture forward); without it, in front of all.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "track"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Removes a track with all its clips.",
+                "properties": {
+                  "op": {
+                    "const": "track.remove"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "track": {
+                    "description": "Track id (aq_timeline_read).",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "track"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Puts a clip on a track: an asset, a scene, a sound, a color or a caption.",
+                "properties": {
+                  "op": {
+                    "const": "clip.add"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "track": {
+                    "description": "Track id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "name": {
+                    "description": "Name people see.",
+                    "type": "string"
+                  },
+                  "start": {
+                    "description": "Seconds as a string: \"12.5\".",
+                    "type": "string"
+                  },
+                  "duration": {
+                    "description": "Length, seconds as a string: \"2.5\".",
+                    "type": "string"
+                  },
+                  "source": {
+                    "description": "What it shows or plays.",
+                    "$ref": "#/properties/operations/$defs/ClipSource"
+                  },
+                  "offset": {
+                    "description": "Where in its media it starts: the clip's clock at its first frame, seconds.",
+                    "type": "string"
+                  },
+                  "loop": {
+                    "description": "true plays it again from the start when it ends.",
+                    "type": "boolean"
+                  },
+                  "enter": {
+                    "description": "Transition at its start.",
+                    "$ref": "#/properties/operations/$defs/Transition"
+                  },
+                  "exit": {
+                    "description": "Transition at its end.",
+                    "$ref": "#/properties/operations/$defs/Transition"
+                  },
+                  "hidden": {
+                    "description": "true leaves it out.",
+                    "type": "boolean"
+                  },
+                  "draft": {
+                    "description": "true marks it a sketch no export has.",
+                    "type": "boolean"
+                  },
+                  "link": {
+                    "description": "Clips with one link move together.",
+                    "type": "string"
+                  },
+                  "sectionFit": {
+                    "description": "How it follows a section that changes length in a version.",
+                    "type": "string",
+                    "enum": [
+                      "stretch",
+                      "hold",
+                      "span"
+                    ]
+                  },
+                  "properties": {
+                    "description": "Properties by path: values, or keyframes (aq_object_read lists a scene's paths).",
+                    "type": "object",
+                    "propertyNames": {
+                      "$ref": "#/properties/operations/$defs/PropertyPath"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/properties/operations/$defs/PropertyValue"
+                    }
+                  },
+                  "effects": {
+                    "description": "Effects, in the order they work.",
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "type": {
+                          "$ref": "#/properties/operations/$defs/TypeName"
+                        },
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "start": {
+                          "type": "string"
+                        },
+                        "end": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "type"
+                      ]
+                    }
+                  },
+                  "id": {
+                    "description": "New id, to use later in the batch; optional.",
+                    "type": "string"
+                  },
+                  "overlap": {
+                    "description": "\"overwrite\" cuts away clips in the way; default \"reject\" fails.",
+                    "type": "string",
+                    "enum": [
+                      "reject",
+                      "overwrite"
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "track",
+                  "start",
+                  "duration",
+                  "source"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Removes clips.",
+                "properties": {
+                  "op": {
+                    "const": "clip.remove"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "clips": {
+                    "description": "Clip ids (aq_timeline_read).",
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "clips"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Changes the name, source, offset, loop, hidden, draft, link or section fit of a clip.",
+                "properties": {
+                  "op": {
+                    "const": "clip.update"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "clip": {
+                    "description": "Clip id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "changes": {
+                    "description": "Fields to change; the rest stay.",
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "$ref": "#/properties/operations/$defs/ClipSource"
+                      },
+                      "offset": {
+                        "type": "string"
+                      },
+                      "loop": {
+                        "type": "boolean"
+                      },
+                      "hidden": {
+                        "type": "boolean"
+                      },
+                      "draft": {
+                        "type": "boolean"
+                      },
+                      "link": {
+                        "type": "string"
+                      },
+                      "sectionFit": {
+                        "type": "string",
+                        "enum": [
+                          "stretch",
+                          "hold",
+                          "span"
+                        ]
+                      }
+                    }
+                  },
+                  "clear": {
+                    "description": "Fields to take away.",
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "name",
+                        "offset",
+                        "loop",
+                        "hidden",
+                        "draft",
+                        "link",
+                        "sectionFit"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "clip",
+                  "changes"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Puts a transition at the start (enter) or end (exit) of a clip, or takes it away with null.",
+                "properties": {
+                  "op": {
+                    "const": "clip.setTransition"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "clip": {
+                    "description": "Clip id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "enter": {
+                    "description": "Transition at its start; null takes it away.",
+                    "anyOf": [
+                      {
+                        "$ref": "#/properties/operations/$defs/Transition"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "exit": {
+                    "description": "Transition at its end; null takes it away.",
+                    "anyOf": [
+                      {
+                        "$ref": "#/properties/operations/$defs/Transition"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "clip"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Puts a transition on the cut between two clips that touch.",
+                "properties": {
+                  "op": {
+                    "const": "join.add"
+                  },
+                  "type": {
+                    "description": "Kind of transition or effect, such as \"fade\" or \"blur\".",
+                    "$ref": "#/properties/operations/$defs/TypeName"
+                  },
+                  "transition": {
+                    "description": "Id of a transition of the project, instead of type.",
+                    "type": "string"
+                  },
+                  "library": {
+                    "description": "Library id, with resource, instead of type.",
+                    "type": "string"
+                  },
+                  "resource": {
+                    "description": "What the library has, with library.",
+                    "type": "string"
+                  },
+                  "duration": {
+                    "description": "Length, seconds; without it, the transition's default (0.5 for pictures, 0.2 for sound), or less where less fits.",
+                    "type": "string"
+                  },
+                  "curve": {
+                    "description": "Speed curve, as CSS cubic-bezier().",
+                    "$ref": "#/properties/operations/$defs/SpeedCurve"
+                  },
+                  "values": {
+                    "description": "Parameter values by name; the rest default.",
+                    "type": "object",
+                    "propertyNames": {
+                      "$ref": "#/properties/operations/$defs/PropertyPath"
+                    },
+                    "additionalProperties": {
+                      "$ref": "#/properties/operations/$defs/Value"
+                    }
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "id": {
+                    "description": "New id, to use later in the batch; optional.",
+                    "type": "string"
+                  },
+                  "from": {
+                    "description": "Clip id before the cut.",
+                    "type": "string"
+                  },
+                  "to": {
+                    "description": "Clip id after the cut, starting where the first ends.",
+                    "type": "string"
+                  },
+                  "align": {
+                    "description": "\"center\" (default), or all \"before\" or \"after\" the cut.",
+                    "type": "string",
+                    "enum": [
+                      "center",
+                      "before",
+                      "after"
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "from",
+                  "to"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Puts an effect on a clip, with the values of its parameters.",
+                "properties": {
+                  "op": {
+                    "const": "effect.add"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "clip": {
+                    "description": "Clip id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "id": {
+                    "description": "New id, to use later in the batch; optional.",
+                    "type": "string"
+                  },
+                  "type": {
+                    "description": "Kind of transition or effect, such as \"fade\" or \"blur\".",
+                    "$ref": "#/properties/operations/$defs/TypeName"
+                  },
+                  "enabled": {
+                    "description": "false turns it off, keeping its place and values.",
+                    "type": "boolean"
+                  },
+                  "index": {
+                    "description": "Place in the list, from 0.",
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "values": {
+                    "description": "Parameter values by name; the rest default.",
+                    "type": "object",
+                    "additionalProperties": {
+                      "$ref": "#/properties/operations/$defs/PropertyValue"
+                    }
+                  },
+                  "start": {
+                    "description": "Seconds from the clip's start.",
+                    "type": "string"
+                  },
+                  "end": {
+                    "description": "Seconds from the clip's start.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "clip",
+                  "type"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Takes effects off a clip.",
+                "properties": {
+                  "op": {
+                    "const": "effect.remove"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "clip": {
+                    "description": "Clip id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "effects": {
+                    "description": "Effect ids of the clip.",
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "clip",
+                  "effects"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Moves an effect in the list of its clip, which changes what it works on.",
+                "properties": {
+                  "op": {
+                    "const": "effect.move"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "clip": {
+                    "description": "Clip id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "effect": {
+                    "description": "Effect id, of the clip (aq_object_read).",
+                    "type": "string"
+                  },
+                  "index": {
+                    "description": "Place in the list, from 0.",
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "clip",
+                  "effect",
+                  "index"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Turns an effect on or off, or changes when it works.",
+                "properties": {
+                  "op": {
+                    "const": "effect.update"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "clip": {
+                    "description": "Clip id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "effect": {
+                    "description": "Effect id, of the clip (aq_object_read).",
+                    "type": "string"
+                  },
+                  "enabled": {
+                    "description": "false turns it off, keeping its place and values.",
+                    "type": "boolean"
+                  },
+                  "start": {
+                    "description": "Seconds from the clip's start; null for its start.",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "end": {
+                    "description": "Seconds from the clip's start; null for its end.",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "clip",
+                  "effect"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Changes the type, duration, align, curve or values of a join.",
+                "properties": {
+                  "op": {
+                    "const": "join.update"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "join": {
+                    "description": "Join id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "changes": {
+                    "description": "Fields to change; the rest stay.",
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "$ref": "#/properties/operations/$defs/TypeName"
+                      },
+                      "transition": {
+                        "type": "string"
+                      },
+                      "library": {
+                        "type": "string"
+                      },
+                      "resource": {
+                        "type": "string"
+                      },
+                      "duration": {
+                        "type": "string"
+                      },
+                      "curve": {
+                        "anyOf": [
+                          {
+                            "$ref": "#/properties/operations/$defs/SpeedCurve"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "values": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "propertyNames": {
+                              "$ref": "#/properties/operations/$defs/PropertyPath"
+                            },
+                            "additionalProperties": {
+                              "$ref": "#/properties/operations/$defs/Value"
+                            }
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "align": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "center",
+                              "before",
+                              "after"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "join",
+                  "changes"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Removes joins.",
+                "properties": {
+                  "op": {
+                    "const": "join.remove"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "joins": {
+                    "description": "Join ids (aq_timeline_read).",
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "joins"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Moves clips to other starts or tracks, in one step.",
+                "properties": {
+                  "op": {
+                    "const": "clip.move"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "clips": {
+                    "description": "Each {\"clip\":id,\"start\"?,\"track\"?}.",
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "clip": {
+                          "type": "string"
+                        },
+                        "start": {
+                          "type": "string"
+                        },
+                        "track": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "clip"
+                      ]
+                    }
+                  },
+                  "overlap": {
+                    "description": "\"overwrite\" cuts away clips in the way; default \"reject\" fails.",
+                    "type": "string",
+                    "enum": [
+                      "reject",
+                      "overwrite"
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "clips"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Moves the start or end of a clip; what it shows stays in place.",
+                "properties": {
+                  "op": {
+                    "const": "clip.trim"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "clip": {
+                    "description": "Clip id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "start": {
+                    "description": "New start; what it shows stays put.",
+                    "type": "string"
+                  },
+                  "end": {
+                    "description": "New end.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "clip"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Cuts a clip in two at a moment of the timeline.",
+                "properties": {
+                  "op": {
+                    "const": "clip.split"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "clip": {
+                    "description": "Clip id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "at": {
+                    "description": "Moment of the timeline to cut at, seconds.",
+                    "type": "string"
+                  },
+                  "piece": {
+                    "description": "Id for the part after the cut; leave out for a new one.",
+                    "type": "string"
+                  },
+                  "keep": {
+                    "description": "Linked clip ids that stay whole.",
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "clip",
+                  "at"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Sets properties of clips and their keyframes, in one step.",
+                "properties": {
+                  "op": {
+                    "const": "property.edit"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "edits": {
+                    "description": "Each {\"owner\":{\"clip\":id},\"path\",…,\"op\"}: \"set\" a value or keyframes, \"clear\", \"write\" at a time, or \"setKey\", \"removeKey\", \"moveKey\", \"putKeys\", \"setInterp\".",
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/properties/operations/$defs/PropertyEdit"
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "edits"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Gives properties of a clip another path, with their keyframes, after code renamed what they are about.",
+                "properties": {
+                  "op": {
+                    "const": "property.rename"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "renames": {
+                    "description": "Each {\"owner\":{\"clip\":id},\"from\",\"to\"}; paths may end in \".*\".",
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/properties/operations/$defs/PropertyRename"
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "renames"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Adds a marker to a timeline.",
+                "properties": {
+                  "op": {
+                    "const": "marker.add"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "id": {
+                    "description": "New id, to use later in the batch; optional.",
+                    "type": "string"
+                  },
+                  "time": {
+                    "description": "Seconds as a string: \"12.5\".",
+                    "type": "string"
+                  },
+                  "name": {
+                    "description": "Name people see.",
+                    "type": "string"
+                  },
+                  "note": {
+                    "description": "A longer note.",
+                    "type": "string"
+                  },
+                  "color": {
+                    "description": "Color: \"#ff6b8a\".",
+                    "type": "string"
+                  },
+                  "duration": {
+                    "description": "Length, seconds, for a stretch.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "time"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Changes the time, name, note, color or duration of a marker.",
+                "properties": {
+                  "op": {
+                    "const": "marker.update"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "marker": {
+                    "description": "Marker id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "changes": {
+                    "description": "Fields to change; the rest stay.",
+                    "type": "object",
+                    "properties": {
+                      "time": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "note": {
+                        "type": "string"
+                      },
+                      "color": {
+                        "type": "string"
+                      },
+                      "duration": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "marker",
+                  "changes"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "description": "Removes a marker.",
+                "properties": {
+                  "op": {
+                    "const": "marker.remove"
+                  },
+                  "timeline": {
+                    "description": "Timeline id (aq_project_status).",
+                    "type": "string"
+                  },
+                  "marker": {
+                    "description": "Marker id (aq_timeline_read).",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "timeline",
+                  "marker"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "$defs": {
+            "Animation": {
+              "type": "object",
+              "properties": {
+                "keys": {
+                  "minItems": 1,
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/properties/operations/$defs/Key"
+                  }
+                },
+                "before": {
+                  "type": "string",
+                  "enum": [
+                    "hold",
+                    "loop",
+                    "pingpong",
+                    "continue"
+                  ]
+                },
+                "after": {
+                  "type": "string",
+                  "enum": [
+                    "hold",
+                    "loop",
+                    "pingpong",
+                    "continue"
+                  ]
+                },
+                "modifiers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "const": "noise"
+                      },
+                      "amount": {
+                        "type": "number"
+                      },
+                      "frequency": {
+                        "type": "number",
+                        "exclusiveMinimum": 0
+                      },
+                      "seed": {
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "amount",
+                      "seed"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "keys"
+              ],
+              "description": "Keyframes: {\"keys\":[…]}."
+            },
+            "ClipSource": {
+              "anyOf": [
+                {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "video"
+                        },
+                        "media": {
+                          "$ref": "#/properties/operations/$defs/MediaRef"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "media"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "image"
+                        },
+                        "media": {
+                          "$ref": "#/properties/operations/$defs/MediaRef"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "media"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "audio"
+                        },
+                        "media": {
+                          "$ref": "#/properties/operations/$defs/MediaRef"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "media"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "scene"
+                        },
+                        "scene": {
+                          "type": "string"
+                        },
+                        "library": {
+                          "type": "string"
+                        },
+                        "resource": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "sound"
+                        },
+                        "sound": {
+                          "type": "string"
+                        },
+                        "library": {
+                          "type": "string"
+                        },
+                        "resource": {
+                          "type": "string"
+                        },
+                        "output": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "music"
+                        },
+                        "music": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "music"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "timeline"
+                        },
+                        "timeline": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "timeline"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "color"
+                        },
+                        "color": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "color"
+                      ]
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "const": "caption"
+                        },
+                        "text": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "string": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "string"
+                              ]
+                            }
+                          ]
+                        },
+                        "words": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "text": {
+                                "type": "string"
+                              },
+                              "time": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "text",
+                              "time"
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "text"
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "pattern": "^[a-z][a-z0-9-]*\\.[a-z][a-z0-9-]*$"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": {}
+                }
+              ],
+              "description": "What a clip shows or plays."
+            },
+            "Handle": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "items": false,
+              "minItems": 2,
+              "description": "A bezier handle [x, y], x from 0 to 1."
+            },
+            "Key": {
+              "type": "object",
+              "properties": {
+                "time": {
+                  "type": "string"
+                },
+                "value": {
+                  "$ref": "#/properties/operations/$defs/Value"
+                },
+                "interp": {
+                  "type": "string",
+                  "enum": [
+                    "linear",
+                    "bezier",
+                    "hold",
+                    "spring",
+                    "preset"
+                  ]
+                },
+                "out": {
+                  "$ref": "#/properties/operations/$defs/Handle"
+                },
+                "in": {
+                  "$ref": "#/properties/operations/$defs/Handle"
+                },
+                "tangent": {
+                  "type": "string",
+                  "enum": [
+                    "auto",
+                    "aligned",
+                    "broken"
+                  ]
+                },
+                "preset": {
+                  "type": "string"
+                },
+                "spring": {
+                  "type": "object",
+                  "properties": {
+                    "stiffness": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "damping": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "mass": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    }
+                  },
+                  "required": [
+                    "stiffness",
+                    "damping"
+                  ]
+                }
+              },
+              "required": [
+                "time",
+                "value"
+              ],
+              "description": "A keyframe: {\"time\":\"<seconds>\",\"value\":…}, with how it goes on to the next one. time is on the clip's clock, which reads the clip's offset (0 by default) at its first frame."
+            },
+            "MediaRef": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "asset": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "asset"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "library": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "library",
+                    "path"
+                  ]
+                }
+              ],
+              "description": "A file: {\"asset\":\"<asset id>\"}, or {\"library\":\"<library id>\",\"path\":\"…\"}."
+            },
+            "PropertyEdit": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "owner": {
+                      "type": "object",
+                      "properties": {
+                        "clip": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "clip"
+                      ]
+                    },
+                    "path": {
+                      "$ref": "#/properties/operations/$defs/PropertyPath"
+                    },
+                    "op": {
+                      "const": "write"
+                    },
+                    "time": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "$ref": "#/properties/operations/$defs/Value"
+                    }
+                  },
+                  "required": [
+                    "owner",
+                    "path",
+                    "op",
+                    "time",
+                    "value"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "owner": {
+                      "type": "object",
+                      "properties": {
+                        "clip": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "clip"
+                      ]
+                    },
+                    "path": {
+                      "$ref": "#/properties/operations/$defs/PropertyPath"
+                    },
+                    "op": {
+                      "const": "setKey"
+                    },
+                    "time": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "$ref": "#/properties/operations/$defs/Value"
+                    }
+                  },
+                  "required": [
+                    "owner",
+                    "path",
+                    "op",
+                    "time",
+                    "value"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "owner": {
+                      "type": "object",
+                      "properties": {
+                        "clip": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "clip"
+                      ]
+                    },
+                    "path": {
+                      "$ref": "#/properties/operations/$defs/PropertyPath"
+                    },
+                    "op": {
+                      "const": "removeKey"
+                    },
+                    "time": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "owner",
+                    "path",
+                    "op",
+                    "time"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "owner": {
+                      "type": "object",
+                      "properties": {
+                        "clip": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "clip"
+                      ]
+                    },
+                    "path": {
+                      "$ref": "#/properties/operations/$defs/PropertyPath"
+                    },
+                    "op": {
+                      "const": "moveKey"
+                    },
+                    "moves": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "from": {
+                            "type": "string"
+                          },
+                          "to": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "from",
+                          "to"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "owner",
+                    "path",
+                    "op",
+                    "moves"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "owner": {
+                      "type": "object",
+                      "properties": {
+                        "clip": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "clip"
+                      ]
+                    },
+                    "path": {
+                      "$ref": "#/properties/operations/$defs/PropertyPath"
+                    },
+                    "op": {
+                      "const": "setInterp"
+                    },
+                    "times": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "ease": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "interp": {
+                              "const": "linear"
+                            }
+                          },
+                          "required": [
+                            "interp"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "interp": {
+                              "const": "hold"
+                            }
+                          },
+                          "required": [
+                            "interp"
+                          ]
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "interp": {
+                              "const": "bezier"
+                            },
+                            "out": {
+                              "$ref": "#/properties/operations/$defs/Handle"
+                            },
+                            "in": {
+                              "$ref": "#/properties/operations/$defs/Handle"
+                            }
+                          },
+                          "required": [
+                            "interp",
+                            "out"
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "owner",
+                    "path",
+                    "op",
+                    "times",
+                    "ease"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "owner": {
+                      "type": "object",
+                      "properties": {
+                        "clip": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "clip"
+                      ]
+                    },
+                    "path": {
+                      "$ref": "#/properties/operations/$defs/PropertyPath"
+                    },
+                    "op": {
+                      "const": "putKeys"
+                    },
+                    "keys": {
+                      "minItems": 1,
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/properties/operations/$defs/Key"
+                      }
+                    }
+                  },
+                  "required": [
+                    "owner",
+                    "path",
+                    "op",
+                    "keys"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "owner": {
+                      "type": "object",
+                      "properties": {
+                        "clip": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "clip"
+                      ]
+                    },
+                    "path": {
+                      "$ref": "#/properties/operations/$defs/PropertyPath"
+                    },
+                    "op": {
+                      "const": "set"
+                    },
+                    "value": {
+                      "$ref": "#/properties/operations/$defs/PropertyValue"
+                    }
+                  },
+                  "required": [
+                    "owner",
+                    "path",
+                    "op",
+                    "value"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "owner": {
+                      "type": "object",
+                      "properties": {
+                        "clip": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "clip"
+                      ]
+                    },
+                    "path": {
+                      "$ref": "#/properties/operations/$defs/PropertyPath"
+                    },
+                    "op": {
+                      "const": "clear"
+                    }
+                  },
+                  "required": [
+                    "owner",
+                    "path",
+                    "op"
+                  ]
+                }
+              ],
+              "description": "One edit of a property of a clip. Its times (time, times, moves) are on the clip's clock, as the times of keys are: it reads the clip's offset (0 by default) at the clip's first frame."
+            },
+            "PropertyPath": {
+              "type": "string",
+              "pattern": "^(?!(?:constructor|prototype)(?:\\.|$))[A-Za-z0-9][A-Za-z0-9_-]*(?:\\.(?!(?:constructor|prototype)(?:\\.|$))[A-Za-z0-9][A-Za-z0-9_-]*)*$",
+              "description": "The path of a property, such as \"transform.x\" or \"param.title\"."
+            },
+            "PropertyRename": {
+              "type": "object",
+              "properties": {
+                "owner": {
+                  "type": "object",
+                  "properties": {
+                    "clip": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "clip"
+                  ]
+                },
+                "from": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/properties/operations/$defs/PropertyPath"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "to": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/properties/operations/$defs/PropertyPath"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "scale": {
+                  "type": "number"
+                },
+                "offset": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "owner",
+                "from",
+                "to"
+              ],
+              "description": "Another path for properties of a clip."
+            },
+            "PropertyValue": {
+              "anyOf": [
+                {
+                  "$ref": "#/properties/operations/$defs/Animation"
+                },
+                {
+                  "$ref": "#/properties/operations/$defs/Value"
+                }
+              ],
+              "description": "A value of a property, or {\"keys\":[{\"time\":\"0\",\"value\":0},…]} with keyframes."
+            },
+            "SceneManifest": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "entry": {
+                  "type": "string"
+                },
+                "runtime": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "params": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[^\\s.]+$"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "text",
+                          "number",
+                          "color",
+                          "boolean",
+                          "choice",
+                          "asset"
+                        ]
+                      },
+                      "default": {
+                        "$ref": "#/properties/operations/$defs/Value"
+                      },
+                      "min": {
+                        "type": "number"
+                      },
+                      "max": {
+                        "type": "number"
+                      },
+                      "options": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "type"
+                    ]
+                  }
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "presets": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "values": {
+                        "type": "object",
+                        "additionalProperties": {
+                          "$ref": "#/properties/operations/$defs/Value"
+                        }
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "values"
+                    ]
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "entry",
+                "runtime"
+              ],
+              "description": "What a scene is, as its scene.json says."
+            },
+            "SoundManifest": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "entry": {
+                  "type": "string"
+                },
+                "runtime": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0
+                },
+                "params": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "pattern": "^[^\\s.]+$"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "text",
+                          "number",
+                          "color",
+                          "boolean",
+                          "choice",
+                          "asset"
+                        ]
+                      },
+                      "default": {
+                        "$ref": "#/properties/operations/$defs/Value"
+                      },
+                      "min": {
+                        "type": "number"
+                      },
+                      "max": {
+                        "type": "number"
+                      },
+                      "options": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "name",
+                      "type"
+                    ]
+                  }
+                },
+                "tags": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "outputs": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "entry",
+                "runtime"
+              ],
+              "description": "What a sound is, as its sound.json says."
+            },
+            "SpeedCurve": {
+              "type": "array",
+              "prefixItems": [
+                {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                {
+                  "type": "number",
+                  "minimum": -10,
+                  "maximum": 10
+                },
+                {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                {
+                  "type": "number",
+                  "minimum": -10,
+                  "maximum": 10
+                }
+              ],
+              "items": false,
+              "minItems": 4,
+              "description": "How it speeds up and slows down: [x1, y1, x2, y2] as in CSS cubic-bezier()."
+            },
+            "Transition": {
+              "description": "A transition at the edge of a clip, such as {\"type\":\"fade\",\"duration\":\"0.5\"}.",
+              "type": "object",
+              "properties": {
+                "type": {
+                  "$ref": "#/properties/operations/$defs/TypeName"
+                },
+                "transition": {
+                  "type": "string"
+                },
+                "library": {
+                  "type": "string"
+                },
+                "resource": {
+                  "type": "string"
+                },
+                "duration": {
+                  "type": "string"
+                },
+                "curve": {
+                  "$ref": "#/properties/operations/$defs/SpeedCurve"
+                },
+                "values": {
+                  "type": "object",
+                  "propertyNames": {
+                    "$ref": "#/properties/operations/$defs/PropertyPath"
+                  },
+                  "additionalProperties": {
+                    "$ref": "#/properties/operations/$defs/Value"
+                  }
+                }
+              },
+              "required": [
+                "duration"
+              ]
+            },
+            "TypeName": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9-]*(\\.[a-z][a-z0-9-]*)?$",
+              "description": "The name of a kind of effect or transition, such as \"blur\" or \"plugin.effect\"."
+            },
+            "Value": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "number"
+                  }
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "string": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "string"
+                  ]
+                },
+                {
+                  "$ref": "#/properties/operations/$defs/MediaRef"
+                }
+              ],
+              "description": "A plain value: a number, a string, true or false, numbers, text or a file."
+            }
+          }
+        },
+        "summary": {
+          "description": "One short sentence for the user on what the batch does, without your reasoning.",
+          "type": "string",
+          "maxLength": 120
+        },
+        "dry_run": {
+          "description": "true checks everything and writes nothing, and lists what the batch would change.",
+          "type": "boolean"
+        },
+        "base_revision": {
+          "description": "Hardly ever needed: a revision from an earlier result; changes of anything changed since then are refused too. It only adds to the checks of the tools.",
+          "type": "string"
+        },
+        "request_id": {
+          "description": "Any string of yours: a call sent again with the same one is not run again and gets the same result.",
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "operations"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Change the project",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "aq_file_edit",
+    "title": "Edit a code file",
+    "description": "Changes part of a code file by replacing exact text: each edit's old_text must appear exactly once in the file as it is now (without the line numbers that aq_file_read shows), and is replaced with new_text; replace_all replaces every occurrence instead. All edits of one call apply in order and succeed together, or nothing is written. It does not use the file's revision, so the user's edits elsewhere in the same file do not stop it; old_text that is not found is not in the file as it is now, as when that part changed after it was read. The file must exist: aq_file_write creates files. The result shows the changed lines and a syntax check.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path of the code file, such as \"scenes/title/index.html\"."
+        },
+        "edits": {
+          "minItems": 1,
+          "maxItems": 20,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "old_text": {
+                "type": "string",
+                "description": "Text of the file as it is now, exactly, without the line numbers of aq_file_read; enough of it to be found once."
+              },
+              "new_text": {
+                "type": "string",
+                "description": "What replaces it."
+              },
+              "replace_all": {
+                "description": "true replaces every place old_text is found, at least one.",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "old_text",
+              "new_text"
+            ],
+            "additionalProperties": false
+          },
+          "description": "Replacements, applied in order, 1 to 20."
+        },
+        "request_id": {
+          "description": "Any string of yours: a call sent again with the same one is not run again and gets the same result.",
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "path",
+        "edits"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Edit a code file",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "aq_file_write",
+    "title": "Write a code file",
+    "description": "Creates a code file or replaces all of one. Paths go under scenes/<scene id>/, sounds/<sound id>/ or code/, and the scene or sound must exist (scene.add and sound.add in aq_edit create them with their first files). An existing file is replaced only if all its lines were read with aq_file_read in this conversation, and the call fails with file-changed if somebody changed it since. Replacing a whole file also replaces any edits the user made elsewhere in it; aq_file_edit changes only the parts it names. The result includes a syntax check.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path of the file, under scenes/<scene id>/, sounds/<sound id>/ or code/, such as \"code/ease.js\"."
+        },
+        "text": {
+          "type": "string",
+          "description": "All of its text."
+        },
+        "base_revision": {
+          "description": "Hardly ever needed: a revision from an earlier result, to also refuse the write if the file changed since then. The file still has to be read first.",
+          "type": "string"
+        },
+        "request_id": {
+          "description": "Any string of yours: a call sent again with the same one is not run again and gets the same result.",
+          "type": "string",
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "path",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Write a code file",
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "aq_propose",
+    "title": "Ask the user",
+    "description": "Hands a decision to the user: kind \"question\" shows the question with 2 to 6 short options, and the user can also answer in their own words. The turn ends with this call: changes later in the same answer are not run, and the answer arrives as the user's next message.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "question",
+          "description": "\"question\": a choice for the user to make."
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "The question, in one sentence, in the language of the user."
+        },
+        "options": {
+          "minItems": 2,
+          "maxItems": 6,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "description": "A short answer the user can pick."
+              },
+              "detail": {
+                "description": "What picking it means, in a few words.",
+                "type": "string",
+                "maxLength": 200
+              }
+            },
+            "required": [
+              "label"
+            ],
+            "additionalProperties": false
+          },
+          "description": "2 to 6 concrete answers."
+        },
+        "allow_other": {
+          "description": "false when the user must pick one of the options; by default they can also answer in their own words.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "question",
+        "options"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Ask the user",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "aq_check_run",
+    "title": "Check the project",
+    "description": "Lists the problems of the project: files that do not fit the project format, references to things that are missing, values that do not fit what a scene describes, errors that scene and sound code threw when the editor ran it, and things this editor version does not do yet (they do not appear in the preview or the export). Runtime errors come only from code the editor has run: a scene runs while one of its clips is in the preview, and again after its code changes; the result lists changed code that has not run since. aq_edit results already include the problems that come from the project data alone. A fix line is an aq_edit operation that resolves that problem.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "checks": {
+          "description": "\"format\": whether every document fits the project format; \"problems\": all problems the editor knows of. Both by default.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "format",
+              "problems"
+            ]
+          }
+        },
+        "severity": {
+          "description": "Only problems of these kinds.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warning",
+              "check"
+            ]
+          }
+        },
+        "subject": {
+          "description": "Only problems of this object id or file path.",
+          "type": "string"
+        },
+        "limit": {
+          "description": "How many problems at most, 1 to 500; 100 by default.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "cursor": {
+          "description": "Where to go on, as the last line of an earlier result of this call says.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Check the project",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
+  }
+]

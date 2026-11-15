@@ -11,7 +11,7 @@ import {
 import { z } from "zod";
 import { fail, type Draft } from "./draft.ts";
 import { formatFailure } from "./failures.ts";
-import { isSourceFile } from "./import-file.ts";
+import { INSTRUCTIONS_FILE, isSourceFile } from "./import-file.ts";
 import { entryOf, type ProjectState } from "./model.ts";
 import { isInUse } from "./references.ts";
 import { removeUses } from "./resource-edits.ts";
@@ -24,14 +24,15 @@ const isKeptOut = (part: string) => part.startsWith(".") || part === "node_modul
 /** Who a file belongs to: a scene or sound by its folder, or everybody for shared code. */
 function ownerOf(path: string) {
   const [root, id = "", ...rest] = path.split("/");
-  if (root === "code") return { kind: "code" as const };
+  // The instructions for AI are the whole project's, as shared code is.
+  if (root === "code" || path === INSTRUCTIONS_FILE) return { kind: "code" as const };
   return { kind: root === "scenes" ? ("scene" as const) : ("sound" as const), id, rest };
 }
 
 /** A path in a project that holds code, as a command can write it. */
 export const SourcePath = RelativePath.refine(
   isSourceFile,
-  "只能写 scenes、sounds、code 里的代码文件",
+  "只能写 scenes、sounds、code 里的代码文件和 AGENTS.md",
 )
   .refine((path) => !path.split("/").some(isKeptOut), "这个名字的文件不会跟项目走")
   .refine((path) => {

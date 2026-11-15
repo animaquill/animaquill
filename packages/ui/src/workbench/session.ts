@@ -4,6 +4,7 @@ import {
   isEmptyUpdate,
   mergeUpdates,
   sourceKindOf,
+  startingFiles,
   type Origin,
 } from "@animaquill/core";
 import type {
@@ -280,7 +281,10 @@ export class ProjectSession {
   /** Resolves to whether the project was created and opened. */
   /** `format`: the first format of the project, see `newFormat`; the usual one without it. */
   async create(name: string, format?: NewProject["format"]): Promise<boolean> {
-    const store = ProjectStore.create(createProject({ name, ...(format && { format }) }));
+    const store = ProjectStore.create(
+      createProject({ name, ...(format && { format }) }),
+      startingFiles(),
+    );
     const { id } = store.getState().manifest;
     const state = store.encodeState();
     store.destroy();

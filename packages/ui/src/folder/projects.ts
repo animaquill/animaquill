@@ -7,7 +7,13 @@
  * browser keeps of its project: the log, the bases, what is being tried. Copies of a folder have the
  * same project id, and must not share any of that. One folder has one record at most.
  */
-import { INCOMPLETE_FILE, ProjectStore, isNoneOfIt, isProjectFile } from "@animaquill/core";
+import {
+  INCOMPLETE_FILE,
+  ProjectStore,
+  isNoneOfIt,
+  isProjectFile,
+  startingFiles,
+} from "@animaquill/core";
 import {
   newNameFor,
   type FolderRecord,
@@ -240,7 +246,10 @@ export class FolderProjects {
     if (await this.#folders.records.find(folder)) {
       throw new Error("This browser knows that folder as the folder of another project");
     }
-    const store = ProjectStore.create(createProject({ name, ...(format && { format }) }));
+    const store = ProjectStore.create(
+      createProject({ name, ...(format && { format }) }),
+      startingFiles(),
+    );
     const { id: project } = store.getState().manifest;
     const state = store.encodeState();
     store.destroy();

@@ -46,3 +46,4 @@ export type {
   ToolHost,
   ToolResult,
 } from "./types.ts";
+export { mcpInstructions, mcpToolsOf, type McpPlace, type McpTool } from "./mcp.ts";

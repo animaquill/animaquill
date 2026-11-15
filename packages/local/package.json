@@ -13,7 +13,8 @@
     "animaquill": "dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "types"
   ],
   "engines": {
     "node": ">=22"
@@ -26,12 +27,17 @@
     "build": "vite build --config vite.server.config.ts && vite build",
     "start": "pnpm build && node dist/cli.js",
     "prepack": "pnpm build && cp ../../LICENSE LICENSE",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json && tsc --ignoreConfig --noEmit --strict --lib ES2024,DOM types/scene.d.ts && tsc --ignoreConfig --noEmit --strict --lib ES2024,WebWorker types/sound.d.ts",
     "e2e": "playwright test"
   },
   "devDependencies": {
+    "@animaquill/core": "workspace:*",
     "@animaquill/scene": "workspace:*",
+    "@animaquill/schema": "workspace:*",
+    "@animaquill/tools": "workspace:*",
     "@animaquill/web": "workspace:*",
+    "@modelcontextprotocol/client": "2.4.0",
+    "@modelcontextprotocol/server": "2.4.0",
     "@playwright/test": "1.64.1",
     "@types/node": "26.0.0",
     "typescript": "7.0.2",

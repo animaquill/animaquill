@@ -4,6 +4,10 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { LOCAL_PORT, localSites } from "@animaquill/web/sites";
 import { PortInUse, startLocalServer } from "./server.ts";
+import { check, describe, guide } from "./mcp/commands.ts";
+import { findProject } from "./mcp/find.ts";
+import { FolderTools } from "./mcp/host.ts";
+import { serveMcp } from "./mcp/server.ts";
 
 /**
  * `npx animaquill`: the editor on this computer. Everything that needs no platform works, in Chrome
@@ -18,8 +22,15 @@ const { version } = JSON.parse(
 ) as { version: string };
 
 const HELP = `用法：animaquill [选项]
+      animaquill <命令> [--project <项目文件夹>]
 
 在这台电脑上启动 AnimaQuill 编辑器，用 Chrome 或 Edge 打开显示的地址。
+
+命令（项目默认是当前文件夹，或者往上最近的有 animaquill.json 的文件夹）：
+  mcp              给电脑上的 AI 工具（Claude Code、Codex 等）用的 MCP 服务器（stdio）
+  check [--json]   检查项目，有错误时退出码是 1
+  describe         项目概要和时间轴
+  guide [<主题>]   手册，比如 guide ops/clip.move；--query <词> 按关键词找
 
 选项：
   --port <端口>  使用的端口，默认 ${LOCAL_PORT}。浏览器里的项目和设置跟着端口走，
@@ -62,7 +73,61 @@ function portFrom(value: string | undefined): number {
   return port;
 }
 
+const COMMANDS = new Set(["mcp", "check", "describe", "guide"]);
+
+/** `animaquill <command>`: the tools on a project folder, without the editor. */
+async function runCommand(name: string, argv: readonly string[]): Promise<number> {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: [...argv],
+      options: {
+        project: { type: "string" },
+        json: { type: "boolean" },
+        query: { type: "string" },
+        help: { type: "boolean", short: "h" },
+      },
+      allowPositionals: name === "guide",
+      strict: true,
+    });
+  } catch (error) {
+    console.error(`${(error as Error).message}\n\n${HELP}`);
+    return 2;
+  }
+  const { values, positionals } = parsed;
+  if (values.help) {
+    console.log(HELP);
+    return 0;
+  }
+  const output = {
+    out: (text: string) => console.log(text),
+    err: (text: string) => console.error(text),
+  };
+  if (name === "guide") return guide(positionals[0], values.query, output);
+  const place = await findProject(values.project);
+  if (name === "check") return check(place, values.json === true, output);
+  if (name === "describe") return describe(place, output);
+
+  // mcp: stdout is the protocol from here on, and what is said to people goes to stderr.
+  console.log = console.error;
+  const tools = new FolderTools({ place, notes: true });
+  const handle = serveMcp({ tools, version });
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    void Promise.allSettled([handle.close(), tools.close()]).then(() => process.exit(0));
+  };
+  process.stdin.once("end", stop);
+  process.stdin.once("close", stop);
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  return -1;
+}
+
 async function main(argv: readonly string[]): Promise<number> {
+  const [first, ...rest] = argv;
+  if (first !== undefined && COMMANDS.has(first)) return runCommand(first, rest);
   let options;
   try {
     ({ values: options } = parseArgs({

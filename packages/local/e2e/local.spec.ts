@@ -8,6 +8,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync } from "n
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Client } from "@modelcontextprotocol/client";
+import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import type { Download, Frame, Page } from "@playwright/test";
 import { dialog, drop, footer } from "../../ui/e2e/folder-support.ts";
 import {
@@ -22,6 +24,7 @@ import { anthropicSays } from "../../ui/e2e/ai-support.ts";
 import { content, expect, findCompositor, resourcesIn, tab, test } from "../../ui/e2e/support.ts";
 
 const RED = fileURLToPath(new URL("../../ui/e2e/fixtures/red.webm", import.meta.url));
+const CLI = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 
 test.use({ devPage: false, folders: true, withProject: false });
 
@@ -194,6 +197,48 @@ test.describe("the editor on this computer", () => {
     const frame = await middleOf(page, png);
     expect({ width: frame.width, height: frame.height }).toEqual({ width: 1920, height: 1080 });
     expect(isRed(frame.color)).toBe(true);
+  });
+
+  test("takes in what an AI tool changes through animaquill mcp in the folder it has open", async ({
+    page,
+  }) => {
+    test.skip(canCapture, "the browser that can capture takes no folders dropped on it");
+    const disk = await newProjectOnDisk(page);
+    // A new project starts with the instructions for AI.
+    expect(readFileSync(join(disk, "AGENTS.md"), "utf8")).toMatch(/^# Instructions for AI/);
+    const client = new Client({ name: "claude-code", version: "9.9.9" });
+    await client.connect(
+      new StdioClientTransport({
+        command: process.execPath,
+        args: [CLI, "mcp", "--project", disk],
+        stderr: "ignore",
+      }),
+    );
+    try {
+      const status = await client.callTool({ name: "aq_project_status", arguments: {} });
+      expect(status.isError).toBeFalsy();
+      const renamed = await client.callTool({
+        name: "aq_edit",
+        arguments: { operations: [{ op: "project.rename", name: "AI 改的名字" }] },
+      });
+      expect(renamed.isError, JSON.stringify(renamed.content)).toBeFalsy();
+      await expect(page.getByText(/外面改了 \d+ 个文件，已并入。/)).toBeVisible({
+        timeout: 15_000,
+      });
+      await expect(footer(page).getByText("AI 改的名字")).toBeVisible();
+      // And the other way round: what people change reaches the AI tool, as somebody else's.
+      await page.getByRole("button", { name: "撤销这次" }).click();
+      await expect(footer(page).getByText("片子")).toBeVisible();
+      await expect
+        .poll(() => JSON.parse(readFileSync(join(disk, "animaquill.json"), "utf8")).name)
+        .toBe("片子");
+      const after = await client.callTool({ name: "aq_project_status", arguments: {} });
+      const text = (after.content as { text: string }[])[0]?.text ?? "";
+      expect(text).toContain("片子");
+      expect(text).toMatch(/^others: .*files in the project folder/m);
+    } finally {
+      await client.close();
+    }
   });
 
   test.describe("with scenes", () => {

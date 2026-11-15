@@ -1116,7 +1116,9 @@ test.describe("a browser that cannot write to folders", () => {
       report.getByText("这些素材的文件不在文件夹里，可以从它们存放的地方下载（3）"),
     ).toBeVisible();
     await expect(report.getByText("采访：可以从 GitHub 大文件存储下载")).toBeVisible();
-    await expect(report.getByText("AGENTS.md")).toBeVisible();
+    // What the format has no place for is listed; AGENTS.md is the project's, and comes along.
+    await expect(report.getByText("制作笔记/分镜.md")).toBeVisible();
+    await expect(report.getByText("AGENTS.md")).toHaveCount(0);
     await closeDialog(page);
     await expect(page.locator("footer").getByRole("button", { name: "原子是什么" })).toBeVisible();
 
@@ -1126,7 +1128,12 @@ test.describe("a browser that cannot write to folders", () => {
     await closeDialog(page);
     const unpacked = mkdtempSync(join(tmpdir(), "animaquill-"));
     unzip(readFileSync(await file.path()), unpacked);
-    for (const path of ["scenes/title/index.html", "code/animate.js", "sounds/impacts/main.js"]) {
+    for (const path of [
+      "scenes/title/index.html",
+      "code/animate.js",
+      "sounds/impacts/main.js",
+      "AGENTS.md",
+    ]) {
       expect(readFileSync(join(unpacked, "原子是什么", path))).toEqual(
         readFileSync(join(folder, path)),
       );

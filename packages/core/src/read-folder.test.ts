@@ -696,14 +696,20 @@ describe("the sample project", () => {
     const fixture = loadFixture("v1");
     const reading = await read(fixture);
     expect(reading.project.manifest.name).toBe("原子是什么");
-    expect(reading.skipped).toEqual(["AGENTS.md", "制作笔记/分镜.md"]);
+    expect(reading.skipped).toEqual(["制作笔记/分镜.md"]);
+    expect(reading.sources["AGENTS.md"]).toBe(fixture.get("AGENTS.md"));
     expect(reading.lost).toEqual([]);
     const texts = new Map([...fixture].filter(([path]) => !reading.skipped.includes(path)));
     const { project, problems } = readProject(texts);
     expect(reading.project).toEqual(project);
     expect(reading.warnings).toEqual(problems);
     expect(Object.keys(reading.sources).toSorted()).toEqual(
-      ["code/animate.js", "scenes/title/index.html", "sounds/impacts/main.js"].toSorted(),
+      [
+        "AGENTS.md",
+        "code/animate.js",
+        "scenes/title/index.html",
+        "sounds/impacts/main.js",
+      ].toSorted(),
     );
     const written = new Map([...writeProject(reading.project), ...Object.entries(reading.sources)]);
     expect(written).toEqual(texts);
