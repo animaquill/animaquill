@@ -54,6 +54,7 @@ const STATES: ReadonlySet<string> = new Set<UploadRecordState>([
   "paused",
   "failed",
   "done",
+  "cancelling",
 ]);
 const TARGETS: ReadonlySet<string> = new Set<UploadTarget>(["lfs"]);
 

@@ -247,7 +247,12 @@ function Dialog({ request }: { request: QuestionRequest }) {
         {isPrompt && request.hint && <p className={styles.hint}>{request.hint}</p>}
         <div className={styles.buttons}>
           {!(isConfirm && request.noticeOnly) && (
-            <button ref={cancel} type="button" onClick={dismiss}>
+            <button
+              ref={cancel}
+              type="button"
+              {...(isConfirm && request.keep && { className: styles.primary })}
+              onClick={dismiss}
+            >
               {(isConfirm && request.cancel) || t("dialog.cancel")}
             </button>
           )}
@@ -265,7 +270,9 @@ function Dialog({ request }: { request: QuestionRequest }) {
           ) : (
             <button
               type="button"
-              className={danger ? styles.danger : styles.primary}
+              className={
+                danger ? styles.danger : isConfirm && request.keep ? undefined : styles.primary
+              }
               disabled={!canConfirm}
               onClick={confirm}
             >

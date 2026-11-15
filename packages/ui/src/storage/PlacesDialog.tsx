@@ -128,7 +128,12 @@ export function PlacesDialog({ request }: { request: PlacesRequest }) {
   const switchAuto = async (on: boolean) => {
     if (!project) return;
     setAuto(on);
-    if (!(await lfsAccount.setAuto(project, on))) {
+    // Turned on, it puts files there by itself: only once people said they know what that means.
+    const took =
+      on && asks
+        ? knows && (await lfsAccount.acknowledge()) && (await lfsAccount.setAuto(project, on))
+        : await lfsAccount.setAuto(project, on);
+    if (!took) {
       setAuto(!on);
       workbench.notifications.push(t("storage.uploads.properties.autoFailed"));
     }
@@ -292,12 +297,14 @@ export function PlacesDialog({ request }: { request: PlacesRequest }) {
               type="checkbox"
               role="switch"
               checked={isAuto}
+              disabled={!isAuto && asks && !knows}
+              title={!isAuto && asks && !knows ? t("storage.uploads.dialog.autoFirst") : undefined}
               onChange={(event) => void switchAuto(event.target.checked)}
             />
             {t("storage.uploads.dialog.auto")}
           </label>
         )}
-        {asks && count > 0 && (
+        {asks && (
           <label className={styles.acknowledge}>
             <input
               type="checkbox"

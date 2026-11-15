@@ -147,6 +147,9 @@ export class LabLfsAccount implements LfsAccountAccess {
     changes: { acknowledged?: true; auto?: { project: string; on: boolean } },
   ): Promise<LfsAccount> {
     if (changes.acknowledged) this.acknowledgedAt ??= Date.now();
+    // As the platform: only for someone who said they know what it means.
+    if (changes.auto?.on && this.acknowledgedAt === undefined)
+      throw new Error("The platform answered 409");
     if (changes.auto) {
       if (changes.auto.on) this.auto.add(changes.auto.project);
       else this.auto.delete(changes.auto.project);

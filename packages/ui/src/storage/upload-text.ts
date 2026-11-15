@@ -46,6 +46,8 @@ export function phaseText(t: TFunction, item: UploadItem): string {
       return t(`storage.uploads.problem.${item.problem ?? "refused"}`);
     case "blocked":
       return t("storage.uploads.phase.queued");
+    case "busy":
+      return item.full ? t("storage.uploads.phase.busyFull") : t("storage.uploads.phase.busy");
     default:
       return t(`storage.uploads.phase.${item.phase}`);
   }

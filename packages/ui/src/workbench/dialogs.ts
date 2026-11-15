@@ -23,6 +23,11 @@ export interface ConfirmOptions {
   readonly danger?: boolean;
   /** Only something to read, so there is nothing to cancel. */
   readonly noticeOnly?: boolean;
+  /**
+   * Saying no is what people most likely want, as it keeps something going: that button looks like
+   * the main one, and the one that says yes does not.
+   */
+  readonly keep?: boolean;
   /** Lists below the message, which can get long. */
   readonly details?: readonly DialogDetail[];
 }

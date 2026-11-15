@@ -4828,7 +4828,7 @@
         "queued": "排队中，前面还有 {{count}} 个",
         "queuedNext": "排队中，下一个就是它",
         "progress": "{{percent}}% · {{done}} / {{total}}",
-        "progressEta": "{{percent}}% · {{done}} / {{total}} · 约 {{eta}}",
+        "progressEta": "{{percent}}% · {{done}} / {{total}} · {{eta}}",
         "checking": "传完了，正在核对文件…",
         "pushing": "传完了，正在存进 GitHub…",
         "done": "GitHub 大文件存储 · {{repo}}",
@@ -4849,7 +4849,8 @@
         "pauseAll": "全部暂停",
         "resumeAll": "全部继续",
         "clear": "清除记录",
-        "choose": "选素材放在哪…"
+        "choose": "选素材放在哪…",
+        "giveUpAll": "清掉没传完的"
       },
       "problem": {
         "githubQuota": "GitHub 大文件存储的额度用完了，没传上去",
@@ -4877,7 +4878,8 @@
         "offline": "离线，联网后接着传",
         "busy": "平台忙，稍后自动继续",
         "sending": "{{percent}}% · {{speed}}/s",
-        "sendingSlow": "{{percent}}%"
+        "sendingSlow": "{{percent}}%",
+        "busyFull": "你同时在传的素材太多，平台先等前面的传完"
       },
       "blocked": {
         "notCloud": "要先连接到云端",
@@ -4902,7 +4904,7 @@
       "panel": {
         "title": "素材",
         "uploading": "正在上传 {{count}} 个，共 {{total}}，已传 {{percent}}%",
-        "uploadingEta": "正在上传 {{count}} 个，共 {{total}}，已传 {{percent}}%，约 {{eta}}",
+        "uploadingEta": "正在上传 {{count}} 个，共 {{total}}，已传 {{percent}}%，{{eta}}",
         "paused": "{{count}} 个已暂停",
         "nothing": "没有正在上传的素材",
         "doneToday": "今天传完 {{count}} 个",
@@ -4936,7 +4938,7 @@
         "noFile": "这台电脑上没有这个文件",
         "total": "GitHub 大文件存储：新放进 {{count}} 个，共 {{size}}",
         "repository": "仓库 {{repo}}",
-        "cost": "免费账号每月 10 GB 存储、10 GB 下载，以 GitHub 为准；绑了付款方式的账号超出后会收费。",
+        "cost": "免费账号每月 10 GiB 存储、10 GiB 下载，以 GitHub 为准；绑了付款方式的账号超出后会收费。",
         "seeQuota": "在 GitHub 上看我的额度",
         "kinds": "几种放法有什么区别（只在这台电脑上 / GitHub 大文件存储 / 云端空间 / 我的存储）",
         "kind": {
@@ -4952,7 +4954,8 @@
         "cancel": "取消",
         "footer": "关掉这个项目会暂停，下次打开接着传。",
         "more": "还有 {{count}} 个小文件（共 {{size}}）· 展开",
-        "failed": "没能开始上传，请再试一次。"
+        "failed": "没能开始上传，请再试一次。",
+        "autoFirst": "先勾下面的“我知道…”"
       },
       "notice": {
         "allDone": "{{count}} 个素材已放进 GitHub 大文件存储",
@@ -4977,7 +4980,8 @@
         "assetsValue": "{{lfs}} 个在 GitHub 大文件存储（{{size}}），{{here}} 个只在这台电脑上",
         "auto": "新导入的素材自动放进 GitHub 大文件存储",
         "autoHelp": "云端项目新导入的素材默认只在这台电脑上。经常换电脑的话打开它，以后导入的素材会自动上传。",
-        "autoFailed": "没能保存这个开关，请再试一次。"
+        "autoFailed": "没能保存这个开关，请再试一次。",
+        "agree": "我知道了，打开"
       },
       "start": {
         "unfinished": "↑ {{count}} 个素材没传完，打开后接着传"
@@ -5004,8 +5008,13 @@
       },
       "eta": {
         "soon": "不到 1 分钟",
-        "minutes": "{{count}} 分钟",
-        "hours": "{{count}} 小时"
+        "minutes": "约 {{count}} 分钟",
+        "hours": "约 {{count}} 小时"
+      },
+      "giveUpAll": {
+        "title": "清掉所有没传完的素材？",
+        "message": "这个项目里还没传完的素材都不传了，平台上占着的名额马上放出来。素材本身不动，以后可以再放进去。",
+        "confirm": "清掉"
       }
     }
   },

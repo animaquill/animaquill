@@ -186,6 +186,18 @@ export function UploadsSection({ focused }: { focused: boolean }) {
       {snapshot.blocked && snapshot.blocked !== "notCloud" && listed.length > 0 && (
         <p className={styles.blocked}>{t(`storage.uploads.blocked.${snapshot.blocked}`)}</p>
       )}
+      {snapshot.items.some((item) => item.full) && (
+        <p className={styles.blocked}>
+          {t("storage.uploads.phase.busyFull")}{" "}
+          <button
+            type="button"
+            className={styles.link}
+            onClick={() => void workbench.giveUpUploads()}
+          >
+            {t("storage.uploads.action.giveUpAll")}
+          </button>
+        </p>
+      )}
       {snapshot.sender === "elsewhere" && listed.length > 0 && (
         <p className={styles.note}>{t("storage.uploads.panel.elsewhere")}</p>
       )}

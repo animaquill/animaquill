@@ -906,6 +906,7 @@ export class Workbench {
       lfs: () => cloud?.lfs,
       project: () => this.#uploadProject(),
       files: () => this.#uploadFiles(),
+      here: () => this.here(),
       onAllDone: (count) => this.notifications.push(t("storage.uploads.notice.allDone", { count })),
     });
     this.lfsAccount = new LfsAccountState(cloud?.lfsAccount, host.account);
@@ -2420,11 +2421,16 @@ export class Workbench {
     let repository: RepositoryWatch | undefined;
     let stopRepository: (() => void) | undefined;
     let signedIn = host.account?.getSnapshot().status === "signedIn";
+    let lfsFor: string | undefined;
     const follow = () => {
       // Signed in again: what failed for that goes on.
       const now = host.account?.getSnapshot().status === "signedIn";
       if (now && !signedIn) void this.uploads.retryAll(["signedOut"]);
       signedIn = now;
+      // A project of the platform opened: how the account goes about its large files, as now.
+      const opened = this.#uploadProject()?.project;
+      if (now && opened !== undefined && opened !== lfsFor) void this.lfsAccount.refresh();
+      lfsFor = opened;
       const cloud = this.cloud?.getSnapshot();
       const watch = cloud?.kind === "linked" ? cloud.repository : undefined;
       if (watch !== repository) {
@@ -2438,6 +2444,8 @@ export class Workbench {
     this.cloud?.subscribe(follow);
     host.account?.subscribe(follow);
     this.projectFolders?.subscribe(follow);
+    // The folder may be read again, as allowed from wherever: what waited for that goes on.
+    this.projectFolders?.subscribe(() => void this.uploads.retryAll(["access"]));
     follow();
   }
 
@@ -2458,6 +2466,7 @@ export class Workbench {
       message: t("storage.uploads.leave.message"),
       confirm: t("storage.uploads.leave.leave"),
       cancel: t("storage.uploads.leave.stay"),
+      keep: true,
     });
   }
 
@@ -2478,6 +2487,37 @@ export class Workbench {
     if (!this.lfsAccount.acknowledged) await this.lfsAccount.refresh();
     if (this.lfsAccount.acknowledged) await this.uploads.add(assets);
     else await this.choosePlaces(assets);
+  }
+
+  /**
+   * Turns on or off that new assets of a project go into the large file storage by themselves.
+   * Turned on by someone who never said they know what that means, they are asked first, as the
+   * dialog asks before the first upload. Resolves to whether it took.
+   */
+  async setLfsAuto(project: string, on: boolean): Promise<boolean> {
+    const { t } = this;
+    if (on && !this.lfsAccount.acknowledged) await this.lfsAccount.refresh();
+    if (on && !this.lfsAccount.acknowledged) {
+      const knows = await this.dialogs.confirm({
+        title: t("storage.uploads.properties.auto"),
+        message: t("storage.uploads.dialog.acknowledge"),
+        confirm: t("storage.uploads.properties.agree"),
+      });
+      if (!knows || !(await this.lfsAccount.acknowledge())) return false;
+    }
+    return this.lfsAccount.setAuto(project, on);
+  }
+
+  /** Gives up every file of the open project that is not there yet, once people said so. */
+  async giveUpUploads(): Promise<void> {
+    const { t } = this;
+    const sure = await this.dialogs.confirm({
+      title: t("storage.uploads.giveUpAll.title"),
+      message: t("storage.uploads.giveUpAll.message"),
+      confirm: t("storage.uploads.giveUpAll.confirm"),
+      danger: true,
+    });
+    if (sure) await this.uploads.giveUpAll();
   }
 
   /** Does what helps with a file that did not get into the large file storage, see `UploadProblem`. */
@@ -2581,13 +2621,20 @@ export class Workbench {
    * a project only in this browser, and the first assets of a new project.
    */
   #imported(ids: readonly string[], before: number): readonly string[] {
+    void this.#afterImport(ids, before);
+    return ids;
+  }
+
+  async #afterImport(ids: readonly string[], before: number): Promise<void> {
     const project = this.#uploadProject();
-    if (ids.length === 0 || !project?.project || !this.uploads.available) return ids;
+    if (ids.length === 0 || !project?.project || !this.uploads.available) return;
     const { t } = this;
     const platform = project.project;
+    // As the account has it now: the switch may have been turned on on another computer.
+    await this.lfsAccount.refresh();
     if (this.lfsAccount.isAuto(platform)) {
-      void this.uploads.add(ids);
-      return ids;
+      await this.uploads.add(ids);
+      return;
     }
     const put = (assets: readonly string[]) => ({
       label: t("storage.uploads.notice.put"),
@@ -2616,7 +2663,6 @@ export class Workbench {
         actions: [put(ids), { label: t("storage.uploads.notice.later"), run: () => {} }],
       });
     } else if (before === 0) void this.#askOnce(`firstImport.${platform}`, "firstImport");
-    return ids;
   }
 
   /**

@@ -56,8 +56,8 @@
 }
 
 .mini {
+  flex: none;
   width: 80px;
-  margin-bottom: 2px;
 }
 
 .note,
@@ -76,13 +76,18 @@
   list-style: none;
 }
 
+/* The name on a line of its own, what it does and what helps under it: the panel is narrow. */
 .row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  padding: 5px 0;
+  gap: 4px 8px;
+  padding: 6px 0;
   border-top: 1px solid var(--aq-border);
+}
+
+.row .name {
+  grid-column: 1 / -1;
 }
 
 .name {
@@ -96,17 +101,22 @@
 }
 
 .state {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
   color: var(--aq-text-muted);
-  text-align: right;
 }
 
 .failed {
+  min-width: 0;
   color: var(--aq-danger);
-  text-align: right;
 }
 
 .buttons {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 4px;
 }
 
@@ -136,13 +146,8 @@
   border-top: 1px solid var(--aq-border);
 }
 
-@media (max-width: 520px) {
-  .row {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .buttons {
-    grid-column: 1 / -1;
-    justify-content: flex-end;
-  }
+/* Why it failed, on a line of its own, and what helps under it. */
+.row[data-phase="failed"] .failed,
+.row[data-phase="failed"] .buttons {
+  grid-column: 1 / -1;
 }

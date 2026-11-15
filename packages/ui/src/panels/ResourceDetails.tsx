@@ -112,7 +112,7 @@ export function useResourceActions() {
     // In the large file storage: that copy stays there, which people should know.
     const inLfs =
       item.kind === "asset" && placedAsset(state, item.id, workbench.here())?.storage === "lfs";
-    const lfsNote = inLfs ? ` ${t("storage.uploads.removeNote")}` : "";
+    const lfsNote = inLfs ? t("storage.uploads.removeNote") : "";
     // Used somewhere, it says how much goes with it, and where, each place a click away.
     const confirmed = await dialogs.confirm(
       uses.length > 0

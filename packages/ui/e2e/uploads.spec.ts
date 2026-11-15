@@ -300,6 +300,57 @@ test.describe("files of assets into the large file storage", () => {
     await expect(place(page)).toContainText("GitHub 大文件存储 ·");
   });
 
+  test("new assets go by themselves where the switch was turned on on another computer, without asking", async ({
+    page,
+  }) => {
+    await arrive(page);
+    await createProject(page, "自动");
+    await connect(page, "zidong");
+    // On another computer: said once what it means, and turned it on for this project.
+    await withLab(page, (lab) => {
+      const [project] = [
+        ...(
+          lab as unknown as { platform: { projects: Map<string, unknown> } }
+        ).platform.projects.keys(),
+      ];
+      lab.lfsAccount.acknowledgedAt = Date.now();
+      lab.lfsAccount.auto.add(project as string);
+    });
+    await importFiles(page, files.video);
+    await explorer(page);
+    await page.getByRole("option", { name: "采访.mp4" }).click();
+    await expect(place(page)).toContainText("GitHub 大文件存储 ·", { timeout: 30_000 });
+    await expect(page.getByText("要把素材也存进 GitHub 仓库吗？")).toHaveCount(0);
+  });
+
+  test("the switch for new assets asks first what people have to know, as the dialog does", async ({
+    page,
+  }) => {
+    await arrive(page);
+    await createProject(page, "开关");
+    await connect(page, "kaiguan");
+    await chooseFrom(page, "文件", "项目属性…");
+    const properties = page.getByTestId("project-properties");
+    await properties
+      .getByRole("navigation", { name: "项目属性的分组" })
+      .getByRole("button", { name: "存放和同步" })
+      .click();
+    const auto = properties.getByRole("switch", { name: "新导入的素材自动放进 GitHub 大文件存储" });
+    await auto.click();
+    const asking = page
+      .locator("dialog[open]")
+      .filter({ hasText: "我知道：放进去以后不能单独删掉" });
+    await expect(asking).toBeVisible();
+    await shot(page, "auto-acknowledge");
+    await asking.getByRole("button", { name: "取消" }).click();
+    await expect(auto).not.toBeChecked();
+    expect(await withLab(page, (lab) => lab.lfsAccount.auto.size)).toBe(0);
+    await auto.click();
+    await page.locator("dialog[open]").getByRole("button", { name: "我知道了，打开" }).click();
+    await expect(auto).toBeChecked();
+    expect(await withLab(page, (lab) => lab.lfsAccount.acknowledgedAt !== undefined)).toBe(true);
+  });
+
   test("the storage page of the start page, and the properties of a project", async ({ page }) => {
     await arrive(page);
     await createProject(page, "属性");
@@ -317,7 +368,8 @@ test.describe("files of assets into the large file storage", () => {
     );
     const auto = properties.getByRole("switch", { name: "新导入的素材自动放进 GitHub 大文件存储" });
     await expect(auto).not.toBeChecked();
-    await auto.check();
+    await auto.click();
+    await page.locator("dialog[open]").getByRole("button", { name: "我知道了，打开" }).click();
     await expect(auto).toBeChecked();
     await shot(page, "properties-assets");
     expect(await withLab(page, (lab) => lab.lfsAccount.auto.size)).toBe(1);

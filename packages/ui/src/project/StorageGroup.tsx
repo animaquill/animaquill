@@ -337,7 +337,7 @@ function AssetRows({ project }: { readonly project: string }) {
   const isAuto = auto ?? account.account?.auto.includes(project) ?? false;
   const change = async (on: boolean) => {
     setAuto(on);
-    if (!(await lfsAccount.setAuto(project, on))) {
+    if (!(await workbench.setLfsAuto(project, on))) {
       setAuto(!on);
       workbench.notifications.push(t("storage.uploads.properties.autoFailed"));
     }

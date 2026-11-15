@@ -1,4 +1,4 @@
-import { STORAGE, type ProjectStore } from "@animaquill/core";
+import { STORAGE, placedAsset, type Here, type ProjectStore } from "@animaquill/core";
 import {
   CloudSignedOut,
   LfsRefused,
@@ -115,6 +115,8 @@ export interface UploadItem {
   readonly received: number;
   /** Bytes a second, while it is sent. */
   readonly speed?: number;
+  /** For "busy": the person has as many files on their way as the platform takes. */
+  readonly full?: boolean;
   readonly problem?: UploadProblem;
   /** For "queued": how many go before it. */
   readonly ahead?: number;
@@ -211,6 +213,8 @@ export interface AssetUploadsOptions {
   /** The open project, as it is now: undefined for none. */
   readonly project: () => UploadProject | undefined;
   readonly files: () => UploadFiles | undefined;
+  /** Where the open project is, as far as places go, see `Here`: undefined for anywhere. */
+  readonly here?: () => Here | undefined;
   readonly environment?: UploadEnvironment;
   /** All of what was asked for of a project got there: how many. */
   readonly onAllDone?: (count: number) => void;
@@ -233,6 +237,7 @@ interface Live {
   >;
   readonly received: number;
   readonly speed?: number;
+  readonly full?: boolean;
 }
 
 const isLiveMessage = (message: unknown): message is LiveMessage =>
@@ -256,6 +261,15 @@ class Failed extends Error {
     this.problem = problem;
   }
 }
+
+/** A failed file again, from the start of what the platform holds of it: it is asked anew. */
+const anew = ({
+  problem: _problem,
+  upload: _upload,
+  received: _received,
+  ...kept
+}: UploadRecord): UploadRecord | undefined =>
+  kept.state === "failed" ? { ...kept, state: "waiting" } : undefined;
 
 /** What a failure the platform said comes to. */
 const problemOf = (error: string | undefined): UploadProblem | "again" | "repository" => {
@@ -304,6 +318,8 @@ export class AssetUploads {
   #claim: WriterClaim | undefined;
   /** Another window has the turn, and this one waits for it. */
   #waiting = false;
+  /** The platform is being told what people gave up. */
+  #telling = false;
   /** Stops waiting for the turn, and everything that goes on for the project. */
   #follow: AbortController | undefined;
   #line: CloudLine | undefined;
@@ -356,7 +372,7 @@ export class AssetUploads {
       const records = await store.list();
       const counts = unfinishedByProject(records);
       for (const record of records)
-        if (record.state !== "done")
+        if (record.state !== "done" && record.state !== "cancelling")
           counts.set(record.project, (counts.get(record.project) ?? 0) + 1);
       this.#unfinished = counts;
       this.#unfinishedEmitter.emit();
@@ -545,6 +561,12 @@ export class AssetUploads {
       wanted.push(id);
     }
     if (wanted.length > 0) void this.add(wanted, { replaced: true });
+    // An asset that went away: its file goes nowhere any more.
+    const gone = this.#records.filter(
+      ({ asset, state: kept }) =>
+        kept !== "done" && kept !== "cancelling" && !state.assets?.[asset],
+    );
+    if (gone.length > 0) void this.#giveUp(gone.map(({ asset }) => asset));
   }
 
   /** Starts what waits, as many as go at once, where this window sends. */
@@ -553,6 +575,13 @@ export class AssetUploads {
     const lfs = this.#options.lfs();
     if (!this.#claim || !project || project.key !== this.#key || !lfs) return;
     if (project.blocked !== undefined || project.project === undefined) return;
+    const cancelling = this.#records.filter(({ state }) => state === "cancelling");
+    if (cancelling.length > 0 && !this.#telling) {
+      this.#telling = true;
+      void this.#tellCancelled(cancelling).finally(() => {
+        this.#telling = false;
+      });
+    }
     for (const record of this.#records) {
       if (this.#running.size >= FILES_AT_ONCE) break;
       if (record.state !== "waiting" || this.#running.has(record.asset)) continue;
@@ -684,7 +713,11 @@ export class AssetUploads {
               await this.#rest(RETRY_MOST_MS, signal);
               continue;
             case "busy":
-              this.#setLive(record.asset, { phase: "busy", received: record.received ?? 0 });
+              this.#setLive(record.asset, {
+                phase: "busy",
+                received: record.received ?? 0,
+                ...(error.detail === "person" && { full: true }),
+              });
               await this.#rest((error.retryAfter ?? 10) * 1000, signal);
               continue;
             case "notFound":
@@ -745,7 +778,9 @@ export class AssetUploads {
     if (kept !== undefined) {
       try {
         const upload = await lfs.state(kept);
-        if (upload.oid === oid && upload.size === record.size) return upload;
+        // One that is over, as one that failed before people tried again, is begun anew.
+        const over = upload.state === "failed" || upload.state === "expired";
+        if (!over && upload.oid === oid && upload.size === record.size) return upload;
       } catch (error) {
         if (!(error instanceof LfsRefused) || error.code !== "notFound") throw error;
       }
@@ -929,16 +964,14 @@ export class AssetUploads {
     const store = this.#options.store;
     if (!project || !store || project.project === undefined) return 0;
     const state = project.store.getState();
-    const places = state.places;
     const at = this.#env.now();
     const fresh = new Map<string, UploadRecord>();
     for (const asset of new Set(assets)) {
       const found = state.assets?.[asset];
       if (found?.hash === undefined || found.size === undefined || found.size > LFS_FILE_MOST)
         continue;
-      const place = places?.[asset];
-      // There already, for this very content.
-      if (place?.storage === "lfs" && isSameHash(place.hash, found.hash)) continue;
+      // There already, for this very content, where it counts: in the repository of the project.
+      if (this.#isThere(asset)) continue;
       fresh.set(asset, {
         key: project.key,
         asset,
@@ -955,8 +988,13 @@ export class AssetUploads {
     let added = 0;
     await store.update(project.key, [...fresh.keys()], (kept, asset) => {
       const next = fresh.get(asset) as UploadRecord;
-      if (kept && kept.hash === next.hash && kept.state !== "failed") {
-        // On its way or there: a paused one goes on.
+      // On its way: a paused one goes on. There: not where it counts now (see above), as after
+      // another repository was chosen, so it goes again; the platform says at once if it has it.
+      if (
+        kept &&
+        kept.hash === next.hash &&
+        (kept.state === "waiting" || kept.state === "paused")
+      ) {
         if (kept.state !== "paused") return undefined;
         added += 1;
         return { ...kept, state: "waiting" };
@@ -966,6 +1004,15 @@ export class AssetUploads {
     });
     this.#nudge();
     return added;
+  }
+
+  /**
+   * Whether the file an asset has now is in the storage of this project's repository, as people
+   * see it (`placedAsset`): a place bound to another repository is not.
+   */
+  #isThere(asset: string): boolean {
+    const state = this.#options.project()?.store.getState();
+    return !!state && placedAsset(state, asset, this.#options.here?.())?.storage === "lfs";
   }
 
   /** Stops a file, where it is: it goes on from there with `resume`. */
@@ -983,9 +1030,7 @@ export class AssetUploads {
 
   /** Tries a file that failed again, from where it got. */
   retry(asset: string): Promise<void> {
-    return this.#change([asset], ({ problem: _problem, ...kept }) =>
-      kept.state === "failed" ? { ...kept, state: "waiting" } : undefined,
-    );
+    return this.#change([asset], anew);
   }
 
   pauseAll(): Promise<void> {
@@ -1006,13 +1051,62 @@ export class AssetUploads {
   async cancel(asset: string): Promise<void> {
     const record = this.#records.find((each) => each.asset === asset);
     if (!record || record.state === "done") return;
-    await this.#change([asset], (kept) => (kept.state === "done" ? undefined : null));
+    await this.#giveUp([asset]);
+  }
+
+  /**
+   * Gives these up: gone at once where the platform has nothing of them; otherwise "cancelling"
+   * until the platform is told, so that what it holds for them goes now rather than a day later,
+   * and takes no room of the person's meanwhile. Whichever window sends tells it once it can.
+   */
+  async #giveUp(assets: readonly string[]): Promise<void> {
+    const store = this.#options.store;
+    const key = this.#key;
+    if (!store || key === undefined || assets.length === 0) return;
+    const after = await store.update(key, assets, (kept) =>
+      !kept || kept.state === "done"
+        ? undefined
+        : kept.upload === undefined
+          ? null
+          : { ...kept, state: "cancelling" },
+    );
+    await this.#tellCancelled(
+      after.flatMap((each) => (each?.state === "cancelling" ? [each] : [])),
+    );
+  }
+
+  /** Tells the platform what people gave up, and forgets it once it heard. */
+  async #tellCancelled(records: readonly UploadRecord[]): Promise<void> {
     const lfs = this.#options.lfs();
-    if (record.upload !== undefined)
-      await lfs?.cancel(record.upload).catch((error: unknown) => {
-        // It goes by itself on the platform a day later.
-        console.warn("An upload could not be given up on the platform", error);
-      });
+    const store = this.#options.store;
+    if (!lfs || !store) return;
+    for (const record of records) {
+      if (record.upload === undefined) continue;
+      try {
+        await lfs.cancel(record.upload);
+      } catch (error) {
+        // No answer: the next time the network is back.
+        if (error instanceof LfsRefused && error.code === "notFound") {
+          /* gone already */
+        } else {
+          console.warn("An upload could not be given up on the platform yet", error);
+          continue;
+        }
+      }
+      await store.update(record.key, [record.asset], (kept) =>
+        kept?.state === "cancelling" && kept.upload === record.upload ? null : undefined,
+      );
+    }
+  }
+
+  /**
+   * Gives up all that is not there yet: what helps where the platform has no room for more of the
+   * person's files, as uploads that were given up while offline still take it.
+   */
+  giveUpAll(): Promise<void> {
+    return this.#giveUp(
+      this.#records.filter(({ state }) => state !== "done").map(({ asset }) => asset),
+    );
   }
 
   /** Forgets the files that are there. */
@@ -1030,8 +1124,7 @@ export class AssetUploads {
       this.#records
         .filter(({ state, problem }) => state === "failed" && wanted.has(problem ?? ""))
         .map(({ asset }) => asset),
-      ({ problem: _problem, ...kept }) =>
-        kept.state === "failed" ? { ...kept, state: "waiting" } : undefined,
+      anew,
     );
   }
 
@@ -1067,6 +1160,7 @@ export class AssetUploads {
       received:
         record.state === "done" ? record.size : Math.max(live?.received ?? 0, record.received ?? 0),
       ...(live?.speed !== undefined && phase === "sending" && { speed: live.speed }),
+      ...(live?.full && phase === "busy" && { full: true }),
       ...(record.problem !== undefined && { problem: record.problem as UploadProblem }),
       ...(phase === "queued" && { ahead }),
       ...(record.replaced && { replaced: true }),
@@ -1079,6 +1173,7 @@ export class AssetUploads {
     let ahead = 0;
     const items: UploadItem[] = [];
     for (const record of this.#records) {
+      if (record.state === "cancelling") continue;
       const item = this.#itemOf(record, ahead);
       if (!item) continue;
       if (item.phase === "queued") ahead += 1;
@@ -1119,6 +1214,7 @@ export class AssetUploads {
 export function unfinishedByProject(records: readonly UploadRecord[]): Map<string, number> {
   const counts = new Map<string, number>();
   for (const record of records)
-    if (record.state !== "done") counts.set(record.key, (counts.get(record.key) ?? 0) + 1);
+    if (record.state !== "done" && record.state !== "cancelling")
+      counts.set(record.key, (counts.get(record.key) ?? 0) + 1);
   return counts;
 }

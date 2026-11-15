@@ -196,9 +196,10 @@ export type UploadTarget = "lfs";
 /**
  * How a file of an asset on its way goes, as this browser keeps it: waiting for its turn or being
  * sent ("waiting"), stopped by people ("paused"), stopped for something people have to do
- * ("failed", `UploadRecord.problem` says what), or there ("done").
+ * ("failed", `UploadRecord.problem` says what), or there ("done"); or given up by people while
+ * the platform could not be told yet ("cancelling"), which it is once it can be.
  */
-export type UploadRecordState = "waiting" | "paused" | "failed" | "done";
+export type UploadRecordState = "waiting" | "paused" | "failed" | "done" | "cancelling";
 
 /**
  * A file of an asset that this browser sends somewhere, for a project it has: the file as the asset

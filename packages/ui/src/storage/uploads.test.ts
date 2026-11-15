@@ -1,4 +1,4 @@
-import { ProjectStore } from "@animaquill/core";
+import { ProjectStore, type Here } from "@animaquill/core";
 import {
   CloudSignedOut,
   LfsRefused,
@@ -213,6 +213,7 @@ function windowOf({
   browser,
   lfs,
   blocked,
+  here,
 }: {
   store: ProjectStore;
   files: Map<string, Blob>;
@@ -220,11 +221,13 @@ function windowOf({
   browser: MemoryUploads;
   lfs: FakeLfs;
   blocked?: { value: UploadBlock | undefined };
+  here?: { value: Here | undefined };
 }) {
   const env = environment();
   const page = { alive: true, asleep: false, isAlive: () => page.alive };
   const uploads: UploadStore = browser.window(page);
   const block = blocked ?? { value: undefined as UploadBlock | undefined };
+  const place = here ?? { value: undefined as Here | undefined };
   const found: { override?: ((asset: string) => FileFound | undefined) | undefined } = {};
   const allDone = vi.fn<(count: number) => void>();
   const failed = vi.fn();
@@ -246,6 +249,7 @@ function windowOf({
         return file ? { kind: "there", file } : { kind: "missing" };
       },
     }),
+    here: () => place.value,
     environment: env,
     onAllDone: allDone,
     onFailed: failed,
@@ -273,9 +277,10 @@ function windowOf({
     allDone,
     failed,
     block,
+    here: place,
     until,
     placeOf,
-    another: () => windowOf({ store, files, reads, browser, lfs, blocked: block }),
+    another: () => windowOf({ store, files, reads, browser, lfs, blocked: block, here: place }),
   };
 }
 
@@ -631,5 +636,121 @@ describe("another file of an asset that is in the storage", () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(v.queue.getSnapshot().items).toEqual([]);
+  });
+});
+
+describe("what people do about it again", () => {
+  test("tried again after the platform found the file was not the one, it goes, once the file is right again", async () => {
+    const w = await world([4000]);
+    w.lfs.chunk = 1024;
+    const right = w.files.get("asset_1")!;
+    // Changed in place while it was sent: the platform reads another file through.
+    w.files.set("asset_1", new Blob([bytesOf(4000, 7)]));
+    await w.queue.add(["asset_1"]);
+    await w.until((s) => phaseOf(s, "asset_1") === "failed");
+    expect(w.queue.getSnapshot().items[0]?.problem).toBe("changed");
+    // Put right, and tried again: a new upload, from the start, and there.
+    w.files.set("asset_1", right);
+    await w.queue.retry("asset_1");
+    await w.until((s) => phaseOf(s, "asset_1") === "done", "done after trying again");
+    expect(w.placeOf("asset_1")).toMatchObject({ storage: "lfs" });
+    expect(w.lfs.uploads.size).toBe(2);
+  });
+
+  test("tried again after the storage said no for a reason of its own, it goes", async () => {
+    const w = await world([2000]);
+    let refuse = true;
+    const state = w.lfs.state.bind(w.lfs);
+    w.lfs.state = async (id) => {
+      const answer = await state(id);
+      if (refuse && answer.state === "pushing") {
+        refuse = false;
+        const each = w.lfs.uploads.get(id)!;
+        each.upload = { ...answer, state: "failed", error: "refused" };
+        return each.upload;
+      }
+      return answer;
+    };
+    await w.queue.add(["asset_1"]);
+    await w.until((s) => phaseOf(s, "asset_1") === "failed");
+    expect(w.queue.getSnapshot().items[0]?.problem).toBe("refused");
+    await w.queue.retryAll(["refused"]);
+    await w.until((s) => phaseOf(s, "asset_1") === "done", "done after trying again");
+  });
+});
+
+describe("a file that is there for another repository only", () => {
+  test("goes into this one's, as people see it only here", async () => {
+    const w = await world([2000]);
+    w.here.value = { repo: REPO };
+    // Written down as in the storage of another repository, as in a copy of the project.
+    const hash = w.store.getState().assets?.["asset_1"]?.hash as string;
+    const placed = w.store.execute(
+      {
+        type: "asset.setStorage",
+        params: { asset: "asset_1", storage: "lfs", hash, repo: "777" },
+      },
+      { origin: "storage" },
+    );
+    expect(placed.ok).toBe(true);
+    expect(await w.queue.add(["asset_1"])).toBe(1);
+    await w.until((s) => phaseOf(s, "asset_1") === "done");
+    expect(w.placeOf("asset_1")).toMatchObject({ storage: "lfs", repo: REPO });
+  });
+
+  test("one this browser sent before, which does not count where the project is now, goes again", async () => {
+    const w = await world([2000]);
+    await w.queue.add(["asset_1"]);
+    await w.until((s) => phaseOf(s, "asset_1") === "done");
+    // Another repository now: what was written down is of the one before.
+    w.here.value = { repo: "999" };
+    expect(await w.queue.add(["asset_1"])).toBe(1);
+    await w.until((s) => phaseOf(s, "asset_1") === "done");
+    // The platform said at once that it has it: nothing sent twice.
+    expect(w.lfs.pieces.reduce((all, size) => all + size, 0)).toBe(2000);
+    // There for this one: nothing more to do.
+    w.here.value = { repo: REPO };
+    expect(await w.queue.add(["asset_1"])).toBe(0);
+  });
+});
+
+describe("given up", () => {
+  test("an asset that is taken away stops, and its file goes nowhere", async () => {
+    const w = await world([30_000]);
+    w.lfs.chunk = 1024;
+    w.lfs.minChunk = 1024;
+    await w.queue.add(["asset_1"]);
+    await w.until((s) => (s.items[0]?.received ?? 0) > 0);
+    w.store.execute({ type: "asset.remove", params: { asset: "asset_1" } });
+    await w.until((s) => s.items.length === 0, "gone");
+    const [each] = [...w.lfs.uploads.values()];
+    await vi.waitFor(() => expect(each?.upload.state).toBe("failed"));
+    expect(each?.upload.error).toBe("cancelled");
+    expect(await w.uploads.list()).toEqual([]);
+  });
+
+  test("while the platform cannot be told, it is told once it can, and takes no room meanwhile", async () => {
+    const w = await world([30_000]);
+    w.lfs.chunk = 1024;
+    w.lfs.minChunk = 1024;
+    await w.queue.add(["asset_1"]);
+    await w.until((s) => (s.items[0]?.received ?? 0) > 0);
+    const cancel = w.lfs.cancel.bind(w.lfs);
+    let offline = true;
+    w.lfs.cancel = async (id) => {
+      if (offline) throw new LfsRefused("unavailable");
+      return cancel(id);
+    };
+    await w.queue.cancel("asset_1");
+    await w.until((s) => s.items.length === 0);
+    expect(await w.uploads.list()).toMatchObject([{ state: "cancelling" }]);
+    expect(unfinishedByProject(await w.uploads.list())).toEqual(new Map());
+    // The network is back: the next time it looks, the platform hears of it.
+    offline = false;
+    await w.queue.add([]);
+    w.queue.follow();
+    await vi.waitFor(async () => expect(await w.uploads.list()).toEqual([]));
+    const [each] = [...w.lfs.uploads.values()];
+    expect(each?.upload.error).toBe("cancelled");
   });
 });
