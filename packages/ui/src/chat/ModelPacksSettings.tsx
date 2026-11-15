@@ -124,7 +124,7 @@ function Row(props: {
   return (
     <>
       <span className={packStyles.listName}>
-        <PackLabel pack={props.pack} testId="pack-item-label" />
+        <PackLabel pack={props.pack} className={packStyles.listLabel} testId="pack-item-label" />
       </span>
       {props.dot && (
         <span

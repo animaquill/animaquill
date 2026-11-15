@@ -452,7 +452,7 @@ function builtinReadme(t: TFunction, pack: ModelPack): PackReadme {
         ? t("ai.packs.readme.default")
         : pack.hidden
           ? t("ai.packs.readme.comparison")
-          : `${pack.description ?? ""}\n\n${t("ai.packs.readme.builtin")}`,
+          : (pack.description ?? ""),
   };
 }
 

@@ -36,6 +36,7 @@ async function removeOpen(page: Page, name: string, users: string) {
   await pagePack(page).getByTestId("pack-viewer-remove").click();
   const ask = page.getByRole("dialog", { name: `删除“${name}”` });
   await expect(ask).toContainText(users);
+  await page.screenshot(SP3("remove"));
   await ask.getByRole("button", { name: "删除" }).click();
 }
 
@@ -716,6 +717,13 @@ test("the page of packs: the list, installing from the three ways, the switch of
   await expect(fact(page, "models")).toHaveText("不自动用");
   await pagePack(page).getByTestId("pack-show-hidden").check();
   await expect(pagePack(page).getByTestId("pack-show-hidden")).toBeChecked();
+  await settings(page).screenshot(SP3("K1-comparison"));
+  // AnimaQuill's own: what it is, in a line, as its README.
+  await packs.locator('[data-testid="pack-builtin"][data-pack="animaquill/default"]').click();
+  await expect(pagePack(page).getByTestId("pack-readme")).toHaveText(
+    "AnimaQuill 自己的提示词和工具说明。",
+  );
+  await settings(page).screenshot(SP3("K1-default"));
 
   // A pack's page, and two packs side by side, wide.
   await packs.getByTestId("pack-item").first().click();
@@ -837,7 +845,7 @@ test("a pack from a repository on GitHub: its README, where it is from, an updat
   );
   await expect(readme.getByTestId("readme-image")).toHaveJSProperty("naturalWidth", 360);
   await expect(readme.getByTestId("readme-image-elsewhere")).toContainText(
-    "别处的图片 i.imgur.com/…（编辑器不显示别处的图片）在新标签页打开",
+    "别处的图片 i.imgur.com/…在新标签页打开",
   );
   await expect(readme.getByRole("link", { name: "The rules in full" })).toHaveAttribute(
     "href",

@@ -30,6 +30,14 @@
   border-radius: 4px;
 }
 
+/* The icon and what the picture is, kept on one line. */
+.where {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
 /* Where a link goes, where its words say something else. */
 .address {
   color: var(--aq-text-muted);

@@ -81,8 +81,10 @@ function Elsewhere(props: { readonly url: string; readonly host: string }) {
   const { t } = useTranslation();
   return (
     <span className={readmeStyles.elsewhere} data-testid="readme-image-elsewhere">
-      <Image size={14} aria-hidden />
-      <span>{t("ai.packs.readme.elsewhere", { host: props.host })}</span>
+      <span className={readmeStyles.where}>
+        <Image size={14} aria-hidden />
+        <span>{t("ai.packs.readme.elsewhere", { host: props.host })}</span>
+      </span>
       <a
         href={props.url}
         target="_blank"
@@ -123,8 +125,10 @@ function Picture({
   }
   return (
     <span className={readmeStyles.elsewhere} data-testid="readme-image-none">
-      <Image size={14} aria-hidden />
-      {alt || t("ai.packs.readme.noImage")}
+      <span className={readmeStyles.where}>
+        <Image size={14} aria-hidden />
+        {alt || t("ai.packs.readme.noImage")}
+      </span>
     </span>
   );
 }

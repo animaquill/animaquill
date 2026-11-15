@@ -576,6 +576,17 @@
   overflow: hidden;
 }
 
+/* A long name wraps in the list, rather than leave a gap where it is cut. */
+.listName .listLabel {
+  display: inline;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.listName .listLabel > span:last-child {
+  white-space: nowrap;
+}
+
 [aria-current="true"] > .listName {
   font-weight: 600;
 }
