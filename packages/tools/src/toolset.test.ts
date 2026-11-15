@@ -28,9 +28,10 @@ import type { Tool } from "./types.ts";
  * the 48 tools before took 67 322. 2026.5 added seven operations of the project properties
  * (project.setDescription to timeline.setDefault) and took 55 334 (2026-11-15); 2026.6 gave
  * aq_selection_read at and messages_back, to read what the editor showed as a message was sent, and
- * took 56 248 (2026-11-15). It is a ceiling, so that the list does not grow unnoticed.
+ * took 56 248 (2026-11-15); 2026.7 added aq_render_frames, which renders frames and says what is on
+ * them, and took 60 635 (2026-11-15). It is a ceiling, so that the list does not grow unnoticed.
  */
-const MOST_CHARACTERS = 56_500;
+const MOST_CHARACTERS = 61_000;
 
 const listOf = (tools: Iterable<Tool>) =>
   [...tools].map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
@@ -60,7 +61,7 @@ function resolve(root: unknown, ref: string): unknown {
 const plain = (text: string) => text.replace(/^rev [a-z0-9]+:/, "rev <epoch>:");
 
 describe("the toolset", () => {
-  it("is twelve tools, in a fixed order", () => {
+  it("is thirteen tools, in a fixed order", () => {
     const { tools } = toolsOn();
     expect([...tools.keys()]).toEqual([
       "aq_project_status",
@@ -74,6 +75,7 @@ describe("the toolset", () => {
       "aq_file_edit",
       "aq_file_write",
       "aq_propose",
+      "aq_render_frames",
       "aq_check_run",
     ]);
   });

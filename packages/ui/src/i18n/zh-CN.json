@@ -863,6 +863,14 @@
           "name": "截图的大小",
           "help": "截取播放头画面发给 AI 时，长边最多多少像素。1568 是 Anthropic 建议的上限，再大服务也会先缩小，只多花 token。",
           "keywords": "screenshot 截图 画面 图片 分辨率 大小 像素"
+        },
+        "lookSize": {
+          "name": "AI 看画面时用多大的图",
+          "keywords": "look frame render 看画面 图 大小 token 截图"
+        },
+        "lookWaits": {
+          "name": "AI 看画面时等你停下播放",
+          "keywords": "look playback wait 看画面 播放 等待 排队"
         }
       },
       "account": {
@@ -1012,6 +1020,11 @@
       "1024": "1024",
       "1568": "1568",
       "original": "原始大小"
+    },
+    "lookSize": {
+      "small": "小 · 约 200 token",
+      "medium": "中 · 约 800 token",
+      "large": "大 · 约 1,800 token"
     }
   },
   "trial": {
@@ -3283,7 +3296,14 @@
       "toolOps": "正在{{name}}（{{count}} 个操作）…",
       "retry": "{{reason}}，正在重试 {{attempt}}/{{of}} · {{seconds}} 秒后",
       "quiet": "模型 {{seconds}} 秒没有回应",
-      "keepWaiting": "继续等"
+      "keepWaiting": "继续等",
+      "look": {
+        "start": "正在看画面…",
+        "rendering": "正在看画面（{{done}}/{{total}}）…",
+        "playing": "你在播放，AI 等你停下再看画面",
+        "exporting": "正在导出，AI 等导出完再看画面",
+        "hidden": "等你回到这个页面才能看画面"
+      }
     },
     "retryReason": {
       "rate": "服务太忙",
@@ -3347,7 +3367,10 @@
       "overlap": "和别的片段重叠了",
       "missing-updates": "别处的改动还没收全，等一下再试",
       "read-only": "项目现在只能看",
-      "other": "调用出错（{{code}}）"
+      "other": "调用出错（{{code}}）",
+      "render-failed": "画不出来",
+      "not-available": "这里不能做这件事",
+      "out-of-range": "时间超出了范围"
     },
     "card": {
       "noChanges": "没有改项目",
@@ -3460,7 +3483,8 @@
       "project_overview": "读项目结构",
       "timeline_read": "读时间轴",
       "selection_read": "读选中内容",
-      "file_read": "读文件"
+      "file_read": "读文件",
+      "aq_render_frames": "看画面"
     },
     "summary": {
       "more": "还有 {{count}} 处",
@@ -3730,7 +3754,8 @@
     "notify": {
       "done": "AI 做完了",
       "asking": "AI 在等你回答",
-      "failed": "AI 的任务出错了"
+      "failed": "AI 的任务出错了",
+      "look": "AI 要看画面，请回到 AnimaQuill"
     },
     "action": {
       "insertTime": "AI 聊天：插入播放头的时间",
@@ -3739,6 +3764,69 @@
       "addPicture": "AI 聊天：添加图片",
       "sendFrameShort": "发送当前画面到聊天",
       "sendFrameHelp": "按导出的样子渲染播放头这一帧，作为图片附件放进 AI 聊天的输入框"
+    },
+    "look": {
+      "name": {
+        "frames": "看了画面",
+        "compare": "对比了改前和改后",
+        "zoom": "放大看了",
+        "overview": "看了总览"
+      },
+      "count": "（{{count}} 张）",
+      "tokens": "约 {{count}} token",
+      "overview": "{{from}}–{{to}}（{{count}} 格）",
+      "zoom": "{{time}} 的{{where}}",
+      "changed": "变了 {{percent}}（{{where}}）",
+      "unchanged": "没有变化",
+      "blind": "（这个模型不能看图，只收到了画面里有什么的清单）",
+      "failed": "{{time}} 画不出来：{{reason}}",
+      "someAsset": "素材",
+      "why": {
+        "missing-file": "素材「{{asset}}」不在这台电脑上",
+        "cannot-decode": "素材「{{asset}}」这个浏览器解不开",
+        "scene": "片段「{{clip}}」的场景没有在运行",
+        "transition": "片段「{{clip}}」的转场这个版本还画不了",
+        "scene-frame": "片段「{{clip}}」的场景没给出这一帧",
+        "compositor": "渲染器没有回应",
+        "encoder": "画的时候出错了",
+        "failed": "画的时候出错了",
+        "stopped": "任务停下了"
+      },
+      "where": {
+        "whole": "整个画面",
+        "topLeft": "左上角",
+        "top": "上方",
+        "topRight": "右上角",
+        "left": "左侧",
+        "middle": "中间",
+        "right": "右侧",
+        "bottomLeft": "左下角",
+        "bottom": "下方",
+        "bottomRight": "右下角"
+      },
+      "side": {
+        "left": "左边",
+        "right": "右边",
+        "top": "上边",
+        "bottom": "下边"
+      },
+      "finding": {
+        "past": "「{{name}}」{{side}}超出画面 {{by}} 像素",
+        "textPast": "文字「{{text}}」{{side}}超出画面 {{by}} 像素",
+        "outside": "「{{name}}」整个在画面外",
+        "overlap": "「{{name}}」和「{{other}}」重叠"
+      },
+      "moreFindings": "还有 {{count}} 处",
+      "before": "改前",
+      "after": "改后",
+      "diff": "差异",
+      "open": "放大看",
+      "viewer": "AI 看的画面",
+      "showMarks": "显示标注",
+      "playhead": "把播放头移到这里",
+      "previous": "上一张",
+      "next": "下一张",
+      "list": "AI 收到的清单（英文原文）"
     }
   },
   "account": {

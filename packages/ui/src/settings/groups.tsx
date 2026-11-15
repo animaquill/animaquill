@@ -233,6 +233,27 @@ export function ChatGroup() {
           }
         />
       </SettingRow>
+      <SettingRow id="chat.lookSize">
+        <Segmented
+          label={t("settings.items.chat.lookSize.name")}
+          value={settings.lookSize ?? "medium"}
+          options={[
+            { value: "small", label: t("settings.lookSize.small") },
+            { value: "medium", label: t("settings.lookSize.medium") },
+            { value: "large", label: t("settings.lookSize.large") },
+          ]}
+          disabled={held}
+          onChange={(value) => ai.setLookSize(value)}
+        />
+      </SettingRow>
+      <SettingRow id="chat.lookWaits">
+        <Toggle
+          label={t("settings.items.chat.lookWaits.name")}
+          checked={settings.lookWhilePlaying !== true}
+          disabled={held}
+          onChange={(on) => ai.setLookWaits(on)}
+        />
+      </SettingRow>
     </GroupPage>
   );
 }

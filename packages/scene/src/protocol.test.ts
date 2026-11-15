@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { REGISTRATION_LIMITS } from "@animaquill/core/registration";
-import { isRegistration, readFromScene, readSamples, readSoundFailure } from "./protocol.ts";
+import {
+  TEXT_LIMITS,
+  isRegistration,
+  readFromScene,
+  readSamples,
+  readSoundFailure,
+} from "./protocol.ts";
 
 const problem = { kind: "error", message: "boom", file: "a.js", line: 3, column: 7, frame: 12 };
 
@@ -160,5 +166,32 @@ describe("readSoundFailure", () => {
   it("does not repeat what anybody can make it say", () => {
     expect(readSoundFailure("<img src=x>")).toBe("error");
     expect(readSoundFailure("constructor")).toBe("error");
+  });
+});
+
+describe("the text a scene says it shows", () => {
+  it("keeps words and boxes, cut to their limits, and drops what is not one", () => {
+    const texts = [
+      { text: "夏日限定", x: 10, y: 20, width: 300, height: 80 },
+      { text: "x".repeat(500), x: 0, y: 0, width: 1, height: 1 },
+      { text: "bad", x: Number.NaN, y: 0, width: 1, height: 1 },
+      { text: "", x: 0, y: 0, width: 1, height: 1 },
+      "not a text",
+    ];
+    const read = readFromScene({ type: "texts", request: 3, texts, more: false });
+    expect(read).toEqual({
+      type: "texts",
+      request: 3,
+      texts: [
+        { text: "夏日限定", x: 10, y: 20, width: 300, height: 80 },
+        { text: "x".repeat(TEXT_LIMITS.characters), x: 0, y: 0, width: 1, height: 1 },
+      ],
+      more: false,
+    });
+    const many = Array.from({ length: TEXT_LIMITS.count + 5 }, () => texts[0]);
+    const cut = readFromScene({ type: "texts", request: 1, texts: many, more: false });
+    expect(cut).toMatchObject({ more: true });
+    expect((cut as unknown as { texts: unknown[] }).texts).toHaveLength(TEXT_LIMITS.count);
+    expect(readFromScene({ type: "texts", request: -1, texts: [] })).toBeUndefined();
   });
 });

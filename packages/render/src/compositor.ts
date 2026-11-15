@@ -32,11 +32,14 @@ import { SceneLayers } from "./scenes.ts";
 import { SlowVideos } from "./slow-videos.ts";
 import { SoundJobs } from "./sounds.ts";
 import { failureOf, FileArrivals, stillPictures, StillFailed } from "./still.ts";
+import { SHEET_GAP, diffPicture, diffPixels, markRect, sheetSize } from "./look.ts";
 import type {
   ColdClip,
   FrameTiming,
   FrameToEncode,
   FromCompositor,
+  LookLayerTexts,
+  LookMarkSpec,
   ToCompositor,
 } from "./index.ts";
 
@@ -654,6 +657,174 @@ async function answerStill(request: number, seconds: number): Promise<void> {
   }
 }
 
+/** The colors of the boxes on a picture for AI: blue, and red for what goes past an edge. */
+const MARK_COLOR = "#3b9eff";
+const MARK_PROBLEM = "#ff4d4f";
+/** A picture for AI fits in this many bytes, see `FRAME_MOST_BYTES` of the chat. */
+const LOOK_MOST_BYTES = 1024 * 1024;
+
+/** As JPEG, at the best quality that fits. */
+async function encodeLook(picture: OffscreenCanvas): Promise<Blob> {
+  let blob = await picture.convertToBlob({ type: "image/jpeg", quality: 0.85 });
+  if (blob.size > LOOK_MOST_BYTES)
+    blob = await picture.convertToBlob({ type: "image/jpeg", quality: 0.7 });
+  return blob;
+}
+
+/** A word on a dark or colored patch, so that it reads on any picture. */
+function drawTag(
+  painter: OffscreenCanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  size: number,
+  background: string,
+): void {
+  painter.font = `600 ${size}px system-ui, sans-serif`;
+  painter.textBaseline = "top";
+  const pad = Math.round(size * 0.3);
+  const width = painter.measureText(text).width + pad * 2;
+  const height = size + pad * 2;
+  painter.fillStyle = background;
+  painter.fillRect(x, y, width, height);
+  painter.fillStyle = "#fff";
+  painter.fillText(text, x + pad, y + pad);
+}
+
+/** The boxes and names of clips on one cell of a picture, where `view` puts the world. */
+function drawMarks(
+  painter: OffscreenCanvasRenderingContext2D,
+  marks: readonly LookMarkSpec[],
+  view: Matrix,
+  cell: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+): void {
+  const scale = Math.max(1, Math.min(cell.width, cell.height) / 540);
+  const size = Math.round(12 * scale);
+  painter.save();
+  painter.beginPath();
+  painter.rect(cell.x, cell.y, cell.width, cell.height);
+  painter.clip();
+  for (const mark of marks) {
+    const color = mark.problem ? MARK_PROBLEM : MARK_COLOR;
+    const box = markRect(view, mark.box);
+    const x = cell.x + Math.max(box.x, 1);
+    const y = cell.y + Math.max(box.y, 1);
+    const right = cell.x + Math.min(box.x + box.width, cell.width - 1);
+    const bottom = cell.y + Math.min(box.y + box.height, cell.height - 1);
+    if (right <= x || bottom <= y) continue;
+    painter.lineWidth = 2 * scale;
+    painter.strokeStyle = color;
+    painter.strokeRect(x, y, right - x, bottom - y);
+    const above = y - size - Math.round(size * 0.6) >= cell.y;
+    drawTag(painter, mark.label, x, above ? y - size - Math.round(size * 0.6) : y, size, color);
+  }
+  painter.restore();
+}
+
+/** Where the text of the pages of the scenes on the picture is, right after it was painted. */
+async function textsOn(shown: RenderPlan, seconds: number): Promise<LookLayerTexts[]> {
+  const found: LookLayerTexts[] = [];
+  for (const layer of shown.layers) {
+    if (layer.source.kind !== "scene" || !showsAt(layer, seconds)) continue;
+    const texts = await scenes.textsOf(layer.id);
+    if (texts && texts.texts.length > 0) found.push({ layer: layer.id, ...texts });
+  }
+  return found;
+}
+
+/**
+ * A picture for AI, see `LookSpec`: every moment painted as a still is, side by side, compared with
+ * the picture before where there is one, the boxes and times drawn on it, and encoded. A moment
+ * without a picture fails all of it.
+ */
+async function answerLook(data: Extract<ToCompositor, { type: "look" }>): Promise<void> {
+  const { request } = data;
+  let cell = 0;
+  try {
+    const shown = plan;
+    if (!shown) throw new StillFailed({ reason: "failed", message: "No plan" });
+    const size = { width: shown.width, height: shown.height };
+    const across = Math.max(1, Math.min(data.columns, data.cells.length));
+    const sheet = sheetSize(data.cells.length, across, size);
+    const out = new OffscreenCanvas(sheet.width, sheet.height);
+    const painter = out.getContext("2d", { willReadFrequently: true });
+    if (!painter) throw new StillFailed({ reason: "failed", message: "No 2D context" });
+    painter.fillStyle = "#000";
+    painter.fillRect(0, 0, sheet.width, sheet.height);
+    const places = data.cells.map((_, index) => ({
+      x: (index % across) * (size.width + SHEET_GAP),
+      y: Math.floor(index / across) * (size.height + SHEET_GAP),
+      ...size,
+    }));
+    const texts: LookLayerTexts[] = [];
+    for (const [index, each] of data.cells.entries()) {
+      cell = index;
+      await paintStill(each.seconds);
+      const place = places[index] as (typeof places)[number];
+      painter.drawImage(canvas, place.x, place.y, place.width, place.height);
+      if (data.texts) texts.push(...(await textsOn(shown, each.seconds)));
+    }
+    cell = 0;
+    const clean = data.clean ? await encodeLook(out) : undefined;
+    const lossless = data.lossless ? await out.convertToBlob({ type: "image/png" }) : undefined;
+    let diff: Extract<FromCompositor, { type: "look"; image: Blob }>["diff"];
+    if (data.base) {
+      const base = await createImageBitmap(data.base);
+      const was = new OffscreenCanvas(sheet.width, sheet.height);
+      const wasPainter = was.getContext("2d", { willReadFrequently: true });
+      if (!wasPainter) throw new StillFailed({ reason: "failed", message: "No 2D context" });
+      wasPainter.drawImage(base, 0, 0, sheet.width, sheet.height);
+      base.close();
+      const now = painter.getImageData(0, 0, sheet.width, sheet.height);
+      const before = wasPainter.getImageData(0, 0, sheet.width, sheet.height);
+      const found = diffPixels(before.data, now.data, sheet.width, sheet.height);
+      const shownDiff = new OffscreenCanvas(sheet.width, sheet.height);
+      shownDiff
+        .getContext("2d")
+        ?.putImageData(
+          new ImageData(diffPicture(now.data, found.changed), sheet.width, sheet.height),
+          0,
+          0,
+        );
+      diff = {
+        image: await encodeLook(shownDiff),
+        ratio: found.ratio,
+        ...(found.box && { box: found.box }),
+      };
+    }
+    for (const [index, each] of data.cells.entries()) {
+      const place = places[index] as (typeof places)[number];
+      drawMarks(painter, each.marks, viewMatrix(shown, each.seconds), place);
+      if (each.label !== undefined) {
+        const tag = Math.max(12, Math.round(place.height * 0.07));
+        drawTag(
+          painter,
+          each.label,
+          place.x + tag / 2,
+          place.y + place.height - tag * 2,
+          tag,
+          "rgba(0,0,0,0.65)",
+        );
+      }
+    }
+    const image = await encodeLook(out);
+    send({
+      type: "look",
+      request,
+      image,
+      width: sheet.width,
+      height: sheet.height,
+      ...(clean && { clean }),
+      ...(lossless && { lossless }),
+      ...(diff && { diff }),
+      texts,
+    });
+  } catch (error) {
+    console.warn("No look", error);
+    send({ type: "look", request, cell, failure: failureOf(error) });
+  }
+}
+
 const notExporting = () => {
   throw new StillFailed({ reason: "failed", message: "Not a compositor for exports" });
 };
@@ -906,6 +1077,10 @@ function handle(data: ToCompositor): void {
   }
   if (data.type === "still") {
     stills = stills.then(() => answerStill(data.request, data.seconds));
+    return;
+  }
+  if (data.type === "look") {
+    stills = stills.then(() => answerLook(data));
     return;
   }
   if (

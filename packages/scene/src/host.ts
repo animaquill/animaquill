@@ -17,6 +17,7 @@ import {
   type SceneLoad,
   type ScenePicture,
   type SceneProblem,
+  type SceneText,
   type TimeBase,
   type ToScene,
 } from "./protocol.ts";
@@ -27,6 +28,9 @@ import {
   type ScenePhase,
   type WatchdogRules,
 } from "./watchdog.ts";
+
+/** How long the text of a page may take to come: it is measured at once, or the page is stuck. */
+const TEXTS_WAIT_MS = 2000;
 
 /** How often the watchdog looks. It decides by itself when to ask. */
 const WATCH_EVERY_MS = 100;
@@ -182,6 +186,12 @@ export class SceneHost {
   /** Whether it says where the objects of its code are. A new frame gets told as well. */
   #handles = false;
   readonly #pending: PendingSeek[] = [];
+  /** Who waits for the text of the page, by request. */
+  readonly #texts = new Map<
+    number,
+    (texts: { readonly texts: readonly SceneText[]; readonly more: boolean } | undefined) => void
+  >();
+  #textRequest = 0;
   readonly #problems = new Set<string>();
   #replays: TokenBucket;
   /** A frame that wants to be replaced, while too many were replaced just now. */
@@ -308,6 +318,29 @@ export class SceneHost {
     this.#handles = on;
     this.#send(this.#current, { type: "handles", on });
     this.#send(this.#next, { type: "handles", on });
+  }
+
+  /**
+   * Where the text of the page in use is, on the frame it is on, see `SceneText`; nothing where it
+   * has no page or does not answer within `TEXTS_WAIT_MS`.
+   */
+  texts(): Promise<{ readonly texts: readonly SceneText[]; readonly more: boolean } | undefined> {
+    const frame = this.#current;
+    if (!frame) return Promise.resolve(undefined);
+    this.#textRequest += 1;
+    const request = this.#textRequest;
+    return new Promise((done) => {
+      const timer = setTimeout(() => finish(undefined), TEXTS_WAIT_MS);
+      const finish = (
+        texts: { readonly texts: readonly SceneText[]; readonly more: boolean } | undefined,
+      ) => {
+        clearTimeout(timer);
+        this.#texts.delete(request);
+        done(texts);
+      };
+      this.#texts.set(request, finish);
+      this.#send(frame, { type: "texts", request });
+    });
   }
 
   /** All that the clips hold for the scene, for a frame that starts. */
@@ -487,6 +520,11 @@ export class SceneHost {
         // What is not on the picture yet has nothing to grab.
         if (frame === this.#current && this.#handles) {
           this.#options.onHandles?.(message.frame, message.handles);
+        }
+        break;
+      case "texts":
+        if (frame === this.#current) {
+          this.#texts.get(message.request)?.({ texts: message.texts, more: message.more });
         }
         break;
       case "pong":

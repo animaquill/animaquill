@@ -145,6 +145,7 @@ export {
 export {
   buildAudioPlan,
   buildRenderPlan,
+  formatOf,
   channelOf,
   channelsOf,
   layerSpecOf,

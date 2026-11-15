@@ -199,7 +199,21 @@ export type ToScene =
    * while the scene stands still, or stop doing that. Answered by `handles`.
    */
   | { readonly type: "handles"; readonly on: boolean }
+  /** Say where the text of the page is, on the frame it is on now. Answered by `texts`. */
+  | { readonly type: "texts"; readonly request: number }
   | { readonly type: "ping"; readonly nonce: number };
+
+/** A piece of text the page of a scene shows: its words, and its box in CSS pixels of the page. */
+export interface SceneText {
+  readonly text: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** How much a scene tells of its text: a few elements with their first words. */
+export const TEXT_LIMITS = { count: 30, characters: 120 } as const;
 
 /** Something a scene wants people to know about, with what it knows of the place. */
 export interface SceneProblem {
@@ -269,6 +283,14 @@ export type FromScene =
    * data, which the editor reads with `readHandles`.
    */
   | { readonly type: "handles"; readonly frame: number; readonly handles: unknown }
+  /** Where the text of the page is, see `texts`. Only ever data, checked by `readFromScene`. */
+  | {
+      readonly type: "texts";
+      readonly request: number;
+      readonly texts: readonly SceneText[];
+      /** It had more than `TEXT_LIMITS.count`. */
+      readonly more: boolean;
+    }
   | { readonly type: "pong"; readonly nonce: number };
 
 /** Whether a message is about what a scene registered, which is the one that can be large. */
@@ -389,6 +411,28 @@ export function readFromScene(data: unknown): Exclude<FromScene, { type: "frame"
       return frame === undefined || !Array.isArray(handles)
         ? undefined
         : { type: "handles", frame, handles };
+    }
+    case "texts": {
+      const request = count(message.request);
+      if (request === undefined || !Array.isArray(message.texts)) return undefined;
+      const texts = message.texts.slice(0, TEXT_LIMITS.count).flatMap((value: unknown) => {
+        if (typeof value !== "object" || value === null) return [];
+        const item = value as Record<string, unknown>;
+        const words = text(item.text, TEXT_LIMITS.characters);
+        const x = number(item.x);
+        const y = number(item.y);
+        const width = number(item.width);
+        const height = number(item.height);
+        if (!words || x === undefined || y === undefined) return [];
+        if (width === undefined || height === undefined || width < 0 || height < 0) return [];
+        return [{ text: words, x, y, width, height }];
+      });
+      return {
+        type: "texts",
+        request,
+        texts,
+        more: message.more === true || message.texts.length > TEXT_LIMITS.count,
+      };
     }
     case "pong": {
       const nonce = count(message.nonce);

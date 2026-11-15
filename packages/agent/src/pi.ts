@@ -48,6 +48,7 @@ import {
   type ImageRef,
   type PackNote,
   type ToolEntry,
+  type ToolPicture,
   type UserEntry,
 } from "./entries.ts";
 import type { ModelValues } from "./ai-settings.ts";
@@ -164,6 +165,8 @@ export interface ToolOutput {
   readonly isError: boolean;
   /** For the summary of a turn: kept with the result, never sent to the model. */
   readonly data?: Readonly<Record<string, unknown>>;
+  /** Pictures that go to the model before the text, kept where the host keeps pictures. */
+  readonly images?: readonly ToolPicture[];
   /** The turn waits for the user now: it ends after the tools of this answer. */
   readonly terminate?: true;
 }
@@ -568,6 +571,9 @@ function messagesOf(
   history: readonly ChatEntry[],
   tools: ReadonlySet<string>,
   said: (entry: UserEntry, at: number) => UserMessage["content"] = (entry) => promptOf(entry),
+  shown: (entry: ToolEntry, at: number) => ToolResultContent = (entry) => [
+    { type: "text", text: toolText(entry) },
+  ],
 ): Message[] {
   const stops: Record<AnswerEnd, AssistantMessage["stopReason"]> = {
     done: "stop",
@@ -603,7 +609,7 @@ function messagesOf(
             role: "toolResult",
             toolCallId: ids.get(entry.call) ?? entry.call,
             toolName: entry.name,
-            content: [{ type: "text", text: entry.text }],
+            content: shown(entry, index),
             isError: !entry.ok,
             timestamp: entry.at,
           });
@@ -649,6 +655,27 @@ function messagesOf(
   }
   flush(history.at(-1)?.at ?? 0);
   return messages;
+}
+
+type ToolResultContent = Extract<Message, { role: "toolResult" }>["content"];
+
+/** The pictures of a tool that go to the model: not those for people only. */
+const sentPictures = (entry: Pick<ToolEntry, "images">): readonly ToolPicture[] =>
+  (entry.images ?? []).filter((image) => !image.forPeople);
+
+/**
+ * What a tool said, with the line of each of its pictures that does not go with it, and why: the
+ * words of the result already say which picture is which.
+ */
+function toolText(
+  entry: Pick<ToolEntry, "text" | "images">,
+  missing: (image: ToolPicture, index: number) => string | undefined = () => NOT_ATTACHED.missing,
+): string {
+  const notes = sentPictures(entry).flatMap((image, index) => {
+    const why = missing(image, index);
+    return why === undefined ? [] : [`${image.note.replace(/\]$/, "")} — not attached: ${why}]`];
+  });
+  return notes.length === 0 ? entry.text : `${notes.join("\n")}\n${entry.text}`;
 }
 
 const textOf = (content: readonly { readonly type: string; readonly text?: string }[]) =>
@@ -756,10 +783,12 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
   const places = [
     ...options.history.flatMap((entry, at) =>
       entry.role === "user"
-        ? (entry.images ?? []).map((image, index) => ({ at, index, image }))
-        : [],
+        ? (entry.images ?? []).map((image, index) => ({ at, index, image: image as ImageRef }))
+        : entry.role === "tool"
+          ? sentPictures(entry).map((image, index) => ({ at, index, image: image as ImageRef }))
+          : [],
     ),
-    ...(options.images ?? []).map((image, index) => ({ at: -1, index, image })),
+    ...(options.images ?? []).map((image, index) => ({ at: -1, index, image: image as ImageRef })),
   ];
   const placeOf = (at: number, index: number) => `${at}/${index}`;
   const recent = new Set(
@@ -775,7 +804,7 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
         loaded.set(image.image, { type: "image", data: read.data, mimeType: read.mimeType });
     }
   }
-  const why = (at: number) => (image: AttachedImage, index: number) =>
+  const why = (at: number) => (image: ImageRef, index: number) =>
     !pictures?.sees
       ? pictures
         ? NOT_ATTACHED.blind
@@ -794,6 +823,19 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
     });
     return images.length === 0 ? text : [{ type: "text", text }, ...images];
   };
+  /** What a tool said, its pictures first, as far as they go: the newest ones, to a model that sees. */
+  const shown = (entry: ToolEntry, at: number): ToolResultContent => {
+    const images = sentPictures(entry).flatMap((image, index) => {
+      const content = why(at)(image, index) === undefined ? loaded.get(image.image) : undefined;
+      return content ? [content] : [];
+    });
+    return [...images, { type: "text", text: toolText(entry, why(at)) }];
+  };
+  /** The pictures of the calls of this task, by call, as they go to the record of the conversation. */
+  const pictured = new Map<
+    string,
+    { readonly images: readonly ToolPicture[]; readonly text: string }
+  >();
 
   /** A tool of the last answer asked the user: the turn ends after its tools. */
   let asked = false;
@@ -811,11 +853,21 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
         return args as never;
       },
     }),
-    execute: async (_id, args) => {
+    execute: async (id, args) => {
       const output = await tool.run(args as Record<string, unknown>);
       if (output.terminate) asked = true;
+      const images = output.images ?? [];
+      if (images.length > 0) pictured.set(id, { images, text: output.text });
+      // What it rendered goes to a model that sees pictures; the others get the lines only.
+      const sent: ImageContent[] = [];
+      const missing = new Map<ToolPicture, string>();
+      for (const image of sentPictures(output)) {
+        const read = pictures?.sees ? await pictures.read(image).catch(() => undefined) : undefined;
+        if (read) sent.push({ type: "image", data: read.data, mimeType: read.mimeType });
+        else missing.set(image, pictures?.sees ? NOT_ATTACHED.missing : NOT_ATTACHED.blind);
+      }
       return {
-        content: [{ type: "text", text: output.text }],
+        content: [...sent, { type: "text", text: toolText(output, (image) => missing.get(image)) }],
         details: output.data,
         ...(output.isError && { isError: true }),
       };
@@ -850,7 +902,7 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
       systemPrompt: options.system,
       model,
       tools,
-      messages: messagesOf(options.history, names, said) as AgentMessage[],
+      messages: messagesOf(options.history, names, said, shown) as AgentMessage[],
     },
     streamFn: (request, context, streamOptions) => {
       // Through the relay, only where requests go changes, and what goes with them.
@@ -951,12 +1003,15 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
       } else if (message.role === "toolResult") {
         const details = (message as { details?: unknown }).details;
         const startedAt = toolStarts.get(message.toolCallId);
+        const kept = pictured.get(message.toolCallId);
         const entry: ToolEntry = {
           role: "tool",
           call: message.toolCallId,
           name: message.toolName,
           ok: !message.isError,
-          text: clean(textOf(message.content)),
+          // The words as the tool said them: which pictures went is for each request to say.
+          text: clean(kept ? kept.text : textOf(message.content)),
+          ...(kept && { images: kept.images }),
           at: message.timestamp,
           ...(startedAt !== undefined && { startedAt }),
           ...(typeof details === "object" &&

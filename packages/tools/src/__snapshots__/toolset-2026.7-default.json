@@ -3208,6 +3208,115 @@
   }
  },
  {
+  "name": "aq_render_frames",
+  "description": "Renders frames of a timeline as the export renders them. The pictures come first in the result, and after them what is on each frame: every clip that shows, back to front, with its id and name, what it shows, its box in world units, the share of the picture it covers, its opacity, how far it goes past the edges of the picture, whether its media is cut to its box, and which small clips overlap; and the text elements of HTML scenes with their text and box. A frame that cannot be rendered whole, as when the file of an asset is not on this computer or a scene does not run, gives an error with the reason, and no picture: a picture is only ever what the export would render.\n\ntimes gives a picture of each moment. range with count is an overview: count frames evenly spread over the range in one picture, each with its time printed on it. region is a part of the picture rendered at the full size of a picture: scenes are laid out again at that resolution, so their text stays sharp, while videos and images are scaled up. annotate draws on the picture a box with the id and name of each clip (true) or of the clips given, red where one goes past an edge. compare gives, for each time, the frame before, the frame now and a picture where the changed pixels are red, with the share of pixels that changed and the box around them: \"task_start\" is the project as this task started, and a revision is the project as an earlier result of this conversation started (its rev line). size small, medium or large is 512, 1024 or 1568 pixels on the longer side; a 1024×576 picture costs about 790 tokens; without size, the size the user set. Each frame is the one the export renders at that moment. A model that cannot see pictures gets the text only. Rendering waits while the user plays or exports, and while the editor page is in the background, as the browser draws nothing then; that wait is part of the call and no failure.",
+  "inputSchema": {
+   "type": "object",
+   "properties": {
+    "times": {
+     "description": "Moments to render, 1 to 8, seconds as strings such as \"12.5\"; each gives a picture. Not with range.",
+     "minItems": 1,
+     "maxItems": 8,
+     "type": "array",
+     "items": {
+      "type": "string",
+      "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$"
+     }
+    },
+    "range": {
+     "description": "An overview: {\"from\": \"0\", \"to\": \"30\"}, seconds as strings; count frames evenly spread from from, all in one picture. Not with times, region or compare.",
+     "type": "object",
+     "properties": {
+      "from": {
+       "type": "string",
+       "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$"
+      },
+      "to": {
+       "type": "string",
+       "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$"
+      }
+     },
+     "required": [
+      "from",
+      "to"
+     ],
+     "additionalProperties": false
+    },
+    "count": {
+     "description": "How many frames an overview has, 2 to 24; 12 by default. Only with range.",
+     "type": "integer",
+     "minimum": 2,
+     "maximum": 24
+    },
+    "timeline": {
+     "description": "Timeline id, as aq_project_status lists it. Without it, the first timeline of the project.",
+     "type": "string"
+    },
+    "version": {
+     "description": "Picture format id, as aq_project_status lists it, for that version of the picture. Without it, the first format.",
+     "type": "string"
+    },
+    "size": {
+     "description": "\"small\" (512 pixels on the longer side), \"medium\" (1024) or \"large\" (1568). Without it, the size the user set, medium by default.",
+     "type": "string",
+     "enum": [
+      "small",
+      "medium",
+      "large"
+     ]
+    },
+    "region": {
+     "description": "A part of the picture to render at the full size of a picture, in world units: {\"x\": -960, \"y\": 0, \"width\": 960, \"height\": 540} is the bottom left quarter of a 1920×1080 picture; x and y are its top left corner, from the center of the picture.",
+     "type": "object",
+     "properties": {
+      "x": {
+       "type": "number"
+      },
+      "y": {
+       "type": "number"
+      },
+      "width": {
+       "type": "number",
+       "exclusiveMinimum": 0
+      },
+      "height": {
+       "type": "number",
+       "exclusiveMinimum": 0
+      }
+     },
+     "required": [
+      "x",
+      "y",
+      "width",
+      "height"
+     ],
+     "additionalProperties": false
+    },
+    "annotate": {
+     "description": "true draws a box with the id and name of every clip on the picture; a list of clip ids draws only those, 1 to 20.",
+     "anyOf": [
+      {
+       "type": "boolean"
+      },
+      {
+       "minItems": 1,
+       "maxItems": 20,
+       "type": "array",
+       "items": {
+        "type": "string"
+       }
+      }
+     ]
+    },
+    "compare": {
+     "description": "\"task_start\", or a revision such as \"k3x9:42\" from the rev line of an earlier result of this conversation: each time is rendered as the project was then and as it is now, with what differs. At most 4 times.",
+     "type": "string"
+    }
+   },
+   "additionalProperties": false
+  }
+ },
+ {
   "name": "aq_check_run",
   "description": "Lists the problems of the project: files that do not fit the project format, references to things that are missing, values that do not fit what a scene describes, errors that scene and sound code threw when the editor ran it, and things this editor version does not do yet (they do not appear in the preview or the export). Runtime errors come only from code the editor has run: a scene runs while one of its clips is in the preview, and again after its code changes; the result lists changed code that has not run since. aq_edit results already include the problems that come from the project data alone. A fix line is an aq_edit operation that resolves that problem.",
   "inputSchema": {

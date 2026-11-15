@@ -610,6 +610,8 @@ export class AiSettingsStore {
       expandThinking,
       sendWith,
       shotSize,
+      lookSize,
+      lookWhilePlaying,
       kept,
     } = this.#snapshot;
     return {
@@ -623,6 +625,8 @@ export class AiSettingsStore {
       expandThinking,
       ...(sendWith === "modEnter" && { sendWith }),
       ...(shotSize !== undefined && shotSize !== 1568 && { shotSize }),
+      ...(lookSize !== undefined && { lookSize }),
+      ...(lookWhilePlaying && { lookWhilePlaying }),
       ...(kept && { kept }),
     };
   }
@@ -1259,6 +1263,18 @@ export class AiSettingsStore {
   }
 
   /** Which key sends a message in the chat; the other makes a new line. */
+  /** How large the frames AI renders are where it does not say. */
+  setLookSize(size: "small" | "medium" | "large"): void {
+    const { lookSize: _was, ...now } = this.#settingsNow();
+    this.#save({ ...now, ...(size !== "medium" && { lookSize: size }) });
+  }
+
+  /** Whether AI waits for people to stop playing before it renders frames. */
+  setLookWaits(waits: boolean): void {
+    const { lookWhilePlaying: _was, ...now } = this.#settingsNow();
+    this.#save({ ...now, ...(!waits && { lookWhilePlaying: true as const }) });
+  }
+
   /** How large a frame for the chat is at most, see `ShotSide`. */
   setShotSize(size: ShotSide): void {
     const { shotSize: _was, ...now } = this.#settingsNow();

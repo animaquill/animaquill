@@ -6,6 +6,8 @@ import {
   type EncodedChunk,
   type FrameToEncode,
   type FromCompositor,
+  type LookResult,
+  type LookSpec,
   type SceneSetup,
   type ToCompositor,
 } from "@animaquill/render";
@@ -133,6 +135,11 @@ export class ExportCompositor {
   readonly #watch: CompositorWatch;
   readonly #ready = Promise.withResolvers<void>();
   readonly #pending = new Map<number, Pending>();
+  /** Pictures for AI on their way, by request. */
+  readonly #looks = new Map<
+    number,
+    { readonly done: (result: LookResult) => void; readonly failed: (reason: unknown) => void }
+  >();
   #saidHello = false;
   #nextRequest = 0;
   /** Why it is gone, if it is. */
@@ -206,6 +213,21 @@ export class ExportCompositor {
   }
 
   /**
+   * A picture for AI, see `LookSpec`: made, drawn on and encoded in the compositor. Rejects with
+   * `StillFailed` when a moment of it has no picture, with which moment as `cell`.
+   */
+  async look(spec: LookSpec): Promise<LookResult> {
+    await this.#ready.promise;
+    if (this.#stopped !== undefined) throw this.#stopped;
+    this.#nextRequest += 1;
+    const request = this.#nextRequest;
+    return new Promise((done, failed) => {
+      this.#looks.set(request, { done, failed });
+      this.#send({ type: "look", request, ...spec });
+    });
+  }
+
+  /**
    * Starts the encoder of an export. What comes out of it goes to `onChunk`, in the order to decode
    * it in, and all of it before `finishEncoding` is over.
    */
@@ -266,6 +288,8 @@ export class ExportCompositor {
     this.#ready.reject(reason);
     for (const { failed } of this.#pending.values()) failed(reason);
     this.#pending.clear();
+    for (const { failed } of this.#looks.values()) failed(reason);
+    this.#looks.clear();
   }
 
   #send(message: ToCompositor): void {
@@ -300,6 +324,7 @@ export class ExportCompositor {
     else if (data.type === "needs-scene") void this.#sendScene(data.scene, data.revision);
     else if (data.type === "origin-retired") this.#options.onRetired?.(data.origin);
     else if (data.type === "still") this.#answer(data);
+    else if (data.type === "look") this.#answerLook(data);
     else if (data.type === "encode-answer") this.#answerEncoding(data);
     else if (data.type === "encoded") {
       const chunk = ownChunk(data);
@@ -337,6 +362,32 @@ export class ExportCompositor {
       if (pending) pending.done(answer.image);
       else answer.image.close();
     } else pending?.failed(new StillFailed(answer.failure));
+  }
+
+  /** What came back is checked: only pictures as blobs, and words and numbers, are taken. */
+  #answerLook(answer: Extract<FromCompositor, { type: "look" }>): void {
+    const pending = this.#looks.get(answer.request);
+    this.#looks.delete(answer.request);
+    if (!pending) return;
+    if ("failure" in answer) {
+      pending.failed(Object.assign(new StillFailed(answer.failure), { cell: answer.cell }));
+      return;
+    }
+    const isBlob = (value: unknown): value is Blob => value instanceof Blob;
+    const { image, clean, lossless, diff, width, height, texts } = answer;
+    if (!isBlob(image) || !Number.isInteger(width) || !Number.isInteger(height)) {
+      pending.failed(new StillFailed({ reason: "failed", message: "Not a picture" }));
+      return;
+    }
+    pending.done({
+      image,
+      width,
+      height,
+      ...(isBlob(clean) && { clean }),
+      ...(isBlob(lossless) && { lossless }),
+      ...(diff && isBlob(diff.image) && Number.isFinite(diff.ratio) && { diff }),
+      texts: Array.isArray(texts) ? texts : [],
+    });
   }
 
   /** The sandbox runs code from projects, so it only gets what the plan uses. */

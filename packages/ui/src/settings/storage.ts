@@ -76,7 +76,9 @@ export async function clearUnusedImages(place: ChatsPlace): Promise<number> {
       const chat = await store.load(project, id);
       for (const value of chat?.entries ?? []) {
         const entry = readEntry(value);
-        if (entry?.role === "user") for (const image of entry.images ?? []) used.add(image.image);
+        // What people attached, and what tools gave, such as the frames AI looked at.
+        if (entry?.role === "user" || entry?.role === "tool")
+          for (const image of entry.images ?? []) used.add(image.image);
       }
     }
   }

@@ -212,8 +212,10 @@ export function makeTool<P>(
       // calls may, is told by the next call instead of never. Of calls that end in another order
       // than they began, the later revision stays, so that nothing is told twice.
       const at = store.revisionId;
+      caller.keepState(at, store.getState());
       const others = othersOf(call);
       const result = await definition.run(call, parsed.value);
+      caller.keepState(store.revisionId, store.getState());
       const last = caller.lastCall === undefined ? undefined : store.revisionOf(caller.lastCall);
       const now = store.revisionOf(at);
       if (last === undefined || now === undefined || now >= last) caller.lastCall = at;

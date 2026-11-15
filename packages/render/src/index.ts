@@ -10,6 +10,7 @@ import type { StillFailure } from "./still.ts";
 
 export { layerWith, type LayerChanges } from "./plan.ts";
 export { failureOf, StillFailed, type StillFailure } from "./still.ts";
+export { DIFF_THRESHOLD, diffPixels, diffPicture, markRect, sheetSize } from "./look.ts";
 
 /**
  * How many pixels of a corner of the compositor scenes share. A scene that has no pixel of its own on
@@ -110,6 +111,78 @@ export interface PlayBase {
   readonly jump: boolean;
 }
 
+/** A box drawn on a frame that AI looks at, in world units, with the name of what it is. */
+export interface LookMarkSpec {
+  readonly box: {
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  };
+  readonly label: string;
+  /** Part of it is off the picture: it is drawn red. */
+  readonly problem: boolean;
+}
+
+/** One moment of a look, with what to draw on it and, in an overview, the time to print. */
+export interface LookCell {
+  readonly seconds: number;
+  readonly label?: string;
+  readonly marks: readonly LookMarkSpec[];
+}
+
+/**
+ * A picture for AI to look at, made, drawn on and encoded in the compositor: one moment, or many in
+ * one picture (`columns` wide), at the size of the plan. Nothing but encoded pictures leaves it.
+ */
+export interface LookSpec {
+  readonly cells: readonly LookCell[];
+  readonly columns: number;
+  /** Measure the text of the scenes on the picture, of one moment. */
+  readonly texts: boolean;
+  /** The picture as it was, as PNG of the same size: what differs comes back, with a picture of it. */
+  readonly base?: Blob;
+  /** Also the picture without its boxes. */
+  readonly clean?: boolean;
+  /** Also the picture as PNG, to be the base of a comparison. */
+  readonly lossless?: boolean;
+}
+
+/** The text of the page of a scene on a picture of a look, see `SceneText` of the scenes. */
+export interface LookLayerTexts {
+  readonly layer: string;
+  readonly texts: readonly {
+    readonly text: string;
+    readonly x: number;
+    readonly y: number;
+    readonly width: number;
+    readonly height: number;
+  }[];
+  readonly more: boolean;
+}
+
+/** What a look came to. */
+export interface LookResult {
+  readonly image: Blob;
+  readonly width: number;
+  readonly height: number;
+  readonly clean?: Blob;
+  readonly lossless?: Blob;
+  readonly diff?: {
+    readonly image: Blob;
+    /** Of the pixels, 0 to 1. */
+    readonly ratio: number;
+    /** Around the pixels that differ, in pixels of the picture. */
+    readonly box?: {
+      readonly x: number;
+      readonly y: number;
+      readonly width: number;
+      readonly height: number;
+    };
+  };
+  readonly texts: readonly LookLayerTexts[];
+}
+
 /** From the editor to the compositor. */
 export type ToCompositor =
   | ({ readonly type: "setup" } & SceneSetup)
@@ -197,6 +270,8 @@ export type ToCompositor =
   | { readonly type: "exporting" }
   /** A picture of this moment of the plan with everything in it, or a reason why there is none. */
   | { readonly type: "still"; readonly request: number; readonly seconds: number }
+  /** A picture for AI, see `LookSpec`: answered by "look". */
+  | ({ readonly type: "look"; readonly request: number } & LookSpec)
   /** Starts the encoder of an export. There is one, and it gets the frames that follow. */
   | { readonly type: "encode-start"; readonly request: number; readonly config: VideoEncoderConfig }
   /** Draws a moment the way `still` does, and encodes it. */
@@ -307,6 +382,14 @@ export type FromCompositor =
   | { readonly type: "strip"; readonly request: number; readonly image: ImageBitmap | undefined }
   | { readonly type: "still"; readonly request: number; readonly image: ImageBitmap }
   | { readonly type: "still"; readonly request: number; readonly failure: StillFailure }
+  | ({ readonly type: "look"; readonly request: number } & LookResult)
+  /** Which moment of the look had no picture, and why. */
+  | {
+      readonly type: "look";
+      readonly request: number;
+      readonly cell: number;
+      readonly failure: StillFailure;
+    }
   /** What came of an `encode-` message. */
   | { readonly type: "encode-answer"; readonly request: number; readonly failure?: StillFailure }
   /** A frame came out of the encoder. They come in the order to decode them in. */

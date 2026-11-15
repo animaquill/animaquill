@@ -21,6 +21,7 @@ import {
   type ClipDescription,
   type ClipState,
   type ProblemSet,
+  type ProjectState,
   type ProjectStore,
   type StaticInputs,
   type UndoResult,
@@ -34,6 +35,8 @@ import {
   choosePack,
   createToolset,
   usePack,
+  type LookAnswer,
+  type LookRequest,
   type ModelPack,
   type PackUse,
   type SelectionFacts,
@@ -190,6 +193,11 @@ export interface ChatSessionOptions {
   readonly shoot?: (signal: AbortSignal) => Promise<FrameShot | undefined>;
   /** How large a frame goes at most, as set (see `ShotSize`). */
   readonly shotSize?: () => ShotSize;
+  /**
+   * Renders frames for AI, as `aq_render_frames` asks (see `FrameLooks`): with whether its model
+   * sees the pictures, and what stops the task.
+   */
+  readonly look?: (request: LookRequest, sees: boolean, signal: AbortSignal) => Promise<LookAnswer>;
   /** For tests: what a small request to a model answers, such as for a title. See `askModel`. */
   readonly ask?: (
     endpoint: Endpoint,
@@ -204,6 +212,8 @@ export interface ChatSessionOptions {
  */
 const SAVE_DELAY_MS = 500;
 const TITLE_LENGTH = 40;
+/** How many tasks keep the project as they started it, for AI to compare with. */
+const KEPT_STARTS = 10;
 /** At most this many tokens for the title the model writes, and this long to wait for it. */
 const TITLE_TOKENS = 60;
 const TITLE_TIMEOUT_MS = 20_000;
@@ -256,6 +266,8 @@ export class ChatSession {
   #pending: (() => Promise<void>) | undefined;
   /** A pack chosen again that the task starting takes, until an answer comes with it. */
   #taking: { readonly model: string; readonly answers: number } | undefined;
+  /** The project as each of the latest tasks started, for AI to compare with (`taskStart`). */
+  readonly #started = new Map<string, ProjectState>();
 
   constructor(options: ChatSessionOptions) {
     this.#options = options;
@@ -418,9 +430,23 @@ export class ChatSession {
   }
 
   /** The tools of one task, on the project that was open when it started, and only that one. */
-  #toolsOf(task: string, caller: CallerState, use: PackUse, conversation: Conversation) {
+  #toolsOf(
+    task: string,
+    caller: CallerState,
+    use: PackUse,
+    conversation: Conversation,
+    signal: AbortSignal,
+  ) {
     const project = this.#project;
-    const { selection, problems, describe, problemInputs, ranNow } = this.#options;
+    const { selection, problems, describe, problemInputs, ranNow, look } = this.#options;
+    // A task tried again goes on from where it was: it started where it started the first time.
+    if (project && !this.#started.has(task)) {
+      this.#started.set(task, project.store.getState());
+      for (const old of this.#started.keys()) {
+        if (this.#started.size <= KEPT_STARTS) break;
+        this.#started.delete(old);
+      }
+    }
     const tools = createToolset(
       {
         store: () =>
@@ -440,6 +466,10 @@ export class ChatSession {
         ...(describe && { describe }),
         ...(problemInputs && { problemInputs }),
         ...(ranNow && { ranNow }),
+        ...(look && {
+          look: (request: LookRequest) => look(request, this.seesPictures() !== false, signal),
+        }),
+        taskStart: () => this.#started.get(task),
       },
       caller,
       use.texts,
@@ -1009,7 +1039,7 @@ export class ChatSession {
       key: target.key,
       maxToolCalls,
       system: browserSystemPrompt(use.texts, sees),
-      tools: (task) => this.#toolsOf(task, caller, use, conversation),
+      tools: (task, signal) => this.#toolsOf(task, caller, use, conversation, signal),
       // How hard the model reasons: as people set it for the model, else as its pack says.
       call: reasoning === undefined ? use.call : { ...use.call, reasoning },
       stamp: { toolset: TOOLSET_VERSION, texts: use.used, pack: note },

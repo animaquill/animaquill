@@ -5,6 +5,7 @@ import {
   rangeOf,
   sceneFrameOf as frameOf,
   sceneViewOf,
+  viewMatrix,
 } from "@animaquill/core/view";
 import {
   OriginPool,
@@ -14,6 +15,7 @@ import {
   type SceneHostOptions,
   type SceneHostState,
   type SceneProblem,
+  type SceneText,
   type SceneView,
   type TimeBase,
 } from "@animaquill/scene";
@@ -71,7 +73,8 @@ export type Host = Pick<
   | "origin"
   | "position"
   | "stateful"
->;
+> &
+  Partial<Pick<SceneHost, "texts">>;
 
 export interface SceneLayersOptions {
   /** Where frames go. */
@@ -215,10 +218,15 @@ export function isOutOfReach(
   return !(last <= MAX_SCENE_FRAME);
 }
 
-/** One unit of the world is one CSS pixel, and the picture has the pixels of the output. */
+/**
+ * One unit of the world is one CSS pixel, and the picture has the pixels of the output: also where
+ * a camera that stands still comes closer, as for a part of the picture rendered large.
+ */
 export function viewOf(layer: RenderLayer, plan: RenderPlan): SceneView {
   const { width, height } = sceneViewOf(layer, plan.stage);
-  const wanted = plan.width / plan.stage.width;
+  // How many pixels of the picture a unit of the world takes, as the camera has it.
+  const [a, b] = viewMatrix(plan, 0);
+  const wanted = Math.hypot(a, b);
   const pixelRatio = Math.min(wanted, MAX_PICTURE_SIDE / Math.max(width, height));
   return {
     width,
@@ -371,6 +379,17 @@ export class SceneLayers {
       }
       this.#expectPicture(entry);
     });
+  }
+
+  /**
+   * Where the text of the page of a layer is, on the frame it is on: right after `exactPicture`, the
+   * frame of the picture. Nothing where it has no page or does not say.
+   */
+  textsOf(
+    layer: string,
+  ): Promise<{ readonly texts: readonly SceneText[]; readonly more: boolean } | undefined> {
+    const host = this.#entries.get(layer)?.current?.host;
+    return host?.texts ? host.texts() : Promise.resolve(undefined);
   }
 
   /** Whether a layer has no picture and is not going to get one for now. */

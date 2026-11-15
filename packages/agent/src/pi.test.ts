@@ -804,3 +804,84 @@ describe("pictures with a message", () => {
     ]);
   });
 });
+
+describe("pictures a tool gives", () => {
+  const picture = (n: number, extra: Record<string, unknown> = {}) => ({
+    image: `sha256:${String(n).repeat(64)}`,
+    type: "image/jpeg",
+    width: 1024,
+    height: 576,
+    bytes: 1000,
+    note: `[image ${n}: frame ${n}]`,
+    ...extra,
+  });
+  const look = {
+    name: "look",
+    label: "看",
+    description: "renders",
+    parameters: { type: "object", properties: {}, additionalProperties: false },
+    run: async () => ({
+      text: "what is on it",
+      isError: false,
+      images: [picture(1, { role: "frame" }), picture(2, { role: "clean", forPeople: true })],
+    }),
+  };
+  const read = async (ref: { image: string }) => ({
+    data: ref.image.slice(7, 9),
+    mimeType: "image/jpeg",
+  });
+  const toolResults = (heard: readonly unknown[]) =>
+    heard.filter((m) => (m as { role: string }).role === "toolResult") as {
+      content: { type: string; text?: string; data?: string }[];
+    }[];
+
+  it("go to a model that sees, before the words, and stay with the result for later", async () => {
+    let heard: readonly unknown[] = [];
+    const endpoint: FakeEndpoint = {
+      fake: [{ calls: [{ name: "look", args: {} }] }, { text: "看到了" }],
+      heard: (m) => (heard = m),
+    };
+    const { done, entries } = run(endpoint, { tools: [look], pictures: { sees: true, read } });
+    await done;
+    // Only what is not for people only goes, and first.
+    expect(toolResults(heard)[0]?.content).toEqual([
+      { type: "image", data: "11", mimeType: "image/jpeg" },
+      { type: "text", text: "what is on it" },
+    ]);
+    const result = entries().find((entry) => entry.role === "tool") as ToolEntry;
+    expect(result.text).toBe("what is on it");
+    expect(result.images?.map(({ role, forPeople }) => [role, forPeople])).toEqual([
+      ["frame", undefined],
+      ["clean", true],
+    ]);
+
+    // Later, from the record: the same, as long as it is among the most recent pictures.
+    let later: readonly unknown[] = [];
+    const again: FakeEndpoint = { fake: [{ text: "好" }], heard: (m) => (later = m) };
+    await run(again, {
+      tools: [look],
+      history: entries(),
+      prompt: "再看",
+      pictures: { sees: true, read },
+    }).done;
+    expect(toolResults(later)[0]?.content).toEqual([
+      { type: "image", data: "11", mimeType: "image/jpeg" },
+      { type: "text", text: "what is on it" },
+    ]);
+  });
+
+  it("go as their lines alone to a model that does not see", async () => {
+    let heard: readonly unknown[] = [];
+    const endpoint: FakeEndpoint = {
+      fake: [{ calls: [{ name: "look", args: {} }] }, { text: "好" }],
+      heard: (m) => (heard = m),
+    };
+    await run(endpoint, { tools: [look], pictures: { sees: false, read } }).done;
+    expect(toolResults(heard)[0]?.content).toEqual([
+      {
+        type: "text",
+        text: "[image 1: frame 1 — not attached: this model cannot receive pictures]\nwhat is on it",
+      },
+    ]);
+  });
+});

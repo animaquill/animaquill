@@ -37,13 +37,32 @@ export {
   type ToolsetOptions,
 } from "./toolset.ts";
 export * from "./packs/index.ts";
+export {
+  LOOK_SIDES,
+  tokensOf,
+  type LookData,
+  type LookFinding,
+  type LookKind,
+  type LookShotData,
+} from "./tools/look.ts";
 export type {
   JsonSchema,
+  LookAnswer,
+  LookFailure,
+  LookImageRole,
+  LookMark,
+  LookRequest,
+  LookShot,
+  LookSize,
+  LookText,
+  LookTexts,
+  LookedShot,
   SelectionFacts,
   SentMessage,
   Tool,
   ToolAnnotations,
   ToolHost,
+  ToolImage,
   ToolResult,
 } from "./types.ts";
 export { mcpInstructions, mcpToolsOf, type McpPlace, type McpTool } from "./mcp.ts";

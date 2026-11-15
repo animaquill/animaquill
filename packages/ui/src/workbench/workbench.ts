@@ -47,7 +47,13 @@ import {
   parseTime,
   toSeconds,
 } from "@animaquill/schema";
-import { memoryKeys, newSyncId, type DownloadStore, type ProjectSummary } from "@animaquill/host";
+import {
+  memoryChatImages,
+  memoryKeys,
+  newSyncId,
+  type DownloadStore,
+  type ProjectSummary,
+} from "@animaquill/host";
 import type { ConnectTiming } from "../cloud/connect.ts";
 import {
   CloudCreate,
@@ -87,6 +93,7 @@ import { OverlayEditor } from "../overlay/editor.ts";
 import { SceneHandles } from "../overlay/scene-handles.ts";
 import { CoverMaker, CoverUploads, canvasEncoder, type CoverShot } from "../export/cover.ts";
 import { ExportCompositor, exportCompositorOptions } from "../export/compositor.ts";
+import { FrameLooks } from "../look/looks.ts";
 import { StillExport } from "../export/still.ts";
 import { VideoExport } from "../export/video.ts";
 import { MediaLibrary } from "../media/library.ts";
@@ -397,6 +404,8 @@ export class Workbench {
   readonly packs: ModelPacks;
   /** The chat with AI in the browser, about the open project. */
   readonly chat: ChatSession;
+  /** The frames AI looks at, which give way to people playing and exporting. */
+  readonly looks: FrameLooks;
   /** What AI tools on this computer do through the folder of the open project. */
   readonly tools: ToolActivity;
   /** Whether new projects start with AGENTS.md, the instructions for AI. */
@@ -784,6 +793,7 @@ export class Workbench {
           : host.chatImages,
       shoot: (signal) => this.#shootFrame(signal),
       shotSize: () => this.ai.getSnapshot().shotSize ?? 1568,
+      look: (request, sees, signal) => this.looks.look(request, sees, signal),
     });
     this.tools = new ToolActivity({
       t,
@@ -844,6 +854,7 @@ export class Workbench {
     });
     // What nobody went on with for long goes, whichever project it is of.
     void this.videos.cleanUp();
+    this.looks = this.#frameLooks(host.chatImages);
     this.projectFolders =
       host.localFolders &&
       new ProjectFolders({
@@ -2549,6 +2560,75 @@ export class Workbench {
       signal.removeEventListener("abort", stop);
       compositor.dispose();
     }
+  }
+
+  /**
+   * The frames AI renders, each look in compositors of its own for the project as the tool read it.
+   * It gives way to an export always, to playing as the settings say, and waits for the page to show.
+   */
+  #frameLooks(images: ChatImageStore | undefined): FrameLooks {
+    const isHidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
+    return new FrameLooks({
+      compositor: (state, plan) => {
+        const key = this.session.getSnapshot().key ?? "";
+        const projects: ProjectLibrary = {
+          ...this.projects,
+          media: (id) =>
+            this.projectFolders?.mediaFor(id, undefined, () => state.assets) ??
+            this.projects.media(id),
+        };
+        const site = {
+          projects,
+          preview: this.preview,
+          compositorUrl: this.compositorUrl,
+          sceneOrigins: this.sceneOrigins,
+          sceneStage: this.sceneStage,
+        };
+        return new ExportCompositor({
+          ...exportCompositorOptions(site, state, key, plan),
+          unseen: "look",
+        });
+      },
+      images: images ?? memoryChatImages(),
+      busy: () =>
+        this.videos.busy
+          ? "exporting"
+          : this.timeline.getSnapshot().playing
+            ? "playing"
+            : undefined,
+      waitsForPlayback: () => this.ai.getSnapshot().lookWhilePlaying !== true,
+      size: () => this.ai.getSnapshot().lookSize ?? "medium",
+      hidden: isHidden,
+      watch: (changed) => {
+        const stops = [
+          this.timeline.subscribe(changed),
+          this.videos.subscribe(changed),
+          this.videos.queue.subscribe(changed),
+          this.ai.subscribe(changed),
+        ];
+        document.addEventListener("visibilitychange", changed);
+        return () => {
+          for (const stop of stops) stop();
+          document.removeEventListener("visibilitychange", changed);
+        };
+      },
+      // Only where people allowed it already: a look is no reason to ask.
+      notify: () => {
+        if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+        try {
+          const notice = new Notification(this.t("chat.notify.look"), {
+            body: this.session.store?.getState().manifest.name ?? "AnimaQuill",
+            tag: "animaquill-look",
+          });
+          notice.addEventListener("click", () => {
+            window.focus();
+            notice.close();
+          });
+        } catch {
+          // Some browsers only make notices from a service worker: the chat says it still.
+        }
+      },
+    });
   }
 
   /** Whether people can choose the covers of projects here: this browser keeps covers. */

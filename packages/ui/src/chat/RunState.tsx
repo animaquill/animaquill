@@ -1,6 +1,7 @@
 import type { Conversation, RunningTask } from "@animaquill/agent";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import { useWorkbench } from "../app/context.ts";
 import styles from "./ChatPanel.module.css";
 import { useNow } from "./clock.ts";
 import type { Say } from "./toolSummary.ts";
@@ -29,8 +30,15 @@ export function RunState({
   const say = t as unknown as Say;
   const now = useNow(true);
   const phase = useLive(conversation.live, livePhase);
+  const { looks } = useWorkbench();
+  const look = useSyncExternalStore(looks.subscribe, looks.getSnapshot);
   const [waitedOn, setWaitedOn] = useState(0);
   const { tool, retry } = running;
+  // Looking at frames waits for people, which it says: they can stop playing, or come back.
+  const waiting =
+    tool?.name === "aq_render_frames" && look.kind !== "idle" && look.kind !== "rendering"
+      ? look.kind
+      : undefined;
   let label: string;
   if (retry) {
     const code = codeIn(retry.failure.message);
@@ -41,6 +49,16 @@ export function RunState({
       of: retry.of,
       seconds: Math.max(0, Math.ceil((retry.at - now) / 1000)),
     });
+  } else if (tool?.name === "aq_render_frames") {
+    label =
+      look.kind === "rendering"
+        ? t("chat.phase.look.rendering", {
+            done: Math.min(look.done + 1, look.total),
+            total: look.total,
+          })
+        : waiting
+          ? say(`chat.phase.look.${waiting}`)
+          : t("chat.phase.look.start");
   } else if (tool) {
     const name = say(`chat.tool.${tool.name}`, { defaultValue: tool.name });
     const operations = Array.isArray(tool.args.operations) ? tool.args.operations.length : 0;
@@ -57,7 +75,8 @@ export function RunState({
     <div
       className={styles.phase}
       data-testid="chat-phase"
-      data-state={retry ? "retry" : quiet ? "quiet" : "running"}
+      data-state={retry ? "retry" : quiet ? "quiet" : waiting ? "waiting" : "running"}
+      data-look={waiting}
       aria-live="polite"
     >
       <span className={styles.dot} aria-hidden="true" />

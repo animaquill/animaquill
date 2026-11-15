@@ -26,6 +26,7 @@ export {
   readSamples,
   readSoundFailure,
   RUNTIME_VERSION,
+  TEXT_LIMITS,
 } from "./protocol.ts";
 export type {
   FrameRate,
@@ -33,6 +34,7 @@ export type {
   SceneLoad,
   ScenePicture,
   SceneProblem,
+  SceneText,
   SceneView,
   SoundFailureReason,
   SoundLoad,

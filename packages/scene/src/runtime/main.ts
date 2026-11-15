@@ -23,6 +23,7 @@ import {
   stageStyle,
   warnAboutTopLayer,
 } from "./stage.ts";
+import { measureTexts } from "./texts.ts";
 import { installTime, realTime } from "./time.ts";
 import { Transport } from "./transport.ts";
 
@@ -383,6 +384,17 @@ function onMessage(event: MessageEvent<ToScene>): void {
       handlesText = undefined;
       handlesChanged();
       break;
+    case "texts": {
+      // What the page laid out for the frame it is on: nothing of it runs for this.
+      let measured: ReturnType<typeof measureTexts> = { texts: [], more: false };
+      try {
+        measured = measureTexts();
+      } catch (error) {
+        reportError(error);
+      }
+      send({ type: "texts", request: data.request, ...measured });
+      break;
+    }
     case "ping":
       send({ type: "pong", nonce: data.nonce });
       break;

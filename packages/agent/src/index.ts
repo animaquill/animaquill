@@ -25,6 +25,7 @@ export {
   readEntry,
   readImage,
   readSelection,
+  readToolPicture,
   type AnswerEnd,
   type AttachedImage,
   type ImageFrame,
@@ -36,6 +37,7 @@ export {
   type PackNote,
   type ToolCallEntry,
   type ToolEntry,
+  type ToolPicture,
   type UserEntry,
 } from "./entries.ts";
 export { NO_LIVE, createLiveStore, type LiveAnswer, type LiveStore } from "./live.ts";

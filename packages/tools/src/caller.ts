@@ -1,4 +1,10 @@
-import { objectKey, type ObjectRef, type Origin, type RevisionId } from "@animaquill/core";
+import {
+  objectKey,
+  type ObjectRef,
+  type Origin,
+  type ProjectState,
+  type RevisionId,
+} from "@animaquill/core";
 import type { ToolResult } from "./types.ts";
 
 /** How long a hold lasts where the host says nothing of answers, see `beginAnswer`. */
@@ -9,6 +15,11 @@ const KEPT_RESULTS = 50;
 /** How long a cursor of a list lasts. */
 export const CURSOR_MS = 10 * 60 * 1000;
 const KEPT_CURSORS = 20;
+/**
+ * How many states of the project, by the revision a result started with, are kept to compare with
+ * (`aq_render_frames` compare): states share what did not change, so that these cost little.
+ */
+const KEPT_STATES = 40;
 /** The version of what `toJSON` gives, for reading it back later. */
 const SNAPSHOT_VERSION = 1;
 
@@ -115,6 +126,8 @@ export class CallerState {
   readonly #results = new Map<string, { readonly call: string; readonly result: ToolResult }>();
   readonly #cursors = new Map<string, Cursor>();
   #cursorCount = 0;
+  /** The project at the revisions results told of, for as long as the page: never kept with it. */
+  readonly #states = new Map<RevisionId, ProjectState>();
   /** What happened so far in the answer of the model that is running, see `beginAnswer`. */
   answer = { failedWrite: false, proposed: false };
   /** Which answer `answer` is of, as the host numbers them, see `answerIs`. */
@@ -162,6 +175,21 @@ export class CallerState {
 
   get now(): number {
     return this.#now();
+  }
+
+  /** The project as it was at a revision a result told of, see `stateAt`. */
+  keepState(revision: RevisionId, state: ProjectState): void {
+    this.#states.delete(revision);
+    this.#states.set(revision, state);
+    for (const old of this.#states.keys()) {
+      if (this.#states.size <= KEPT_STATES) break;
+      this.#states.delete(old);
+    }
+  }
+
+  /** The project at a revision a result of this page told of, where it is still kept. */
+  stateAt(revision: RevisionId): ProjectState | undefined {
+    return this.#states.get(revision);
   }
 
   /**

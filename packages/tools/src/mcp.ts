@@ -24,7 +24,7 @@ const INTRO: Readonly<Record<McpPlace, string>> = {
 /** What the place has, after the rules: no picture, no sound, no editor. */
 const HOST: Readonly<Record<McpPlace, string>> = {
   folder:
-    "- These tools cannot render frames or play sound: seeing the picture and hearing it takes the AnimaQuill editor. Judge what no picture shows by names, lengths and what the user tells you, and say so when it matters.\n- What the editor selects is the editor's: aq_selection_read here has no editor to read it from.",
+    "- These tools cannot render frames or play sound (aq_render_frames gives not-available here): seeing the picture and hearing it takes the AnimaQuill editor. Judge what no picture shows by names, lengths and what the user tells you, and say so when it matters.\n- What the editor selects is the editor's: aq_selection_read here has no editor to read it from.",
 };
 
 /** The instructions of a server, as MCP gives them to the client. */

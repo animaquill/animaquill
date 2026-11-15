@@ -143,6 +143,21 @@ export interface PackNote {
   readonly by: PackBy;
 }
 
+/**
+ * A picture a tool gave, such as a frame `aq_render_frames` rendered: it goes to the model before
+ * the words of its result, unless it is for people only.
+ */
+export interface ToolPicture extends ImageRef {
+  /** For the model, in English: which picture it is. Where the picture does not go, this goes. */
+  readonly note: string;
+  /** What it is of the call, for people: see `LookImageRole` of the tools. */
+  readonly role?: string;
+  /** Which shot of the call, from 0. */
+  readonly shot?: number;
+  /** For people only, as a frame without the boxes the model asked for: never sent. */
+  readonly forPeople?: true;
+}
+
 /** What came of one call of a tool, which is what AI gets to read. */
 export interface ToolEntry {
   readonly role: "tool";
@@ -156,6 +171,8 @@ export interface ToolEntry {
   readonly startedAt?: number;
   /** What the call changed or found, for the summary of a turn: never sent to the model. */
   readonly data?: Readonly<Record<string, unknown>>;
+  /** Pictures it gave, in order. */
+  readonly images?: readonly ToolPicture[];
 }
 
 export type ChatEntry = UserEntry | AssistantEntry | ToolEntry;
@@ -279,6 +296,20 @@ export function readImage(value: unknown): AttachedImage | undefined {
   };
 }
 
+/** A picture of a tool as kept, where it is one. */
+export function readToolPicture(value: unknown): ToolPicture | undefined {
+  const image = readImage(value);
+  if (!image || !isRecord(value)) return undefined;
+  const { label: _label, frame: _frame, ...ref } = image;
+  const shot = count(value.shot);
+  return {
+    ...ref,
+    ...(typeof value.role === "string" && { role: value.role }),
+    ...(shot !== undefined && { shot }),
+    ...(value.forPeople === true && { forPeople: true as const }),
+  };
+}
+
 /**
  * The text a message goes to the model with: its words, then the line of each of its pictures. A
  * picture that does not go with it says so in its line, and why (`missing`).
@@ -329,6 +360,9 @@ export function readEntry(value: unknown): ChatEntry | undefined {
     if (typeof call !== "string" || typeof name !== "string") return undefined;
     if (typeof ok !== "boolean" || typeof text !== "string") return undefined;
     const startedAt = count(value.startedAt);
+    const images = Array.isArray(value.images)
+      ? value.images.map(readToolPicture).filter((image) => image !== undefined)
+      : [];
     return {
       role,
       call,
@@ -338,6 +372,7 @@ export function readEntry(value: unknown): ChatEntry | undefined {
       at,
       ...(startedAt !== undefined && { startedAt }),
       ...(isRecord(data) && { data }),
+      ...(images.length > 0 && { images }),
     };
   }
   if (role === "assistant") {

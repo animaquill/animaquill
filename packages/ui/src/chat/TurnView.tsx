@@ -15,6 +15,7 @@ import { Markdown } from "./markdown/Markdown.tsx";
 import { RefChip, RefText } from "./RefChip.tsx";
 import { piecesOf, plainOf } from "./refs.ts";
 import { summaryOf } from "./summary.ts";
+import { LookRow } from "./LookRow.tsx";
 import { ToolRow } from "./ToolRow.tsx";
 import type { Names, Say } from "./toolSummary.ts";
 import { durationText, type Step, type Turn } from "./turns.ts";
@@ -23,6 +24,9 @@ import { liveText, liveThinking, liveThinkingSince, useLive } from "./useLive.ts
 
 /** A link of the editor in what AI wrote: a block, as in people's words. */
 const appLink = (href: string, label: string) => <RefChip chatRef={{ href, label }} />;
+
+/** The tool whose pictures show in the chat, see `LookRow`. */
+const LOOK_TOOL = "aq_render_frames";
 
 /** A thought quicker than this says nothing of how long it took. */
 const SHOWN_MS = 100;
@@ -221,8 +225,12 @@ function ProcessView({ turn, names }: { readonly turn: Turn; readonly names: Nam
     ...(turn.failed > 0 ? [t("chat.process.failed", { count: turn.failed })] : []),
     ...(turn.ms !== undefined ? [durationText(say, turn.ms, true)] : []),
   ];
+  // What failed shows anyway, and so do the pictures AI looked at: is what it saw what people see?
   const failed = turn.steps.filter(
-    (step) => step.kind === "tool" && step.result && !step.result.ok,
+    (step) =>
+      step.kind === "tool" &&
+      step.result &&
+      (!step.result.ok || (step.call.name === LOOK_TOOL && (step.result.images?.length ?? 0) > 0)),
   );
   return (
     <div className={styles.process} data-testid="chat-process">
@@ -263,6 +271,16 @@ function StepView({
         </div>
       );
     case "tool":
+      if (step.call.name === LOOK_TOOL) {
+        return (
+          <LookRow
+            call={step.call}
+            result={step.result}
+            running={running?.tool?.id === step.call.id ? running.tool.startedAt : undefined}
+            names={names}
+          />
+        );
+      }
       return (
         <ToolRow
           call={step.call}

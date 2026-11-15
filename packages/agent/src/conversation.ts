@@ -85,8 +85,11 @@ export interface TaskTarget {
   readonly key: () => Promise<string | undefined>;
   readonly maxToolCalls: number;
   readonly system: string;
-  /** The tools of a task, which change the project as that task. */
-  readonly tools: (task: string) => readonly ToolSpec[];
+  /**
+   * The tools of a task, which change the project as that task. `signal` stops when the task does,
+   * for a tool that waits, such as one that waits for people to stop playing.
+   */
+  readonly tools: (task: string, signal: AbortSignal) => readonly ToolSpec[];
   /** How to call its model, as its model pack says. */
   readonly call?: CallSettings;
   /** What its answers are recorded as made with. */
@@ -273,7 +276,7 @@ export class Conversation {
           endpoint: target.endpoint,
           key: target.key,
           system: target.system,
-          tools: target.tools(task),
+          tools: target.tools(task, controller.signal),
           ...(target.call && { call: target.call }),
           ...(target.stamp && { stamp: target.stamp }),
           ...(this.#options.onAnswer && { onAnswer: this.#options.onAnswer }),

@@ -226,6 +226,10 @@ export interface AiSettings {
   readonly sendWith?: SendWith;
   /** How large a frame for the chat is at most on its longer side: 1568 unless people chose. */
   readonly shotSize?: ShotSide;
+  /** How large the frames AI renders are where it does not say: medium unless people chose. */
+  readonly lookSize?: "small" | "large";
+  /** AI renders frames while people play, which it waits for unless people said not to. */
+  readonly lookWhilePlaying?: true;
   readonly kept?: KeptSettings;
 }
 
@@ -324,6 +328,8 @@ const TOP_FIELDS = new Set([
   "expandThinking",
   "sendWith",
   "shotSize",
+  "lookSize",
+  "lookWhilePlaying",
 ]);
 const SERVICE_FIELDS = new Set([
   "id",
@@ -798,6 +804,10 @@ export function readAiSettings(value: unknown): AiSettingsReading {
     ...((value.shotSize === 1024 || value.shotSize === "original") && {
       shotSize: value.shotSize,
     }),
+    ...((value.lookSize === "small" || value.lookSize === "large") && {
+      lookSize: value.lookSize,
+    }),
+    ...(value.lookWhilePlaying === true && { lookWhilePlaying: true as const }),
     ...(Object.keys(kept).length > 0 && { kept }),
   };
   // Set while the services were read, which control flow does not see.
@@ -937,6 +947,8 @@ export function writeAiSettings(settings: AiSettings): Record<string, unknown> {
     ...(settings.sendWith === "modEnter" && { sendWith: "modEnter" }),
     ...(settings.shotSize !== undefined &&
       settings.shotSize !== 1568 && { shotSize: settings.shotSize }),
+    ...(settings.lookSize !== undefined && { lookSize: settings.lookSize }),
+    ...(settings.lookWhilePlaying && { lookWhilePlaying: true }),
   };
 }
 
