@@ -149,6 +149,11 @@ export interface ProjectFoldersOptions {
   readonly hasher?: Hasher;
   /** Where the project is, for what a file that is not here can be downloaded from. */
   readonly here?: HereOf;
+  /**
+   * Assets whose files are on their way here out of where they are kept, see `AssetDownloads`:
+   * that they are not here yet is no problem to list, as it goes away by itself.
+   */
+  readonly downloading?: () => ReadonlySet<string>;
   readonly timing?: Partial<FolderTiming>;
   /** Which windows have which projects open, which a move into a folder has to know. */
   readonly presence?: ProjectPresence;
@@ -304,6 +309,8 @@ export class ProjectFolders {
   readonly #batches = new Map<string, { store: ProjectStore; merge: FolderMerge }>();
   /** Files of assets that are not right, as problems. */
   #assetNotes: readonly Listed[] = [];
+  /** What says that the files stayed where the project was before, as last compared. */
+  #leftBehind: readonly Listed[] = [];
   /** The same as they were found, for the explorer. */
   #assetIssues: readonly AssetIssue[] = [];
   /**
@@ -469,25 +476,8 @@ export class ProjectFolders {
                 },
               ]
             : [];
-        // Many files that can come from where they are kept are one line, not one each.
-        const elsewhere = issues.filter(({ kind }) => kind === "elsewhere");
-        const together =
-          elsewhere.length > 1
-            ? [
-                {
-                  severity: "warning" as const,
-                  text: t("folder.asset.elsewhereMany", { count: elsewhere.length }),
-                  origin: t("folder.origin"),
-                },
-              ]
-            : [];
-        this.#assetNotes = [
-          ...leftBehind,
-          ...together,
-          ...issues
-            .filter(({ kind }) => kind !== "elsewhere" || elsewhere.length === 1)
-            .map((issue) => this.#assetProblem(current, issue)),
-        ];
+        this.#leftBehind = leftBehind;
+        this.#assetNotes = this.#notesOf(current, issues);
         this.#assetIssues = issues;
         this.#changed();
       })
@@ -496,6 +486,45 @@ export class ProjectFolders {
         if (current.checkAgain && this.#current === current) void this.#check(current);
       });
     return current.checking;
+  }
+
+  /** The lines of the problems for what is not right with the files of the assets. */
+  #notesOf(current: Current, issues: readonly AssetIssue[]): readonly Listed[] {
+    const { t } = this.#options;
+    const coming = this.#options.downloading?.() ?? new Set<string>();
+    // Many files that can come from where they are kept are one line, not one each; those on their
+    // way here none.
+    const elsewhere = issues.filter(
+      ({ kind, asset }) => kind === "elsewhere" && !coming.has(asset),
+    );
+    const together =
+      elsewhere.length > 1
+        ? [
+            {
+              severity: "warning" as const,
+              text: t("folder.asset.elsewhereMany", { count: elsewhere.length }),
+              origin: t("folder.origin"),
+            },
+          ]
+        : [];
+    return [
+      ...this.#leftBehind,
+      ...together,
+      ...issues
+        .filter(
+          ({ kind, asset }) =>
+            kind !== "elsewhere" || (elsewhere.length === 1 && !coming.has(asset)),
+        )
+        .map((issue) => this.#assetProblem(current, issue)),
+    ];
+  }
+
+  /** Which files are on their way here changed: the problems say so. */
+  downloadsChanged(): void {
+    const current = this.#current;
+    if (!current) return;
+    this.#assetNotes = this.#notesOf(current, this.#assetIssues);
+    this.#changed();
   }
 
   /**
@@ -668,6 +697,7 @@ export class ProjectFolders {
     this.#setProgress(NO_PROGRESS);
     this.#notes = [];
     this.#assetNotes = [];
+    this.#leftBehind = [];
     this.#assetIssues = [];
     this.#changed();
     await current.session.close();

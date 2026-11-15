@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { MenuItem } from "../app/Menu.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import { formatSize } from "../transfer/transfer.ts";
+import { downloadProblemText } from "./download-text.ts";
 import { percentOf } from "./upload-text.ts";
 import { LFS_FILE_MOST, type UploadItem, type UploadProblem } from "./uploads.ts";
 import styles from "./marks.module.css";
@@ -13,7 +14,9 @@ import styles from "./marks.module.css";
 export type AssetMark =
   | { readonly kind: "lfs" }
   | { readonly kind: "uploading"; readonly percent: number }
-  | { readonly kind: "failed"; readonly problem: UploadProblem };
+  | { readonly kind: "failed"; readonly problem: UploadProblem }
+  | { readonly kind: "downloading"; readonly percent: number }
+  | { readonly kind: "downloadFailed"; readonly reason: string };
 
 /**
  * Of the assets of the open project, those whose picture says where their file is (4.3): in the
@@ -21,10 +24,12 @@ export type AssetMark =
  */
 export function useAssetMarks(): ReadonlyMap<string, AssetMark> {
   const workbench = useWorkbench();
-  const { uploads } = workbench;
+  const { uploads, downloads } = workbench;
+  const { t } = useTranslation();
   const { store } = useSession();
   const state = useProject(store);
   const { items } = useSyncExternalStore(uploads.subscribe, uploads.getSnapshot);
+  const coming = useSyncExternalStore(downloads.subscribe, downloads.getSnapshot).items;
   const here = workbench.here();
   return useMemo(() => {
     const marks = new Map<string, AssetMark>();
@@ -38,8 +43,18 @@ export function useAssetMarks(): ReadonlyMap<string, AssetMark> {
       else if (item.phase !== "done")
         marks.set(item.asset, { kind: "uploading", percent: percentOf(item) });
     }
+    // On its way here, which this computer lacks: what people see first.
+    for (const item of coming) {
+      if (item.hash !== state.assets?.[item.asset]?.hash || item.phase === "done") continue;
+      marks.set(
+        item.asset,
+        item.phase === "failed"
+          ? { kind: "downloadFailed", reason: downloadProblemText(t, item) }
+          : { kind: "downloading", percent: percentOf(item) },
+      );
+    }
     return marks;
-  }, [state, items, here]);
+  }, [state, items, coming, here, t]);
 }
 
 /** A small sign in the corner of the picture of an asset, with its words on hover. */
@@ -51,12 +66,16 @@ export function UploadMark({ mark }: { mark: AssetMark | undefined }) {
       ? t("storage.uploads.badge.lfs")
       : mark.kind === "uploading"
         ? t("storage.uploads.badge.uploading", { percent: mark.percent })
-        : t("storage.uploads.badge.failed", {
-            reason: t(`storage.uploads.problem.${mark.problem}`),
-          });
+        : mark.kind === "downloading"
+          ? t("storage.downloads.badge.downloading", { percent: mark.percent })
+          : mark.kind === "downloadFailed"
+            ? t("storage.downloads.badge.failed", { reason: mark.reason })
+            : t("storage.uploads.badge.failed", {
+                reason: t(`storage.uploads.problem.${mark.problem}`),
+              });
   return (
     <span
-      className={`${styles.mark} ${styles[mark.kind]}`}
+      className={`${styles.mark} ${styles[mark.kind === "downloading" ? "uploading" : mark.kind === "downloadFailed" ? "failed" : mark.kind]}`}
       title={title}
       role="img"
       aria-label={title}
@@ -64,10 +83,16 @@ export function UploadMark({ mark }: { mark: AssetMark | undefined }) {
     >
       {mark.kind === "lfs" ? (
         <Cloud size={10} aria-hidden />
-      ) : mark.kind === "failed" ? (
+      ) : mark.kind === "failed" || mark.kind === "downloadFailed" ? (
         <CircleAlert size={11} aria-hidden />
       ) : (
-        <svg viewBox="0 0 16 16" width={12} height={12} aria-hidden>
+        <svg
+          viewBox="0 0 16 16"
+          width={12}
+          height={12}
+          aria-hidden
+          {...(mark.kind === "downloading" && { "data-down": "" })}
+        >
           <circle cx="8" cy="8" r="6" className={styles.track} />
           <circle
             cx="8"
@@ -77,6 +102,9 @@ export function UploadMark({ mark }: { mark: AssetMark | undefined }) {
             strokeDasharray={`${(mark.percent / 100) * 37.7} 37.7`}
             transform="rotate(-90 8 8)"
           />
+          {mark.kind === "downloading" && (
+            <path d="M8 5v5M6 8l2 2 2-2" className={styles.arrow} fill="none" />
+          )}
         </svg>
       )}
     </span>

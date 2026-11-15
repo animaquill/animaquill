@@ -1176,3 +1176,4 @@ export const memoryFolders = (disk: MemoryDisk, timing?: Partial<WatchTiming>): 
 
 export { MemoryWriters, type WriterPage } from "./folder-writer.ts";
 export { MemoryUploads } from "./uploads.ts";
+export { MemoryDownloads } from "./downloads.ts";

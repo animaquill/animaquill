@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import { formatSize } from "../transfer/transfer.ts";
+import { DownloadsBlock } from "./DownloadsBlock.tsx";
 import { placeRows, placeSummary } from "./place-choice.ts";
 import { etaText, isGoing, needsPeople, percentOf, phaseText } from "./upload-text.ts";
 import type { UploadItem, UploadsSnapshot } from "./uploads.ts";
@@ -41,6 +42,11 @@ export function UploadsSection({ focused }: { focused: boolean }) {
   const { store } = useSession();
   const state = useProject(store);
   const snapshot = useSyncExternalStore(uploads.subscribe, uploads.getSnapshot);
+  // While files come here, "nothing goes up" only says what nobody asked.
+  const downloadsGoing = useSyncExternalStore(
+    workbench.downloads.subscribe,
+    workbench.downloads.getSnapshot,
+  ).items.some(({ phase }) => phase !== "done");
   const missing = useSyncExternalStore(missingFiles.subscribe, missingFiles.getSnapshot);
   const section = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -162,22 +168,25 @@ export function UploadsSection({ focused }: { focused: boolean }) {
           )
         )}
       </div>
-      <p className={styles.headline} role="status">
-        {totals.going.length > 0
-          ? eta === undefined
-            ? t("storage.uploads.panel.uploading", {
-                count: totals.going.length,
-                total: formatSize(totals.size),
-                percent: totals.percent,
-              })
-            : t("storage.uploads.panel.uploadingEta", {
-                count: totals.going.length,
-                total: formatSize(totals.size),
-                percent: totals.percent,
-                eta,
-              })
-          : t("storage.uploads.panel.nothing")}
-      </p>
+      <DownloadsBlock />
+      {(totals.going.length > 0 || !downloadsGoing) && (
+        <p className={styles.headline} role="status">
+          {totals.going.length > 0
+            ? eta === undefined
+              ? t("storage.uploads.panel.uploading", {
+                  count: totals.going.length,
+                  total: formatSize(totals.size),
+                  percent: totals.percent,
+                })
+              : t("storage.uploads.panel.uploadingEta", {
+                  count: totals.going.length,
+                  total: formatSize(totals.size),
+                  percent: totals.percent,
+                  eta,
+                })
+            : t("storage.uploads.panel.nothing")}
+        </p>
+      )}
       {totals.going.length > 0 && (
         <div className={styles.bar} aria-hidden>
           <span style={{ width: `${totals.percent}%` }} />

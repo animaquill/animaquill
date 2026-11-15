@@ -228,3 +228,88 @@ describe("the large file storage through the platform", () => {
       expect(() => uploadOf(wrong), JSON.stringify(wrong)).toThrow(LfsRefused);
   });
 });
+
+describe("downloads out of the large file storage through the platform", () => {
+  test("looks objects up, in their order, and reads what it does not know as unavailable", async () => {
+    const { access, sent } = platform(() =>
+      Response.json({
+        objects: [
+          { oid: OID, state: "ready" },
+          { oid: OID, state: "uploading", received: 5, size: 10 },
+          { oid: OID, state: "missing" },
+          { oid: OID, state: "somethingNew" },
+        ],
+      }),
+    );
+    const objects = Array.from({ length: 4 }, () => ({ oid: OID, size: 10 }));
+    expect(await access.lookup!("p/1", objects)).toEqual([
+      { state: "ready" },
+      { state: "uploading", received: 5, size: 10 },
+      { state: "missing" },
+      { state: "unavailable" },
+    ]);
+    expect(sent[0]).toMatchObject({
+      url: "https://platform.example/api/projects/p%2F1/lfs/lookup",
+      method: "POST",
+      headers: { "x-animaquill": "1" },
+      body: { objects },
+    });
+    // An answer for fewer objects than asked about is none.
+    const short = platform(() => Response.json({ objects: [] }));
+    await expect(short.access.lookup!("p", objects)).rejects.toMatchObject({ code: "malformed" });
+  });
+
+  test("gets a piece with its range and the headers of this site's pages, and only what it asked for", async () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const { access, sent } = platform(
+      () =>
+        new Response(bytes, {
+          status: 206,
+          headers: { "content-range": "bytes 6-9/10", "content-length": "4" },
+        }),
+    );
+    const heard: number[] = [];
+    const piece = await access.piece!("p", { oid: OID, size: 10 }, 6, 9, {
+      onBytes: (count) => heard.push(count),
+    });
+    expect(piece.start).toBe(6);
+    expect(new Uint8Array(await piece.bytes.arrayBuffer())).toEqual(bytes);
+    expect(heard.at(-1)).toBe(4);
+    expect(sent[0]).toMatchObject({
+      url: `https://platform.example/api/projects/p/lfs/objects/${OID}?size=10`,
+      method: "GET",
+      headers: { "x-animaquill": "1", range: "bytes=6-9" },
+    });
+    // Another part, or of another size, is not the piece.
+    for (const range of ["bytes 0-3/10", "bytes 6-9/11"]) {
+      const wrong = platform(
+        () => new Response(bytes, { status: 206, headers: { "content-range": range } }),
+      );
+      await expect(wrong.access.piece!("p", { oid: OID, size: 10 }, 6, 9)).rejects.toMatchObject({
+        code: "malformed",
+      });
+    }
+  });
+
+  test("says why a piece did not come", async () => {
+    const cases: [Response, string][] = [
+      [Response.json({ error: "missing" }, { status: 410 }), "missing"],
+      [Response.json({ error: "changed" }, { status: 409 }), "changed"],
+      [Response.json({ error: "githubQuota" }, { status: 409 }), "githubQuota"],
+      [Response.json({ error: "busy" }, { status: 429, headers: { "retry-after": "7" } }), "busy"],
+      [new Response("bad gateway", { status: 502 }), "unavailable"],
+      [new Response("", { status: 200 }), "malformed"],
+    ];
+    for (const [answer, code] of cases) {
+      const { access } = platform(() => answer);
+      await expect(access.piece!("p", { oid: OID, size: 10 }, 0, 9)).rejects.toMatchObject({
+        code,
+      });
+    }
+    const { access } = platform(() => Response.json({ error: "signedOut" }, { status: 401 }));
+    await expect(access.piece!("p", { oid: OID, size: 10 }, 0, 9)).rejects.toBeInstanceOf(
+      CloudSignedOut,
+    );
+    expect(LfsRefused).toBeDefined();
+  });
+});

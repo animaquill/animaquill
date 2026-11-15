@@ -1,10 +1,11 @@
 import { placedAsset } from "@animaquill/core";
-import { CircleAlert, Cloud, ExternalLink, Upload } from "lucide-react";
+import { CircleAlert, Cloud, Download, ExternalLink, Upload } from "lucide-react";
 import { useSyncExternalStore, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import { httpsLink } from "../app/links.ts";
 import type { CloudProjectsSnapshot } from "../cloud/projects.ts";
+import { downloadFix, downloadPhaseText, downloadProblemText } from "./download-text.ts";
 import { downloadFrom } from "./places.ts";
 import { percentOf, phaseText, progressText } from "./upload-text.ts";
 import type { UploadItem } from "./uploads.ts";
@@ -27,11 +28,12 @@ function Buttons({ children }: { children: ReactNode }) {
  */
 export function AssetPlace({ asset }: { asset: string }) {
   const workbench = useWorkbench();
-  const { uploads, cloud, missingFiles } = workbench;
+  const { uploads, downloads, cloud, missingFiles } = workbench;
   const { t } = useTranslation();
   const { store } = useSession();
   const state = useProject(store);
   const snapshot = useSyncExternalStore(uploads.subscribe, uploads.getSnapshot);
+  const coming = useSyncExternalStore(downloads.subscribe, downloads.getSnapshot);
   const missing = useSyncExternalStore(missingFiles.subscribe, missingFiles.getSnapshot);
   const linked = useSyncExternalStore(
     cloud?.subscribe ?? noSubscription,
@@ -50,13 +52,24 @@ export function AssetPlace({ asset }: { asset: string }) {
   const going = item && item.hash === placed.hash && item.phase !== "done" ? item : undefined;
   const file = missing.get(asset);
   const isCloud = linked.kind === "linked";
+  const download =
+    file?.elsewhere === "lfs" ? coming.items.find((each) => each.asset === asset) : undefined;
   const elsewhereWindow = snapshot.sender === "elsewhere";
 
   const frame = (tone: "plain" | "going" | "failed" | "there", body: ReactNode) => (
     <section
       className={`${styles.place} ${styles[tone]}`}
       aria-label={t("storage.uploads.row.title")}
-      data-asset-place={going?.phase ?? (placed.storage === "lfs" ? "lfs" : file ? "away" : "here")}
+      data-asset-place={
+        going?.phase ??
+        (download
+          ? `download-${download.phase}`
+          : placed.storage === "lfs" && !file
+            ? "lfs"
+            : file
+              ? "away"
+              : "here")
+      }
     >
       <h4 className={styles.title}>{t("storage.uploads.row.title")}</h4>
       {body}
@@ -182,6 +195,115 @@ export function AssetPlace({ asset }: { asset: string }) {
         {control(going)}
       </>,
     );
+  }
+
+  // Not on this computer, and on its way here out of the large file storage, or to be asked for.
+  if (file?.elsewhere === "lfs" && downloads.available && isCloud) {
+    if (download && download.phase === "failed") {
+      const fix = downloadFix(download, workbench.projectFolders?.assets() === undefined);
+      return frame(
+        "failed",
+        <>
+          <p className={styles.problem} role="alert">
+            <CircleAlert size={13} aria-hidden />
+            {t("storage.downloads.row.failed", { reason: downloadProblemText(t, download) })}
+          </p>
+          {download.problem === "missing" && (
+            <p className={styles.note}>{t("storage.downloads.problem.missingHelp")}</p>
+          )}
+          <Buttons>
+            <button type="button" onClick={() => downloads.retry(asset)}>
+              {t("storage.downloads.action.retry")}
+            </button>
+            {fix && (
+              <button
+                type="button"
+                className={styles.link}
+                onClick={() => void workbench.fixDownload(download.problem ?? "refused")}
+              >
+                {t(`storage.downloads.fix.${fix}`)}
+                {fix === "quota" && " ↗"}
+              </button>
+            )}
+          </Buttons>
+        </>,
+      );
+    }
+    if (download && download.phase !== "done") {
+      const line =
+        download.phase === "queued"
+          ? download.ahead
+            ? t("storage.downloads.row.queued", { count: download.ahead })
+            : t("storage.downloads.row.queuedNext")
+          : download.phase === "checking"
+            ? t("storage.downloads.row.checking")
+            : download.phase === "writing"
+              ? t("storage.downloads.row.writing")
+              : download.phase === "paused"
+                ? t("storage.downloads.row.paused", { percent: percentOf(download) })
+                : download.phase === "blocked"
+                  ? t(`storage.downloads.blocked.${coming.blocked ?? "notCloud"}`)
+                  : download.phase === "downloading"
+                    ? progressText(t, download)
+                    : downloadPhaseText(t, download);
+      const bar =
+        download.phase === "checking" || download.phase === "writing" || download.phase === "access"
+          ? 100
+          : percentOf(download);
+      return frame(
+        "going",
+        <>
+          <p className={styles.headline}>
+            <Download size={13} aria-hidden />
+            {t("storage.downloads.row.downloading")}
+          </p>
+          <div
+            className={styles.bar}
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={bar}
+            aria-label={t("storage.downloads.row.downloading")}
+          >
+            <span style={{ width: `${bar}%` }} />
+          </div>
+          <p className={styles.note} role="status">
+            {line}
+          </p>
+          {coming.sender === "elsewhere" && (
+            <p className={styles.note}>{t("storage.downloads.row.otherWindow")}</p>
+          )}
+          {download.phase === "access" && (
+            <Buttons>
+              <button
+                type="button"
+                className={styles.primary}
+                onClick={() => void workbench.fixDownload("access")}
+              >
+                {t("storage.downloads.fix.allow")}
+              </button>
+            </Buttons>
+          )}
+        </>,
+      );
+    }
+    if (!download)
+      return frame(
+        "plain",
+        <>
+          <p className={styles.headline}>{downloadFrom(t, "lfs", placed.url)}</p>
+          <p className={styles.note}>{t("storage.downloads.row.notUsed")}</p>
+          <Buttons>
+            <button
+              type="button"
+              className={styles.primary}
+              onClick={() => downloads.download(asset)}
+            >
+              {t("storage.downloads.row.download")}
+            </button>
+          </Buttons>
+        </>,
+      );
   }
 
   if (placed.storage === "lfs") {

@@ -41,6 +41,7 @@ import { useProject, useSession, useWorkbench } from "./context.ts";
 import { Bubble } from "./Bubble.tsx";
 import { CloudPanelBody } from "./CloudPanel.tsx";
 import { UploadsSection, uploadTotals } from "../storage/UploadsSection.tsx";
+import { downloadTotals } from "../storage/downloads.ts";
 import panelStyles from "./CloudPanel.module.css";
 import { OperationStatus } from "./OperationStatus.tsx";
 import { PlaceIcon, type Place } from "./PlaceIcon.tsx";
@@ -588,6 +589,11 @@ function SaveStatuses({
     workbench.uploads.getSnapshot,
   );
   const uploading = uploadTotals(uploadsNow);
+  const downloadsNow = useSyncExternalStore(
+    workbench.downloads.subscribe,
+    workbench.downloads.getSnapshot,
+  );
+  const downloading = downloadTotals(downloadsNow);
   // Failing for long is looked at again every minute, and whenever the platform says something.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -636,15 +642,25 @@ function SaveStatuses({
     });
   const github = panel?.github;
   // Only what people have to do something about stands out; files on their way do not.
-  const isError = github?.kind === "error" || uploading.needsPeople;
+  const isError = github?.kind === "error" || uploading.needsPeople || downloading.needsPeople;
+  const isDownloading = downloading.count > 0 && !downloadsNow.paused;
   const uploadWord =
     outer.kind !== "linked"
       ? undefined
       : uploading.needsPeople
         ? t("storage.uploads.panel.barFailed")
-        : uploading.going.length > 0
-          ? t("storage.uploads.panel.bar", { percent: uploading.percent })
-          : undefined;
+        : downloading.needsPeople
+          ? t("storage.downloads.panel.barFailed")
+          : uploading.going.length > 0 && isDownloading
+            ? t("storage.downloads.panel.both", {
+                up: uploading.percent,
+                down: downloading.percent,
+              })
+            : uploading.going.length > 0
+              ? t("storage.uploads.panel.bar", { percent: uploading.percent })
+              : isDownloading
+                ? t("storage.downloads.panel.bar", { percent: downloading.percent })
+                : undefined;
   const githubWord = github && (uploadWord ?? githubText(github, t));
   return (
     <span ref={group} className={styles.saves}>
@@ -717,7 +733,20 @@ function SaveStatuses({
                 data-github={github.kind}
                 data-github-cause={github.cause}
                 data-uploads={
-                  uploadWord === undefined ? undefined : uploading.needsPeople ? "failed" : "going"
+                  uploading.needsPeople
+                    ? "failed"
+                    : uploading.going.length > 0 && uploadWord !== undefined
+                      ? "going"
+                      : undefined
+                }
+                data-downloads={
+                  outer.kind !== "linked"
+                    ? undefined
+                    : downloading.needsPeople
+                      ? "failed"
+                      : isDownloading
+                        ? "going"
+                        : undefined
                 }
                 onClick={() => openAt(uploadWord === undefined ? "github" : "assets")}
               >

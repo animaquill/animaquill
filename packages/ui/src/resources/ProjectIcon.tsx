@@ -203,11 +203,12 @@ function AssetPicture({ id, asset, playing }: { id: string; asset: Asset; playin
 export function ProjectIcon({ resource, playing }: ResourceIconProps<ProjectItem>) {
   const { t } = useTranslation();
   const workbench = useWorkbench();
-  const { media, proxies, missingFiles } = workbench;
+  const { media, proxies, missingFiles, downloads } = workbench;
   const item = resource.data;
   // A thumbnail gave up on a file that was not there, and starts over when one came back.
   const restored = useSyncExternalStore(media.subscribe, media.getRestored);
   const missing = useSyncExternalStore(missingFiles.subscribe, missingFiles.getSnapshot);
+  const coming = useSyncExternalStore(downloads.subscribe, downloads.getSnapshot);
   const proxySnapshot = useSyncExternalStore(
     proxies?.subscribe ?? noSubscription,
     proxies?.getSnapshot ?? noProxies,
@@ -218,6 +219,10 @@ export function ProjectIcon({ resource, playing }: ResourceIconProps<ProjectItem
   const proxy = asset.hash === undefined ? undefined : proxySnapshot.states.get(asset.hash);
   const length = lengthOf(asset);
   const file = missing.get(id);
+  // On its way here: the mark of the picture says how far, see `UploadMark`.
+  const isComing = coming.items.some(
+    (each) => each.asset === id && each.phase !== "failed" && each.phase !== "done",
+  );
   return (
     <>
       <AssetPicture key={restored} id={id} asset={asset} playing={playing} />
@@ -225,6 +230,7 @@ export function ProjectIcon({ resource, playing }: ResourceIconProps<ProjectItem
         <ProxyBadge state={proxy} snapshot={proxySnapshot} />
       )}
       {file &&
+        !isComing &&
         (file.elsewhere ? (
           <span className={styles.elsewhere}>{t("assetPanel.elsewhere")}</span>
         ) : (

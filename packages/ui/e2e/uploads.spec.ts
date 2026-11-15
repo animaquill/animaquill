@@ -122,7 +122,7 @@ test.describe("files of assets into the large file storage", () => {
 
     // Connected: asked once whether the assets go there too.
     await connect(page, "xuanchuanpian");
-    await expect(notice(page, "要把素材也存进 GitHub 仓库吗？")).toBeVisible();
+    await expect(notice(page, "要把素材放进 GitHub 大文件存储吗？")).toBeVisible();
     await shot(page, "connected-prompt");
     await page.getByRole("button", { name: "以后再说" }).click();
 
@@ -320,7 +320,7 @@ test.describe("files of assets into the large file storage", () => {
     await explorer(page);
     await page.getByRole("option", { name: "采访.mp4" }).click();
     await expect(place(page)).toContainText("GitHub 大文件存储 ·", { timeout: 30_000 });
-    await expect(page.getByText("要把素材也存进 GitHub 仓库吗？")).toHaveCount(0);
+    await expect(page.getByText("要把素材放进 GitHub 大文件存储吗？")).toHaveCount(0);
   });
 
   test("the switch for new assets asks first what people have to know, as the dialog does", async ({

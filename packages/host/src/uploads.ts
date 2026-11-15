@@ -235,7 +235,7 @@ export function browserUploads(
 }
 
 /** For tests: what windows of one browser say to each other, in memory, a moment later. */
-class Lines {
+export class MemoryLines {
   readonly #listeners = new Map<string, Set<(message: unknown) => void>>();
 
   line(key: string): CloudLine {
@@ -273,7 +273,7 @@ export class MemoryUploads {
   readonly #records = new Map<string, UploadRecord>();
   readonly #listeners = new Set<(key: string) => void>();
   readonly writers = new MemoryWriters();
-  readonly #lines = new Lines();
+  readonly #lines = new MemoryLines();
   /** For tests that are about it: putting fails. */
   failPut = false;
 

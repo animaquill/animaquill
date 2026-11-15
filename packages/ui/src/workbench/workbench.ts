@@ -29,13 +29,21 @@ import {
   type OperationCall,
   type UndoResult,
   sceneSourceOf,
+  elsewhereOf,
   type ObjectRef,
   type ProjectState,
 } from "@animaquill/core";
 import type { SceneStatus } from "@animaquill/render";
 import type { SceneProblem } from "@animaquill/scene";
-import { compare, createProject, formatTime, parseTime, toSeconds } from "@animaquill/schema";
-import { memoryKeys, newSyncId, type ProjectSummary } from "@animaquill/host";
+import {
+  compare,
+  createProject,
+  formatTime,
+  lfsOidOf,
+  parseTime,
+  toSeconds,
+} from "@animaquill/schema";
+import { memoryKeys, newSyncId, type DownloadStore, type ProjectSummary } from "@animaquill/host";
 import type { ConnectTiming } from "../cloud/connect.ts";
 import {
   CloudCreate,
@@ -79,7 +87,7 @@ import { VideoExport } from "../export/video.ts";
 import { MediaLibrary } from "../media/library.ts";
 import type { Hasher } from "../media/hasher.ts";
 import { MadeSounds, SoundMaker } from "../media/sounds.ts";
-import { isSameHash } from "@animaquill/media";
+import { hashFile, isSameHash } from "@animaquill/media";
 import type { ProxyMaker } from "../proxy/maker.ts";
 import { ProxyFiles, type ProxyProject } from "../proxy/proxies.ts";
 import { describeProblem, sceneClipName } from "../preview/problems.ts";
@@ -128,6 +136,12 @@ import {
   type UploadProject,
 } from "../storage/uploads.ts";
 import { GITHUB_BILLING } from "../storage/links.ts";
+import {
+  AssetDownloads,
+  downloadWhole,
+  type DownloadProblem,
+  type DownloadTarget,
+} from "../storage/downloads.ts";
 
 /**
  * Pauses of archiving for which the repository cannot take files either: it is not there to the
@@ -236,6 +250,13 @@ export class Workbench {
    * repository, see `AssetUploads`.
    */
   readonly uploads: AssetUploads;
+  /**
+   * The files of assets of the open project that this computer lacks, out of the large file
+   * storage of its repository, see `AssetDownloads`.
+   */
+  readonly downloads: AssetDownloads;
+  /** The assets whose files are on their way here, as the problems go by them. */
+  #downloading: ReadonlySet<string> = new Set();
   /** What people have in the large file storage of GitHub, and how they go about it. */
   readonly lfsAccount: LfsAccountState;
   /** What was said about the files of the open project, which goes with it as it closes. */
@@ -325,6 +346,10 @@ export class Workbench {
   readonly persistence: StoragePersistence | undefined;
   /** The platform, where the editor is hosted on one and has accounts. */
   readonly #platform: CloudAccess | undefined;
+  /** What finds out the hashes of files, in a worker where there is one. */
+  readonly #hasher: Hasher | undefined;
+  /** Where this browser keeps the pieces of files that come, see `DownloadStore`. */
+  readonly #downloadStore: DownloadStore | undefined;
   /** For tests only: new projects can stay in this browser, see `Host.projectsHereForTests`. */
   readonly #projectsHere: boolean;
   readonly #memory: WindowMemory;
@@ -535,6 +560,8 @@ export class Workbench {
     // A platform is for whoever is signed in to it: without an account, there is none.
     const cloud = host.account ? host.cloud : undefined;
     this.#platform = cloud;
+    this.#hasher = options.hasher;
+    this.#downloadStore = options.host.downloads;
     this.persistence = host.persistence;
     this.#projectsHere = host.projectsHereForTests === true;
     this.#memory = host.windowMemory;
@@ -789,6 +816,7 @@ export class Workbench {
     this.projectFolders =
       host.localFolders &&
       new ProjectFolders({
+        downloading: () => this.#downloading,
         folders: host.localFolders,
         projects: host.projects,
         session: this.session,
@@ -903,6 +931,50 @@ export class Workbench {
       files: () => this.#uploadFiles(),
       here: () => this.here(),
       onAllDone: (count) => this.notifications.push(t("storage.uploads.notice.allDone", { count })),
+    });
+    this.downloads = new AssetDownloads({
+      store: host.downloads,
+      lfs: () => cloud?.lfs,
+      project: () => this.#uploadProject(),
+      missing: this.missingFiles.getSnapshot,
+      subscribeMissing: this.missingFiles.subscribe,
+      target: () => this.#downloadTarget(),
+      hash: (file, signal) =>
+        options.hasher ? options.hasher.file(file, { signal }) : hashFile(file, { signal }),
+      playhead: () => {
+        const model = this.timeline.getSnapshot().model;
+        return (
+          model && {
+            timeline: model.id,
+            seconds: frameSeconds(this.timeline.frame, model.rate),
+            playing: this.timeline.getSnapshot().playing,
+          }
+        );
+      },
+      subscribePlayhead: (listener) => {
+        const stops = [this.timeline.subscribeView(listener), this.timeline.subscribe(listener)];
+        return () => {
+          for (const stop of stops) stop();
+        };
+      },
+      estimate: async () => {
+        const found = await globalThis.navigator?.storage?.estimate?.();
+        return found?.quota !== undefined && found.usage !== undefined
+          ? { quota: found.quota, usage: found.usage }
+          : undefined;
+      },
+    });
+    // That a file is on its way here is no problem to list in the problems.
+    this.downloads.subscribe(() => {
+      const coming = new Set(
+        this.downloads
+          .getSnapshot()
+          .items.filter(({ phase }) => !["failed", "done", "blocked"].includes(phase))
+          .map(({ asset }) => asset),
+      );
+      if ([...coming].join() === [...this.#downloading].join()) return;
+      this.#downloading = coming;
+      this.projectFolders?.downloadsChanged();
     });
     this.lfsAccount = new LfsAccountState(cloud?.lfsAccount, host.account);
     this.#followUploads(host);
@@ -1864,13 +1936,65 @@ export class Workbench {
     if (id === undefined) return;
     const isOpen = open.kind === "linked" && open.link.project === id;
     const shown = name ?? (isOpen ? this.session.store?.getState().manifest.name : undefined) ?? "";
-    await projectFolders.saveAsLocal(shown, (signal) =>
-      cloud.copySource(
+    const came: string[] = [];
+    await projectFolders.saveAsLocal(shown, async (signal) => {
+      const got = await cloud.copySource(
         id,
         signal,
         (key) => projectFolders.mediaFor(key) ?? this.projects.media(key),
-      ),
-    );
+      );
+      // The copy does not stay with the platform: whatever can come out of the large file storage
+      // comes first, used or not (4.3 of the design of the start page).
+      return (
+        got && { ...got, media: this.#downloadingMedia(id, got.store, got.media, signal, came) }
+      );
+    });
+    // What came for the copy alone goes: the copy has it. The open project may want it still.
+    if (!isOpen) for (const oid of came) await this.#downloadStore?.dropPieces(oid).catch(() => {});
+  }
+
+  /**
+   * The files of a project as a copy of it takes them: those this browser has, and where it does
+   * not, those that can come out of the large file storage of its repository, checked.
+   */
+  #downloadingMedia(
+    project: string,
+    store: ProjectStore,
+    media: Pick<MediaStore, "get">,
+    signal: AbortSignal,
+    came: string[],
+  ): Pick<MediaStore, "get"> {
+    const lfs = this.#platform?.lfs;
+    const kept = this.#downloadStore;
+    if (!lfs?.piece || !kept) return media;
+    return {
+      get: async (hash) => {
+        const here = await media.get(hash);
+        if (here) return here;
+        const state = store.getState();
+        const asset = Object.entries(state.assets ?? {}).find(
+          ([id, each]) =>
+            each.hash !== undefined &&
+            isSameHash(each.hash, hash) &&
+            elsewhereOf(state, id) === "lfs",
+        )?.[1];
+        if (asset?.hash === undefined || asset.size === undefined) return undefined;
+        const hashOf = (file: Blob, stop: AbortSignal) =>
+          this.#hasher
+            ? this.#hasher.file(file, { signal: stop })
+            : hashFile(file, { signal: stop });
+        const oid = lfsOidOf(asset.hash);
+        if (oid !== undefined) came.push(oid);
+        return downloadWhole(
+          lfs,
+          kept,
+          project,
+          { hash: asset.hash, size: asset.size },
+          hashOf,
+          signal,
+        ).catch(() => undefined);
+      },
+    };
   }
 
   /**
@@ -2433,6 +2557,39 @@ export class Workbench {
     };
   }
 
+  /**
+   * Where the files that come for the open project go: into its folder where it has one, and into
+   * this browser where it is only here.
+   */
+  #downloadTarget(): DownloadTarget | undefined {
+    const store = this.session.store;
+    if (!store) return undefined;
+    const folder = this.projectFolders?.assets();
+    const open = this.projectFolders?.getSnapshot().open;
+    if (folder && open)
+      return {
+        inBrowser: false,
+        write: async ({ id, path, hash }, file) => {
+          const status = await open.record.folder.status().catch(() => "ask" as const);
+          if (status !== "ready") return "access";
+          const written = await folder.putDownloaded(path, file, { hash, size: file.size });
+          if (written === "written") {
+            this.media.filesChanged([path]);
+            this.projectFolders?.checkAssetsSoon();
+          }
+          void id;
+          return written;
+        },
+      };
+    return {
+      inBrowser: true,
+      write: async ({ hash }, file) => {
+        await this.media.fileArrived(hash, file);
+        return "written";
+      },
+    };
+  }
+
   /** The uploads follow the open project, and how it stands with the platform and the account. */
   #followUploads(host: Host): void {
     let repository: RepositoryWatch | undefined;
@@ -2442,7 +2599,10 @@ export class Workbench {
     const follow = () => {
       // Signed in again: what failed for that goes on.
       const now = host.account?.getSnapshot().status === "signedIn";
-      if (now && !signedIn) void this.uploads.retryAll(["signedOut"]);
+      if (now && !signedIn) {
+        void this.uploads.retryAll(["signedOut"]);
+        this.downloads.retryAll(["signedOut"]);
+      }
       signedIn = now;
       // A project of the platform opened: how the account goes about its large files, as now.
       const opened = this.#uploadProject()?.project;
@@ -2456,13 +2616,17 @@ export class Workbench {
         stopRepository = watch?.subscribe(follow);
       }
       this.uploads.follow();
+      this.downloads.follow();
     };
     this.session.subscribe(follow);
     this.cloud?.subscribe(follow);
     host.account?.subscribe(follow);
     this.projectFolders?.subscribe(follow);
     // The folder may be read again, as allowed from wherever: what waited for that goes on.
-    this.projectFolders?.subscribe(() => void this.uploads.retryAll(["access"]));
+    this.projectFolders?.subscribe(() => {
+      void this.uploads.retryAll(["access"]);
+      this.downloads.retryAll(["access"]);
+    });
     follow();
   }
 
@@ -2553,6 +2717,31 @@ export class Workbench {
         return;
       case "signedOut":
         await this.signIn();
+        return;
+      default:
+        return;
+    }
+  }
+
+  /** Does what a file that did not come asks of people, see `DownloadProblem`. */
+  async fixDownload(problem: DownloadProblem | "access"): Promise<void> {
+    switch (problem) {
+      case "githubQuota":
+        window.open(GITHUB_BILLING, "_blank", "noopener,noreferrer");
+        return;
+      case "occupied":
+        this.layout.openPanel("problems");
+        return;
+      case "access":
+        await this.projectFolders?.allowAgain();
+        this.downloads.retryAll(["access"]);
+        return;
+      case "signedOut":
+        await this.signIn();
+        return;
+      case "space":
+        // A project only in this browser can go into a folder, where its files take no room of it.
+        if (!this.projectFolders?.assets()) await this.moveToFolder();
         return;
       default:
         return;
@@ -3412,6 +3601,7 @@ export class Workbench {
     this.projectNav.close();
     // What is on its way stops where it is, and goes on the next time the project is open.
     await this.uploads.close();
+    await this.downloads.close();
     for (const id of this.#uploadNotices.splice(0)) this.notifications.dismiss(id);
     // What the platform does not have yet stays in the log, for whoever syncs next.
     await this.cloud?.close();

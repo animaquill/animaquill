@@ -195,6 +195,45 @@ export interface Host {
    * `UploadStore`. Without it nothing is sent.
    */
   readonly uploads?: UploadStore;
+  /**
+   * The files of assets this browser downloads for projects, piece by piece, see `DownloadStore`.
+   * Without it nothing is downloaded.
+   */
+  readonly downloads?: DownloadStore;
+}
+
+/** A piece of the file of an object that this browser downloaded, see `DownloadStore`. */
+export interface DownloadedPiece {
+  /** Where in the file it begins. */
+  readonly start: number;
+  readonly bytes: Blob;
+}
+
+/**
+ * The files of assets that this browser downloads (docs/design/asset-storage.md of AnimaQuill
+ * Cloud, 4.7.3): the pieces that got here so far, by the oid of the object, kept until the file is
+ * all there, checked and put where it goes, so that a download goes on from where it got after a
+ * reload, or in another window; and which projects people paused it for. Which window downloads
+ * the files of a project goes by a lock of its own (`downloader`).
+ */
+export interface DownloadStore {
+  /** The pieces of an object kept so far, in the order of where they begin. */
+  pieces(oid: string): Promise<readonly DownloadedPiece[]>;
+  /** Keeps a piece. Rejects with QuotaExceededError where the browser has no room for it. */
+  putPiece(oid: string, start: number, bytes: Blob): Promise<void>;
+  /** What is kept of an object goes, once it is where it goes, or turned out to be wrong. */
+  dropPieces(oid: string): Promise<void>;
+  /** The objects pieces are kept of, and when a piece of each came last, in ms since 1970. */
+  objects(): Promise<readonly { readonly oid: string; readonly at: number }[]>;
+  /** Whether people paused the downloads of a project. */
+  paused(key: string): Promise<boolean>;
+  setPaused(key: string, paused: boolean): Promise<void>;
+  /** Which window downloads the files of a project: one at a time. */
+  downloader(key: string): FolderWriter;
+  /** How the windows of this browser tell each other about the downloads of a project. */
+  line(key: string): CloudLine | undefined;
+  /** Hears that what is kept for a project changed (paused or not), in any window. */
+  listen(listener: (key: string) => void): () => void;
 }
 
 /**
@@ -1564,7 +1603,42 @@ export interface LfsAccess {
   state(upload: string): Promise<LfsUpload>;
   /** Gives the upload up: what the platform has of the file goes. */
   cancel(upload: string): Promise<void>;
+  /**
+   * Says of each object whether it can be downloaded from the repository of a project, in their
+   * order, 100 at most at a time (`LFS_LOOKUP_MOST`). Where there is no such thing, nothing can be
+   * downloaded through this platform.
+   */
+  lookup?(
+    project: string,
+    objects: readonly { readonly oid: string; readonly size: number }[],
+    options?: { readonly signal?: AbortSignal },
+  ): Promise<readonly LfsObjectState[]>;
+  /**
+   * A piece of an object of the repository of a project, from `start` to `end` (the last byte it
+   * has): what the platform gives, which can end before `end` when it gives less at a time.
+   * `onBytes` hears how many came so far. Rejects with `LfsRefused`: "missing", "changed", and as
+   * for the rest.
+   */
+  piece?(
+    project: string,
+    object: { readonly oid: string; readonly size: number },
+    start: number,
+    end: number,
+    options?: { readonly signal?: AbortSignal; readonly onBytes?: (bytes: number) => void },
+  ): Promise<DownloadedPiece>;
 }
+
+/** Objects one `LfsAccess.lookup` asks about at most. */
+export const LFS_LOOKUP_MOST = 100;
+
+/**
+ * What the platform says of an object it was asked about, see `LfsAccess.lookup`: there ("ready"),
+ * on its way into the storage from another computer ("uploading"), not there ("missing"), there in
+ * another size ("changed"), or not known now ("unavailable").
+ */
+export type LfsObjectState =
+  | { readonly state: "ready" | "missing" | "changed" | "unavailable" }
+  | { readonly state: "uploading"; readonly received: number; readonly size: number };
 
 /** A repository and what the platform put into its large file storage, see `LfsAccount`. */
 export interface LfsRepositoryUse {
@@ -1642,6 +1716,10 @@ export type LfsRefusal =
   | "malformed"
   | "notFound"
   | "invalid"
+  /** A download: the storage does not have the object. */
+  | "missing"
+  /** A download: the storage has the object in another size than asked for. */
+  | "changed"
   /** No answer, or one that says nothing of the above: the platform is not there now. Later. */
   | "unavailable";
 

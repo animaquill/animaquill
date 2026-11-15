@@ -382,6 +382,10 @@ function ResourceDetails({
     workbench.missingFiles.subscribe,
     workbench.missingFiles.getSnapshot,
   );
+  const coming = useSyncExternalStore(
+    workbench.downloads.subscribe,
+    workbench.downloads.getSnapshot,
+  );
   const [pointed, setPointed] = useState(false);
   // Looking through every clip takes a while in a large project: once for each state of it.
   const uses = useMemo((): readonly ResourceUse[] => {
@@ -413,11 +417,15 @@ function ResourceDetails({
         t("explorer.from.asset", { path: asset.path, interpolation: { escapeValue: false } }),
       ]);
       const file = missing.get(item.id);
-      if (file?.elsewhere) {
+      const isComing = coming.items.some(
+        (each) => each.asset === item.id && each.phase !== "failed" && each.phase !== "done",
+      );
+      // On its way here, which "存放位置" says: nothing to put right.
+      if (file?.elsewhere && !isComing) {
         const url = state && placedAsset(state, item.id, workbench.here())?.url;
         const download = downloadFrom(t, file.elsewhere, url);
         problems.push(t("explorer.elsewhere", { path: file.path, download }));
-      } else if (file) {
+      } else if (file && !file.elsewhere) {
         problems.push(
           t("explorer.missing.file", { path: file.path, interpolation: { escapeValue: false } }),
         );

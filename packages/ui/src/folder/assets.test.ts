@@ -474,3 +474,32 @@ describe("watching the files of the assets", () => {
     stop();
   });
 });
+
+describe("a file that was downloaded", () => {
+  it("goes where nothing is, or where the pointer of Git LFS to it is, and nowhere else", async () => {
+    const { disk, assets } = await setup();
+    const content = "下载来的视频";
+    const size = bytes(content).length;
+    const hash = await hashFile(new Blob([bytes(content)]));
+    const file = new Blob([bytes(content)]);
+    // Nothing there.
+    expect(await assets.putDownloaded("assets/a.webm", file, { hash, size })).toBe("written");
+    expect(disk.text(`${ROOT}/assets/a.webm`)).toBe(content);
+    expect(await assets.fileAt("assets/a.webm")).toMatchObject({ kind: "there", hash });
+    // A folder cloned without Git LFS has the pointer to it.
+    disk.write(`${ROOT}/assets/b.webm`, lfsPointer(hash, size)!);
+    expect(await assets.putDownloaded("assets/b.webm", file, { hash, size })).toBe("written");
+    expect(disk.text(`${ROOT}/assets/b.webm`)).toBe(content);
+    // Another file stays as it is: people put it there.
+    disk.write(`${ROOT}/assets/c.webm`, "别的文件");
+    expect(await assets.putDownloaded("assets/c.webm", file, { hash, size })).toBe("occupied");
+    expect(disk.text(`${ROOT}/assets/c.webm`)).toBe("别的文件");
+    // As does the pointer to another file.
+    const other = await hashFile(new Blob([bytes("另一个")]));
+    disk.write(`${ROOT}/assets/d.webm`, lfsPointer(other, size)!);
+    expect(await assets.putDownloaded("assets/d.webm", file, { hash, size })).toBe("occupied");
+    expect(disk.text(`${ROOT}/assets/d.webm`)).toContain("version https://git-lfs");
+    // The very file that is there already is nothing to do.
+    expect(await assets.putDownloaded("assets/a.webm", file, { hash, size })).toBe("written");
+  });
+});

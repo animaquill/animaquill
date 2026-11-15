@@ -20,7 +20,10 @@ export function etaText(
 }
 
 /** "45% · 132 MB / 290 MB · 约 1 分钟". */
-export function progressText(t: TFunction, item: UploadItem): string {
+export function progressText(
+  t: TFunction,
+  item: Pick<UploadItem, "received" | "size" | "speed">,
+): string {
   const values = {
     percent: percentOf(item),
     done: formatSize(item.received),

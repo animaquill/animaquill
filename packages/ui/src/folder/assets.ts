@@ -405,6 +405,54 @@ export class FolderAssets {
     }
   }
 
+  /**
+   * Puts a file that was downloaded, and checked to be of this hash, where its asset says it is: only
+   * where nothing is there, or the pointer of Git LFS to this very file, as a folder cloned without
+   * Git LFS has. Any other file stays as it is ("occupied"). "access" where the folder may not be
+   * written now, until people allow it again.
+   */
+  async putDownloaded(
+    path: string,
+    file: Blob,
+    asset: { readonly hash: string; readonly size: number },
+  ): Promise<"written" | "access" | "occupied"> {
+    const folder = this.#folder;
+    let expected: File | "absent";
+    try {
+      expected = await folder.file(path);
+    } catch (error) {
+      if (error instanceof FolderError && error.reason === "denied") return "access";
+      if (!(error instanceof FolderError && error.reason === "missing")) throw error;
+      expected = "absent";
+    }
+    if (expected !== "absent" && expected.size > 0 && !(await isPointerTo(expected, asset))) {
+      // That very file got there meanwhile: nothing to do.
+      const there = await this.fileAt(path);
+      return there.kind === "there" && isSameHash(there.hash, asset.hash) ? "written" : "occupied";
+    }
+    const hashedAt = this.#now();
+    let written: File;
+    try {
+      written = await folder.write(path, file, { expected });
+    } catch (error) {
+      if (error instanceof FolderError && error.reason === "denied") return "access";
+      if (error instanceof FolderError && (error.reason === "changed" || error.reason === "exists"))
+        return "occupied";
+      throw error;
+    }
+    const { size, lastModified } = written;
+    this.#note({
+      path,
+      size,
+      lastModified,
+      hash: asset.hash,
+      samples: await samplesOf(written),
+      hashedAt,
+    });
+    this.#options.onChanged?.([path]);
+    return "written";
+  }
+
   /** Takes back a copy that came in for nothing, while it is still the one that was written. */
   async remove(path: string, written: File): Promise<void> {
     await this.#folder.remove(path, { expected: written }).catch(() => {});

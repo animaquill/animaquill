@@ -583,6 +583,27 @@ export class MediaLibrary {
     }
   }
 
+  /**
+   * The file of a hash came for the open project in this browser, as a download, checked to be that
+   * file: it is kept, and whatever looked for it looks again. Resolves to whether it was kept for the
+   * project that is still open.
+   */
+  async fileArrived(hash: string, file: Blob): Promise<boolean> {
+    const store = this.#store;
+    if (!store) return false;
+    const media = this.#media(store);
+    if (!(await media.get(hash))) await media.put(hash, file);
+    if (this.#session.store !== store) return false;
+    for (const [id, asset] of Object.entries(store.getState().assets ?? {}))
+      if (asset.hash !== undefined && isSameHash(asset.hash, hash)) this.#dropUrl(id);
+    this.#peaks.delete(hash);
+    this.#strips.delete(hash);
+    this.#restored += 1;
+    for (const listener of this.#restoredListeners) listener(hash);
+    this.#emitter.emit();
+    return true;
+  }
+
   #media(store: ProjectStore) {
     return this.#projects.media(projectKeyOf(store));
   }

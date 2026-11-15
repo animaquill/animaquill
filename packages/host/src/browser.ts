@@ -1,3 +1,4 @@
+import { browserDownloads } from "./downloads.ts";
 import { browserUploads } from "./uploads.ts";
 import { browserAccountKeys, browserChatImages, browserChats, browserKeys } from "./ai.ts";
 import { createWorkCache } from "./caches.ts";
@@ -1000,6 +1001,7 @@ export { browserRepository, statusOf } from "./repository.ts";
 export type { BrowserRepositoryOptions } from "./repository.ts";
 export { browserLfs, browserLfsAccount, lfsAccountOf, uploadOf } from "./lfs.ts";
 export { browserUploads, uploadRecordOf } from "./uploads.ts";
+export { browserDownloads } from "./downloads.ts";
 export type { BrowserLfsOptions } from "./lfs.ts";
 export { browserCloudProjects, projectSummaryOf } from "./cloud-projects.ts";
 export type { BrowserCloudProjectsOptions } from "./cloud-projects.ts";
@@ -1170,6 +1172,7 @@ export function createBrowserHost(
   const chats = browserChats(database);
   const covers = browserCoverStore(database);
   const uploads = browserUploads(database, locks);
+  const downloads = browserDownloads(database, locks);
   // What an export kept of a project that is gone would only take room on the disk.
   const forget = async (project: string) => {
     await Promise.all([
@@ -1223,5 +1226,6 @@ export function createBrowserHost(
     organizer: browserOrganizer(database),
     covers,
     uploads,
+    downloads,
   };
 }

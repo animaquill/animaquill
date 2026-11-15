@@ -6,6 +6,7 @@ import {
   type LfsAccess,
   type LfsAccount,
   type LfsAccountAccess,
+  type LfsObjectState,
   type LfsRefusal,
   type LfsRepositoryUse,
   type LfsUpload,
@@ -22,6 +23,8 @@ import {
  * - `PUT    <api>/lfs/uploads/<upload>` with a piece of the file, from `Upload-Offset`
  * - `GET    <api>/lfs/uploads/<upload>`
  * - `DELETE <api>/lfs/uploads/<upload>`
+ * - `POST   <api>/projects/<project>/lfs/lookup` with `{ objects: [{ oid, size }] }`
+ * - `GET    <api>/projects/<project>/lfs/objects/<oid>?size=<size>`, with `Range`: a piece of it
  *
  * What comes back is read field by field: a platform of another version can say more, or less.
  * Everything that is not the upload asked for rejects with `LfsRefused`, each with a code that says
@@ -97,6 +100,8 @@ const CODES: ReadonlySet<string> = new Set<LfsRefusal>([
   "forbidden",
   "notFound",
   "invalid",
+  "missing",
+  "changed",
   "unavailable",
 ]);
 
@@ -112,6 +117,7 @@ const codeOf = (status: number, said: unknown): LfsRefusal => {
   if (status === 413) return "tooLarge";
   if (status === 429) return "busy";
   if (status === 404) return "notFound";
+  if (status === 410) return "missing";
   if (status === 400 || status === 415 || status === 422) return "invalid";
   return "unavailable";
 };
@@ -187,8 +193,90 @@ export function browserLfs(options: BrowserLfsOptions): LfsAccess {
     async cancel(upload) {
       await call("DELETE", uploadPath(upload));
     },
+    async lookup(project, objects, { signal } = {}) {
+      const answer = await call(
+        "POST",
+        `/projects/${encodeURIComponent(project)}/lfs/lookup`,
+        { json: { objects: objects.map(({ oid, size }) => ({ oid, size })) } },
+        signal,
+      );
+      const said = isObject(answer) && Array.isArray(answer.objects) ? answer.objects : undefined;
+      if (!said || said.length !== objects.length) throw new LfsRefused("malformed");
+      return said.map(objectStateOf);
+    },
+    async piece(project, { oid, size }, start, end, { signal, onBytes } = {}) {
+      const path = `/projects/${encodeURIComponent(project)}/lfs/objects/${encodeURIComponent(oid)}?size=${size}`;
+      let response: Response;
+      try {
+        response = await request(options.api(path), {
+          method: "GET",
+          cache: "no-store",
+          headers: { ...options.changeHeaders, range: `bytes=${start}-${end}` },
+          ...(signal && { signal }),
+        });
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        throw new LfsRefused("unavailable");
+      }
+      if (response.status !== 206) {
+        const json: unknown = await response.json().catch(() => undefined);
+        const said = isObject(json) ? json : {};
+        if (response.status === 401 || said.error === "signedOut")
+          throw new CloudSignedOut("Nobody is signed in");
+        const retryAfter = Number(response.headers.get("retry-after"));
+        throw new LfsRefused(response.ok ? "malformed" : codeOf(response.status, said.error), {
+          ...optional(
+            "retryAfter",
+            Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined,
+          ),
+          ...optional("detail", text(said.detail)),
+        });
+      }
+      const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(response.headers.get("content-range") ?? "");
+      if (!range || Number(range[1]) !== start || Number(range[3]) !== size || !response.body) {
+        await response.body?.cancel().catch(() => {});
+        throw new LfsRefused("malformed");
+      }
+      const length = Number(range[2]) - start + 1;
+      const parts: Uint8Array[] = [];
+      let bytes = 0;
+      const reader = response.body.getReader();
+      try {
+        for (;;) {
+          const read = await reader.read();
+          if (read.done) break;
+          parts.push(read.value);
+          bytes += read.value.byteLength;
+          onBytes?.(bytes);
+        }
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        // What came before the connection went is kept: the next piece goes on from there.
+        if (bytes === 0) throw new LfsRefused("unavailable");
+      } finally {
+        reader.releaseLock();
+      }
+      if (bytes > length) throw new LfsRefused("malformed");
+      return { start, bytes: new Blob(parts as BlobPart[]) };
+    },
   };
 }
+
+/** What the platform said of an object it was looked up for. */
+const objectStateOf = (value: unknown): LfsObjectState => {
+  if (!isObject(value)) return { state: "unavailable" };
+  const state = text(value.state);
+  if (state === "uploading") {
+    const received = count(value.received);
+    const size = count(value.size);
+    return received !== undefined && size !== undefined
+      ? { state, received: Math.min(received, size), size }
+      : { state: "unavailable" };
+  }
+  return state === "ready" || state === "missing" || state === "changed"
+    ? { state }
+    : { state: "unavailable" };
+};
 
 const repositoryOf = (value: unknown): LfsRepositoryUse | undefined => {
   if (!isObject(value) || !isObject(value.project)) return undefined;
