@@ -21,6 +21,11 @@ export interface MarkdownProps {
    * without this they show as text.
    */
   readonly onAppLink?: (href: string) => void;
+  /**
+   * How a link of the editor shows, such as a block that goes to what it points at; before
+   * `onAppLink`.
+   */
+  readonly renderAppLink?: (href: string, label: string) => ReactNode;
 }
 
 /** Where links may go: the web, mail, and the editor's own `aq:`. Anything else is no link. */
@@ -47,6 +52,19 @@ const Block = memo(function Block({
 
 /** Where the links of the editor go, see `MarkdownProps.onAppLink`. */
 const AppLink = createContext<((href: string) => void) | undefined>(undefined);
+const AppLinkView = createContext<((href: string, label: string) => ReactNode) | undefined>(
+  undefined,
+);
+
+/** The words of what a link says. */
+const wordsOf = (node: ReactNode): string =>
+  typeof node === "string" || typeof node === "number"
+    ? String(node)
+    : Array.isArray(node)
+      ? node.map(wordsOf).join("")
+      : typeof node === "object" && node !== null && "props" in node
+        ? wordsOf((node.props as { children?: ReactNode }).children)
+        : "";
 
 function SafeLink({
   href,
@@ -56,7 +74,9 @@ function SafeLink({
   readonly children?: ReactNode;
 }) {
   const onAppLink = useContext(AppLink);
+  const view = useContext(AppLinkView);
   if (!href) return <span>{children}</span>;
+  if (/^aq:/i.test(href) && view) return <>{view(href, wordsOf(children))}</>;
   if (/^aq:/i.test(href)) {
     if (!onAppLink) return <span>{children}</span>;
     return (
@@ -117,17 +137,19 @@ function TaskBox({
 
 const COMPONENTS: Components = { a: SafeLink, img: ImageLink, table: Table, input: TaskBox };
 
-function MarkdownBody({ text, streaming, onAppLink }: MarkdownProps) {
+function MarkdownBody({ text, streaming, onAppLink, renderAppLink }: MarkdownProps) {
   // An answer on its way grows by a few characters a piece; its finished blocks keep their parse
   // and only the last is parsed again. A finished answer is one block.
   const blocks = useMemo(() => (streaming ? splitMarkdownBlocks(text) : [text]), [streaming, text]);
   return (
     <AppLink.Provider value={onAppLink}>
-      <div className={styles.markdown} data-testid="chat-markdown">
-        {blocks.map((block, index) => (
-          <Block key={index} markdown={block} components={COMPONENTS} />
-        ))}
-      </div>
+      <AppLinkView.Provider value={renderAppLink}>
+        <div className={styles.markdown} data-testid="chat-markdown">
+          {blocks.map((block, index) => (
+            <Block key={index} markdown={block} components={COMPONENTS} />
+          ))}
+        </div>
+      </AppLinkView.Provider>
     </AppLink.Provider>
   );
 }

@@ -19,6 +19,7 @@ import type {
 import type { TFunction } from "i18next";
 import {
   buildRenderPlan,
+  entryOf,
   clipEnd,
   clipOffset,
   clipStart,
@@ -49,6 +50,10 @@ import { CloudProjects } from "../cloud/projects.ts";
 import type { CloudEnvironment, CloudTiming } from "../cloud/session.ts";
 import { StartList } from "../cloud/start-list.ts";
 import { ChatSession } from "../chat/session.ts";
+import type { FrameShot } from "../chat/attachments.ts";
+import { ChatPointing } from "../chat/pointing.ts";
+import { askingIn } from "../chat/conversations.ts";
+import { parseAddress } from "@animaquill/tools";
 import { ModelPacks } from "../chat/packs.ts";
 import { AiSettingsStore } from "../chat/settings.ts";
 import { AiSync } from "../chat/ai-sync.ts";
@@ -87,7 +92,7 @@ import { TrialSession } from "../properties/trial.ts";
 import { PropertyWriter } from "../properties/writer.ts";
 import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
-import { frameAt, frameSeconds, frameTime } from "../timeline/frames.ts";
+import { formatTimecode, frameAt, frameSeconds, frameTime } from "../timeline/frames.ts";
 import { keepFiles, type ImportReport, type PreparedProject } from "../transfer/import.ts";
 import { downloadFrom, type HereOf } from "../storage/places.ts";
 import { ProjectTransfer, formatSize } from "../transfer/transfer.ts";
@@ -107,7 +112,7 @@ import { CommandPalette } from "./palette.ts";
 import { ResourceHabits } from "../resources/habits.ts";
 import { ExplorerState, nodeOfResource } from "../resources/explorer.ts";
 import { ResourcePages } from "../resources/pages.ts";
-import { parseProjectResourceId } from "../resources/project-resources.ts";
+import { parseProjectResourceId, projectResourceId } from "../resources/project-resources.ts";
 import { MissingFileWatch } from "../resources/missing-files.ts";
 import type { FolderTiming } from "../folder/session.ts";
 import { ProjectFolders, type FolderLinking, type PlacedFiles } from "./project-folders.ts";
@@ -315,6 +320,12 @@ export class Workbench {
   readonly packs: ModelPacks;
   /** The chat with AI in the browser, about the open project. */
   readonly chat: ChatSession;
+  /** What the chat points at: the playhead, what is selected, and where its blocks go. */
+  readonly pointing: ChatPointing;
+  /** What the box of the chat does with the commands of the palette, while it is there. */
+  #compose: ComposeHandlers | undefined;
+  /** People asked for notices of the chat in this page already. */
+  #askedToNotify = false;
   /** The conversations of projects of the platform, going with the account. */
   readonly chatSync: CloudChats | undefined;
   /** Whether the settings are open in this window, and where in them, see `SettingsNav`. */
@@ -682,6 +693,9 @@ export class Workbench {
       }),
       undone: (result) => this.tellUndo(result),
       memory: host.windowMemory,
+      images: host.chatImages,
+      shoot: (signal) => this.#shootFrame(signal),
+      shotSize: () => this.ai.getSnapshot().shotSize ?? 1568,
     });
     // What the last turn of AI changed shows on the timeline until the next one.
     this.chat.subscribe(() => this.timeline.setMarked(this.chat.getSnapshot().marked));
@@ -934,12 +948,22 @@ export class Workbench {
       describe: this.keyframes.describe,
       messages: { gone: () => this.notifications.push(t("notice.overlayGone")) },
     });
+    this.pointing = new ChatPointing({
+      session: this.session,
+      timeline: this.timeline,
+      keyframes: this.keyframes,
+      explorer: this.explorer,
+      code: this.code,
+      t,
+    });
     this.#keepTrail();
     this.#keepPropertyProblems();
+    this.#followChatForNotices();
     for (const panel of panels) this.panels.register(panel);
     this.#registerProjectActions();
     this.#registerSettingsActions();
     this.#registerCodeActions();
+    this.#registerChatActions();
     this.#registerEditActions();
     this.#registerViewActions();
     this.#registerHelpActions();
@@ -2652,6 +2676,216 @@ export class Workbench {
     }
   }
 
+  /**
+   * The frame at the playhead of the timeline shown, as the export renders it (the files themselves,
+   * no proxies, no selection or guides), for the chat. Nothing where no timeline shows.
+   */
+  async #shootFrame(signal: AbortSignal): Promise<FrameShot | undefined> {
+    const store = this.session.store;
+    const model = this.timeline.model;
+    if (!store || !model) return undefined;
+    const state = store.getState();
+    const plan = buildRenderPlan(state, model.id);
+    if (!plan) return undefined;
+    const frame = this.timeline.frame;
+    const seconds = frame / model.rate.fps;
+    const key = this.session.getSnapshot().key ?? "";
+    const projects: ProjectLibrary = {
+      ...this.projects,
+      media: (id) =>
+        this.projectFolders?.mediaFor(id, undefined, () => state.assets) ?? this.projects.media(id),
+    };
+    const compositor = new ExportCompositor({
+      ...exportCompositorOptions(
+        {
+          projects,
+          preview: this.preview,
+          compositorUrl: this.compositorUrl,
+          sceneOrigins: this.sceneOrigins,
+          sceneStage: this.sceneStage,
+        },
+        state,
+        key,
+        plan,
+      ),
+      unseen: "cover",
+    });
+    const stop = () => compositor.dispose();
+    signal.addEventListener("abort", stop, { once: true });
+    try {
+      const image = await compositor.still(seconds);
+      return {
+        image,
+        frame: {
+          timeline: model.id,
+          ...(state.timelines[model.id]?.name !== undefined && {
+            timelineName: state.timelines[model.id]?.name as string,
+          }),
+          t: formatTime(frameTime(frame, model.rate)),
+          timecode: formatTimecode(frame, model.rate),
+        },
+      };
+    } finally {
+      signal.removeEventListener("abort", stop);
+      compositor.dispose();
+    }
+  }
+
+  /** The box of the chat says what it does with the commands; resolves to taking that back. */
+  composeWith(handlers: ComposeHandlers): () => void {
+    this.#compose = handlers;
+    return () => {
+      if (this.#compose === handlers) this.#compose = undefined;
+    };
+  }
+
+  /** The frame at the playhead goes with the next message of the chat, which opens for it. */
+  sendFrameToChat(): void {
+    const project = this.chat.projectKey;
+    const id = this.chat.getSnapshot().id;
+    if (project === undefined || id === undefined) return;
+    this.layout.openPanel("chat");
+    void this.chat.attachments.shoot(project, id, this.t("chat.pictures.frame")).then((refused) => {
+      if (refused) this.notifications.push(this.t(`chat.pictures.${refused}`));
+    });
+    requestAnimationFrame(() => this.#compose?.focus());
+  }
+
+  /** Something in the chat points at what a block points to: it shows on the timeline and preview. */
+  pointAt(href: string | undefined): void {
+    const clips = href === undefined ? [] : this.pointing.clipsOf(href);
+    this.overlay.point(new Set(clips));
+    if (clips.length > 0) this.timeline.flash({ clips: new Set(clips) });
+  }
+
+  /** Goes to what a block of the chat points at: a moment, a clip, a key, a resource, lines. */
+  goToRef(href: string): boolean {
+    const address = parseAddress(href);
+    const state = this.session.store?.getState();
+    const model = this.timeline.model;
+    if (!address || !state) return false;
+    switch (address.kind) {
+      case "time": {
+        if (!model || (address.timeline !== undefined && address.timeline !== model.id))
+          return false;
+        this.timeline.seek(frameAt(toSeconds(parseTime(address.t)), model.rate));
+        this.layout.openPanel("timeline");
+        return true;
+      }
+      case "keyframe": {
+        if (!this.goToUse({ timeline: address.timeline ?? model?.id ?? "", clip: address.id }))
+          return false;
+        this.layout.openPanel("keyframes");
+        return true;
+      }
+      case "object": {
+        for (const kind of ["asset", "scene", "sound"] as const) {
+          const found =
+            kind === "asset"
+              ? entryOf(state.assets, address.id)
+              : kind === "scene"
+                ? entryOf(state.scenes, address.id)
+                : entryOf(state.sounds, address.id);
+          if (!found) continue;
+          const key = this.session.getSnapshot().key ?? "";
+          const id = projectResourceId(key, kind, address.id);
+          if (this.canRevealResource(id)) this.revealResource(id);
+          return true;
+        }
+        const timeline = address.timeline ?? model?.id;
+        if (timeline === undefined) return false;
+        const on = state.timelines[timeline];
+        if (on?.markers[address.id])
+          return this.goToObject({ kind: "marker", id: address.id, timeline });
+        if (on?.tracks[address.id])
+          return this.goToObject({ kind: "track", id: address.id, timeline });
+        return this.goToUse({ timeline, clip: address.id });
+      }
+      case "objects": {
+        const timeline = address.timeline ?? model?.id;
+        if (timeline === undefined || model?.id !== timeline) return false;
+        const clips = address.ids.filter((id) => model.boxes.has(id));
+        if (clips.length === 0) return false;
+        this.goToUse({ timeline, clip: clips[0] as string });
+        for (const clip of clips.slice(1)) this.timeline.addToSelection(clip);
+        return true;
+      }
+      case "file":
+        return this.showCode(
+          address.path,
+          address.from === undefined ? undefined : { line: address.from },
+        );
+    }
+  }
+
+  /**
+   * Asks the browser once whether the chat may tell people, as AI is done or asks them while the
+   * page is in the background: when they send something, which is what lets a page ask.
+   */
+  askToNotify(): void {
+    if (this.#askedToNotify || typeof Notification === "undefined") return;
+    this.#askedToNotify = true;
+    if (Notification.permission === "default")
+      void Notification.requestPermission().catch(() => {});
+  }
+
+  /**
+   * Tells people when a task of the chat ends or AI asks them while the page is in the background:
+   * a notice of the browser where they allowed it, and "●" before the title of the tab until they
+   * come back.
+   */
+  #followChatForNotices(): void {
+    if (typeof document === "undefined") return;
+    let watched: { conversation: unknown; stop: () => void } | undefined;
+    const follow = () => {
+      const { conversation } = this.chat.getSnapshot();
+      if (watched?.conversation === conversation) return;
+      watched?.stop();
+      if (!conversation) {
+        watched = undefined;
+        return;
+      }
+      let last = conversation.getSnapshot().last;
+      const stop = conversation.subscribe(() => {
+        const now = conversation.getSnapshot().last;
+        if (now === last) return;
+        last = now;
+        if (!now || document.visibilityState !== "hidden") return;
+        const entries = conversation.getSnapshot().entries;
+        const asking = askingIn(entries);
+        this.#notice(asking ? "asking" : now.end === "failed" ? "failed" : "done");
+      });
+      watched = { conversation, stop };
+    };
+    this.chat.subscribe(follow);
+    follow();
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") this.attention.set(false);
+    });
+  }
+
+  /** Whether the chat has something for people that they have not seen: "●" before the title. */
+  readonly attention = new Flag();
+
+  #notice(what: "done" | "asking" | "failed"): void {
+    this.attention.set(true);
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    const name = this.session.store?.getState().manifest.name ?? "AnimaQuill";
+    try {
+      const notice = new Notification(this.t(`chat.notify.${what}`), {
+        body: name,
+        tag: "animaquill-chat",
+      });
+      notice.addEventListener("click", () => {
+        window.focus();
+        this.layout.openPanel("chat");
+        notice.close();
+      });
+    } catch {
+      // Some browsers only make notices from a service worker: the title says it still.
+    }
+  }
+
   async exportFrame(): Promise<void> {
     if (await this.#readyToExport()) await this.stills.run();
   }
@@ -2947,6 +3181,40 @@ export class Workbench {
       run: () => void this.exportFrame(),
       menu: { name: "file", group: "export" },
       enabled: isOpen,
+    });
+  }
+
+  /** The buttons of the box of the chat as commands, and sending the frame from the preview. */
+  #registerChatActions(): void {
+    const hasProject = () => this.session.store !== undefined && this.timeline.model !== undefined;
+    const viaBox = (which: keyof ComposeHandlers) => () => {
+      this.layout.openPanel("chat");
+      // The box is there once the chat shows.
+      requestAnimationFrame(() => this.#compose?.[which]());
+    };
+    this.actions.register({
+      id: "chat.insertTime",
+      title: (t) => t("chat.action.insertTime"),
+      run: viaBox("time"),
+      enabled: hasProject,
+    });
+    this.actions.register({
+      id: "chat.insertSelection",
+      title: (t) => t("chat.action.insertSelection"),
+      run: viaBox("selection"),
+      enabled: () => hasProject() && this.pointing.getSnapshot().count > 0,
+    });
+    this.actions.register({
+      id: "chat.sendFrame",
+      title: (t) => t("chat.action.sendFrame"),
+      run: () => this.sendFrameToChat(),
+      enabled: hasProject,
+    });
+    this.actions.register({
+      id: "chat.addPicture",
+      title: (t) => t("chat.action.addPicture"),
+      run: viaBox("picture"),
+      enabled: () => this.session.store !== undefined,
     });
   }
 
@@ -3257,4 +3525,12 @@ export class Workbench {
       });
     }
   }
+}
+
+/** What the box of the chat does with the commands of the palette, see `Workbench.composeWith`. */
+export interface ComposeHandlers {
+  readonly time: () => void;
+  readonly selection: () => void;
+  readonly picture: () => void;
+  readonly focus: () => void;
 }

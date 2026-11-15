@@ -10,6 +10,7 @@ import {
   type ModelRef,
   type PackNote,
   type ReasoningLevel,
+  type AttachedImage,
   type ServiceConfig,
   type SmallAsk,
   type TaskOutcome,
@@ -42,6 +43,7 @@ import {
   ChatNewer,
   memoryChats,
   type AccountAccess,
+  type ChatImageStore,
   type ChatStore,
   type SavedChat,
   type SavedChatSummary,
@@ -56,7 +58,9 @@ import {
   searchChats,
   type Found,
 } from "./conversations.ts";
+import { ChatAttachments, type FrameShot } from "./attachments.ts";
 import { Drafts } from "./drafts.ts";
+import { DEFAULT_IMAGE_BYTES, DEFAULT_SHOT_SIZE, type ShotSize } from "./shots.ts";
 import type { ModelPacks } from "./packs.ts";
 import type { AiSettingsStore } from "./settings.ts";
 import { clipsOf, summaryOf } from "./summary.ts";
@@ -77,7 +81,9 @@ export type ChatHold =
   /** The service of the model of the conversation was taken away. */
   | "modelGone"
   /** The model of the conversation was turned off in the settings. */
-  | "modelOff";
+  | "modelOff"
+  /** The message has pictures, and the model of the conversation takes none. */
+  | "noPictures";
 
 /** Where a conversation was copied from, see `ChatSession.fork`. */
 export interface ForkedFrom {
@@ -125,7 +131,13 @@ export interface ChatSnapshot {
    */
   readonly repick: readonly string[];
   /** Messages that go once the task that runs is done, oldest first. */
-  readonly queued: readonly string[];
+  readonly queued: readonly Queued[];
+}
+
+/** A message that waits for the task that runs, with its pictures. */
+export interface Queued {
+  readonly text: string;
+  readonly images?: readonly AttachedImage[];
 }
 
 /** What `ChatSession.packOptions` gives for a model. */
@@ -170,6 +182,12 @@ export interface ChatSessionOptions {
   readonly fake?: () => FakeEndpoint | undefined;
   /** The memory of this window, where drafts and the conversation open are kept. */
   readonly memory?: WindowMemory;
+  /** Where the pictures of conversations are kept; without it, for as long as the page. */
+  readonly images?: ChatImageStore | undefined;
+  /** Renders the frame at the playhead, as the export does, to go with a message. */
+  readonly shoot?: (signal: AbortSignal) => Promise<FrameShot | undefined>;
+  /** How large a frame goes at most, as set (see `ShotSize`). */
+  readonly shotSize?: () => ShotSize;
   /** For tests: what a small request to a model answers, such as for a title. See `askModel`. */
   readonly ask?: (
     endpoint: Endpoint,
@@ -224,6 +242,8 @@ export class ChatSession {
   };
   /** What people wrote and did not send yet, by conversation. */
   readonly drafts: Drafts;
+  /** The pictures of those drafts. */
+  readonly attachments: ChatAttachments;
   /** The last task, once people took back what it did: its clips are no longer marked. */
   #unmarked: string | undefined;
   #project: { readonly store: ProjectStore; readonly key: string } | undefined;
@@ -239,6 +259,16 @@ export class ChatSession {
     this.#options = options;
     this.#chats = options.chats ?? memoryChats();
     this.drafts = new Drafts(options.memory);
+    this.attachments = new ChatAttachments({
+      memory: options.memory,
+      images: options.images,
+      ...(options.shoot && { shoot: options.shoot }),
+      side: () => {
+        const size = options.shotSize?.() ?? DEFAULT_SHOT_SIZE;
+        return size === "original" ? undefined : size;
+      },
+      maxBytes: () => this.imageBytes(),
+    });
     options.subscribeProject(() => this.#follow());
     this.#follow();
   }
@@ -625,22 +655,25 @@ export class ChatSession {
       forkedFrom: { title, turn },
     });
     this.drafts.write(project, copy, user.text);
+    this.attachments.restore(project, copy, user.images ?? []);
     this.#keep();
   }
 
   /** Queues a message to go once the task that runs is done. */
-  queue(text: string): void {
-    if (!text.trim()) return;
-    this.#set({ queued: [...this.#snapshot.queued, text] });
+  queue(text: string, images: readonly AttachedImage[] = []): void {
+    if (!text.trim() && images.length === 0) return;
+    this.#set({
+      queued: [...this.#snapshot.queued, { text, ...(images.length > 0 && { images }) }],
+    });
   }
 
   /** Takes a queued message back, which then does not go. Says what it was. */
-  unqueue(index: number): string | undefined {
+  unqueue(index: number): Queued | undefined {
     const { queued } = this.#snapshot;
-    const text = queued[index];
-    if (text === undefined) return undefined;
+    const message = queued[index];
+    if (message === undefined) return undefined;
     this.#set({ queued: queued.filter((_, at) => at !== index) });
-    return text;
+    return message;
   }
 
   /**
@@ -654,7 +687,7 @@ export class ChatSession {
     const [next, ...rest] = this.#snapshot.queued;
     if (next === undefined || outcome.end !== "done") return;
     this.#set({ queued: rest });
-    void this.send(next);
+    void this.send(next.text, next.images);
   }
 
   /**
@@ -824,14 +857,29 @@ export class ChatSession {
    * Sends a message, which starts a task. Resolves once the task is over. Words that do not go out,
    * or that the service refused before it said anything, go back to the input box.
    */
-  async send(text: string): Promise<TaskOutcome | undefined> {
+  async send(
+    text: string,
+    images: readonly AttachedImage[] = [],
+  ): Promise<TaskOutcome | undefined> {
     const conversation = this.#snapshot.conversation;
-    if (!conversation || conversation.running || !text.trim()) return undefined;
+    if (!conversation || conversation.running || (!text.trim() && images.length === 0))
+      return undefined;
     const id = this.#snapshot.id;
     const project = this.#project?.key;
+    const putBack = () => {
+      if (project === undefined || id === undefined) return;
+      this.drafts.restore(project, id, text);
+      this.attachments.restore(project, id, images);
+    };
+    // Pictures do not go to a model said not to take them: people choose another, or go without.
+    if (images.length > 0 && this.seesPictures() === false) {
+      this.#set({ hold: "noPictures" });
+      putBack();
+      return undefined;
+    }
     const target = await this.#taskTarget(conversation);
     if (!target) {
-      if (project !== undefined && id !== undefined) this.drafts.restore(project, id, text);
+      putBack();
       return undefined;
     }
     // The first message settles the model of the conversation: another default later is not it.
@@ -839,14 +887,14 @@ export class ChatSession {
       const now = this.modelNow();
       if (now) this.#set({ model: now.ref });
     }
-    const outcome = await conversation.send(text, target);
+    const outcome = await conversation.send(text, target, images);
     if (outcome?.end === "failed" && project !== undefined && id !== undefined) {
       const entries = conversation.getSnapshot().entries;
       const turn = entries.slice(entries.findLastIndex((entry) => entry.role === "user") + 1);
       const silent = turn.every(
         (entry) => entry.role === "assistant" && entry.text === "" && entry.calls.length === 0,
       );
-      if (silent) this.drafts.restore(project, id, text);
+      if (silent) putBack();
     }
     this.#after(conversation, outcome);
     return outcome;
@@ -860,7 +908,33 @@ export class ChatSession {
     const last = this.#snapshot.conversation
       ?.getSnapshot()
       .entries.findLast((entry) => entry.role === "user");
+    return last?.role === "user" ? this.send(last.text, last.images) : undefined;
+  }
+
+  /** The last turn once more without its pictures, where its model or service took none. */
+  async resendWithoutPictures(): Promise<TaskOutcome | undefined> {
+    const last = this.#snapshot.conversation
+      ?.getSnapshot()
+      .entries.findLast((entry) => entry.role === "user");
     return last?.role === "user" ? this.send(last.text) : undefined;
+  }
+
+  /**
+   * Whether the model of the conversation open takes pictures, as its settings say (a catalog filled
+   * in, or people): nothing where nobody said, and then pictures go and the service answers.
+   */
+  seesPictures(): boolean | undefined {
+    if (this.#options.fake?.()) return true;
+    const now = this.modelNow();
+    if (!now?.service) return undefined;
+    return this.#options.ai.modelOf(now.ref.service, now.ref.model)?.image;
+  }
+
+  /** The largest picture the model of the conversation open takes, in bytes. */
+  imageBytes(): number {
+    const now = this.modelNow();
+    const values = now?.service && this.#options.ai.modelOf(now.ref.service, now.ref.model)?.values;
+    return values?.imageMaxBytes ?? DEFAULT_IMAGE_BYTES;
   }
 
   /**
@@ -895,7 +969,9 @@ export class ChatSession {
     // Another conversation may have opened meanwhile: this one is no longer on the screen.
     if (this.#snapshot.conversation !== conversation) return undefined;
     const { use, note } = this.#packFor(target.model, conversation.getSnapshot().entries);
+    const sees = this.seesPictures() !== false;
     return {
+      pictures: { sees, read: (ref) => this.attachments.base64Of(ref) },
       endpoint: target.endpoint,
       key: target.key,
       maxToolCalls,

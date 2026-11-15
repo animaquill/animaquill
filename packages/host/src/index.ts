@@ -8,6 +8,7 @@ export {
   KEYS_DATABASE,
   MAX_CHATS_PER_PROJECT,
   memoryAccountKeys,
+  memoryChatImages,
   memoryChats,
   memoryKeys,
 } from "./ai.ts";
@@ -128,6 +129,11 @@ export interface Host {
   readonly accountKeys?: AccountKeys;
   /** Conversations with AI in the browser, by project. Without it they last as long as the page. */
   readonly chats?: ChatStore;
+  /**
+   * The pictures of those conversations, by what they are: a conversation keeps only which picture
+   * (`ChatImageRef`). Without it they last as long as the page.
+   */
+  readonly chatImages?: ChatImageStore;
   /**
    * The relay of AI services of the platform the editor is hosted on, for services that do not let a
    * page read their answers: see `AiRelay`. Without it, as on this computer, services can only be
@@ -1968,6 +1974,31 @@ export interface ChatStore {
    * take, for people to see what takes room. Missing where the host cannot tell.
    */
   usage?(): Promise<readonly ChatUsage[]>;
+}
+
+/** Which picture, as a conversation keeps it: by the SHA-256 of its bytes. */
+export interface ChatImageRef {
+  /** `sha256:` and the hash of its bytes, in hex. */
+  readonly image: string;
+  readonly type: string;
+  readonly width: number;
+  readonly height: number;
+  readonly bytes: number;
+}
+
+/**
+ * The pictures of conversations on this device, each once however many conversations and drafts
+ * have it: what goes with a message, such as a frame of the project. A picture of the platform comes
+ * here as well, once it was read (a step of its own).
+ */
+export interface ChatImageStore {
+  /** Keeps a picture, and says which it is. The same bytes are the same picture. */
+  save(
+    blob: Blob,
+    size: { readonly width: number; readonly height: number },
+  ): Promise<ChatImageRef>;
+  /** A picture kept here; nothing where it is not. */
+  read(image: string): Promise<Blob | undefined>;
 }
 
 /** The conversations of a project, as `ChatStore.usage` counts them. */

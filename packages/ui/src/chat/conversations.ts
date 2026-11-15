@@ -1,4 +1,5 @@
 import type { ChatEntry } from "@animaquill/agent";
+import { plainOf } from "./refs.ts";
 import type { SavedChatSummary } from "@animaquill/host";
 import { summaryOf } from "./summary.ts";
 import { groupsOf } from "./turns.ts";
@@ -53,7 +54,7 @@ export function askingIn(entries: readonly ChatEntry[]): boolean {
 /** The first words of a conversation, for its title until it gets another. */
 export function firstWords(entries: readonly ChatEntry[], length: number): string {
   const first = entries.find((entry) => entry.role === "user");
-  const text = first?.role === "user" ? first.text : "";
+  const text = first?.role === "user" ? plainOf(first.text) : "";
   const line = text.split("\n").find((each) => each.trim() !== "") ?? "";
   // A quote is not what a conversation is about: what follows it is.
   const said = text
@@ -121,7 +122,7 @@ export function searchChats(
     for (const entry of entries) {
       if (entry.role === "user") task = entry.task;
       if (entry.role !== "user" && entry.role !== "assistant") continue;
-      const hit = hitIn(entry.text, matcher);
+      const hit = hitIn(plainOf(entry.text), matcher);
       if (!hit) continue;
       found.push({ id, title, updatedAt, ...(task !== undefined && { task }), ...hit });
       if (++hits >= PER_CHAT || found.length >= MAX_FOUND) break;

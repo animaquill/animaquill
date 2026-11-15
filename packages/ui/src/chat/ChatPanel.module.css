@@ -661,9 +661,359 @@
   border-top: 1px solid var(--aq-border);
 }
 
-.compose textarea {
-  resize: none;
-  line-height: 16px;
+/* The box people write in: text and blocks, 2 to 10 lines, then it scrolls. */
+.input {
+  min-height: 42px;
+  max-height: 170px;
+  overflow-y: auto;
+  padding: 4px 6px;
+  color: var(--aq-text);
+  line-height: 18px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--aq-bg-input);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  outline: none;
+  cursor: text;
+}
+
+.input:focus-visible,
+.input:focus {
+  border-color: var(--aq-accent);
+}
+
+.input[data-empty]::before {
+  content: attr(data-placeholder);
+  color: var(--aq-text-muted);
+  pointer-events: none;
+}
+
+/* A block: a moment, an object, lines of code; one piece, which the caret goes around. */
+.chip {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+  max-width: 100%;
+  padding: 0 5px;
+  margin: 0 1px;
+  color: #9cd3ff;
+  font-size: 12px;
+  line-height: 17px;
+  white-space: nowrap;
+  vertical-align: baseline;
+  text-decoration: none;
+  background: #0078d426;
+  border: 1px solid #0078d466;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.chip:hover {
+  background: #0078d440;
+}
+
+.chip[data-kind="time"] {
+  font-variant-numeric: tabular-nums;
+}
+
+.chip[data-gone] {
+  color: var(--aq-text-muted);
+  background: transparent;
+  border-color: var(--aq-border);
+  cursor: default;
+}
+
+.chipIcon {
+  flex: none;
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.chip[data-gone] .chipLabel {
+  text-decoration: line-through;
+}
+
+.chipGone {
+  margin-left: 2px;
+  font-size: 11px;
+}
+
+/* The buttons that put things in the box, before the model. */
+.composeTools {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  align-items: center;
+}
+
+.panel .composeTools button {
+  position: relative;
+  gap: 2px;
+}
+
+.panel .composeTools button[aria-disabled] {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.toolCount {
+  min-width: 14px;
+  padding: 0 3px;
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+  background: var(--aq-bg-hover);
+  border-radius: 7px;
+}
+
+.toolsSep {
+  width: 1px;
+  height: 14px;
+  margin: 0 3px;
+  background: var(--aq-border);
+}
+
+.menuUp {
+  top: auto;
+  right: auto;
+  bottom: 100%;
+  left: 0;
+  min-width: 200px;
+}
+
+.menuKeys {
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+/* The pictures that go with the next message, over the box. */
+.pictures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.picture {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 84px;
+  margin: 0;
+}
+
+.panel .pictureThumb {
+  position: relative;
+  justify-content: center;
+  width: 84px;
+  height: 47px;
+  padding: 0;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.pictureThumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.picture[data-blind] .pictureThumb {
+  border: 2px solid var(--aq-warning);
+}
+
+.picture[data-state="failed"] .pictureThumb {
+  border-color: var(--aq-danger);
+}
+
+.pictureTime {
+  position: absolute;
+  bottom: 2px;
+  left: 3px;
+  color: #fff;
+  font-size: 10px;
+  text-shadow: 0 0 2px #000;
+}
+
+.panel .pictureRemove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 50%;
+}
+
+.picture figcaption {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  font-size: 10px;
+  line-height: 13px;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.picture[data-blind] figcaption {
+  color: var(--aq-trial);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.largePicture {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: #000000cc;
+  cursor: zoom-out;
+}
+
+.largePicture img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
+.largeClose {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  color: #fff;
+  background: transparent;
+  border: none;
+}
+
+/* The model takes no pictures: it says so over the box, with the two ways on. */
+.blind {
+  padding: 6px 8px;
+  color: var(--aq-trial);
+  line-height: 18px;
+  background: #cca70014;
+  border: 1px solid #cca70040;
+  border-radius: 4px;
+}
+
+.unsure {
+  margin: 0;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+/* What went with people's words, and what AI got. */
+.sentWith {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.panel .sentWithHead {
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  background: transparent;
+}
+
+.sentTag {
+  padding: 0 4px;
+  color: var(--aq-text);
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+}
+
+.sentBody {
+  align-self: stretch;
+  padding: 6px 8px;
+  background: var(--aq-bg-panel);
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.sentBodyHead {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  color: var(--aq-text-strong);
+  font-size: 11px;
+}
+
+.sentBody pre {
+  margin: 0;
+  color: var(--aq-text);
+  font:
+    11px/16px Consolas,
+    "Cascadia Mono",
+    Menlo,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sentPictures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.panel .sentPicture {
+  justify-content: center;
+  width: 84px;
+  height: 47px;
+  padding: 0;
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  font-size: 10px;
+  background: #000;
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.sentPicture img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* A turn a search went to, and the words it found, for a while. */
+[data-found-turn] {
+  outline: 1px solid var(--aq-match);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+
+::highlight(chat-found) {
+  color: #000;
+  background-color: var(--aq-star);
 }
 
 /* Under the box: the model, how hard it reasons, then send or stop. */

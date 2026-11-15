@@ -1,4 +1,4 @@
-import { browserAccountKeys, browserChats, browserKeys } from "./ai.ts";
+import { browserAccountKeys, browserChatImages, browserChats, browserKeys } from "./ai.ts";
 import { createWorkCache } from "./caches.ts";
 import { createExportStore } from "./exports.ts";
 import { browserFolders } from "./folders.ts";
@@ -1220,6 +1220,7 @@ export function createBrowserHost(
     keys: browserKeys(database),
     accountKeys: browserAccountKeys(database),
     chats,
+    chatImages: browserChatImages(database),
     organizer: browserOrganizer(database),
     covers,
   };

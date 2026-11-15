@@ -23,6 +23,27 @@ const WIDTHS = [420, 320] as const;
 const chat = (page: Page) => content(page, "chat");
 const box = (page: Page) => chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
 
+/** What the box holds, as its draft keeps it: its text with new lines, a block as its link. */
+const draft = (page: Page) =>
+  box(page).evaluate((root) => {
+    let text = "";
+    const walk = (node: Node, last: boolean) => {
+      if (node.nodeType === Node.TEXT_NODE) text += node.textContent ?? "";
+      else if (node instanceof HTMLElement && node.dataset["href"] !== undefined)
+        text += `[${node.dataset["label"]}](${node.dataset["href"]})`;
+      else if (node.nodeName === "BR") text += last ? "" : "\n";
+      else {
+        if ((node.nodeName === "DIV" || node.nodeName === "P") && text && !text.endsWith("\n"))
+          text += "\n";
+        const children = [...node.childNodes];
+        children.forEach((child, at) => walk(child, last && at === children.length - 1));
+      }
+    };
+    const children = [...root.childNodes];
+    children.forEach((child, at) => walk(child, at === children.length - 1));
+    return text;
+  });
+
 /** What a request asked for: the model, and the last thing people said. */
 function askedOf(route: Route): { model: string; said: string } {
   const body = route.request().postDataJSON() as {
@@ -167,7 +188,7 @@ test("a draft stays through a reload, and messages queue while a task runs", asy
   await box(page).fill("还没写完的话");
   await page.reload();
   await tab(page, "chat").click();
-  await expect(box(page)).toHaveValue("还没写完的话");
+  await expect.poll(() => draft(page)).toBe("还没写完的话");
   // The box grows with what is in it, up to ten lines.
   const before = (await box(page).boundingBox())?.height ?? 0;
   await box(page).fill(Array.from({ length: 6 }, (_, at) => `第 ${at + 1} 行`).join("\n"));
@@ -181,7 +202,7 @@ test("a draft stays through a reload, and messages queue while a task runs", asy
   // While a task runs, Enter queues; what is queued shows above the box, and goes after it.
   await send(page, "慢慢来");
   await expect(chat(page).getByTestId("chat-phase")).toBeVisible();
-  await expect(box(page)).toHaveValue("");
+  await expect.poll(() => draft(page)).toBe("");
   await send(page, "排着的第一句");
   await send(page, "排着的第二句");
   const queued = chat(page).getByTestId("chat-queued");
@@ -190,7 +211,7 @@ test("a draft stays through a reload, and messages queue while a task runs", asy
   await shoot(page, "queued");
   // The second, taken back to change it.
   await queued.getByRole("button", { name: "撤回来改" }).nth(1).click();
-  await expect(box(page)).toHaveValue("排着的第二句");
+  await expect.poll(() => draft(page)).toBe("排着的第二句");
   await expect(queued).not.toContainText("排着的第二句");
   await box(page).fill("");
   const slow = waiting.shift();
@@ -232,13 +253,13 @@ test("the list: rename, search, delete; a new conversation from a turn; quoting 
     "从《把字幕往上挪一点》第 2 轮分出来；那之后的改动还在项目里。",
   );
   await expect(chat(page).getByTestId("chat-task")).toHaveCount(1);
-  await expect(box(page)).toHaveValue("开场放慢一点");
+  await expect.poll(() => draft(page)).toBe("开场放慢一点");
 
   // Words of an answer, quoted into the box.
   const words = chat(page).getByTestId("chat-answer").getByText("字幕往上挪了 12 像素。");
   await words.selectText();
   await chat(page).getByTestId("chat-quote").click();
-  await expect(box(page)).toHaveValue("开场放慢一点\n\n> 字幕往上挪了 12 像素。\n\n");
+  await expect.poll(() => draft(page)).toBe("开场放慢一点\n\n> 字幕往上挪了 12 像素。\n\n");
   await send(page, "接着来");
   await expect(chat(page).getByTestId("chat-task")).toHaveCount(2, { timeout: 15_000 });
 
@@ -304,7 +325,7 @@ test("before any service: where the key goes, and one click to adding Anthropic,
   const examples = chat(page).getByTestId("chat-examples");
   await expect(examples).toBeVisible();
   await examples.getByRole("button", { name: "开场放慢一点" }).click();
-  await expect(box(page)).toHaveValue("开场放慢一点");
+  await expect.poll(() => draft(page)).toBe("开场放慢一点");
   await shoot(page, "empty");
 });
 
@@ -326,13 +347,13 @@ test("sends with Ctrl+Enter where people chose that, and Enter is a new line the
   await closeSettings(page);
   await tab(page, "chat").click();
   await expect(box(page)).toHaveAttribute(
-    "placeholder",
+    "data-placeholder",
     "给 AI 发消息，Ctrl+Enter 发送，Enter 换行",
   );
   await box(page).fill("第一行");
   await box(page).press("Enter");
   await box(page).pressSequentially("第二行");
-  await expect(box(page)).toHaveValue("第一行\n第二行");
+  await expect.poll(() => draft(page)).toBe("第一行\n第二行");
   expect(asked).toEqual([]);
   await box(page).press("Control+Enter");
   await expect(chat(page).getByText("收到。")).toBeVisible();

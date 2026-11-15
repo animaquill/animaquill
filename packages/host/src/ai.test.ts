@@ -1,6 +1,13 @@
 import { IDBFactory } from "fake-indexeddb";
 import { describe, expect, it } from "vitest";
-import { KEYS_DATABASE, browserChats, browserKeys, memoryChats } from "./ai.ts";
+import {
+  KEYS_DATABASE,
+  browserChatImages,
+  browserChats,
+  browserKeys,
+  memoryChatImages,
+  memoryChats,
+} from "./ai.ts";
 import { createBrowserHost } from "./browser.ts";
 
 const storage = (): Storage => {
@@ -90,6 +97,36 @@ describe("conversations with AI", () => {
       expect(of("other")?.bytes).toBe(size);
       await chats.forget("p");
       expect(await chats.usage?.()).toEqual([{ project: "other", count: 1, bytes: size }]);
+    }
+  });
+});
+
+describe("pictures of conversations", () => {
+  it("are kept once by the hash of their bytes, and read back", async () => {
+    const factory = new IDBFactory();
+    for (const images of [browserChatImages(() => factory), memoryChatImages()]) {
+      const blob = new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" });
+      const ref = await images.save(blob, { width: 4, height: 3 });
+      expect(ref).toEqual({
+        image: "sha256:039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81",
+        type: "image/jpeg",
+        width: 4,
+        height: 3,
+        bytes: 3,
+      });
+      const again = await images.save(
+        new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" }),
+        {
+          width: 4,
+          height: 3,
+        },
+      );
+      expect(again.image).toBe(ref.image);
+      const read = await images.read(ref.image);
+      expect(new Uint8Array((await read?.arrayBuffer()) ?? new ArrayBuffer(0))).toEqual(
+        new Uint8Array([1, 2, 3]),
+      );
+      expect(await images.read("sha256:none")).toBeUndefined();
     }
   });
 });

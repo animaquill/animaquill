@@ -2,6 +2,14 @@
  * The tools that AI uses on an AnimaQuill project, the same for the assistant in the browser, a
  * command line and the MCP of a platform: no pi, no page. See `createToolset`.
  */
+export {
+  formatAddress,
+  isAddress,
+  parseAddress,
+  valueOfAddress,
+  withoutAddresses,
+  type Address,
+} from "./address.ts";
 export { CallerState } from "./caller.ts";
 export type { ObjectChange } from "./changes.ts";
 export type { OtherChange, OtherWho } from "./context.ts";

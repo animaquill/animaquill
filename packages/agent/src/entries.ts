@@ -6,10 +6,48 @@ import type { TextsUsed } from "@animaquill/tools";
  * Only `pi.ts` turns it into what the library wants.
  */
 
+/**
+ * A picture kept with a conversation, by what it is: the SHA-256 of its bytes, so that the same
+ * picture is kept once, here and, for a project of the platform, there (a design of its own). The
+ * conversation has only this; the bytes are where the host keeps pictures.
+ */
+export interface ImageRef {
+  /** `sha256:` and the hash of its bytes, in hex. */
+  readonly image: string;
+  /** Its media type, such as image/jpeg. */
+  readonly type: string;
+  readonly width: number;
+  readonly height: number;
+  readonly bytes: number;
+}
+
+/** Which moment of the project a picture is a frame of. */
+export interface ImageFrame {
+  readonly timeline: string;
+  readonly timelineName?: string;
+  /** As times of the project are written. */
+  readonly t: string;
+  /** As the editor shows the moment. */
+  readonly timecode: string;
+}
+
+/** A picture that went with a message: the line that says what it is goes to the model with it. */
+export interface AttachedImage extends ImageRef {
+  /** For the model, in English: which picture it is, of what, how large. */
+  readonly note: string;
+  /** For people: what the picture is, such as the moment of a frame. */
+  readonly label?: string;
+  /** Of a frame of the project: which. */
+  readonly frame?: ImageFrame;
+}
+
 /** What people wrote. Each message starts a task, and what AI changes for it is that task's. */
 export interface UserEntry {
   readonly role: "user";
+  /** As people wrote it, links of the editor (`aq:`) as Markdown links. */
   readonly text: string;
+  /** Pictures that went with it, in order. */
+  readonly images?: readonly AttachedImage[];
   /** Milliseconds since 1970. */
   readonly at: number;
   /** The task this message started, see `aiTask`. */
@@ -161,6 +199,48 @@ function readCall(value: unknown): ToolCallEntry | undefined {
   return { id, name, args };
 }
 
+const HASH = /^sha256:[0-9a-f]{64}$/;
+
+/** A picture as kept, where it is one. */
+export function readImage(value: unknown): AttachedImage | undefined {
+  if (!isRecord(value)) return undefined;
+  const { image, type, note, label } = value;
+  const width = count(value.width);
+  const height = count(value.height);
+  const bytes = count(value.bytes);
+  if (typeof image !== "string" || !HASH.test(image) || typeof type !== "string") return undefined;
+  if (width === undefined || height === undefined || bytes === undefined) return undefined;
+  if (typeof note !== "string") return undefined;
+  const frame = isRecord(value.frame) ? value.frame : undefined;
+  const ok =
+    typeof frame?.timeline === "string" &&
+    typeof frame.t === "string" &&
+    typeof frame.timecode === "string";
+  return {
+    image,
+    type,
+    width,
+    height,
+    bytes,
+    note,
+    ...(typeof label === "string" && { label }),
+    ...(ok && {
+      frame: {
+        timeline: frame.timeline as string,
+        t: frame.t as string,
+        timecode: frame.timecode as string,
+        ...(typeof frame.timelineName === "string" && { timelineName: frame.timelineName }),
+      },
+    }),
+  };
+}
+
+/** The text a message goes to the model with: its words, then the line of each of its pictures. */
+export function promptOf(entry: Pick<UserEntry, "text" | "images">): string {
+  const notes = (entry.images ?? []).map((image) => image.note);
+  return notes.length === 0 ? entry.text : `${entry.text}\n\n${notes.join("\n")}`;
+}
+
 /** An entry read back from the browser, or nothing when it is not one. */
 export function readEntry(value: unknown): ChatEntry | undefined {
   if (!isRecord(value) || typeof value.at !== "number") return undefined;
@@ -168,7 +248,10 @@ export function readEntry(value: unknown): ChatEntry | undefined {
   if (role === "user") {
     const { text, task } = value;
     if (typeof text !== "string" || typeof task !== "string") return undefined;
-    return { role, text, at, task };
+    const images = Array.isArray(value.images)
+      ? value.images.map(readImage).filter((image) => image !== undefined)
+      : [];
+    return { role, text, at, task, ...(images.length > 0 && { images }) };
   }
   if (role === "tool") {
     const { call, name, ok, text, data } = value;

@@ -101,7 +101,13 @@ export function packChoicesOf(chat: ChatSession, model: string) {
   return { options, fits, others };
 }
 
-export function ModelPicker() {
+/** Asks the picker to open from elsewhere: each new `at` opens it, lighting up those that see. */
+export interface PickerRequest {
+  readonly at: number;
+  readonly pictures: boolean;
+}
+
+export function ModelPicker({ request }: { readonly request?: PickerRequest | undefined } = {}) {
   const workbench = useWorkbench();
   const { ai, chat, packs } = workbench;
   const { t } = useTranslation();
@@ -109,6 +115,14 @@ export function ModelPicker() {
   useSyncExternalStore(chat.subscribe, chat.getSnapshot);
   const snapshot = useSyncExternalStore(packs.subscribe, packs.getSnapshot);
   const [open, setOpen] = useState(false);
+  const [pictures, setPictures] = useState(false);
+  const asked = useRef(request?.at);
+  useEffect(() => {
+    if (!request || request.at === asked.current) return;
+    asked.current = request.at;
+    setPictures(request.pictures);
+    setOpen(true);
+  }, [request]);
   const now = chat.modelNow();
   const info = now && ai.modelOf(now.ref.service, now.ref.model);
   const name = info?.name ?? now?.ref.model;
@@ -150,7 +164,10 @@ export function ModelPicker() {
                 })
               : t("chat.picker.title", { service: now.service.name, model: name })
         }
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          setPictures(false);
+          setOpen(!open);
+        }}
       >
         <span className={styles.pickName} data-short={label.slice(0, SHORT_NAME)}>
           {label}
@@ -162,7 +179,7 @@ export function ModelPicker() {
         )}
         {open ? <ChevronUp size={12} aria-hidden /> : <ChevronDown size={12} aria-hidden />}
       </button>
-      {open && <Bubble onClose={() => setOpen(false)} />}
+      {open && <Bubble pictures={pictures} onClose={() => setOpen(false)} />}
     </div>
   );
 }
@@ -201,7 +218,14 @@ function inTriangle(
   return !(negative && positive);
 }
 
-function Bubble({ onClose }: { readonly onClose: () => void }) {
+function Bubble({
+  onClose,
+  pictures,
+}: {
+  readonly onClose: () => void;
+  /** Only those that take pictures light up. */
+  readonly pictures: boolean;
+}) {
   const workbench = useWorkbench();
   const { ai, chat, packs } = workbench;
   const { t } = useTranslation();
@@ -445,6 +469,11 @@ function Bubble({ onClose }: { readonly onClose: () => void }) {
               clearTimeout(timer.current);
             }}
           >
+            {pictures && (
+              <p className={styles.bubbleNone} data-testid="chat-picker-pictures">
+                {t("chat.picker.pictures")}
+              </p>
+            )}
             {found.length === 0 && <p className={styles.bubbleNone}>{t("chat.picker.none")}</p>}
             {found.map((group) => (
               <div key={group.service} data-testid="chat-model-group" data-dim={group.dim}>
@@ -467,7 +496,7 @@ function Bubble({ onClose }: { readonly onClose: () => void }) {
                     current={keyOf(row) === current}
                     active={at !== undefined && keyOf(row) === keyOf(at)}
                     menuOpen={menu?.key === keyOf(row)}
-                    dim={group.dim !== undefined}
+                    dim={group.dim !== undefined || (pictures && row.model.image !== true)}
                     isDefault={
                       settings.default?.service === row.service &&
                       settings.default.model === row.model.id

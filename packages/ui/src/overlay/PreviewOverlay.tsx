@@ -150,7 +150,14 @@ export function PreviewOverlay() {
   const target = scene.target;
   const targetBox = target && boundsOf(target.corners);
   return (
-    <div ref={area} className={styles.overlay}>
+    <div
+      ref={area}
+      className={styles.overlay}
+      // Which clips have an outline now, for the browser tests.
+      data-outlined={scene.marks
+        .flatMap((mark) => (mark.kind === "outline" ? [mark.clip] : []))
+        .join(" ")}
+    >
       <canvas
         ref={canvas}
         className={styles.canvas}

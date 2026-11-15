@@ -26,6 +26,13 @@ export interface CodePlace {
   readonly column?: number;
 }
 
+/** Lines of a file selected in the code editor, from 1. */
+export interface SelectedLines {
+  readonly path: string;
+  readonly from: number;
+  readonly to: number;
+}
+
 export interface CodeSnapshot {
   readonly documents: readonly CodeDocument[];
   readonly active: string | undefined;
@@ -68,6 +75,8 @@ export class CodeDocuments {
   #snapshot = NOTHING_OPEN;
   #request = 0;
   #moving = false;
+  #lines: SelectedLines | undefined;
+  readonly #linesEmitter = new Emitter();
 
   constructor(session: ProjectSession, messages: CodeMessages, questions: CodeQuestions) {
     this.#session = session;
@@ -79,6 +88,22 @@ export class CodeDocuments {
 
   subscribe = this.#emitter.subscribe;
   getSnapshot = (): CodeSnapshot => this.#snapshot;
+
+  /** Lines people selected in the code editor, for whoever points at them, such as the chat. */
+  get selectedLines(): SelectedLines | undefined {
+    return this.#lines;
+  }
+
+  subscribeLines = this.#linesEmitter.subscribe;
+
+  /** The editor says which lines are selected: none where the selection is only a caret. */
+  selectLines(lines: SelectedLines | undefined): void {
+    const before = this.#lines;
+    if (before?.path === lines?.path && before?.from === lines?.from && before?.to === lines?.to)
+      return;
+    this.#lines = lines;
+    this.#linesEmitter.emit();
+  }
 
   get hasUnsaved(): boolean {
     return this.#snapshot.documents.some(isDirty);

@@ -675,3 +675,87 @@ describe("a key in a header of people's choosing", () => {
     expect(bearer.has("authorization")).toBe(false);
   });
 });
+
+describe("pictures with a message", () => {
+  const hash = (n: number) => `sha256:${String(n).repeat(64)}`;
+  const image = (n: number, note: string) => ({
+    image: hash(n),
+    type: "image/jpeg",
+    width: 1568,
+    height: 882,
+    bytes: 1000,
+    note,
+  });
+  const earlier: ChatEntry[] = [
+    {
+      role: "user",
+      text: "看 [0:01/00](aq://time?timeline=main&t=1)",
+      images: [image(1, "[image 1: frame]")],
+      at: 1,
+      task: "t0",
+    },
+    {
+      role: "assistant",
+      text: "好",
+      calls: [],
+      at: 2,
+      end: "done",
+      service: "fake",
+      protocol: "fake",
+      model: "fake",
+    },
+  ];
+  const read = vi.fn(async (ref: { image: string }) => ({
+    data: ref.image.slice(7, 15),
+    mimeType: "image/jpeg",
+  }));
+
+  it("go with their lines to a model that takes them, earlier ones too", async () => {
+    let heard: readonly unknown[] = [];
+    const endpoint: FakeEndpoint = { fake: [{ text: "ok" }], heard: (m) => (heard = m) };
+    const { done } = run(endpoint, {
+      history: earlier,
+      prompt: "这样呢\n\n[image 2: frame]",
+      images: [image(2, "[image 2: frame]")],
+      pictures: { sees: true, read },
+    });
+    await done;
+    const users = heard.filter((m) => (m as { role: string }).role === "user") as {
+      content: unknown;
+    }[];
+    expect(users[0]?.content).toEqual([
+      { type: "text", text: "看 [0:01/00](aq://time?timeline=main&t=1)\n\n[image 1: frame]" },
+      { type: "image", data: "11111111", mimeType: "image/jpeg" },
+    ]);
+    expect(users[1]?.content).toEqual([
+      { type: "text", text: "这样呢\n\n[image 2: frame]" },
+      { type: "image", data: "22222222", mimeType: "image/jpeg" },
+    ]);
+  });
+
+  it("stay out for a model that takes none: their lines go alone", async () => {
+    let heard: readonly unknown[] = [];
+    const endpoint: FakeEndpoint = { fake: [{ text: "ok" }], heard: (m) => (heard = m) };
+    const { done } = run(endpoint, {
+      history: earlier,
+      prompt: "这样呢\n\n[image 2: frame]",
+      images: [image(2, "[image 2: frame]")],
+      pictures: { sees: false, read },
+    });
+    await done;
+    const users = heard.filter((m) => (m as { role: string }).role === "user") as {
+      content: unknown;
+    }[];
+    const texts = users.map((user) =>
+      typeof user.content === "string"
+        ? user.content
+        : (user.content as { type: string; text?: string }[])
+            .map((part) => (part.type === "text" ? part.text : `<${part.type}>`))
+            .join(""),
+    );
+    expect(texts).toEqual([
+      "看 [0:01/00](aq://time?timeline=main&t=1)\n\n[image 1: frame]",
+      "这样呢\n\n[image 2: frame]",
+    ]);
+  });
+});

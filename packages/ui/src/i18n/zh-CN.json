@@ -923,6 +923,11 @@
           "name": "发送键",
           "help": "按哪个键发出消息。选 Ctrl+Enter 时，Enter 换行。",
           "keywords": "send enter 回车 发送 换行 快捷键"
+        },
+        "shotSize": {
+          "name": "截图的大小",
+          "help": "截取播放头画面发给 AI 时，长边最多多少像素。1568 是 Anthropic 建议的上限，再大服务也会先缩小，只多花 token。",
+          "keywords": "screenshot 截图 画面 图片 分辨率 大小 像素"
         }
       },
       "account": {
@@ -1117,7 +1122,12 @@
       "editingGroup": "编辑",
       "tail": "里。"
     },
-    "accountMenu": "账号设置…"
+    "accountMenu": "账号设置…",
+    "shotSize": {
+      "1024": "1024",
+      "1568": "1568",
+      "original": "原始大小"
+    }
   },
   "trial": {
     "label": "试改",
@@ -3618,7 +3628,8 @@
       "retryChanged": "上次已经改了 {{count}} 处，重试会接着改。要先撤销吗？",
       "undoThenRetry": "先撤销再重试",
       "retryOn": "接着改",
-      "cancel": "算了"
+      "cancel": "算了",
+      "withoutPictures": "去掉图片重发"
     },
     "usage": {
       "in": "↑{{n}}",
@@ -3688,7 +3699,8 @@
       "relayUrl": "平台转发只能转到 https 地址的默认端口，请在设置里改一下服务的地址，或者改成直连。",
       "relaySignIn": "通过平台转发要先登录。",
       "modelGone": "这个对话用的模型所在的服务已经删了，在下面换一个模型。",
-      "modelOff": "这个对话用的模型已经在设置里停用了，在下面换一个模型，或者去设置里启用它。"
+      "modelOff": "这个对话用的模型已经在设置里停用了，在下面换一个模型，或者去设置里启用它。",
+      "noPictures": "这个模型看不了图。换个能看图的模型，或者去掉图片再发。"
     },
     "tool": {
       "aq_project_status": "读项目概况",
@@ -3809,7 +3821,8 @@
       "copy": "复制成 Markdown",
       "copied": "已复制",
       "copyFailed": "复制不了，浏览器不让写剪贴板。",
-      "sent": "看模型实际收到的"
+      "sent": "看模型实际收到的",
+      "download": "下载成 Markdown"
     },
     "picker": {
       "label": "选模型",
@@ -3838,7 +3851,8 @@
       "othersTitle": "不是为这个模型写的",
       "backModels": "返回模型",
       "backPacks": "返回",
-      "titlePack": "这个对话用 {{service}} · {{model}} · {{pack}}，点了换"
+      "titlePack": "这个对话用 {{service}} · {{model}} · {{pack}}，点了换",
+      "pictures": "亮着的是能看图的模型"
     },
     "reasoning": {
       "label": "推理强度",
@@ -3857,7 +3871,18 @@
       "sendNow": "现在发",
       "whileRunning": "AI 在做事，Enter 排到这一轮之后",
       "quote": "引用",
-      "whileRunningWith": "AI 在做事，{{send}} 排到这一轮之后"
+      "whileRunningWith": "AI 在做事，{{send}} 排到这一轮之后",
+      "insertTime": "插入播放头的时间",
+      "insertTimeHelp": "{{timeline}} {{time}}（第 {{frame}} 帧）。AI 收到的是时间轴 id 和精确时间。",
+      "noTimeline": "先打开一条时间轴",
+      "insertSelection": "插入选中的对象",
+      "insertSelectionHelp": "把选中的 {{count}} 个插在光标处。AI 收到的是它们的 id，不会认错。",
+      "insertSelectionNone": "先在时间轴、预览或资源里选中",
+      "shoot": "截取播放头的画面",
+      "shootHelp": "按导出的样子渲染这一帧（原片、不带选中框），作为图片附件",
+      "addPicture": "添加图片",
+      "addPictureHelp": "选本机的图片；也可以直接粘贴或拖进输入框",
+      "more": "插入和附件"
     },
     "user": {
       "copy": "复制",
@@ -3894,7 +3919,61 @@
       "marker": "在 3 秒处加一个标记",
       "problems": "看看项目里有什么问题"
     },
-    "placeholderWith": "给 AI 发消息，{{send}} 发送，Enter 换行"
+    "placeholderWith": "给 AI 发消息，{{send}} 发送，Enter 换行",
+    "refs": {
+      "clip": "片段「{{name}}」",
+      "caption": "字幕「{{name}}」",
+      "keyframe": "关键帧 {{property}} @{{at}} · {{clip}}",
+      "asset": "素材「{{name}}」",
+      "scene": "场景「{{name}}」",
+      "sound": "声音「{{name}}」",
+      "line": "{{file}} 第 {{line}} 行",
+      "lines": "{{file}} {{from}}–{{to}} 行",
+      "more": "还有 {{count}} 个",
+      "gone": "它已经不在项目里了",
+      "goneMark": "已删除",
+      "elsewhere": "在另一条时间轴上，切过去才能定位"
+    },
+    "pictures": {
+      "frame": "画面",
+      "working": "正在渲染…",
+      "cancel": "取消",
+      "remove": "去掉",
+      "failed": "没截到画面，再试一次，或者看看预览里有没有报错。",
+      "full": "一条消息最多带 8 张图片。",
+      "notPicture": "只能加图片。",
+      "info": "{{label}} · {{width}}×{{height}} · {{size}}",
+      "noVision": "{{model}} 看不了图",
+      "blocked": "这个模型看不了图，图片不会发出去。",
+      "pickVision": "换个能看图的模型",
+      "sendWithout": "去掉图片发送",
+      "unsure": "不确定这个模型能不能看图，发不出去的话在模型参数里取消“能看图”。",
+      "notSent": "这些图片没有发给 {{model}}（它看不了图）",
+      "view": "看大图",
+      "close": "关闭",
+      "missing": "图片不在这台设备上",
+      "count": "{{count}} 张图"
+    },
+    "attached": {
+      "title": "附带",
+      "picture": "图片 {{number}}",
+      "refs": "{{count}} 个链接",
+      "sent": "AI 实际收到的",
+      "copy": "复制"
+    },
+    "notify": {
+      "done": "AI 做完了",
+      "asking": "AI 在等你回答",
+      "failed": "AI 的任务出错了"
+    },
+    "action": {
+      "insertTime": "AI 聊天：插入播放头的时间",
+      "insertSelection": "AI 聊天：插入选中的对象",
+      "sendFrame": "AI 聊天：截取播放头的画面",
+      "addPicture": "AI 聊天：添加图片",
+      "sendFrameShort": "发送当前画面到聊天",
+      "sendFrameHelp": "按导出的样子渲染播放头这一帧，作为图片附件放进 AI 聊天的输入框"
+    }
   },
   "account": {
     "signIn": "登录",

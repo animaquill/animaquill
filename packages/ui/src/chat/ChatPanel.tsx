@@ -21,6 +21,7 @@ import { EmptyStart, Onboarding } from "./ChatStart.tsx";
 import { Composer } from "./Composer.tsx";
 import { ConversationList } from "./ConversationList.tsx";
 import { firstWords } from "./conversations.ts";
+import { plainOf } from "./refs.ts";
 import type { ModelPacks, ModelPacksSnapshot } from "./packs.ts";
 import packStyles from "./ModelPacks.module.css";
 import { OpenPackView, PackViewer, type PackViewRequest } from "./PackViews.tsx";
@@ -87,7 +88,7 @@ export function ChatPanel() {
   const panelRef = useRef<HTMLDivElement>(null);
   /** Puts the cursor in the input box, after something went there. */
   const focusInput = () =>
-    panelRef.current?.querySelector<HTMLTextAreaElement>('[data-testid="chat-input"]')?.focus();
+    panelRef.current?.querySelector<HTMLElement>('[data-testid="chat-input"]')?.focus();
   // The list of conversations over this one, or with this one's name to change.
   const [listOpen, setListOpen] = useState<false | "list" | "rename">(false);
   // A view of model packs over the whole chat: details, all a model gets, or a comparison.
@@ -132,14 +133,19 @@ export function ChatPanel() {
     },
     [toBottom, setToLatest],
   );
-  /** Goes to the turn a search found, once the conversation it is in shows. */
-  const showTurn = (task: string | undefined) => {
+  /**
+   * Goes to the turn a search found, once the conversation it is in shows: the words found light
+   * up in it for a while, and the turn too.
+   */
+  const showTurn = (task: string | undefined, query?: string) => {
     if (task === undefined) return;
     requestAnimationFrame(() => {
-      const turn = listRef.current?.querySelector(`[data-task="${CSS.escape(task)}"]`);
+      const turn = listRef.current?.querySelector<HTMLElement>(`[data-task="${CSS.escape(task)}"]`);
       if (!turn) return;
       following.current = false;
-      turn.scrollIntoView({ block: "start" });
+      if (query) markFound(turn, query);
+      const hit = turn.querySelector("[data-found]") ?? turn;
+      hit.scrollIntoView({ block: "center" });
     });
   };
 
@@ -434,6 +440,16 @@ function MoreMenu(props: {
       () => notifications.push(t("chat.more.copyFailed")),
     );
   };
+  const download = () => {
+    const text = markdownOf(t, props.title, props.entries);
+    const name = `${props.title.replace(/[\\/:*?"<>|\n]+/g, " ").trim() || "chat"}.md`;
+    const url = URL.createObjectURL(new Blob([text], { type: "text/markdown;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  };
   const sent = () => {
     const model = chat.modelNow()?.ref.model;
     if (!model) return;
@@ -464,6 +480,7 @@ function MoreMenu(props: {
           {item(t("chat.more.rename"), props.onRename, !saved)}
           {item(t("chat.more.remove"), () => void remove(), !saved || props.running)}
           {item(t("chat.more.copy"), copy, props.entries.length === 0)}
+          {item(t("chat.more.download"), download, props.entries.length === 0)}
           {item(t("chat.more.sent"), sent, chat.modelNow() === undefined)}
         </div>
       )}
@@ -475,9 +492,16 @@ function MoreMenu(props: {
 export function markdownOf(t: TFunction, title: string, entries: readonly ChatEntry[]): string {
   const parts = [`# ${title}`];
   for (const group of groupsOf(entries)) {
-    parts.push(`**${t("chat.you")}**:\n\n${group.user.text}`);
+    const pictures = (group.user.images ?? []).map(
+      (image, index) =>
+        `[${t("chat.attached.picture", { number: index + 1 })}${image.label ? `: ${image.label}` : ""}]`,
+    );
+    parts.push(
+      `**${t("chat.you")}**:\n\n${[plainOf(group.user.text), ...pictures].filter(Boolean).join("\n\n")}`,
+    );
     const turn = turnOf(group.user, group.entries);
-    if (turn.answer) parts.push(`**${t("chat.assistant")}**:\n\n${turn.answer}`);
+    // Links of the editor mean nothing outside it: what they say stays.
+    if (turn.answer) parts.push(`**${t("chat.assistant")}**:\n\n${plainOf(turn.answer)}`);
   }
   return `${parts.join("\n\n")}\n`;
 }
@@ -607,4 +631,38 @@ function packLinesOf(
     }
   }
   return lines;
+}
+
+/** How long the words a search found stay lit up in the turn it went to. */
+const FOUND_MS = 4000;
+
+/**
+ * Lights up the words a search found in a turn, where the browser can (`CSS.highlights`), and the
+ * turn itself, for a while.
+ */
+function markFound(turn: HTMLElement, query: string): void {
+  const needle = query.toLowerCase();
+  const ranges: Range[] = [];
+  const walker = document.createTreeWalker(turn, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node.textContent?.toLowerCase() ?? "";
+    for (let at = text.indexOf(needle); at >= 0; at = text.indexOf(needle, at + needle.length)) {
+      const range = document.createRange();
+      range.setStart(node, at);
+      range.setEnd(node, at + needle.length);
+      ranges.push(range);
+      if (ranges.length === 1) node.parentElement?.setAttribute("data-found", "");
+    }
+  }
+  turn.setAttribute("data-found-turn", "");
+  const highlights = (CSS as unknown as { highlights?: Map<string, unknown> }).highlights;
+  const Highlight = (globalThis as unknown as { Highlight?: new (...ranges: Range[]) => unknown })
+    .Highlight;
+  if (highlights && Highlight && ranges.length > 0)
+    highlights.set("chat-found", new Highlight(...ranges));
+  setTimeout(() => {
+    turn.removeAttribute("data-found-turn");
+    for (const each of turn.querySelectorAll("[data-found]")) each.removeAttribute("data-found");
+    highlights?.delete("chat-found");
+  }, FOUND_MS);
 }

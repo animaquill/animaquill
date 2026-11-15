@@ -155,7 +155,19 @@ export class CodeView {
     });
     const markers = monaco.editor.onDidChangeMarkers((uris) => this.#noteMarkers(uris));
     const stopCode = code.subscribe(this.#sync);
-    this.#stop = [stopCode, () => markers.dispose()];
+    // Lines people select can go into what they write to AI.
+    const selected = this.#editor.onDidChangeCursorSelection(({ selection }) => {
+      const path = this.#shown;
+      const empty =
+        selection.startLineNumber === selection.endLineNumber &&
+        selection.startColumn === selection.endColumn;
+      code.selectLines(
+        path === undefined || empty
+          ? undefined
+          : { path, from: selection.startLineNumber, to: selection.endLineNumber },
+      );
+    });
+    this.#stop = [stopCode, () => markers.dispose(), () => selected.dispose()];
     this.#sync();
   }
 

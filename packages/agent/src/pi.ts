@@ -24,6 +24,7 @@ import {
   type AssistantMessage,
   type ClientIdentity,
   type FauxResponseStep,
+  type ImageContent,
   type Message,
   type Model,
   type ProviderStreams,
@@ -35,13 +36,16 @@ import { mistralConversationsApi } from "@earendil-works/pi-ai/api/mistral-conve
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import type { CallSettings, TextsUsed } from "@animaquill/tools";
-import type {
-  AnswerEnd,
-  AnswerUsage,
-  AssistantEntry,
-  ChatEntry,
-  PackNote,
-  ToolEntry,
+import {
+  promptOf,
+  type AnswerEnd,
+  type AnswerUsage,
+  type AssistantEntry,
+  type AttachedImage,
+  type ChatEntry,
+  type ImageRef,
+  type PackNote,
+  type ToolEntry,
 } from "./entries.ts";
 import type { ModelValues } from "./ai-settings.ts";
 import type { ListedModel, ThinkingLevelMap } from "./model-discovery.ts";
@@ -154,6 +158,8 @@ export interface FakeEndpoint {
   readonly charactersPerSecond?: number;
   /** How many requests it got. */
   requests?: number;
+  /** Hears the messages of each request, as pi sends them: for tests of what the model gets. */
+  readonly heard?: (messages: readonly unknown[]) => void;
 }
 
 /** What a tool said, for AI to read, and what it changed or found, for people. */
@@ -212,6 +218,18 @@ export type RunEvent =
       readonly args: Readonly<Record<string, unknown>>;
     };
 
+/**
+ * Whether pictures go to the model, and where their bytes are read from. A model people did not
+ * say about (`ModelValues.image`) is tried with them: the service says so where it takes none.
+ */
+export interface Pictures {
+  readonly sees: boolean;
+  /** The bytes of a picture, as base64; nothing where they are not here, and its line goes alone. */
+  readonly read: (
+    ref: ImageRef,
+  ) => Promise<{ readonly data: string; readonly mimeType: string } | undefined>;
+}
+
 export interface RunOptions {
   readonly endpoint: Endpoint | FakeEndpoint;
   /** The key, read when a request goes out. Undefined for services without one. */
@@ -231,6 +249,10 @@ export interface RunOptions {
    * then ends with what people wrote or what tools said: to try again after a failure.
    */
   readonly prompt?: string;
+  /** The pictures that go with the prompt. */
+  readonly images?: readonly AttachedImage[];
+  /** Whether pictures go to the model, see `Pictures`; without it, only their lines. */
+  readonly pictures?: Pictures;
   readonly signal: AbortSignal;
   /**
    * Asked before each tool runs, with its arguments checked: a reason not to run it goes to AI
@@ -540,7 +562,11 @@ const cut = (text: string, most: number) => (text.length > most ? `${text.slice(
  * their call id only (`callIdOf`), as pi does for calls of another model. Keeping answers as each
  * protocol has them, to send them back as they were, is a design of its own, still to come.
  */
-function messagesOf(history: readonly ChatEntry[], tools: ReadonlySet<string>): Message[] {
+function messagesOf(
+  history: readonly ChatEntry[],
+  tools: ReadonlySet<string>,
+  pictures: ReadonlyMap<string, ImageContent> = new Map(),
+): Message[] {
   const stops: Record<AnswerEnd, AssistantMessage["stopReason"]> = {
     done: "stop",
     tools: "toolUse",
@@ -562,9 +588,22 @@ function messagesOf(history: readonly ChatEntry[], tools: ReadonlySet<string>): 
   for (const entry of history) {
     if (entry.role !== "tool") flush(entry.at);
     switch (entry.role) {
-      case "user":
-        messages.push({ role: "user", content: entry.text, timestamp: entry.at });
+      case "user": {
+        const images = (entry.images ?? []).flatMap((image) => {
+          const content = pictures.get(image.image);
+          return content ? [content] : [];
+        });
+        messages.push({
+          role: "user",
+          // A picture the model does not get is its line alone, which is in the text anyway.
+          content:
+            images.length === 0
+              ? promptOf(entry)
+              : [{ type: "text", text: promptOf(entry) }, ...images],
+          timestamp: entry.at,
+        });
         break;
+      }
       case "tool": {
         const call = old.get(entry.call);
         if (call !== undefined) {
@@ -649,8 +688,9 @@ function fakeProvider(endpoint: FakeEndpoint, results: () => readonly ToolEntry[
     models: [{ id: endpoint.model ?? FAKE }],
     ...(cps !== undefined && { tokensPerSecond: cps, tokenSize: { min: 1, max: 1 } }),
   });
-  const step: FauxResponseStep = () => {
+  const step: FauxResponseStep = (context) => {
     endpoint.requests = (endpoint.requests ?? 0) + 1;
+    endpoint.heard?.(context.messages);
     const next = endpoint.fake.shift();
     const answer = typeof next === "function" ? next(results()) : next;
     if (!answer) return fauxAssistantMessage("（假的服务没有更多回答了）");
@@ -717,6 +757,26 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
     );
   }
 
+  // A model people did not say about is tried with pictures: pi would put words in their place.
+  const pictures = options.pictures;
+  if (pictures?.sees && !model.input.includes("image")) {
+    model = { ...model, input: [...model.input, "image"] };
+  }
+  /** The pictures of the conversation and of the prompt, read once for this task. */
+  const loaded = new Map<string, ImageContent>();
+  if (pictures?.sees) {
+    const wanted = [
+      ...options.history.flatMap((entry) => (entry.role === "user" ? (entry.images ?? []) : [])),
+      ...(options.images ?? []),
+    ];
+    for (const image of wanted) {
+      if (loaded.has(image.image)) continue;
+      const read = await pictures.read(image).catch(() => undefined);
+      if (read)
+        loaded.set(image.image, { type: "image", data: read.data, mimeType: read.mimeType });
+    }
+  }
+
   /** A tool of the last answer asked the user: the turn ends after its tools. */
   let asked = false;
   const tools: AgentTool[] = options.tools.map((tool) => ({
@@ -772,7 +832,7 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
       systemPrompt: options.system,
       model,
       tools,
-      messages: messagesOf(options.history, names) as AgentMessage[],
+      messages: messagesOf(options.history, names, loaded) as AgentMessage[],
     },
     streamFn: (request, context, streamOptions) => {
       // Through the relay, only where requests go changes, and what goes with them.
@@ -896,7 +956,13 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
   try {
     if (signal.aborted) return { end: "stopped" };
     if (options.prompt === undefined) await agent.continue();
-    else await agent.prompt(options.prompt);
+    else {
+      const images = (options.images ?? []).flatMap((image) => {
+        const content = loaded.get(image.image);
+        return content ? [content] : [];
+      });
+      await agent.prompt(options.prompt, images.length > 0 ? images : undefined);
+    }
   } catch (error) {
     return { end: "failed", error: clean(error instanceof Error ? error.message : String(error)) };
   } finally {

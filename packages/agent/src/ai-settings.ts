@@ -200,11 +200,16 @@ export interface AiSettings {
   readonly expandThinking: boolean;
   /** Which key sends what was typed in the chat: Enter, unless people chose Ctrl+Enter (⌘ Enter). */
   readonly sendWith?: SendWith;
+  /** How large a frame for the chat is at most on its longer side: 1568 unless people chose. */
+  readonly shotSize?: ShotSide;
   readonly kept?: KeptSettings;
 }
 
 /** Which key sends a message: the other one makes a new line. */
 export type SendWith = "enter" | "modEnter";
+
+/** How large a frame for the chat is at most: 1568 pixels, 1024, or as the project has it. */
+export type ShotSide = 1024 | 1568 | "original";
 
 export const DEFAULT_MAX_TOOL_CALLS = 50;
 export const TOOL_CALL_LIMITS = { min: 1, max: 500 } as const;
@@ -280,6 +285,7 @@ const TOP_FIELDS = new Set([
   "autoTitle",
   "expandThinking",
   "sendWith",
+  "shotSize",
 ]);
 const SERVICE_FIELDS = new Set([
   "id",
@@ -722,6 +728,9 @@ export function readAiSettings(value: unknown): AiSettingsReading {
     autoTitle: typeof value.autoTitle === "boolean" ? value.autoTitle : true,
     expandThinking: value.expandThinking === true,
     ...(value.sendWith === "modEnter" && { sendWith: "modEnter" as const }),
+    ...((value.shotSize === 1024 || value.shotSize === "original") && {
+      shotSize: value.shotSize,
+    }),
     ...(Object.keys(kept).length > 0 && { kept }),
   };
   // Set while the services were read, which control flow does not see.
@@ -782,6 +791,8 @@ export function writeAiSettings(settings: AiSettings): Record<string, unknown> {
     autoTitle: settings.autoTitle,
     expandThinking: settings.expandThinking,
     ...(settings.sendWith === "modEnter" && { sendWith: "modEnter" }),
+    ...(settings.shotSize !== undefined &&
+      settings.shotSize !== 1568 && { shotSize: settings.shotSize }),
   };
 }
 

@@ -40,6 +40,7 @@ import {
   type ServiceFailure,
   type ServiceKind,
   type SendWith,
+  type ShotSide,
 } from "@animaquill/agent";
 import {
   MODEL_CATALOG_MAX_AGE_MS,
@@ -466,6 +467,7 @@ export class AiSettingsStore {
       autoTitle,
       expandThinking,
       sendWith,
+      shotSize,
       kept,
     } = this.#snapshot;
     return {
@@ -478,6 +480,7 @@ export class AiSettingsStore {
       autoTitle,
       expandThinking,
       ...(sendWith === "modEnter" && { sendWith }),
+      ...(shotSize !== undefined && shotSize !== 1568 && { shotSize }),
       ...(kept && { kept }),
     };
   }
@@ -1060,6 +1063,12 @@ export class AiSettingsStore {
   }
 
   /** Which key sends a message in the chat; the other makes a new line. */
+  /** How large a frame for the chat is at most, see `ShotSide`. */
+  setShotSize(size: ShotSide): void {
+    const { shotSize: _was, ...now } = this.#settingsNow();
+    this.#save({ ...now, ...(size !== 1568 && { shotSize: size }) });
+  }
+
   setSendWith(key: SendWith): void {
     const { sendWith: _was, ...now } = this.#settingsNow();
     this.#save({ ...now, ...(key === "modEnter" && { sendWith: key }) });

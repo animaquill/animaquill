@@ -1,5 +1,5 @@
-import type { Conversation, RunningTask, TaskOutcome } from "@animaquill/agent";
-import { failureOf } from "@animaquill/agent";
+import type { AttachedImage, Conversation, RunningTask, TaskOutcome } from "@animaquill/agent";
+import { failureOf, promptOf } from "@animaquill/agent";
 import { ChevronDown, ChevronRight, Copy, GitBranchPlus, Lightbulb, RotateCcw } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
@@ -9,13 +9,19 @@ import styles from "./ChatPanel.module.css";
 import { useNow } from "./clock.ts";
 import { useOpened } from "./expanded.ts";
 import { failureText } from "./failure.ts";
+import { LargePicture, usePictureUrl } from "./AttachmentsView.tsx";
 import { Markdown } from "./markdown/Markdown.tsx";
+import { RefChip, RefText } from "./RefChip.tsx";
+import { piecesOf, plainOf } from "./refs.ts";
 import { summaryOf } from "./summary.ts";
 import { ToolRow } from "./ToolRow.tsx";
 import type { Names, Say } from "./toolSummary.ts";
 import { durationText, type Step, type Turn } from "./turns.ts";
 import { dollars, tokens, usageOf } from "./usage.ts";
 import { liveText, liveThinking, liveThinkingSince, useLive } from "./useLive.ts";
+
+/** A link of the editor in what AI wrote: a block, as in people's words. */
+const appLink = (href: string, label: string) => <RefChip chatRef={{ href, label }} />;
 
 /** A thought quicker than this says nothing of how long it took. */
 const SHOWN_MS = 100;
@@ -82,7 +88,7 @@ export function TurnView({
       )}
       {turn.answer !== undefined && (
         <div className={styles.answer} data-testid="chat-answer">
-          <Markdown text={turn.answer} />
+          <Markdown text={turn.answer} renderAppLink={appLink} />
         </div>
       )}
       {shown && (
@@ -92,6 +98,7 @@ export function TurnView({
           latest={latest}
           maxToolCalls={maxToolCalls}
           changed={summaryOf(turn.entries).changes.length}
+          pictures={(turn.user.images?.length ?? 0) > 0}
         />
       )}
       {question && <QuestionView question={question} />}
@@ -122,9 +129,12 @@ function UserView(props: {
   };
   return (
     <div className={styles.userWrap}>
+      <SentWith turn={turn} />
       <div className={styles.user} data-testid="chat-user">
-        {turn.user.text}
+        <RefText text={turn.user.text} />
+        {turn.user.images && <SentPictures images={turn.user.images} />}
       </div>
+      <PicturesNotSent turn={turn} latest={props.latest} />
       <div className={styles.userActions} data-testid="chat-user-actions">
         <button
           type="button"
@@ -133,7 +143,7 @@ function UserView(props: {
           title={t("chat.user.copy")}
           onClick={() =>
             void navigator.clipboard
-              ?.writeText(turn.user.text)
+              ?.writeText(plainOf(turn.user.text))
               .then(() => notifications.push(t("chat.more.copied")))
           }
         >
@@ -248,7 +258,7 @@ function StepView({
     case "said":
       return (
         <div className={styles.said} data-testid="chat-said">
-          <Markdown text={step.text} />
+          <Markdown text={step.text} renderAppLink={appLink} />
         </div>
       );
     case "tool":
@@ -335,7 +345,7 @@ function LiveView({ conversation }: { readonly conversation: Conversation }) {
       )}
       {text !== "" && (
         <div className={styles.answer} data-testid="chat-live" aria-live="polite">
-          <Markdown text={text} streaming />
+          <Markdown text={text} streaming renderAppLink={appLink} />
         </div>
       )}
     </>
@@ -420,7 +430,10 @@ function OutcomeView({
   latest,
   maxToolCalls,
   changed,
+  pictures,
 }: {
+  /** The message had pictures, which the service may not have taken. */
+  readonly pictures: boolean;
   readonly outcome: TaskOutcome;
   readonly task: string;
   readonly latest: boolean;
@@ -496,6 +509,15 @@ function OutcomeView({
               <button type="button" onClick={retry}>
                 {t("chat.failure.retry")}
               </button>
+              {pictures && (
+                <button
+                  type="button"
+                  data-testid="chat-resend-without-pictures"
+                  onClick={() => void chat.resendWithoutPictures()}
+                >
+                  {t("chat.failure.withoutPictures")}
+                </button>
+              )}
               {kind !== "network" && (
                 <button
                   type="button"
@@ -595,5 +617,115 @@ function QuestionView({ question }: { readonly question: Question }) {
       </div>
       {question.other && <p className={styles.muted}>{t("chat.question.other")}</p>}
     </div>
+  );
+}
+
+/**
+ * What went with people's words, over them on the right: the frames and pictures, and the line
+ * "附带" opens to show what AI got as it was (links and the lines of the pictures), to copy.
+ */
+function SentWith({ turn }: { readonly turn: Turn }) {
+  const { notifications } = useWorkbench();
+  const { t } = useTranslation();
+  const [open, setOpen] = useOpened(`${turn.task}/sent`, false);
+  const images = turn.user.images ?? [];
+  const refs = piecesOf(turn.user.text).filter((piece) => "ref" in piece).length;
+  if (images.length === 0 && refs === 0) return null;
+  const sent = promptOf(turn.user);
+  return (
+    <div className={styles.sentWith} data-testid="chat-sent-with">
+      <button
+        type="button"
+        className={styles.sentWithHead}
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        {t("chat.attached.title")}
+        {images.map((image, index) => (
+          <span key={`${image.image}/${index}`} className={styles.sentTag}>
+            {image.label ?? t("chat.attached.picture", { number: index + 1 })}
+          </span>
+        ))}
+        {refs > 0 && (
+          <span className={styles.sentTag}>{t("chat.attached.refs", { count: refs })}</span>
+        )}
+        {open ? <ChevronDown size={11} aria-hidden /> : <ChevronRight size={11} aria-hidden />}
+      </button>
+      {open && (
+        <div className={styles.sentBody} data-testid="chat-sent">
+          <div className={styles.sentBodyHead}>
+            <span>{t("chat.attached.sent")}</span>
+            <button
+              type="button"
+              className={styles.link}
+              onClick={() =>
+                void navigator.clipboard
+                  ?.writeText(sent)
+                  .then(() => notifications.push(t("chat.more.copied")))
+              }
+            >
+              {t("chat.attached.copy")}
+            </button>
+          </div>
+          <pre data-testid="chat-sent-text">{sent}</pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The pictures of a message, small; a click shows one large. */
+function SentPictures({ images }: { readonly images: readonly AttachedImage[] }) {
+  const [large, setLarge] = useState<{ url: string; label: string } | undefined>();
+  return (
+    <span className={styles.sentPictures}>
+      {images.map((image, index) => (
+        <SentPicture
+          key={`${image.image}/${index}`}
+          image={image}
+          onOpen={(url, label) => setLarge({ url, label })}
+        />
+      ))}
+      {large && <LargePicture {...large} onClose={() => setLarge(undefined)} />}
+    </span>
+  );
+}
+
+function SentPicture(props: {
+  readonly image: AttachedImage;
+  readonly onOpen: (url: string, label: string) => void;
+}) {
+  const { t } = useTranslation();
+  const url = usePictureUrl(props.image.image);
+  const label = props.image.label ?? "";
+  return (
+    <button
+      type="button"
+      className={styles.sentPicture}
+      data-testid="chat-sent-picture"
+      title={label}
+      disabled={!url}
+      onClick={() => url && props.onOpen(url, label)}
+    >
+      {url ? <img src={url} alt={label} /> : <span>{t("chat.pictures.missing")}</span>}
+    </button>
+  );
+}
+
+/**
+ * Pictures of an earlier turn do not go to a model that takes none, which the conversation uses
+ * now: the turn says so.
+ */
+function PicturesNotSent({ turn }: { readonly turn: Turn; readonly latest: boolean }) {
+  const { chat, ai } = useWorkbench();
+  const { t } = useTranslation();
+  useSyncExternalStore(ai.subscribe, ai.getSnapshot);
+  if (!turn.user.images?.length || chat.seesPictures() !== false) return null;
+  const now = chat.modelNow();
+  const name = (now && ai.modelOf(now.ref.service, now.ref.model)?.name) ?? now?.ref.model ?? "";
+  return (
+    <p className={styles.muted} data-testid="chat-pictures-not-sent">
+      {t("chat.pictures.notSent", { model: name, interpolation: { escapeValue: false } })}
+    </p>
   );
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { CallerState } from "./caller.ts";
+import { withoutAddresses } from "./address.ts";
 import { failed, othersOf, type Call } from "./context.ts";
 import { issueLine } from "./issues.ts";
 import type { DetailLimits } from "./packs/detail.ts";
@@ -155,7 +156,8 @@ export function makeTool<P>(
     openWorldHint: false,
   };
   const parse = (args: unknown): { ok: true; value: P } | { ok: false; error: ToolResult } => {
-    const parsed = params.safeParse(args ?? {});
+    // A link of the editor pasted as it is (aq://object/…, aq://time?…) stands for its id or time.
+    const parsed = params.safeParse(withoutAddresses(args ?? {}));
     if (!parsed.success) return { ok: false, error: paramsError(parsed.error, params, args) };
     const extra = definition.check?.(parsed.data, texts);
     return extra ? { ok: false, error: extra } : { ok: true, value: parsed.data };

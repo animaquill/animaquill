@@ -37,7 +37,7 @@ export function ConversationList(props: {
   readonly rename?: boolean;
   readonly onClose: () => void;
   /** A conversation opened from a search: the turn the words are in. */
-  readonly onFound: (task: string | undefined) => void;
+  readonly onFound: (task: string | undefined, query?: string) => void;
 }) {
   const { chat } = useWorkbench();
   const { t } = useTranslation();
@@ -70,7 +70,7 @@ export function ConversationList(props: {
   const open = async (id: string, task?: string) => {
     if (id !== snapshot.id) await chat.open(id);
     props.onClose();
-    props.onFound(task);
+    props.onFound(task, query.trim() || undefined);
   };
   // Esc closes it wherever the focus is, such as after the row that had it went away.
   const busy = renaming !== undefined || removing !== undefined;

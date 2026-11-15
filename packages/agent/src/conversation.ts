@@ -1,10 +1,19 @@
-import type { AnswerEnd, AssistantEntry, ChatEntry, ToolEntry, UserEntry } from "./entries.ts";
+import {
+  promptOf,
+  type AnswerEnd,
+  type AssistantEntry,
+  type AttachedImage,
+  type ChatEntry,
+  type ToolEntry,
+  type UserEntry,
+} from "./entries.ts";
 import { createLiveStore, type LiveStore } from "./live.ts";
 import type {
   AnswerStamp,
   CallSettings,
   Endpoint,
   FakeEndpoint,
+  Pictures,
   RunEvent,
   RunResult,
   ToolSpec,
@@ -82,6 +91,11 @@ export interface TaskTarget {
   readonly call?: CallSettings;
   /** What its answers are recorded as made with. */
   readonly stamp?: AnswerStamp;
+  /**
+   * Whether the pictures of the conversation go to its model, and where they are read from:
+   * without it, or where the model does not take pictures, only the line of each goes.
+   */
+  readonly pictures?: Pictures;
 }
 
 export interface ConversationOptions {
@@ -153,14 +167,24 @@ export class Conversation {
    * Starts a task with what people wrote, and waits for it to end. One at a time: while a task
    * runs this does nothing and says so with undefined.
    */
-  async send(text: string, target: TaskTarget): Promise<TaskOutcome | undefined> {
-    if (this.running || !text.trim()) return undefined;
+  async send(
+    text: string,
+    target: TaskTarget,
+    images: readonly AttachedImage[] = [],
+  ): Promise<TaskOutcome | undefined> {
+    if (this.running || (!text.trim() && images.length === 0)) return undefined;
     const now = this.#options.now ?? Date.now;
     const task = (this.#options.newTask ?? newTaskId)();
-    const user: UserEntry = { role: "user", text, at: now(), task };
+    const user: UserEntry = {
+      role: "user",
+      text,
+      at: now(),
+      task,
+      ...(images.length > 0 && { images }),
+    };
     const history = this.#snapshot.entries;
     this.#set({ entries: [...history, user] });
-    return this.#run(task, target, history, text);
+    return this.#run(task, target, history, user);
   }
 
   /**
@@ -188,7 +212,7 @@ export class Conversation {
     task: string,
     target: TaskTarget,
     history: readonly ChatEntry[],
-    prompt: string | undefined,
+    prompt: UserEntry | undefined,
   ): Promise<TaskOutcome> {
     const now = this.#options.now ?? Date.now;
     const controller = new AbortController();
@@ -251,7 +275,11 @@ export class Conversation {
           ...(target.stamp && { stamp: target.stamp }),
           ...(this.#options.onAnswer && { onAnswer: this.#options.onAnswer }),
           history: first === undefined ? this.#snapshot.entries : history,
-          ...(first !== undefined && { prompt: first }),
+          ...(first !== undefined && {
+            prompt: promptOf(first),
+            ...(first.images && { images: first.images }),
+          }),
+          ...(target.pictures && { pictures: target.pictures }),
           signal: controller.signal,
           before: () => {
             if (calls >= max) return { reason: limitReason(max), stop: true };

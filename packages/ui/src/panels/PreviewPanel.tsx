@@ -1,4 +1,4 @@
-import { Pause, Play, SkipBack, SkipForward } from "lucide-react";
+import { MessageSquarePlus, Pause, Play, SkipBack, SkipForward } from "lucide-react";
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Tip } from "../app/Tip.tsx";
@@ -142,7 +142,8 @@ const noSubscription = () => () => {};
 const noProgress = () => NO_PROGRESS;
 
 export function PreviewPanel() {
-  const { timeline, preview, trials } = useWorkbench();
+  const workbench = useWorkbench();
+  const { timeline, preview, trials } = workbench;
   const { t } = useTranslation();
   const { playing, model } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
   const frame = useSyncExternalStore(timeline.subscribeView, () => timeline.frame);
@@ -203,6 +204,13 @@ export function PreviewPanel() {
             </span>
           </Tip>
         )}
+        <ToolButton
+          name={t("chat.action.sendFrameShort")}
+          usage={t("chat.action.sendFrameHelp")}
+          icon={MessageSquarePlus}
+          unavailable={!model}
+          onClick={() => workbench.sendFrameToChat()}
+        />
         <QualityButton />
       </div>
     </div>

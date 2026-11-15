@@ -20,9 +20,15 @@ export function TitleBar() {
   useSyncExternalStore(keybindings.subscribe, keybindings.getSnapshot);
 
   const name = project?.manifest.name;
+  // "●" while the chat has something people have not seen, such as an answer that came meanwhile.
+  const attention = useSyncExternalStore(
+    workbench.attention.subscribe,
+    workbench.attention.getSnapshot,
+  );
   useEffect(() => {
-    document.title = name ? `${name} - AnimaQuill` : "AnimaQuill";
-  }, [name]);
+    const title = name ? `${name} - AnimaQuill` : "AnimaQuill";
+    document.title = attention ? `● ${title}` : title;
+  }, [name, attention]);
 
   const shortcutOf = (id: string) => {
     const combo = keybindings.keysFor(id)[0];

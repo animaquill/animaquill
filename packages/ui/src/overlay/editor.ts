@@ -245,6 +245,8 @@ export class OverlayEditor {
   #snapshot: OverlaySnapshot = { scene: EMPTY, hovered: undefined, dragging: undefined };
   /** What the scene was last worked out from, to tell when it has to be worked out again. */
   #inputs: readonly unknown[] = [];
+  /** Clips something else points at now, such as a block in the chat under the pointer. */
+  #pointed: ReadonlySet<string> = new Set();
   #stop: () => void;
 
   constructor(sources: OverlaySources) {
@@ -308,6 +310,14 @@ export class OverlayEditor {
   setTouchInput(on: boolean): void {
     if (on === this.#touch) return;
     this.#touch = on;
+    this.#changed();
+  }
+
+  /** Outlines clips that something else points at, as if selected; none again with an empty set. */
+  point(clips: ReadonlySet<string>): void {
+    if (clips.size === this.#pointed.size && [...clips].every((clip) => this.#pointed.has(clip)))
+      return;
+    this.#pointed = clips;
     this.#changed();
   }
 
@@ -504,6 +514,7 @@ export class OverlayEditor {
       this.#touch,
       handles.getVersion(),
       registrations.getVersion(),
+      this.#pointed,
     ];
     if (
       inputs.length === this.#inputs.length &&
@@ -615,6 +626,11 @@ export class OverlayEditor {
         corners: one.corners,
         style: locked ? "locked" : "selected",
       });
+    }
+    // What the chat points at shows as if selected, while the pointer is on it.
+    for (const one of placed) {
+      if (!this.#pointed.has(one.layer.id) || selection.has(one.layer.id)) continue;
+      marks.push({ kind: "outline", clip: one.layer.id, corners: one.corners, style: "selected" });
     }
     if (target) this.#targetScene(frame, target, marks, grips);
     handles.want(target?.layer.source.kind === "scene" ? target.layer.id : undefined);

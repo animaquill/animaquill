@@ -462,6 +462,21 @@ export function ChatGroup() {
           onChange={(value) => ai.setSendWith(value)}
         />
       </SettingRow>
+      <SettingRow id="chat.shotSize">
+        <Segmented
+          label={t("settings.items.chat.shotSize.name")}
+          value={String(settings.shotSize ?? 1568)}
+          options={[
+            { value: "1024", label: t("settings.shotSize.1024") },
+            { value: "1568", label: t("settings.shotSize.1568") },
+            { value: "original", label: t("settings.shotSize.original") },
+          ]}
+          disabled={held}
+          onChange={(value) =>
+            ai.setShotSize(value === "original" ? "original" : value === "1024" ? 1024 : 1568)
+          }
+        />
+      </SettingRow>
     </GroupPage>
   );
 }

@@ -1,8 +1,10 @@
 import type { FakeEndpoint } from "@animaquill/agent";
 import { ProblemSet, ProjectStore, withId, type UndoResult } from "@animaquill/core";
 import {
+  memoryChatImages,
   memoryChats,
   memoryKeys,
+  type ChatImageStore,
   type AccountAccess,
   type ChatStore,
   type WindowMemory,
@@ -59,6 +61,7 @@ function setup(
     memory?: WindowMemory;
     chats?: ChatStore;
     ask?: ChatSessionOptions["ask"];
+    images?: ChatImageStore;
   } = {},
 ) {
   const values = new Map<string, unknown>();
@@ -99,6 +102,7 @@ function setup(
     undone: (result) => undone.push(result),
     fake: () => fake,
     ...(where.memory && { memory: where.memory }),
+    ...(where.images && { images: where.images }),
     // No title from a model unless a test asks for one: it would be one more request.
     ask: where.ask ?? (async () => ({ ok: false })),
   });
@@ -476,8 +480,8 @@ describe("a conversation of its own", () => {
     await vi.waitFor(() => expect(chat.running).toBe(true));
     chat.queue("第二句");
     chat.queue("第三句");
-    expect(chat.unqueue(1)).toBe("第三句");
-    expect(chat.getSnapshot().queued).toEqual(["第二句"]);
+    expect(chat.unqueue(1)).toEqual({ text: "第三句" });
+    expect(chat.getSnapshot().queued).toEqual([{ text: "第二句" }]);
     await running;
     await vi.waitFor(() =>
       expect(
@@ -923,5 +927,69 @@ describe("model packs in this browser", () => {
     });
     expect(check.problems.map(({ code }) => code)).toEqual(["scripts"]);
     expect(packs.getSnapshot().installed).toEqual([]);
+  });
+});
+
+describe("pictures with a message", () => {
+  const picture = {
+    image: `sha256:${"a".repeat(64)}`,
+    type: "image/jpeg",
+    width: 1568,
+    height: 882,
+    bytes: 1000,
+    note: "[image 1: the frame of timeline main at t=1 (0:01/00), as the export renders it, 1568×882]",
+    label: "画面 0:01/00",
+  };
+
+  it("are held back for a model that takes none, and go back to the draft with the words", async () => {
+    const memory = windowMemory();
+    const { ai, chat } = setup({ memory });
+    const id = ai.add("deepseek", "DeepSeek") as string;
+    ai.setEnabled(id, "deepseek-chat", true);
+    // Nobody said whether it takes pictures: they go, and the service answers.
+    expect(chat.seesPictures()).toBeUndefined();
+    ai.editModel(id, "deepseek-chat", "image", false);
+    expect(chat.seesPictures()).toBe(false);
+    await chat.send("看看 [0:01/00](aq://time?timeline=main&t=1)", [picture]);
+    expect(chat.getSnapshot().hold).toBe("noPictures");
+    expect(chat.getSnapshot().conversation?.getSnapshot().entries).toEqual([]);
+    const chatId = chat.getSnapshot().id as string;
+    expect(chat.drafts.read("p1", chatId)).toBe("看看 [0:01/00](aq://time?timeline=main&t=1)");
+    expect(chat.attachments.ready("p1", chatId).map(({ image }) => image)).toEqual([picture.image]);
+    ai.editModel(id, "deepseek-chat", "image", true);
+    expect(chat.seesPictures()).toBe(true);
+  });
+
+  it("go to a model that takes them, with their lines after the words", async () => {
+    const images = memoryChatImages();
+    const { chat, fake } = setup({ images });
+    const kept = await images.save(new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" }), {
+      width: 1568,
+      height: 882,
+    });
+    let heard: readonly unknown[] = [];
+    fake({ fake: [{ text: "看到了" }, { text: "好" }], heard: (messages) => (heard = messages) });
+    const lost = { ...picture, image: `sha256:${"b".repeat(64)}`, note: "[image 2: lost]" };
+    const sent = { ...picture, image: kept.image };
+    const outcome = await chat.send("这里 [片段「标题」](aq://object/clip_1?timeline=main)", [
+      sent,
+    ]);
+    expect(outcome?.end).toBe("done");
+    const user = () =>
+      heard.findLast((message) => (message as { role: string }).role === "user") as {
+        content: unknown;
+      };
+    expect(user().content).toEqual([
+      {
+        type: "text",
+        text: `这里 [片段「标题」](aq://object/clip_1?timeline=main)\n\n${picture.note}`,
+      },
+      { type: "image", data: "AQID", mimeType: "image/jpeg" },
+    ]);
+    const entries = chat.getSnapshot().conversation?.getSnapshot().entries ?? [];
+    expect(entries[0]).toMatchObject({ role: "user", images: [sent] });
+    // A picture whose bytes are not here goes as its line alone.
+    await chat.send("还有这张", [lost]);
+    expect(user().content).toEqual([{ type: "text", text: "还有这张\n\n[image 2: lost]" }]);
   });
 });

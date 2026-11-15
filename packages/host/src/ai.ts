@@ -1,4 +1,11 @@
-import type { ChatStore, KeyStore, SavedChat, SavedChatSummary } from "./index.ts";
+import type {
+  ChatImageRef,
+  ChatImageStore,
+  ChatStore,
+  KeyStore,
+  SavedChat,
+  SavedChatSummary,
+} from "./index.ts";
 
 /**
  * Keys of AI services and conversations with AI, each in a database of its own: keys must not be
@@ -314,5 +321,74 @@ export function memoryChats(): ChatStore {
       }
       return [...found].map(([project, each]) => ({ project, ...each }));
     },
+  };
+}
+
+/**
+ * Where the pictures of conversations are kept: a database of its own, so that pages of before it
+ * still open the one of conversations, which has the same version as ever.
+ */
+export const CHAT_IMAGES_DATABASE = "animaquill-chat-images";
+const IMAGES = "images";
+
+/** What a picture is called by: the SHA-256 of its bytes. */
+export async function imageHashOf(blob: Blob): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", await blob.arrayBuffer()));
+  return `sha256:${[...digest].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+}
+
+interface ImageRecord {
+  readonly image: string;
+  readonly blob: Blob;
+  /** When it was kept, for whoever clears what nothing has any more. */
+  readonly at: number;
+}
+
+const refOf = (image: string, blob: Blob, size: { width: number; height: number }) => ({
+  image,
+  type: blob.type,
+  width: size.width,
+  height: size.height,
+  bytes: blob.size,
+});
+
+/** The pictures of conversations in this browser. */
+export function browserChatImages(factory: () => IDBFactory): ChatImageStore {
+  const database = connector(() => {
+    const request = factory().open(CHAT_IMAGES_DATABASE, VERSION);
+    request.addEventListener("upgradeneeded", () => {
+      request.result.createObjectStore(IMAGES, { keyPath: "image" });
+    });
+    return resultOf(request);
+  });
+  return {
+    async save(blob, size): Promise<ChatImageRef> {
+      const image = await imageHashOf(blob);
+      const transaction = (await database()).transaction(IMAGES, "readwrite");
+      const store = transaction.objectStore(IMAGES);
+      const known = await resultOf(store.getKey(image));
+      if (known === undefined) store.put({ image, blob, at: Date.now() } satisfies ImageRecord);
+      await committed(transaction);
+      return refOf(image, blob, size);
+    },
+    async read(image) {
+      const transaction = (await database()).transaction(IMAGES, "readonly");
+      const found = (await resultOf(transaction.objectStore(IMAGES).get(image))) as
+        ImageRecord | undefined;
+      return found?.blob;
+    },
+  };
+}
+
+/** Pictures that last as long as the page. */
+export function memoryChatImages(): ChatImageStore {
+  const images = new Map<string, Blob>();
+  return {
+    async save(blob, size) {
+      const image = await imageHashOf(blob);
+      if (!images.has(image)) images.set(image, blob);
+      return refOf(image, blob, size);
+    },
+    read: async (image) => images.get(image),
   };
 }

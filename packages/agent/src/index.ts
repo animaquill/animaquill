@@ -20,8 +20,13 @@ export {
   type TaskTarget,
 } from "./conversation.ts";
 export {
+  promptOf,
   readEntry,
+  readImage,
   type AnswerEnd,
+  type AttachedImage,
+  type ImageFrame,
+  type ImageRef,
   type AnswerUsage,
   type AssistantEntry,
   type ChatEntry,
@@ -41,6 +46,7 @@ export type {
   FakeAnswer,
   ModelTest,
   FakeEndpoint,
+  Pictures,
   Relayed,
   SmallAsk,
   ToolOutput,
@@ -85,6 +91,7 @@ export {
   type PriceDoubt,
   type ModelRef,
   type SendWith,
+  type ShotSide,
   type ServiceConfig,
 } from "./ai-settings.ts";
 export {
