@@ -824,7 +824,7 @@ describe("assets.json that changed in the project folder", () => {
     const result = merge(store, base, (asset) =>
       Object.assign(asset, { hash: OTHER, size: 5, storage: "lfs", name: "外面改的" }),
     );
-    expect(result.conflicts).toEqual([
+    expect(result.conflicts).toMatchObject([
       { file: ASSETS, path: ["assets", "a", "hash"], theirs: OTHER },
     ]);
     expect(inFile(store)).toEqual({ ...file, name: "外面改的", hash: THIRD, size: 7 });
@@ -873,7 +873,7 @@ describe("assets.json that changed in the project folder", () => {
       asset.name = "外面改的";
     });
     expect(result.files).toMatchObject([{ path: ASSETS, status: "merged" }]);
-    expect(result.conflicts).toEqual([
+    expect(result.conflicts).toMatchObject([
       { file: ASSETS, path: ["assets", "a", "storage"], theirs: "remote" },
     ]);
     expect(store.getState().places?.["a"]).toEqual({
@@ -895,7 +895,7 @@ describe("assets.json that changed in the project folder", () => {
     );
     // The folder says LFS and leaves the address there: field by field, LFS at the new address.
     const result = merge(store, base, (asset) => (asset.storage = "lfs"));
-    expect(result.conflicts).toEqual([
+    expect(result.conflicts).toMatchObject([
       { file: ASSETS, path: ["assets", "a", "storage"], theirs: "lfs" },
     ]);
     expect(inFile(store)).toEqual(at(moved));

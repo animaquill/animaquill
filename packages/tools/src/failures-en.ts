@@ -238,6 +238,14 @@ export const FAILURE_TEXTS: Texts = {
     why === "uses-removed"
       ? "The files use what the editor just removed."
       : "The files and what the editor has not written yet would break the project together.",
+  "conflict-not-taken": ({ why, file }) =>
+    why === "manual"
+      ? `Only the user can settle this conflict in ${file}.`
+      : why === "changed"
+        ? `${file} changed there since the merge, so the conflict is out of date.`
+        : why === "not-found"
+          ? `The place of the conflict is not in ${file} any more, or not only once.`
+          : `Taking the other side would leave something in ${file} pointing at nothing.`,
   "copy-too-large": ({ bytes, limit }) =>
     `The project is too large to copy: ${Math.ceil(bytes / 1024 ** 2)} MiB, more than ${limit / 1024 ** 2} MiB.`,
   "copy-discarded": () => "The copy was discarded.",

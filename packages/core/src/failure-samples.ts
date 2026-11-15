@@ -116,6 +116,10 @@ const CODES: { readonly [C in FailureCode]: CommandFailure & { readonly code: C 
   "manifest-deleted": { code: "manifest-deleted", params: {} },
   "merge-unsettled": { code: "merge-unsettled", params: {} },
   "merge-would-break": { code: "merge-would-break", params: { why: "breaks" } },
+  "conflict-not-taken": {
+    code: "conflict-not-taken",
+    params: { why: "changed", file: "timelines/main/timeline.json" },
+  },
   "copy-too-large": {
     code: "copy-too-large",
     params: { bytes: 80 * 1024 ** 2, limit: 64 * 1024 ** 2 },

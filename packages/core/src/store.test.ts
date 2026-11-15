@@ -3581,7 +3581,7 @@ describe("a step that cannot go back", () => {
     const store = freshProject();
     setOpacity(store, 0.2);
     setOpacity(store, 0.5, { origin: AI });
-    expect(blocked(store.undo()).conflicts).toEqual([
+    expect(blocked(store.undo()).conflicts).toMatchObject([
       ["timelines", "main", "clips", "c", "properties", "opacity"],
     ]);
   });

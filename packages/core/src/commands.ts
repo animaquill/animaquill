@@ -135,6 +135,24 @@ import {
   writeFile,
 } from "./scene-edits.ts";
 import { codeUsingAsset } from "./scene-plan.ts";
+import { takeTheirs } from "./merge-files.ts";
+
+/** A conflict of a merge, as `MergeConflict` says it, whose other side `conflict.take` takes. */
+const ConflictTake = z.strictObject({
+  conflict: z.object({
+    file: z.string().min(1),
+    path: z.array(z.string()).min(1),
+    kind: z.enum(["value", "lines", "file", "order", "asset-file", "removed-link"]),
+    lines: z
+      .strictObject({ from: z.number().int().nonnegative(), to: z.number().int().nonnegative() })
+      .optional(),
+    ours: z.unknown().optional(),
+    theirs: z.unknown().optional(),
+    around: z
+      .strictObject({ before: z.string().optional(), after: z.string().optional() })
+      .optional(),
+  }),
+});
 
 /**
  * How far an operation reaches. `edit` changes the project, and can be undone; `outside` would change
@@ -656,6 +674,24 @@ export const OPERATIONS = [
       result: Nothing,
       failures: [],
       whileLocked: true,
+    },
+  ),
+
+  /**
+   * The other side of a conflict of a merge, such as what GitHub has where the editor's stayed. It
+   * is a decision of the person, which goes back with undo like any other change of theirs.
+   */
+  define(
+    "conflict.take",
+    "把合并时两边都改了、留了编辑器这边的一处，换成另一边（比如 GitHub 上）的内容。",
+    ConflictTake,
+    (draft, { conflict }) => takeTheirs(draft, conflict),
+    {
+      group: "project",
+      level: "human",
+      ai: { no: "human" },
+      result: Nothing,
+      failures: ["conflict-not-taken"],
     },
   ),
 

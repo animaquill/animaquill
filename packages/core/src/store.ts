@@ -29,10 +29,20 @@ import {
   type MergeMemory,
 } from "./merge-files.ts";
 import { brokenDocument } from "./document-check.ts";
+import { editSpan } from "./doubled-text.ts";
 import { objectKey, objectOfPath } from "./object-of-path.ts";
 import { projectToState, stateToProject, type Here, type ProjectState } from "./model.ts";
-import { NOBODY, STORAGE, USER, aiTask, folderBatch, type Origin } from "./origin.ts";
-import { cloudOrigin } from "./sync.ts";
+import {
+  NOBODY,
+  STORAGE,
+  USER,
+  aiTask,
+  folderBatch,
+  isFileBatch,
+  repoBatch,
+  type Origin,
+} from "./origin.ts";
+import { PLATFORM_CLIENT, cloudOrigin } from "./sync.ts";
 import { Mutator, getIn, type Patch } from "./patch.ts";
 import { danglingAt } from "./references.ts";
 import {
@@ -47,7 +57,7 @@ import {
 } from "./structure.ts";
 import { UNWRITTEN, WriteTree, type Written } from "./write-tree.ts";
 
-export { STORAGE, USER, aiTask, folderBatch, type Origin };
+export { STORAGE, USER, aiTask, folderBatch, repoBatch, type Origin };
 
 const LOAD = "load";
 const REMOTE = "remote";
@@ -169,15 +179,24 @@ export type ImportResult =
 /**
  * How a batch of files comes in. Like a file, it has to say who changed it, see `ImportOptions`.
  * Changes in the folder are nobody's in particular: each batch gets an origin of its own, see
- * `folderBatch`, so that it can be taken back as a whole with `undoOrigin`.
+ * `folderBatch`, so that it can be taken back as a whole with `undoOrigin`. The same goes for a
+ * batch from the repository on GitHub, see `repoBatch`.
  */
 export interface MergeOptions {
   readonly origin: Origin;
   /**
    * What each file of the folder outside the batch holds, which is its base: the merge has to know
-   * what the folder still has, to tell what only the editor took away. See `BaseOf`.
+   * what the folder still has, to tell what only the editor took away. See `BaseOf`. Whoever does
+   * not know what those files hold, as the platform for a repository, leaves it out: then whatever
+   * could be there counts as there, which keeps more of the editor's side.
    */
-  readonly baseOf: BaseOf;
+  readonly baseOf: BaseOf | undefined;
+  /**
+   * Where the files of assets are kept as counts for the copy the batch is from, see `Here`: the
+   * same as it was written out with, as `{ repo }` for the repository on GitHub, so that assets.json
+   * reads the same on both sides. Undefined counts every place, as a folder is written.
+   */
+  readonly here?: Here;
   /** Runs every check and writes nothing. */
   readonly dryRun?: boolean;
 }
@@ -435,23 +454,10 @@ function readChange(root: Y.Map<unknown>, map: Y.Map<unknown>, path: Path, key: 
   return { path: where, value: toState(where, map.get(key)) };
 }
 
-const isHighSurrogate = (code: number) => code >= 0xd800 && code <= 0xdbff;
-
 /** Changes a text as little as possible, so that it merges with edits made at the same time. */
 function editText(target: Y.Text, next: string): void {
   const current = target.toString();
-  const shortest = Math.min(current.length, next.length);
-  let start = 0;
-  while (start < shortest && current[start] === next[start]) start++;
-  if (start > 0 && isHighSurrogate(current.charCodeAt(start - 1))) start--;
-  let end = 0;
-  while (
-    end < shortest - start &&
-    current[current.length - 1 - end] === next[next.length - 1 - end]
-  ) {
-    end++;
-  }
-  if (end > 0 && isHighSurrogate(next.charCodeAt(next.length - end - 1))) end--;
+  const { start, end } = editSpan(current, next);
   target.delete(start, current.length - start - end);
   target.insert(start, next.slice(start, next.length - end));
 }
@@ -559,6 +565,9 @@ export class ProjectStore {
   /** Opens a document that already has content, such as one that came from the platform. */
   constructor(doc: Y.Doc) {
     this.doc = doc;
+    // Only the platform writes as the platform, see `writeAsPlatform`. Yjs draws ids by chance.
+    while (doc.clientID === PLATFORM_CLIENT)
+      doc.clientID = 1 + Math.floor(Math.random() * 0xffff_fffe);
     this.#root = doc.getMap<unknown>(ROOT);
     this.#state = toState([], this.#root) as ProjectState;
     this.#latest = this.#state;
@@ -656,6 +665,34 @@ export class ProjectStore {
       this.#show();
     }
     return { delta, written: watching.written };
+  }
+
+  /**
+   * Writes what `write` does as the platform, with `PLATFORM_CLIENT` as the client id of Yjs, and
+   * goes back to the document's own id after it: a merge from GitHub, and whatever else the platform
+   * changes itself. That is what makes a person's change of the same key, made where the change of
+   * the platform had not arrived yet, win over it when the two meet, see `PLATFORM_CLIENT`.
+   *
+   * Only for the working copy on the platform, of which there is one at a time, and only once it
+   * has every update: Yjs numbers what a client writes one after the other from what the document
+   * has of it, so a second copy writing as the platform at the same time, or a copy without some of
+   * what the platform wrote before, would give two different changes the same number, and one of
+   * them would never arrive anywhere. It throws then, without writing anything. The id is set only
+   * while `write` runs, which is all at once: an update from elsewhere that numbered something as
+   * the document's own would make Yjs draw another id, see `Transaction.js`.
+   */
+  writeAsPlatform<T>(write: () => T): T {
+    const own = this.doc.clientID;
+    if (own === PLATFORM_CLIENT) throw new Error("This copy writes as the platform already");
+    if (this.isMissingUpdates) {
+      throw new Error("A copy that waits for updates cannot write as the platform");
+    }
+    this.doc.clientID = PLATFORM_CLIENT;
+    try {
+      return write();
+    } finally {
+      this.doc.clientID = own;
+    }
   }
 
   /** What this project has, as Yjs counts it, see `isAhead`. */
@@ -946,8 +983,9 @@ export class ProjectStore {
       draft.knowsOnlyOutcome();
       // Code that does not say what the folder has gets the merge that assumes the most.
       const baseOf = typeof options?.baseOf === "function" ? options.baseOf : undefined;
+      const here = options?.here;
       try {
-        merge = planMerge(draft, changes, { baseOf, memory: this.#read });
+        merge = planMerge(draft, changes, { baseOf, memory: this.#read, here });
       } catch (error) {
         if (error instanceof CommandError) throw error;
         // Nothing is written of a draft that did not get through, so the project stays as it is.
@@ -970,7 +1008,7 @@ export class ProjectStore {
 
   /** Only the last few batches of files can be taken back: the oldest goes, with all of its log. */
   #rememberBatch(origin: Origin): void {
-    if (!origin.startsWith(folderBatch(""))) return;
+    if (!isFileBatch(origin)) return;
     const known = this.#batches.indexOf(origin);
     if (known >= 0) this.#batches.splice(known, 1);
     this.#batches.push(origin);

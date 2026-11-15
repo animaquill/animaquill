@@ -16,6 +16,17 @@ export const aiTask = (task: string): Origin => `ai:${task}`;
  */
 export const folderBatch = (batch: string): Origin => `folder:${batch}`;
 
+/**
+ * One batch of changes that came from the repository of the project on GitHub, as the platform
+ * merges it: what somebody committed there. It is no person, and like a batch of the folder it is an
+ * origin of its own, so that it can be taken back as a whole.
+ */
+export const repoBatch = (batch: string): Origin => `repo:${batch}`;
+
+/** Whether a change comes from a batch of files, of the folder or of the repository. */
+export const isFileBatch = (origin: Origin): boolean =>
+  origin.startsWith("folder:") || origin.startsWith("repo:");
+
 /** What did not say where it comes from. That is no person either. */
 export const NOBODY: Origin = "nobody";
 

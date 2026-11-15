@@ -111,6 +111,7 @@ export function failureMessage(failure: CommandFailure, t: Translate = plainTran
     case "missing-entry":
     case "path-taken":
     case "transition-too-long":
+    case "conflict-not-taken":
     case "merge-would-break": {
       const which = str(params.holds ?? params.why ?? params.by ?? params.kind);
       return t(`${key}.${which}`, params);

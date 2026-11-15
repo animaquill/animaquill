@@ -1,8 +1,10 @@
 import {
+  SALVAGEABLE,
   folderBatch,
   inRanks,
   isDocument,
   isProjectFile,
+  mergeInRounds,
   type FileChange,
   type MergeConflict,
   type MergeResult,
@@ -241,8 +243,6 @@ const LOOK_AT_ONCE = 16;
 const WRITE_AT_ONCE = 8;
 /** A file that keeps changing while it is read gets read this many times at the most. */
 const READ_ATTEMPTS = 3;
-/** Refusals of a batch that say which files they are about, which can wait while the rest comes. */
-const SALVAGEABLE = new Set(["merge-would-break", "merge-unsettled"]);
 /**
  * Refusals that a change of the project can lift, so that the files are tried again then: a tag
  * that locks the project, or what the editor did that the files run into.
@@ -1181,50 +1181,19 @@ class Turn {
     }
     const origin = folderBatch(tool ? `tool-${tool.batch}` : nextBatch());
     const atStart = !this.#compared;
-    let before = store.getState();
-    const mergeOf = (files: readonly FileChange[]) => {
-      before = store.getState();
-      return store.mergeFiles(files, { origin, baseOf: this.#baseOf });
-    };
     const told = { tool, atStart };
-    let batch = changes;
-    let result = mergeOf(batch);
-    // What would break the project, and says about which files, keeps out only those.
-    for (
-      let round = 0;
-      round < 3 && !result.ok && SALVAGEABLE.has(result.error.code) && batch.length > 1;
-      round++
-    ) {
-      const { error } = result;
-      const named = new Set((error.problems ?? []).map(({ file }) => file));
-      const out = batch.filter(({ path }) => named.has(path));
-      if (out.length === 0 || out.length === batch.length) break;
-      for (const { path, base } of out) {
-        this.#block(path, disk.get(path), problemsAbout(error, path), true, base);
+    // What would break the project, and says about which files, keeps out only those, see
+    // `mergeInRounds`: each is noted before the next merge, which asks `#baseOf` about them.
+    let took = false;
+    mergeInRounds(store, changes, { origin, baseOf: this.#baseOf }, (round) => {
+      if (round.ok) {
+        took = true;
+        this.#took(round.result, round.changes, disk, origin, { ...told, before: round.before });
+      } else {
+        this.#refused(round.error, round.changes, disk);
       }
-      batch = batch.filter(({ path }) => !named.has(path));
-      result = mergeOf(batch);
-    }
-    if (!result.ok && SALVAGEABLE.has(result.error.code) && batch.length > 1) {
-      // It does not say which: each file goes on its own then, what others refer to first, and
-      // what still would break the project waits, to be tried again once the project changes.
-      for (const rank of inRanks(batch.map(({ path }) => path))) {
-        for (const path of rank) {
-          const one = batch.filter((change) => change.path === path);
-          const alone = mergeOf(one);
-          if (alone.ok) this.#took(alone, one, disk, origin, { ...told, before });
-          else this.#refused(alone.error, one, disk);
-        }
-      }
-      await this.#keepPartly();
-      return;
-    }
-    if (!result.ok) {
-      this.#refused(result.error, batch, disk);
-      return;
-    }
-    this.#took(result, batch, disk, origin, { ...told, before });
-    await this.#keepPartly();
+    });
+    if (took) await this.#keepPartly();
   }
 
   /**

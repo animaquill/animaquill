@@ -297,11 +297,20 @@ export {
 } from "./project-files.ts";
 export type {
   BaseOf,
+  ConflictKind,
   FileChange,
   MergeConflict,
   MergedFile,
   MergedFileStatus,
 } from "./merge-files.ts";
+export { SALVAGEABLE, mergeInRounds, type MergeRound, type Mergeable } from "./merge-rounds.ts";
+export {
+  editSpan,
+  insertionOf,
+  undoubled,
+  type Insertion,
+  type TextPiece,
+} from "./doubled-text.ts";
 export {
   linesOf,
   matchLines,
@@ -385,6 +394,7 @@ export {
   hasDeletionsOf,
   isAhead,
   isEmptyUpdate,
+  PLATFORM_CLIENT,
   sourceKindOf,
   stateVectorOfUpdate,
   type SourceKind,
@@ -397,6 +407,7 @@ export {
   USER,
   aiTask,
   folderBatch,
+  repoBatch,
   mergeUpdates,
   type ChangeRecord,
   type CheckedChange,

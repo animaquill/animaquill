@@ -144,7 +144,7 @@ describe("files changed in the folder, merged with what the editor has", () => {
     const result = merged(mergeFiles(store, batch, { origin: FOLDER }));
     expect(property(store, "param.size")).toBe(80);
     expect(clip(store)?.start).toBe("0.5");
-    expect(result.conflicts).toEqual([
+    expect(result.conflicts).toMatchObject([
       {
         file: MAIN,
         path: ["timelines", "main", "clips", "clip_title", "properties", "param.size"],
@@ -269,7 +269,7 @@ describe("code changed in the folder", () => {
     expect(store.getState().files[CODE]).toBe(
       lines(10).replace("line 4\n", "编辑器 4\n").replace("line 8\n", "外面 8\n"),
     );
-    expect(result.conflicts).toEqual([
+    expect(result.conflicts).toMatchObject([
       { file: CODE, path: ["files", CODE], lines: { from: 4, to: 5 }, theirs: "外面 4\n" },
     ]);
     expect(result.problems.map(({ message }) => message)).toEqual([
@@ -284,7 +284,7 @@ describe("code changed in the folder", () => {
     const batch = changesOf(base, (files) => files.delete(CODE));
     const result = merged(mergeFiles(store, batch, { origin: FOLDER }));
     expect(store.getState().files[CODE]).toBe("// 编辑器改的\n");
-    expect(result.conflicts).toEqual([{ file: CODE, path: ["files", CODE] }]);
+    expect(result.conflicts).toMatchObject([{ file: CODE, path: ["files", CODE] }]);
     expect(statusOf(result, CODE)).toEqual({
       path: CODE,
       status: "merged",
@@ -733,7 +733,7 @@ describe("versions and languages", () => {
     const vertical = main(store).overrides["format.vertical"];
     expect(vertical?.clips?.["clip_interview"]).toBeUndefined();
     expect(vertical?.clips?.["clip_title"]?.properties?.["param.size"]?.value).toBe(40);
-    expect(result.conflicts).toEqual([
+    expect(result.conflicts).toMatchObject([
       {
         file: VERTICAL,
         path: [
@@ -812,7 +812,7 @@ describe("the order of tracks and sections", () => {
       "track_music",
     ]);
     // What the folder had is its order, by ids.
-    expect(result.conflicts).toEqual([
+    expect(result.conflicts).toMatchObject([
       {
         file: MAIN,
         path: ["timelines", "main", "tracks"],
@@ -910,7 +910,7 @@ describe("more of what the folder can change", () => {
       }),
     );
     expect(store.getState().files["code/new.js"]).toBe("// 编辑器\n");
-    expect(result.conflicts).toEqual([
+    expect(result.conflicts).toMatchObject([
       { file: "code/new.js", path: ["files", "code/new.js"], theirs: "// 外面\n" },
     ]);
     expect(result.problems.map(({ message }) => message)).toEqual([
@@ -999,7 +999,7 @@ describe("what the folder points at, that the editor just took away", () => {
     expect(store.getState().assets?.["raw-footage"]).toBeUndefined();
     expect(store.getState().files[CODE]).toBe("// 外面改的\n");
     expect(statusOf(result, MAIN)).toMatchObject({ status: "merged", rewrite: true });
-    expect(result.conflicts).toEqual([
+    expect(result.conflicts).toMatchObject([
       {
         file: MAIN,
         path: ["timelines", "main", "clips", "clip_raw"],
@@ -1131,7 +1131,7 @@ describe("what the folder points at, that the editor just took away", () => {
     expect(clip(store)?.name).toBe("AI 改的标题");
     expect(store.getState().assets?.["logo"]?.credit).toBe("别人");
     expect(statusOf(result, MAIN)).toMatchObject({ status: "merged", rewrite: true });
-    expect(result.conflicts).toEqual([
+    expect(result.conflicts).toMatchObject([
       {
         file: MAIN,
         path: ["timelines", "main", "joins", "join_new"],
@@ -1287,7 +1287,7 @@ describe("transitions", () => {
     expect(clip(store)?.enter).toEqual({ type: "fade", duration: "1" });
     expect(clip(store)?.name).toBe("新标题");
     expect(clip(store, "clip_card")?.exit).toEqual({ type: "fade", duration: "0.5" });
-    expect(result.conflicts).toEqual([
+    expect(result.conflicts).toMatchObject([
       {
         file: MAIN,
         path: ["timelines", "main", "clips", "clip_title", "enter"],
@@ -1384,7 +1384,9 @@ describe("transitions", () => {
     );
     const result = merged(mergeFiles(store, gone, { origin: FOLDER }));
     expect(join(store)).toMatchObject({ from: "clip_title", to: "clip_interview" });
-    expect(result.conflicts).toEqual([{ file: MAIN, path: ["timelines", "main", "joins", JOIN] }]);
+    expect(result.conflicts).toMatchObject([
+      { file: MAIN, path: ["timelines", "main", "joins", JOIN] },
+    ]);
     expect(result.problems.map(({ message }) => message)).toEqual([
       "衔接转场“join_1”在编辑器和文件里都改了，保留了编辑器里的",
     ]);
@@ -1733,7 +1735,7 @@ describe("what conflicts say about the folder's side", () => {
       files.delete("code/gone.js");
     });
     const result = merged(mergeFiles(store, batch, { origin: FOLDER }));
-    expect(result.conflicts).toEqual([
+    expect(result.conflicts).toMatchObject([
       {
         file: MAIN,
         path: ["timelines", "main", "clips", "clip_title", "properties", "param.size"],
@@ -1810,7 +1812,7 @@ describe("fields of one value", () => {
       name: "编辑器改的",
       description: "外面改的说明",
     });
-    expect(result.conflicts).toEqual([
+    expect(result.conflicts).toMatchObject([
       { file: TITLE, path: ["scenes", "title", "name"], theirs: "外面改的" },
     ]);
   });

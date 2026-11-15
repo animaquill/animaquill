@@ -11,13 +11,14 @@ import {
   type Problem,
 } from "@animaquill/schema";
 import type { z } from "zod";
-import { CommandError, Draft } from "./draft.ts";
+import { CommandError, Draft, fail } from "./draft.ts";
 import type { CommandFailure } from "./failures.ts";
 import { isSourceFile, isUser, readDocument } from "./import-file.ts";
 import { linesOf, mergeText, type LineRange } from "./merge-text.ts";
 import {
   entryOf,
   orderedSections,
+  type Here,
   orderedTracks,
   placedAssets,
   stateToProject,
@@ -29,6 +30,7 @@ import { deepEqual, getIn, settled, type Patch } from "./patch.ts";
 import { writeAssets } from "./places.ts";
 import { isNoneOfIt } from "./read-folder.ts";
 import { danglingAt } from "./references.ts";
+import { insertionOf, type Insertion } from "./doubled-text.ts";
 import { isTooLargeSource } from "./source-size.ts";
 import { assetsNamedIn, codeUsingAsset } from "./scene-plan.ts";
 import { isContainer, isStanding, type Path } from "./structure.ts";
@@ -112,22 +114,61 @@ export interface MergedFile {
    * editor kept its own side of something, or had changes there that were not written yet.
    */
   readonly rewrite: boolean;
+  /**
+   * For code that came in just as the file has it, over what the editor had: what that inserted,
+   * see `insertionOf`. Where the same change comes once more by another way, as from GitHub and
+   * from a folder that is a clone of the repository, the new lines are there twice, which
+   * `undoubled` finds.
+   */
+  readonly copied?: Insertion;
 }
+
+/**
+ * What a conflict is about, which says what its two values are, and whether the other side can be
+ * taken with `conflict.take`:
+ * - `value`: one value, or a whole thing that one side took away and the other changed, or both
+ *   brought under one id. Values are the way the project has them, apart from the number that
+ *   says the order of a track or a section, which `order` is about.
+ * - `lines`: lines of code, the editor's lines and the file's.
+ * - `file`: a whole file of code, taken away on one side and changed on the other, or new on both.
+ * - `order`: the order of tracks or sections, as their ids in a row.
+ * - `asset-file`: which file an asset has, or where that file is kept, which goes as a whole. It
+ *   cannot be taken from the other side without that file, so only people can settle it.
+ * - `removed-link`: what the file starts to point at, which the editor took away. Only people can
+ *   settle that, by bringing it back or by changing what points at it.
+ */
+export type ConflictKind = "value" | "lines" | "file" | "order" | "asset-file" | "removed-link";
 
 /** Something both sides changed, each in its own way. What the editor had stays. */
 export interface MergeConflict {
   readonly file: string;
   /** Where in the project. */
   readonly path: Path;
+  readonly kind: ConflictKind;
+  /** What it is about, in the words people see, such as 片段“开场”的 start. */
+  readonly label: string;
   /** For code: the lines in the merged text that are the editor's, where the file had others. */
   readonly lines?: LineRange;
   /**
+   * What the editor has there, which stayed: a value the way the project has it, the editor's
+   * lines, its whole file of code, or its order. Undefined where the editor took it away.
+   */
+  readonly ours?: unknown;
+  /**
    * What the folder has there, which did not come in, so that it can be kept before the file is
-   * written again: a value the way the project has it, the folder's lines of code, or its whole
-   * file of code. Undefined where the folder took it away.
+   * written again: a value the way the project has it, the folder's lines of code, its whole
+   * file of code, or its order. Undefined where the folder took it away.
    */
   readonly theirs?: unknown;
+  /**
+   * For lines of code: the lines right before and after the editor's, where there are any, to find
+   * them again in a text that changed since, see `conflict.take`.
+   */
+  readonly around?: { readonly before?: string; readonly after?: string };
 }
+
+/** A conflict as the merge finds it, before it is said in words. */
+type Unnamed = Omit<MergeConflict, "label">;
 
 export interface FileMerge {
   readonly files: readonly MergedFile[];
@@ -147,6 +188,11 @@ export interface MergeContext {
   /** See `BaseOf`. Without it, whatever could be in the folder counts as there. */
   readonly baseOf: BaseOf | undefined;
   readonly memory?: MergeMemory;
+  /**
+   * Where the files of assets are kept as counts for the files of the batch, see `Here`: the same
+   * as they were written with, so that assets.json reads the same on both sides.
+   */
+  readonly here?: Here | undefined;
 }
 
 /** The kinds of files the project keeps, in the order they go into it. See `rankOf`. */
@@ -295,10 +341,13 @@ function withoutVersions(timeline: TimelineState | undefined): Timeline | undefi
   return rest;
 }
 
-/** What the project holds of a file, as the file has it: assets with where their files are. */
-function valueIn(state: ProjectState, { kind, at }: Place): unknown {
+/**
+ * What the project holds of a file, as the file has it: assets with where their files are, as counts
+ * `here`, see `Here`.
+ */
+function valueIn(state: ProjectState, { kind, at }: Place, here?: Here): unknown {
   if (kind === "timeline") return withoutVersions(entryOf(state.timelines, at[1] as string));
-  return kind === "assets" ? placedAssets(state) : getIn(state, at);
+  return kind === "assets" ? placedAssets(state, here) : getIn(state, at);
 }
 
 /** Only so that a version can be read when its timeline is not there. */
@@ -399,10 +448,13 @@ const FIELDED = new Set(["assets", "notes", "scenes", "sounds"]);
  */
 const isFielded = (path: Path) => path.length === 2 && FIELDED.has(path[0] as string);
 
-/** A place where both sides changed one value differently, and what the folder has there. */
+/** A place where both sides changed one value differently, and what each side has there. */
 interface Found {
   readonly path: Path;
+  readonly ours: unknown;
   readonly theirs: unknown;
+  /** Undefined for a value. */
+  readonly kind?: "order" | "asset-file";
 }
 
 /**
@@ -437,7 +489,7 @@ function mergeChanged(
   if (!goesDeeper) {
     if (deepEqual(ours, theirs)) return ours;
     if (deepEqual(base, ours)) return theirs;
-    conflicts.push({ path, theirs });
+    conflicts.push({ path, ours, theirs });
     return ours;
   }
   if (path.length === 2 && path[0] === "assets")
@@ -492,17 +544,24 @@ function mergeAsset(
   } else if (isOurs && !isTheirs) {
     file = assetPart(ours, true);
   } else if (isOurs && isTheirs && !isSameContent(mine, theirsNow)) {
-    conflicts.push({ path: [...path, "hash"], theirs: theirsNow });
+    conflicts.push({ path: [...path, "hash"], ours: mine, theirs: theirsNow, kind: "asset-file" });
     file = assetPart(ours, true);
   } else {
     const [before = {}, editor = {}, folder = {}] = [base, ours, theirs].map((value) =>
       assetPart(value, true),
     );
     const found = conflicts.length;
-    const merged = mergeEntries(path, before, editor, folder, conflicts) ?? {};
+    const inner: Found[] = [];
+    const merged = mergeEntries(path, before, editor, folder, inner) ?? {};
+    for (const each of inner) conflicts.push({ ...each, kind: "asset-file" });
     const checked = sameFile(merged, before, editor, folder);
     if (checked === undefined && conflicts.length === found) {
-      conflicts.push({ path: [...path, "storage"], theirs: folder.storage });
+      conflicts.push({
+        path: [...path, "storage"],
+        ours: editor.storage,
+        theirs: folder.storage,
+        kind: "asset-file",
+      });
     }
     file = checked ?? editor;
   }
@@ -589,20 +648,33 @@ function mergeCode(
   base: string | undefined,
   ours: string | undefined,
   theirs: string | undefined,
-  conflicts: MergeConflict[],
+  conflicts: Unnamed[],
 ): string | undefined {
   if (base === theirs || ours === theirs) return ours;
   if (base === ours) return theirs;
   const path = ["files", file];
   // Taken away on one side and changed on the other, or new on both: there are no lines to go by.
   if (base === undefined || ours === undefined || theirs === undefined) {
-    conflicts.push({ file, path, theirs });
+    conflicts.push({ file, path, kind: "file", ours, theirs });
     return ours;
   }
   const merged = mergeText(base, ours, theirs);
   const lines = merged.conflicts.length > 0 ? linesOf(theirs) : [];
+  const now = merged.conflicts.length > 0 ? linesOf(merged.text) : [];
   for (const { at, theirs: range } of merged.conflicts) {
-    conflicts.push({ file, path, lines: at, theirs: lines.slice(range.from, range.to).join("") });
+    const [before, after] = [now[at.from - 1], now[at.to]];
+    conflicts.push({
+      file,
+      path,
+      kind: "lines",
+      lines: at,
+      ours: now.slice(at.from, at.to).join(""),
+      theirs: lines.slice(range.from, range.to).join(""),
+      around: {
+        ...(before !== undefined && { before }),
+        ...(after !== undefined && { after }),
+      },
+    });
   }
   return merged.text;
 }
@@ -724,9 +796,20 @@ function mergeTimeline(
   conflicts: Found[],
 ): Timeline | undefined {
   const [was, mine, theirsNow] = [unnumbered(base), unnumbered(ours), unnumbered(theirs)];
+  const found: Found[] = [];
   const merged = [was, mine, theirsNow].every(isPlain)
-    ? mergeEntries(at, was, mine, theirsNow, conflicts, OBJECTS)
-    : merge3(at, was, mine, theirsNow, conflicts);
+    ? mergeEntries(at, was, mine, theirsNow, found, OBJECTS)
+    : merge3(at, was, mine, theirsNow, found);
+  // A whole timeline, track or section, as the project has it: with the numbers of its order.
+  for (const conflict of found) {
+    const inside = conflict.path.slice(at.length);
+    const isWholeItem = inside.length === 2 && (inside[0] === "tracks" || inside[0] === "sections");
+    if (inside.length !== 0 && !isWholeItem) {
+      conflicts.push(conflict);
+      continue;
+    }
+    conflicts.push({ ...conflict, ours: getIn(ours, inside), theirs: getIn(theirs, inside) });
+  }
   if (!isPlain(merged)) return undefined;
   const numbered = (level: keyof typeof LEVELS_IN_ORDER) => {
     const items = (merged[level] ?? {}) as Readonly<Record<string, Plain>>;
@@ -736,7 +819,14 @@ function mergeTimeline(
       sequenceIn(level, theirs),
       new Set(Object.keys(items)),
     );
-    if (conflict) conflicts.push({ path: [...at, level], theirs: sequenceIn(level, theirs) });
+    if (conflict) {
+      conflicts.push({
+        path: [...at, level],
+        ours: sequenceIn(level, ours),
+        theirs: sequenceIn(level, theirs),
+        kind: "order",
+      });
+    }
     return Object.fromEntries(
       Object.entries(items).map(([id, item]) => [id, { ...item, order: orders.get(id) }]),
     );
@@ -771,7 +861,7 @@ interface Doc extends Place {
  * Puts what a file is to be into a draft. A timeline keeps the versions the draft has, which are
  * files of their own. Returns false for a version whose timeline is not there.
  */
-function put(draft: Draft, { kind, at }: Place, value: unknown): boolean {
+function put(draft: Draft, { kind, at }: Place, value: unknown, here?: Here): boolean {
   if (kind === "source") {
     const now = entryOf(draft.state.files, at[1] as string);
     if (value === undefined) {
@@ -782,7 +872,7 @@ function put(draft: Draft, { kind, at }: Place, value: unknown): boolean {
     return true;
   }
   if (kind === "assets") {
-    writeAssets(draft, value as ProjectState["assets"]);
+    writeAssets(draft, value as ProjectState["assets"], here);
     return true;
   }
   const owner = entryOf(draft.state.timelines, at[1] as string);
@@ -946,9 +1036,13 @@ const spaced = (name: string) => (/[\x21-\x7e]$/.test(name) ? `${name} ` : name)
 
 const KEPT_MINE = "在编辑器和文件里都改了，保留了编辑器里的";
 
-function conflictInWords(state: ProjectState, { file, path, lines }: MergeConflict): Problem {
-  const what = lines ? `${spaced(file)}${linesInWords(lines)}` : spaced(named(state, path));
-  return warningAt("merge-conflict", path, `${what}${KEPT_MINE}`, file);
+/** What a conflict is about, in words, see `MergeConflict.label`. */
+const labelOf = (state: ProjectState, { file, path, lines }: Unnamed): string =>
+  lines ? `${spaced(file)}${linesInWords(lines)}` : named(state, path);
+
+function conflictInWords(state: ProjectState, conflict: Unnamed): Problem {
+  const { file, path } = conflict;
+  return warningAt("merge-conflict", path, `${spaced(labelOf(state, conflict))}${KEPT_MINE}`, file);
 }
 
 /** Every library that a project points at, however deep: media, sources, joins, versions. */
@@ -1276,7 +1370,7 @@ interface Admitted {
 export function planMerge(
   draft: Draft,
   changes: readonly FileChange[],
-  { baseOf, memory }: MergeContext,
+  { baseOf, memory, here }: MergeContext,
 ): FileMerge {
   const before = draft.state;
   const { origin } = draft;
@@ -1313,7 +1407,7 @@ export function planMerge(
   // What each file means, and what the project is to hold of it.
   const docs: Doc[] = [];
   const invalid = new Map<string, readonly Problem[]>();
-  const conflicts: MergeConflict[] = [];
+  const conflicts: Unnamed[] = [];
   for (const change of changes) {
     const { path } = change;
     const place = placeOf(path);
@@ -1340,7 +1434,7 @@ export function planMerge(
             ? known.value
             : readQuietly(before, path, place, baseText).value;
     if (text !== undefined && place.kind !== "source") remember(memory, path, text, next.value);
-    const ours = valueIn(before, place);
+    const ours = valueIn(before, place, here);
     const found: Found[] = [];
     let merged: unknown;
     if (place.kind === "source") {
@@ -1358,8 +1452,8 @@ export function planMerge(
     } else {
       merged = merge3(place.at, base, ours, next.value, found);
     }
-    for (const { path: where, theirs } of found)
-      conflicts.push({ file: path, path: where, theirs });
+    for (const { path: where, ours: mine, theirs, kind = "value" } of found)
+      conflicts.push({ file: path, path: where, kind, ours: mine, theirs });
     docs.push({ ...place, change, base, next: next.value, merged });
   }
   const byFile = new Map(docs.map((doc) => [doc.change.path, doc]));
@@ -1407,7 +1501,7 @@ export function planMerge(
         continue;
       }
     }
-    if (!put(planned, doc, doc.merged)) {
+    if (!put(planned, doc, doc.merged, here)) {
       const message = `没有这条时间轴：${doc.at[1]}`;
       block(doc, { severity: "error", code: "timeline-missing", file: doc.change.path, message });
     }
@@ -1417,7 +1511,7 @@ export function planMerge(
   const theirsOf = () => {
     if (folderState) return folderState;
     const theirs = new Draft(before, USER);
-    for (const doc of inRank(docs, ({ next }) => next)) put(theirs, doc, doc.next);
+    for (const doc of inRank(docs, ({ next }) => next)) put(theirs, doc, doc.next, here);
     folderState = theirs.state;
     return folderState;
   };
@@ -1456,7 +1550,7 @@ export function planMerge(
   const holds: Hold[] = [];
   /** How often what holds keep out grew, which is how far the merge got, see `waits`. */
   let heldMore = 0;
-  const holdConflicts: MergeConflict[] = [];
+  const holdConflicts: Unnamed[] = [];
   const holdProblems: Problem[] = [];
   const keepLibraries = new Set<string>();
   const relist = new Set<string>();
@@ -1533,10 +1627,10 @@ export function planMerge(
   const sameAsFile = new Map<Doc, { readonly held: unknown; readonly same: boolean }>();
   const holdsFile = (state: ProjectState, doc: Doc) => {
     // Assets as the file has them, with their places: the same object while neither changed.
-    const held = doc.kind === "assets" ? placedAssets(state) : getIn(state, doc.at);
+    const held = doc.kind === "assets" ? placedAssets(state, here) : getIn(state, doc.at);
     const was = sameAsFile.get(doc);
     if (was && was.held === held && typeof held === "object") return was.same;
-    const same = isSame(doc, valueIn(state, doc), doc.next);
+    const same = isSame(doc, valueIn(state, doc, here), doc.next);
     sameAsFile.set(doc, { held, same });
     return same;
   };
@@ -1692,6 +1786,8 @@ export function planMerge(
           holdConflicts.push({
             file,
             path: from,
+            kind: "removed-link",
+            ours: getIn(before, from),
             theirs: getIn(doc.next, from.slice(doc.at.length)),
           });
         }
@@ -1730,7 +1826,7 @@ export function planMerge(
     }
 
     // What would be broken where neither the project before nor the folder was waits, file by file.
-    const broken = brokenBy(before, theirsOf, state, paths, docs, errorsBefore, holdsFile);
+    const broken = brokenBy(before, theirsOf, state, paths, docs, errorsBefore, holdsFile, here);
     if (broken.length > 0) {
       const waited = new Set(docs.filter(({ blocked }) => blocked));
       for (const problem of broken) {
@@ -1756,7 +1852,9 @@ export function planMerge(
   const problems: Problem[] = [...invalid.values()].flat();
   for (const doc of docs) problems.push(...(doc.blocked ?? []));
   // Nothing of a file that waits came in, so neither did a conflict in it.
-  const found = [...conflicts, ...holdConflicts].filter(({ file }) => !isWaiting(file));
+  const found = [...conflicts, ...holdConflicts]
+    .filter(({ file }) => !isWaiting(file))
+    .map((conflict): MergeConflict => ({ ...conflict, label: labelOf(before, conflict) }));
   for (const conflict of conflicts) {
     if (!isWaiting(conflict.file)) problems.push(conflictInWords(before, conflict));
   }
@@ -1798,12 +1896,16 @@ export function planMerge(
     const doc = byFile.get(path);
     if (isWaiting(path)) return { path, status: "blocked", base, rewrite: false };
     if (!doc) return { path, status: "ignored", base: text, rewrite: false };
-    return {
-      path,
-      status: "merged",
-      base: text,
-      rewrite: !holdsFile(admitted.draft.state, doc),
-    };
+    const merged = { path, status: "merged", base: text } as const;
+    const rewrite = !holdsFile(admitted.draft.state, doc);
+    // Code that came in as the file has it, over what the editor had.
+    const was = doc.kind === "source" ? entryOf(before.files, path) : undefined;
+    const now = doc.next as string | undefined;
+    const copied =
+      was !== undefined && now !== undefined && was !== now && !rewrite
+        ? insertionOf(was, now)
+        : undefined;
+    return { ...merged, rewrite, ...(copied && { copied }) };
   });
   return {
     files,
@@ -1830,6 +1932,7 @@ function brokenBy(
   docs: readonly Doc[],
   errorsBefore: ReadonlyMap<string, Problem>,
   holdsFile: (state: ProjectState, doc: Doc) => boolean,
+  here: Here | undefined,
 ): readonly Problem[] {
   const broken: Problem[] = [];
   const linksIn = (state: ProjectState) =>
@@ -1854,7 +1957,7 @@ function brokenBy(
       !doc.blocked &&
       doc.kind !== "source" &&
       !holdsFile(merged, doc) &&
-      !isSame(doc, valueIn(merged, doc), valueIn(before, doc)),
+      !isSame(doc, valueIn(merged, doc, here), valueIn(before, doc, here)),
   );
   const invalid = mixed.length > 0 ? stateToProject(partOf(merged, mixed)).problems : [];
   if (invalid.length > 0) {
@@ -1886,4 +1989,161 @@ function brokenBy(
     }
   }
   return broken;
+}
+
+/** A conflict as a merge said it, see `MergeConflict`, to take the other side of it. */
+export interface TakenConflict {
+  readonly file: string;
+  readonly path: Path;
+  readonly kind: ConflictKind;
+  readonly lines?: LineRange | undefined;
+  readonly ours?: unknown;
+  readonly theirs?: unknown;
+  readonly around?:
+    { readonly before?: string | undefined; readonly after?: string | undefined } | undefined;
+}
+
+/** Why the other side of a conflict cannot be taken, see `takeTheirs`. */
+type NotTaken = "manual" | "changed" | "not-found" | "would-break";
+
+/** Whether `lines` has `pattern` at `at`. */
+const hasLinesAt = (lines: readonly string[], pattern: readonly string[], at: number) =>
+  pattern.every((line, index) => lines[at + index] === line);
+
+/**
+ * Where the editor's lines of a conflict are in a text, with the lines around them: only where that
+ * is one place. Before the first line or after the last there is nothing, which pins them to the
+ * start or the end.
+ */
+function findLines(
+  lines: readonly string[],
+  mine: readonly string[],
+  around: TakenConflict["around"],
+): number | undefined {
+  const before = around?.before === undefined ? [] : [around.before];
+  const after = around?.after === undefined ? [] : [around.after];
+  const pattern = [...before, ...mine, ...after];
+  if (pattern.length === 0) return lines.length === 0 ? 0 : undefined;
+  const found: number[] = [];
+  for (let at = 0; at + pattern.length <= lines.length; at++) {
+    if (before.length === 0 && at !== 0) break;
+    if (after.length === 0 && at + pattern.length !== lines.length) continue;
+    if (hasLinesAt(lines, pattern, at)) found.push(at + before.length);
+    if (found.length > 1) return undefined;
+  }
+  return found[0];
+}
+
+/** The order numbers that put the tracks or sections of a timeline in the order of `wanted`. */
+function ordersFor(
+  timeline: TimelineState,
+  level: keyof typeof LEVELS_IN_ORDER,
+  wanted: readonly string[],
+): ReadonlyMap<string, number> {
+  const items = LEVELS_IN_ORDER[level](timeline);
+  const now = sequenceOf(items);
+  return mergeOrder(now, items, wanted, new Set(now)).orders;
+}
+
+/**
+ * Takes the other side of a conflict, where the editor's side stayed, see `MergeConflict`: the value,
+ * the order, the lines of code or the whole file of code, as the file had it. Only while the project
+ * still has the editor's side there: anything else is a change made since, which is not to be
+ * written over, and the conflict is out of date (`changed`). Where the project has the other side
+ * already, nothing happens. Lines of code are found by what they are, with the lines around them,
+ * only where that is one place (`not-found`). Which file an asset has and what the file points at
+ * that the editor took away only people can settle (`manual`). What it writes is checked like a
+ * file that comes in: no document that was valid becomes invalid, which the store checks of every
+ * command, and nothing new points at what is not there (`would-break`).
+ */
+export function takeTheirs(draft: Draft, conflict: TakenConflict): void {
+  const { file, path, kind, ours, theirs } = conflict;
+  const refuse = (why: NotTaken): never => fail("conflict-not-taken", { why, file });
+  if (kind === "asset-file" || kind === "removed-link") refuse("manual");
+  const place = placeOf(file);
+  if (!place || isProblem(place) || !startsWith(path, place.at)) return refuse("not-found");
+  const before = draft.state;
+  const inside = path.slice(place.at.length);
+  const isText = (value: unknown): value is string | undefined =>
+    value === undefined || typeof value === "string";
+  switch (kind) {
+    case "file": {
+      if (place.kind !== "source" || !isText(ours) || !isText(theirs)) return refuse("not-found");
+      const now = entryOf(before.files, file);
+      if (now === theirs) return;
+      if (now !== ours) refuse("changed");
+      put(draft, place, theirs);
+      break;
+    }
+    case "lines": {
+      const now = entryOf(before.files, file);
+      if (place.kind !== "source" || now === undefined || typeof theirs !== "string") {
+        return refuse("not-found");
+      }
+      if (typeof ours !== "string") return refuse("not-found");
+      const lines = linesOf(now);
+      const mine = linesOf(ours);
+      const at = findLines(lines, mine, conflict.around);
+      if (at === undefined) {
+        // Taken already, where the file's lines are there instead, in the same place.
+        if (findLines(lines, linesOf(theirs), conflict.around) !== undefined) return;
+        return refuse("not-found");
+      }
+      const next = [...lines.slice(0, at), theirs, ...lines.slice(at + mine.length)].join("");
+      put(draft, place, next);
+      break;
+    }
+    case "order": {
+      const [level] = inside;
+      const timeline = entryOf(before.timelines, place.at[1] as string);
+      if (
+        place.kind !== "timeline" ||
+        inside.length !== 1 ||
+        (level !== "tracks" && level !== "sections") ||
+        !timeline ||
+        !Array.isArray(theirs) ||
+        !theirs.every((id) => typeof id === "string")
+      ) {
+        return refuse("not-found");
+      }
+      const now = sequenceIn(level, timeline);
+      if (deepEqual(now, theirs)) return;
+      if (!deepEqual(now, ours)) refuse("changed");
+      for (const [id, order] of ordersFor(timeline, level, theirs)) {
+        const items: Readonly<Record<string, Ordered>> = timeline[level];
+        if (entryOf(items, id)?.order !== order) {
+          draft.set([...place.at, level, id, "order"], order);
+        }
+      }
+      break;
+    }
+    default: {
+      const value = valueIn(before, place);
+      const [level, id = ""] = inside;
+      const isOrdered = level === "tracks" || level === "sections";
+      // The number of a track or a section says nothing on its own, only together with the others.
+      const isItem = place.kind === "timeline" && isOrdered && inside.length === 2;
+      const plain = (item: unknown) =>
+        isItem && isPlain(item) ? { ...item, order: undefined } : item;
+      const now = getIn(value, inside);
+      if (deepEqual(plain(now), plain(theirs))) return;
+      if (!deepEqual(plain(now), plain(ours))) refuse("changed");
+      let next = theirs;
+      if (isItem && isPlain(theirs)) {
+        // A track or a section that comes back goes last, one that stays keeps its place.
+        const items = (fieldOf(value, level) ?? {}) as Readonly<Record<string, Ordered>>;
+        const order =
+          entryOf(items, id)?.order ??
+          Math.max(-1, ...Object.values(items).map((item) => item.order)) + 1;
+        next = { ...theirs, order };
+      }
+      put(draft, place, withInner(value, inside, next));
+      break;
+    }
+  }
+  const written = draft.steps.map(({ patch }) => patch.path);
+  const known = new Set(written.flatMap((each) => danglingAt(before, each)));
+  if (written.flatMap((each) => danglingAt(draft.state, each)).some((link) => !known.has(link))) {
+    refuse("would-break");
+  }
 }

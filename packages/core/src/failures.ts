@@ -249,6 +249,16 @@ export const FAILURES = {
   "merge-unsettled": none,
   /** What came in and what the editor has not written yet would break the project together. */
   "merge-would-break": z.strictObject({ why: z.enum(["uses-removed", "breaks"]) }),
+  /**
+   * The other side of a conflict of a merge cannot be taken, see `conflict.take`: only people can
+   * settle it (`manual`), the project changed there since (`changed`), the place or the lines are
+   * not there, or not only once (`not-found`), or it would leave something pointing at nothing
+   * (`would-break`).
+   */
+  "conflict-not-taken": z.strictObject({
+    why: z.enum(["manual", "changed", "not-found", "would-break"]),
+    file: z.string(),
+  }),
 
   // Temporary copies of a project, see `ProjectCopy`.
   /** The project is too large to copy: its update has `bytes`, more than `limit`. */

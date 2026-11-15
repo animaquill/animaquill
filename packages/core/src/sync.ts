@@ -21,18 +21,31 @@ export const cloudSeqOf = (origin: Origin): number | undefined => {
 
 /**
  * Who made a change, as far as copies elsewhere go: the person at the editor, a batch of files that
- * changed in the project folder, an AI task, the platform, or something else. Only "user" is a
- * person, see `USER`.
+ * changed in the project folder, a batch from the repository on GitHub (which only the platform
+ * merges), an AI task, the platform, or something else. Only "user" is a person, see `USER`.
  */
-export type SourceKind = "user" | "folder" | "ai" | "cloud" | "other";
+export type SourceKind = "user" | "folder" | "repo" | "ai" | "cloud" | "other";
 
 export const sourceKindOf = (origin: Origin): SourceKind => {
   if (origin === USER) return "user";
   if (origin.startsWith("folder:")) return "folder";
+  if (origin.startsWith("repo:")) return "repo";
   if (origin.startsWith("ai:")) return "ai";
   if (cloudSeqOf(origin) !== undefined) return "cloud";
   return "other";
 };
+
+/**
+ * The client id of Yjs that the platform writes with, and nobody else: the smallest there is. Where
+ * two copies wrote the same key without having seen each other, Yjs keeps the value of the one with
+ * the larger client id (`Item.integrate` in Yjs 13.6: of two items with the same origin, the one of
+ * the smaller client goes to the left, and the rightmost is the value). So whatever a person changed
+ * while offline, and the platform hears of only after it merged something from GitHub into the same
+ * key, wins over that merge, wherever it arrives first: see `ProjectStore.writeAsPlatform`, and
+ * platform-client.test.ts, which holds Yjs to it. An editor never writes with it: a document that
+ * drew it by chance draws again, and `checkUpdate` turns away what an editor sends with it.
+ */
+export const PLATFORM_CLIENT = 0;
 
 /** What a copy of a project has, as Yjs counts it: compare it with `isAhead`. */
 export const stateVectorOfUpdate = (update: Uint8Array): Uint8Array =>
@@ -63,7 +76,10 @@ export const isEmptyUpdate = (update: Uint8Array): boolean => {
 export type UpdateFault =
   /** It cannot be read. */
   | "malformed"
-  /** It writes somewhere else than the project, or kinds of values the editor never writes. */
+  /**
+   * It writes somewhere else than the project, or kinds of values the editor never writes, or, from
+   * an editor, writes as the platform, see `PLATFORM_CLIENT`.
+   */
   | "foreign"
   /** It has more pieces than a copy takes in at once, see `checkUpdate`. */
   | "too-large";
@@ -77,17 +93,22 @@ export const PROJECT_ROOT = "project";
  * it takes them in, as the platform does. Reading it all is what finds a damaged one, before any of
  * it is in a document. When the editor starts to write another kind of value, it has to go in here
  * too: the platform would turn it away. `most` is how many pieces it may have, see `piecesOf`, as
- * taking in each one costs time and memory.
+ * taking in each one costs time and memory. `fromEditor` is for an update that an editor made, which
+ * may not write with `PLATFORM_CLIENT`: only the platform does. What the platform wrote can be in
+ * the whole state of a project an editor sends, so that is no update of the editor's own.
  *
  * It reads the update as it goes, piece by piece, and makes nothing of it: a large one costs no more
  * memory than its bytes, and one with too many pieces is known before Yjs would read them all.
  */
 export const checkUpdate = (
   update: Uint8Array,
-  { most = Number.POSITIVE_INFINITY }: { readonly most?: number } = {},
+  {
+    most = Number.POSITIVE_INFINITY,
+    fromEditor = false,
+  }: { readonly most?: number; readonly fromEditor?: boolean } = {},
 ): UpdateFault | undefined => {
   try {
-    return scanUpdate(new UpdateReader(update), most, { structs: 0, values: 0 });
+    return scanUpdate(new UpdateReader(update), most, { structs: 0, values: 0 }, fromEditor);
   } catch {
     return "malformed";
   }
@@ -245,14 +266,20 @@ class UpdateReader {
 }
 
 /** See `checkUpdate`: the structs of each client, then what is taken away. Counts into `pieces`. */
-function scanUpdate(read: UpdateReader, most: number, pieces: Pieces): UpdateFault | undefined {
+function scanUpdate(
+  read: UpdateReader,
+  most: number,
+  pieces: Pieces,
+  fromEditor = false,
+): UpdateFault | undefined {
   const isTooMany = () => pieces.structs + pieces.values > most;
   const clients = read.uint();
   for (let client = 0; client < clients; client++) {
     const structs = read.uint();
     pieces.structs += structs;
     if (isTooMany()) return "too-large";
-    read.uint(); // the client
+    // The client: only the platform writes as the platform.
+    if (read.uint() === PLATFORM_CLIENT && fromEditor && structs > 0) return "foreign";
     read.uint(); // the clock of its first struct
     for (let index = 0; index < structs; index++) {
       const info = read.byte();

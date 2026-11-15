@@ -6,7 +6,7 @@
 import { Asset, AssetHash, HttpsUrl, Id, isElsewhere, isSameHash } from "@animaquill/schema";
 import { z } from "zod";
 import { fail, type Draft } from "./draft.ts";
-import { entryOf, withPlace } from "./model.ts";
+import { entryOf, isBoundHere, withPlace, type Here } from "./model.ts";
 import { STORAGE } from "./origin.ts";
 import { deepEqual } from "./patch.ts";
 
@@ -177,25 +177,37 @@ function withoutPlace(body: Asset | undefined, place: Place, wanted: Asset): Ass
  * So taking back what people said about where a file is still goes back to what the asset says.
  * The place of an asset that the document does not have stays: a merge can keep the asset all the
  * same, as one that is still in use, and without it the place says nothing.
+ *
+ * A document written for somewhere else, as `here` says, such as the repository on GitHub, has the
+ * assets without the places that do not count there, see `Here`: those stay, as long as they are
+ * about the file the asset has, and the asset says what the document says.
  */
 export function writeAssets(
   draft: Draft,
   wanted: Readonly<Record<string, Asset>> | undefined,
+  here?: Here,
 ): void {
   const { assets: bodies, places } = draft.state;
+  const counts = (place: Place) => isBoundHere(place, here);
   let next: Record<string, Asset> | undefined;
   if (wanted) {
     next = {};
     for (const [id, asset] of Object.entries(wanted)) {
       const place = entryOf(places, id);
       next[id] =
-        place && agrees(place, asset) ? withoutPlace(entryOf(bodies, id), place, asset) : asset;
+        place && counts(place) && agrees(place, asset)
+          ? withoutPlace(entryOf(bodies, id), place, asset)
+          : asset;
     }
   }
   draft.replace(["assets"], next);
   for (const [id, place] of Object.entries(places ?? {})) {
     const asset = wanted && entryOf(wanted, id);
-    if (asset && !agrees(place, asset)) draft.delete(["places", id]);
+    if (!asset) continue;
+    const stays = counts(place)
+      ? agrees(place, asset)
+      : asset.hash !== undefined && isSameHash(place.hash, asset.hash);
+    if (!stays) draft.delete(["places", id]);
   }
 }
 
