@@ -145,7 +145,7 @@ describe("telling people what an AI tool did", async () => {
     browser.disk.write(`${PROJECT}/${MAIN}`, text);
     await browser.settle();
     expect(shown().map(({ message }) => message)).toEqual([
-      "Claude Code 改了 1 处 · 片段「AI 的」  名字 标题 → AI 的",
+      "Claude Code：把片段「标题」改名为「AI 的」",
     ]);
     expect(activity.getSnapshot().marked).toEqual(new Set(["clip_title"]));
     toolWrites(browser.disk, "b1", "AI 也改了笔记");
@@ -153,7 +153,7 @@ describe("telling people what an AI tool did", async () => {
     await browser.settle();
     const messages = shown().map(({ message }) => message);
     expect(messages).toHaveLength(1);
-    expect(messages[0]).toMatch(/^Claude Code 改了 2 处 · .* 等$/);
+    expect(messages[0]).toBe("Claude Code：把片段「标题」改名为「AI 的」等 2 处");
   });
 
   it("says where people changed the same thing, and that theirs stayed", async () => {
@@ -172,7 +172,7 @@ describe("telling people what an AI tool did", async () => {
     await browser.settle();
     expect(clipName(window.store, "clip_title")).toBe("你的");
     const [notice] = shown();
-    expect(notice?.message).toMatch(/^Claude Code 改了/);
+    expect(notice?.message).toMatch(/^Claude Code：/);
     expect(notice?.warning?.text).toBe("其中 1 处你也改了，保留了你的");
   });
 });

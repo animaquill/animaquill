@@ -107,6 +107,7 @@
 .tabs {
   display: flex;
   flex-wrap: wrap;
+  gap: 4px;
 }
 
 .tabs button {
@@ -115,19 +116,12 @@
   font: inherit;
   background: var(--aq-bg-input);
   border: 1px solid var(--aq-border);
+  border-radius: 4px;
   cursor: pointer;
 }
 
-.tabs button + button {
-  border-left: 0;
-}
-
-.tabs button:first-child {
-  border-radius: 4px 0 0 4px;
-}
-
-.tabs button:last-child {
-  border-radius: 0 4px 4px 0;
+.tabs button:hover:not([aria-selected="true"]) {
+  background: var(--aq-bg-hover);
 }
 
 .tabs button[aria-selected="true"] {
@@ -164,12 +158,13 @@
   flex: 1;
   min-width: 0;
   margin: 0;
-  overflow-x: auto;
   color: var(--aq-text-strong);
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 12px;
   line-height: 1.5;
-  white-space: pre;
+  /* All of a command shows, however narrow: it goes on in the next line. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .copy {

@@ -2233,7 +2233,7 @@
     "removeLikeEditor": "按编辑器删掉它（先备份）",
     "asset": {
       "missing": "素材文件不在这里了。把它放回原处，或者重新拖进来。",
-      "elsewhere": "素材文件不在这台电脑上，{{download}}。",
+      "elsewhere": "素材文件不在这台电脑上，原片存在{{where}}。",
       "elsewhereMany": "{{count}} 个素材的文件不在这台电脑上，可以从它们存放的地方下载。资源管理器里每个素材都写着从哪里下载。",
       "hidden": "素材文件读不到，可能是因为名字里的“{{name}}”Chrome 不让网页看到。在电脑上给它改个名字，再拖进来。",
       "moved": "素材文件不在这里了，但在 {{found}} 找到了一模一样的文件。",
@@ -2606,7 +2606,6 @@
     "added": "已加到 {{tracks}}，{{start}}",
     "failed": "没能加到时间轴上，再试一次",
     "missing": "文件找不到",
-    "elsewhere": "可以下载",
     "length": "时长 {{length}}"
   },
   "resourcePage": {
@@ -2722,7 +2721,7 @@
       "sound": "项目里没有这个声音了（{{id}}），但还有片段在用。",
       "library": "素材库“{{library}}”里的 {{item}}：这一版还不能用素材库。"
     },
-    "elsewhere": "这台电脑上没有这个文件：{{path}}。{{download}}。",
+    "elsewhere": "这台电脑上没有这个文件：{{path}}。原片存在{{where}}。",
     "missingName": {
       "asset": "不在了的素材 {{id}}",
       "scene": "不在了的场景 {{id}}",
@@ -4831,6 +4830,12 @@
         "both": "↑ {{up}}% ↓ {{down}}%",
         "elsewhere": "这个项目的素材在另一个窗口里下载，这里只看进度；暂停会转给那个窗口。"
       }
+    },
+    "storedIn": {
+      "lfs": "GitHub 大文件存储",
+      "platform": "云端空间",
+      "remote": "{{host}}",
+      "remoteUnknown": "它的网址"
     }
   },
   "newProject": {
@@ -5310,8 +5315,8 @@
     "action": "连接电脑上的 AI 工具",
     "keywords": "mcp claude code codex cursor vscode 订阅 本机 命令行 终端 agents",
     "notice": {
-      "changed": "{{tool}} 改了 {{count}} 处 · {{first}}",
-      "changedMore": "{{tool}} 改了 {{count}} 处 · {{first}} 等",
+      "changed": "{{tool}}：{{first}}",
+      "changedMore": "{{tool}}：{{first}}等 {{count}} 处",
       "changedNone": "{{tool}} 改了项目",
       "whileAway": "你不在时，{{tool}} 改了 {{count}} 个文件，已并入",
       "yoursKept": "其中 {{count}} 处你也改了，保留了你的",
@@ -5321,7 +5326,7 @@
       "changes": "改了什么",
       "held": "项目现在只读，{{tool}} 的改动先留在文件夹里，能编辑以后再并入"
     },
-    "operation": "{{tool}}（电脑上的）· 改了 {{count}} 处",
+    "operation": "{{tool}} 改了 {{count}} 处",
     "source": "电脑上的 AI",
     "connected": "{{tool}} 连着（{{since}} 起）",
     "connectedHere": "{{tool}} 连着这个项目（{{since}} 起）",
@@ -5354,7 +5359,7 @@
       "onlyServer": "只装工具，不装插件",
       "codexSlow": "启动超时的话",
       "openWindows": "在资源管理器里打开{{folder}}，在地址栏输入 cmd 回车，再输入：",
-      "openMac": "在访达里右键{{folder}} › 服务 › 新建位于文件夹位置的终端窗口，再输入：",
+      "openMac": "打开终端，输入 cd 加一个空格，把{{folder}}拖进终端窗口，回车，再输入：",
       "openLinux": "在{{folder}}里打开终端，再输入：",
       "theFolder": "「{{folder}}」文件夹",
       "projectFolder": "项目文件夹",
@@ -5391,16 +5396,27 @@
     },
     "settings": {
       "wizard": "连接向导…",
-      "recent": "最近连过「{{project}}」的",
+      "recent": "最近连过这个项目的",
       "recentNone": "还没有",
       "use": "{{tool}} · {{when}} · {{count}} 次任务",
       "now": "连着"
     },
     "agents": {
-      "has": "有",
-      "none": "没有",
+      "has": "已有",
+      "none": "还没有",
       "open": "打开",
       "add": "加一份"
+    },
+    "change": {
+      "added": "新加了{{kind}}{{name}}",
+      "removed": "删了{{kind}}{{name}}",
+      "changed": "改了{{kind}}{{name}}",
+      "renamed": "把{{kind}}「{{before}}」改名为「{{after}}」",
+      "from": "把{{kind}}{{name}}的{{field}}从 {{before}} 改成 {{after}}",
+      "set": "把{{kind}}{{name}}的{{field}}设为 {{after}}",
+      "cleared": "去掉了{{kind}}{{name}}的{{field}}",
+      "lines": "改了{{kind}}{{name}}（+{{added}} −{{removed}} 行）",
+      "fieldsMore": "{{line}}等 {{count}} 项"
     }
   }
 }

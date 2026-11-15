@@ -223,7 +223,11 @@ test.describe("the editor on this computer", () => {
       });
       expect(renamed.isError, JSON.stringify(renamed.content)).toBeFalsy();
       // As its batch, named after the tool, as the note it left next to the project says.
-      await expect(page.getByText(/^Claude Code 改了 1 处 · /)).toBeVisible({ timeout: 15_000 });
+      await expect(
+        page.getByText(/^Claude Code：把项目「片子」改名为「AI 改的名字」$/),
+      ).toBeVisible({
+        timeout: 15_000,
+      });
       await expect(footer(page).getByText("AI 改的名字")).toBeVisible();
       // And the other way round: what people change reaches the AI tool, as somebody else's.
       await page.getByRole("button", { name: "撤销这次" }).click();

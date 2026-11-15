@@ -78,7 +78,7 @@ import {
 import type { FolderChoice, FolderRefusal, NewFormat } from "../cloud/create.ts";
 import type { Hasher } from "../media/hasher.ts";
 import type { ProblemList } from "../problems/list.ts";
-import { downloadFrom, downloadableItems, type HereOf } from "../storage/places.ts";
+import { downloadableItems, storedIn, type HereOf } from "../storage/places.ts";
 import type { ImportRefused, ImportReport } from "../transfer/import.ts";
 import { formatSize } from "../transfer/transfer.ts";
 import { commandFailedText } from "../i18n/failures.ts";
@@ -573,8 +573,8 @@ export class ProjectFolders {
     if (issue.kind === "elsewhere") {
       const here = this.#options.here?.();
       const url = placedAsset(current.store.getState(), issue.asset, here)?.url;
-      const download = downloadFrom(t, issue.storage, url);
-      return { ...base, text: t("folder.asset.elsewhere", { download }) };
+      const where = storedIn(t, issue.storage, url);
+      return { ...base, text: t("folder.asset.elsewhere", { where }) };
     }
     if (issue.hidden !== undefined) {
       return { ...base, text: t("folder.asset.hidden", { name: issue.hidden }) };

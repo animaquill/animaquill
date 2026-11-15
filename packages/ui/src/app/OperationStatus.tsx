@@ -118,7 +118,9 @@ export function OperationStatus() {
                       </span>
                       {tool ? (
                         <time dateTime={new Date(tool.batch.startedAt).toISOString()}>
-                          {`${clock.format(tool.batch.startedAt)}–${clock.format(tool.batch.updatedAt)}`}
+                          {clock.format(tool.batch.startedAt) === clock.format(tool.batch.updatedAt)
+                            ? clock.format(tool.batch.startedAt)
+                            : `${clock.format(tool.batch.startedAt)}–${clock.format(tool.batch.updatedAt)}`}
                         </time>
                       ) : (
                         <time dateTime={new Date(operation.time).toISOString()}>

@@ -55,6 +55,15 @@ export function downloadFrom(t: TFunction, storage: Elsewhere, url: string | und
     : t("storage.download.remote", { host });
 }
 
+/** Where the file of an asset is kept, for a project that cannot download it by itself. */
+export function storedIn(t: TFunction, storage: Elsewhere, url: string | undefined): string {
+  if (storage !== "remote") return t(`storage.storedIn.${storage}`);
+  const host = hostOf(url);
+  return host === undefined
+    ? t("storage.storedIn.remoteUnknown")
+    : t("storage.storedIn.remote", { host });
+}
+
 /** Files that are not here, in a list for people: where each can come from. */
 export const downloadableItems = (t: TFunction, files: readonly ElsewhereFile[]): string[] =>
   files.map(({ name, storage, url }) =>

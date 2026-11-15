@@ -250,9 +250,9 @@ export function ProjectIcon({ resource, playing }: ResourceIconProps<ProjectItem
                 : t("storage.downloads.badge.notDownloaded")}
             </span>
           )
-        ) : file.elsewhere ? (
-          <span className={styles.elsewhere}>{t("assetPanel.elsewhere")}</span>
         ) : (
+          // Kept elsewhere, but a project that is not of the platform cannot download it: as far
+          // as people here go, it is not there.
           <span className={styles.missing}>{t("assetPanel.missing")}</span>
         ))}
       {length && <span className={styles.length}>{length}</span>}

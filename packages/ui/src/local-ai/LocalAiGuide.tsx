@@ -473,21 +473,26 @@ function LocalAiGuide() {
           </div>
         </div>
         <footer className={styles.foot}>
-          <span
-            className={styles.connected}
-            data-on={first ? "" : undefined}
-            role="status"
-            data-testid="local-ai-connected"
-          >
-            <span className={styles.dot} aria-hidden />
-            {first
-              ? t("localAi.connectedHere", {
-                  tool: toolName(t, first.client),
-                  since: whenText(first.startedAt),
-                  interpolation: { escapeValue: false },
-                })
-              : t("localAi.noneConnected")}
-          </span>
+          {/* Who is connected is of a project: without one there is nobody to wait for. */}
+          {store ? (
+            <span
+              className={styles.connected}
+              data-on={first ? "" : undefined}
+              role="status"
+              data-testid="local-ai-connected"
+            >
+              <span className={styles.dot} aria-hidden />
+              {first
+                ? t("localAi.connectedHere", {
+                    tool: toolName(t, first.client),
+                    since: whenText(first.startedAt),
+                    interpolation: { escapeValue: false },
+                  })
+                : t("localAi.noneConnected")}
+            </span>
+          ) : (
+            <span className={styles.connected} />
+          )}
           <button
             ref={closeButton}
             type="button"

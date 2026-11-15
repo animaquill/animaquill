@@ -106,7 +106,7 @@ test.describe("with a project folder", () => {
     await expect(panel).toContainText("在资源管理器里打开「原子」文件夹，在地址栏输入 cmd 回车");
     await shot(page, "guide-claude-code");
     await shown.getByRole("radio", { name: "macOS" }).click();
-    await expect(panel).toContainText("在访达里右键「原子」文件夹");
+    await expect(panel).toContainText("打开终端，输入 cd 加一个空格，把「原子」文件夹拖进终端窗口");
     await panel
       .getByRole("button", { name: "复制 claude plugin install animaquill@animaquill" })
       .click();
@@ -184,24 +184,36 @@ test.describe("with a project folder", () => {
     await openDropped(page, disk);
     connect(disk);
     toolWrites(disk, "b1", { [MAIN]: titleNamed(disk, "AI 改的标题") });
-    const notice = page.getByText(/^Claude Code 改了 1 处 · 片段「AI 改的标题」/);
+    const notice = page.getByText("Claude Code：把片段「标题」改名为「AI 改的标题」", {
+      exact: true,
+    });
     await expect(notice).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("外面改了")).toHaveCount(0);
+    // Who is connected, where the status bar says how the folder is.
+    await footer(page).getByRole("status").filter({ hasText: "已保存" }).hover();
+    await expect(page.getByRole("tooltip")).toContainText("Claude Code 连着（");
+    await shot(page, "status-connected");
+    await page.mouse.move(700, 300);
     // The clips it changed stand out on the timeline.
     await expect(page.locator('[data-ai-changed][role="option"]')).toHaveCount(1);
     // More of the same batch: the same notice counts on.
     const scene = text(disk, "scenes/title/index.html");
     toolWrites(disk, "b1", { "scenes/title/index.html": `${scene}\n<!-- AI -->\n` });
-    await expect(page.getByText(/^Claude Code 改了 2 处 · /)).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText(/^Claude Code 改了/)).toHaveCount(1);
+    await expect(
+      page.getByText("Claude Code：把片段「标题」改名为「AI 改的标题」等 2 处", { exact: true }),
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText(/^Claude Code：/)).toHaveCount(1);
     await shot(page, "notice");
     // The status bar says who is connected, and lists the batch as one.
     await footer(page)
       .getByRole("button", { name: /^上次的操作/ })
       .click();
-    const item = page.getByRole("listitem", { name: "Claude Code（电脑上的）· 改了 2 处" });
+    const item = page.getByRole("listitem", { name: "Claude Code 改了 2 处" });
     await expect(item).toBeVisible();
     await expect(item).toContainText("电脑上的 AI");
+    await expect(footer(page).getByRole("button", { name: /^上次的操作/ })).toHaveText(
+      "Claude Code 改了 2 处",
+    );
     await shot(page, "history");
     await item.getByRole("button", { name: "撤销这次" }).click();
     await expect.poll(() => text(disk, MAIN)).not.toContain("AI 改的标题");

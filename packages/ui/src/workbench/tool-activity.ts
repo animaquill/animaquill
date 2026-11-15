@@ -2,11 +2,9 @@ import { objectKey, type ProjectState, type ProjectStore } from "@animaquill/cor
 import type { LocalFolder } from "@animaquill/host";
 import { describeChanges, type ObjectChange } from "@animaquill/tools";
 import type { TFunction } from "i18next";
-import { changeText } from "../chat/ChangeCard.tsx";
-import { changeName } from "../chat/objectName.ts";
 import type { TurnChange } from "../chat/summary.ts";
-import type { Say } from "../chat/toolSummary.ts";
 import type { FolderMerge } from "../folder/session.ts";
+import { changeLine } from "../local-ai/change-line.ts";
 import {
   ToolNotes,
   knownTool,
@@ -89,6 +87,36 @@ const asTurnChange = (change: ObjectChange): TurnChange => ({
   fields: change.fields ?? [],
   ...(change.lines && { lines: change.lines }),
 });
+
+/** A value of the project's own fields, in a few characters. */
+function valueText(value: unknown): string {
+  if (value === undefined) return "none";
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  return [...text].length > 40 ? `${[...text].slice(0, 39).join("")}…` : text;
+}
+
+/**
+ * The fields of the project itself that a merge changed, such as its name: the tools tell only
+ * that the project changed, as its fields are not under an id.
+ */
+function withProjectFields(
+  change: TurnChange,
+  merge: FolderMerge,
+  after: ProjectState,
+): TurnChange {
+  if (change.kind !== "project" || change.fields.length > 0) return change;
+  const fields = [
+    ...new Set(merge.paths.filter(([top]) => top === "manifest").map(([, field]) => field)),
+  ].flatMap((field) => {
+    if (field === undefined) return [];
+    const before = (merge.before.manifest as Record<string, unknown>)[field];
+    const now = (after.manifest as Record<string, unknown>)[field];
+    return JSON.stringify(before) === JSON.stringify(now)
+      ? []
+      : [{ path: field, before: valueText(before), after: valueText(now) }];
+  });
+  return { ...change, fields };
+}
 
 /** What two changes of one object come to: each field from the first before to the last after. */
 function joined(first: TurnChange, next: TurnChange): TurnChange | undefined {
@@ -257,7 +285,9 @@ export class ToolActivity {
     if (!tool) return;
     this.#store = store;
     const after = store.getState();
-    const described = describeChanges(merge.before, after, merge.paths).map(asTurnChange);
+    const described = describeChanges(merge.before, after, merge.paths)
+      .map(asTurnChange)
+      .map((change) => withProjectFields(change, merge, after));
     const known = this.#batches.get(merge.origin);
     const changes = new Map((known?.changes ?? []).map((change) => [change.key, change]));
     for (const change of described) {
@@ -302,9 +332,7 @@ export class ToolActivity {
     const tool = toolName(t, batch.client);
     const count = batch.changes.length;
     const [first] = batch.changes;
-    const firstText = first
-      ? changeText(t as unknown as Say, first, changeName(t, first, state))
-      : undefined;
+    const firstText = first ? changeLine(t, first, state) : undefined;
     const message = batch.whileAway
       ? t("localAi.notice.whileAway", { tool, count: batch.files.length })
       : firstText === undefined
@@ -336,9 +364,7 @@ export class ToolActivity {
     if (!batch) return;
     const { t, dialogs } = this.#options;
     const state = this.#store?.getState();
-    const lines = batch.changes.map((change) =>
-      changeText(t as unknown as Say, change, changeName(t, change, state)),
-    );
+    const lines = batch.changes.map((change) => changeLine(t, change, state));
     await dialogs.confirm({
       title: t("localAi.notice.showTitle", {
         tool: toolName(t, batch.client),

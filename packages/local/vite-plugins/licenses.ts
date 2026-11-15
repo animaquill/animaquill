@@ -36,7 +36,10 @@ function packageOf(module: string, known: Map<string, string | undefined>): stri
     seen.push(folder);
     const manifest = join(folder, "package.json");
     if (existsSync(manifest)) {
-      const { name, version } = JSON.parse(readFileSync(manifest, "utf8")) as Record<string, unknown>;
+      const { name, version } = JSON.parse(readFileSync(manifest, "utf8")) as Record<
+        string,
+        unknown
+      >;
       if (typeof name === "string" && typeof version === "string") {
         for (const each of seen) known.set(each, folder);
         return folder;

@@ -19,7 +19,7 @@ import type { ResourceIconProps } from "../resources/ResourceBrowser.tsx";
 import { parseTags, type ProjectItem } from "../resources/project-resources.ts";
 import type { Resource } from "../resources/resources.ts";
 import { resourceTypeName } from "../resources/type-names.ts";
-import { downloadFrom } from "../storage/places.ts";
+import { storedIn } from "../storage/places.ts";
 import { AssetPlace } from "../storage/AssetPlace.tsx";
 import { formatSize } from "../transfer/transfer.ts";
 import { textOf } from "../properties/names.ts";
@@ -420,8 +420,8 @@ function ResourceDetails({
       // In a project of the platform it comes by itself, and "存放位置" says how that goes.
       if (file?.elsewhere && !autoDownloads(workbench.downloads.available, coming)) {
         const url = state && placedAsset(state, item.id, workbench.here())?.url;
-        const download = downloadFrom(t, file.elsewhere, url);
-        problems.push(t("explorer.elsewhere", { path: file.path, download }));
+        const where = storedIn(t, file.elsewhere, url);
+        problems.push(t("explorer.elsewhere", { path: file.path, where }));
       } else if (file && !file.elsewhere) {
         problems.push(
           t("explorer.missing.file", { path: file.path, interpolation: { escapeValue: false } }),

@@ -119,14 +119,14 @@ async function expectExplorer(page: Page) {
   // Only the file that is nowhere else is missing.
   await expect(missing).toHaveText("缺失的资源（1）", { timeout: 10_000 });
   await node(page, "project.media").click();
-  await expect(item(page, "云端.webm")).toContainText("可以下载");
-  await expect(item(page, "云端.webm")).not.toContainText("文件找不到");
+  // Not of the platform: nothing downloads it, so it is not there as far as people here go.
+  await expect(item(page, "云端.webm")).toContainText("文件找不到");
   await expect(item(page, "丢了.webm")).toContainText("文件找不到");
-  await expect(item(page, "胶片.webm")).not.toContainText(/可以下载|文件找不到/);
+  await expect(item(page, "胶片.webm")).not.toContainText("文件找不到");
 
   await item(page, "云端.webm").click();
   await expect(details(page).getByRole("note")).toHaveText(
-    "这台电脑上没有这个文件：assets/云端.webm。可以从云端空间下载。",
+    "这台电脑上没有这个文件：assets/云端.webm。原片存在云端空间。",
   );
   await item(page, "胶片.webm").click();
   await expect(details(page).getByRole("note")).toHaveCount(0);
@@ -157,7 +157,7 @@ test.describe("a project folder", () => {
     await tab(page, "problems").click();
     const problems = content(page, "problems");
     const away = problems.getByRole("listitem").filter({ hasText: "assets/云端.webm" }).last();
-    await expect(away).toContainText("素材文件不在这台电脑上，可以从云端空间下载。", {
+    await expect(away).toContainText("素材文件不在这台电脑上，原片存在云端空间。", {
       timeout: 10_000,
     });
     await expect(away).not.toContainText("不在这里了");

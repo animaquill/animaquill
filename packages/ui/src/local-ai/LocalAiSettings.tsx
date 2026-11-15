@@ -47,20 +47,24 @@ export function LocalAiGroup() {
   const connected = new Set(activity.connections.map(({ client }) => client?.name ?? ""));
   return (
     <GroupPage title={t("settings.groups.localAi")}>
-      <SettingRow id="localAi.connect" help="">
-        <button
-          type="button"
-          className={`${settings.button} ${settings.primary}`}
-          data-testid="local-ai-wizard"
-          onClick={() => workbench.openLocalAiGuide()}
-        >
-          {t("localAi.settings.wizard")}
-        </button>
-      </SettingRow>
+      {/* The button says what it is: a row of its own, with no name beside it. */}
+      <div className={settings.row} data-setting="localAi.connect">
+        <div className={settings.words}>
+          <button
+            type="button"
+            className={`${settings.button} ${settings.primary}`}
+            style={{ justifySelf: "start", alignSelf: "flex-start" }}
+            data-testid="local-ai-wizard"
+            onClick={() => workbench.openLocalAiGuide()}
+          >
+            {t("localAi.settings.wizard")}
+          </button>
+        </div>
+      </div>
       {project !== undefined && activity.folder && (
         <SettingRow
           id="localAi.recent"
-          name={t("localAi.settings.recent", { project, interpolation: { escapeValue: false } })}
+          name={t("localAi.settings.recent")}
           help=""
           wide
           below={

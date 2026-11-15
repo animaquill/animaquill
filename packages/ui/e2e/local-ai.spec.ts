@@ -66,10 +66,10 @@ test.describe("on the start page", () => {
     await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
     await page.getByRole("menu").getByRole("menuitem", { name: "项目属性…", exact: true }).click();
     await group.getByRole("button", { name: "给 AI 的说明", exact: true }).click();
-    await expect(props.getByTestId("project-agents")).toHaveText("没有");
+    await expect(props.getByTestId("project-agents")).toHaveText("还没有");
     await shot(page, "properties-none");
     await props.getByRole("button", { name: "加一份" }).click();
-    await expect(props.getByTestId("project-agents")).toHaveText("有");
+    await expect(props.getByTestId("project-agents")).toHaveText("已有");
     await shot(page, "properties");
     await props.getByRole("button", { name: "打开" }).click();
     await expect(props).toBeHidden();
@@ -84,6 +84,7 @@ test.describe("on the start page", () => {
     await expect(guide(page).getByTestId("local-ai-project")).toHaveCount(0);
     await expect(guide(page).getByTestId("local-ai-panel")).toContainText("项目文件夹");
     await expect(guide(page).getByTestId("local-ai-agents")).toHaveCount(0);
+    await expect(guide(page).getByTestId("local-ai-connected")).toHaveCount(0);
     await shot(page, "guide-none");
   });
 });

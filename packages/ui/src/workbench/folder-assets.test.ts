@@ -319,7 +319,7 @@ describe("the files of the assets of a project folder", () => {
     await vi.waitFor(
       () =>
         expect(folderProblems(workbench)[0]?.text).toBe(
-          'folder.asset.elsewhere {"download":"storage.download.platform"}',
+          'folder.asset.elsewhere {"where":"storage.storedIn.platform"}',
         ),
       { timeout: 3000 },
     );
