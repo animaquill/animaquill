@@ -56,12 +56,15 @@ describe("policies", () => {
   test("the editor shows only the compositor, and adds the pictures a deployment has", () => {
     expect(editorPolicy(deployed, { images: ["https://pictures.example"] })).toBe(
       "default-src 'none'; script-src 'self'; worker-src 'self'; " +
-        "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://pictures.example; " +
+        "style-src 'self' 'unsafe-inline'; " +
+        "img-src 'self' data: blob: https://raw.githubusercontent.com https://pictures.example; " +
         "font-src 'self'; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; " +
         "manifest-src 'self'; frame-src https://compositor.example.net; base-uri 'none'; " +
         "form-action 'none'; frame-ancestors 'none'",
     );
-    expect(editorPolicy(deployed)).toContain("img-src 'self' data: blob:;");
+    expect(editorPolicy(deployed)).toContain(
+      "img-src 'self' data: blob: https://raw.githubusercontent.com;",
+    );
   });
 
   test("the compositor runs its own code, shows only scenes, and only in the editor", () => {

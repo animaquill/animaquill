@@ -7,7 +7,6 @@ import {
   filesNamedIn,
   isPackPath,
   MANIFEST,
-  MAX_FILE_BYTES,
   TOOLSET_VERSION,
   type ModelPack,
   type PackCheck,
@@ -19,15 +18,51 @@ import {
   type WordsGroup,
   wordsChanges,
 } from "@animaquill/tools";
-import type { SettingsStore } from "@animaquill/host";
+import type { SettingsStore, WindowMemory } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
+import {
+  asText,
+  gitHubPlace,
+  isAccount,
+  latestOf,
+  isCommit,
+  isRepository,
+  MOST,
+  README_BYTES,
+  readmeOf,
+  type GitHubLatest,
+  type GitHubSource,
+  type PackInput,
+  type PackReadme,
+} from "./github-packs.ts";
 
-/** Where people installed a pack from, to tell them and to look for an update. */
+export {
+  gitHubPlace,
+  readGitHub,
+  type GitHubFailure,
+  type GitHubPlace,
+  type GitHubRead,
+  type PackInput,
+  type PackReadme,
+} from "./github-packs.ts";
+
+/**
+ * Where people installed a pack from, as the editor wrote it when they did: what a pack is labeled
+ * with ("名字(来源)", see `originOf`) and where an update is looked for. Nothing in a pack can set it.
+ */
 export type PackSource =
+  /** A folder or a pack.json on this computer. */
   | { readonly kind: "folder"; readonly name: string }
   | { readonly kind: "file"; readonly name: string }
-  /** A folder of a repository on GitHub, and the commit it was taken from. */
-  | { readonly kind: "github"; readonly url: string; readonly commit: string };
+  /** A repository on GitHub, or a folder of one, and the commit it was taken from. */
+  | GitHubSource
+  /** One of the packs of "发现", at the commit the platform's people looked at (S-P2). */
+  | {
+      readonly kind: "discover";
+      readonly entry: string;
+      readonly repo: string;
+      readonly commit: string;
+    };
 
 /** A pack as this browser keeps it: the files that were checked when it was installed. */
 export interface KeptPack {
@@ -47,6 +82,11 @@ export interface KeptPack {
    * a conversation keeps the version it began with. Only the last few are kept.
    */
   readonly previous?: readonly KeptPack[];
+  /**
+   * What a pack from this computer says of itself for people (its README.md, never sent to models).
+   * Of a pack from GitHub it is read from there when its details open, at the commit installed.
+   */
+  readonly readme?: PackReadme;
 }
 
 /** How many versions before an update are kept for conversations that began with them. */
@@ -63,22 +103,54 @@ export interface InstalledPack {
   readonly dropped: readonly PackProblem[];
 }
 
+/** What looking for an update of an installed pack found last, and when. */
+export interface PackUpdate {
+  readonly at: number;
+  /** The commit installed then: an update of it found before says nothing of another one. */
+  readonly commit: string;
+  readonly latest: GitHubLatest;
+}
+
 export interface ModelPacksSnapshot {
   readonly installed: readonly InstalledPack[];
   /** Every pack that can be used: AnimaQuill's own, then those installed, as installed. */
   readonly packs: readonly ModelPack[];
+  /** What looking for updates found, by id, for packs from GitHub: see `ModelPacks.lookForUpdates`. */
+  readonly updates: ReadonlyMap<string, PackUpdate>;
+  /** Packs whose update is being looked for now. */
+  readonly looking: ReadonlySet<string>;
 }
 
 export interface ModelPacksMessages {
   saveFailed(): void;
 }
 
+export interface ModelPacksOptions {
+  /** Where what looking for updates found is kept, so that a reload does not ask GitHub again. */
+  readonly memory?: WindowMemory;
+  /** How GitHub is asked; tests give their own. */
+  readonly fetcher?: typeof fetch;
+}
+
+/** How long what looking for an update found holds: GitHub answers 60 times an hour. */
+export const UPDATE_EVERY = 6 * 60 * 60 * 1000;
+
+const UPDATES_KEY = "packs.updates";
+
 const SETTINGS_KEY = "ai.packs";
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-function readSource(value: unknown): PackSource | undefined {
+const shortText = (value: unknown, most: number) =>
+  typeof value === "string" && value.length <= most ? value : undefined;
+
+/**
+ * Where a pack was installed from, as kept. The account and repository it says it is from are only
+ * kept as GitHub may spell them, so that settings written some other way cannot make a pack say it
+ * is from "内置".
+ */
+export function readSource(value: unknown): PackSource | undefined {
   if (!isRecord(value)) return undefined;
   if ((value.kind === "folder" || value.kind === "file") && typeof value.name === "string") {
     return { kind: value.kind, name: value.name };
@@ -88,7 +160,29 @@ function readSource(value: unknown): PackSource | undefined {
     typeof value.url === "string" &&
     typeof value.commit === "string"
   ) {
-    return { kind: "github", url: value.url, commit: value.commit };
+    const owner = shortText(value.owner, 39);
+    const repo = shortText(value.repo, 100);
+    const path = shortText(value.path, 1000);
+    const ref = shortText(value.ref, 255);
+    return {
+      kind: "github",
+      url: value.url,
+      commit: value.commit,
+      ...(owner !== undefined && isAccount(owner) && { owner }),
+      ...(repo !== undefined && isRepository(repo) && { repo }),
+      ...(path !== undefined && { path }),
+      ...(ref !== undefined && { ref }),
+      ...(value.tag === true && { tag: true }),
+    };
+  }
+  if (
+    value.kind === "discover" &&
+    typeof value.entry === "string" &&
+    typeof value.repo === "string" &&
+    typeof value.commit === "string" &&
+    isCommit(value.commit)
+  ) {
+    return { kind: "discover", entry: value.entry, repo: value.repo, commit: value.commit };
   }
   return undefined;
 }
@@ -113,10 +207,18 @@ function readKept(value: unknown): KeptPack | undefined {
         )
         .filter((each) => each !== undefined)
     : [];
+  const readme =
+    isRecord(value.readme) && typeof value.readme.text === "string"
+      ? {
+          text: value.readme.text.slice(0, README_BYTES),
+          ...(value.readme.cut === true && { cut: true }),
+        }
+      : undefined;
   return {
     files: Object.fromEntries(files) as Record<string, string>,
     source,
     installedAt: value.installedAt,
+    ...(readme && { readme }),
     ...(typeof value.toolset === "string" && { toolset: value.toolset }),
     ...(defaults && { defaults }),
     ...(previous.length > 0 && { previous }),
@@ -159,13 +261,122 @@ export class ModelPacks {
   readonly #settings: SettingsStore;
   readonly #messages: ModelPacksMessages;
   readonly #emitter = new Emitter();
-  #snapshot: ModelPacksSnapshot = { installed: [], packs: builtinPacks() };
+  readonly #options: ModelPacksOptions;
+  #snapshot: ModelPacksSnapshot = {
+    installed: [],
+    packs: builtinPacks(),
+    updates: new Map(),
+    looking: new Set(),
+  };
   /** Versions before an update, checked when a conversation asks for one, by id and hash. */
   readonly #before = new Map<string, ModelPack | null>();
 
-  constructor(settings: SettingsStore, messages: ModelPacksMessages) {
+  constructor(
+    settings: SettingsStore,
+    messages: ModelPacksMessages,
+    options: ModelPacksOptions = {},
+  ) {
     this.#settings = settings;
     this.#messages = messages;
+    this.#options = options;
+    this.#snapshot = { ...this.#snapshot, updates: this.#keptUpdates() };
+  }
+
+  /** What looking for updates found before a reload, as this window kept it. */
+  #keptUpdates(): ReadonlyMap<string, PackUpdate> {
+    try {
+      const kept: unknown = JSON.parse(this.#options.memory?.read(UPDATES_KEY) ?? "{}");
+      if (!isRecord(kept)) return new Map();
+      return new Map(
+        Object.entries(kept).flatMap(([id, value]): [string, PackUpdate][] => {
+          if (!isRecord(value) || typeof value.at !== "number" || typeof value.commit !== "string")
+            return [];
+          const latest = value.latest;
+          if (!isRecord(latest)) return [];
+          if (latest.state === "update" && typeof latest.commit === "string") {
+            const version = typeof latest.version === "string" ? latest.version : undefined;
+            return [
+              [
+                id,
+                {
+                  at: value.at,
+                  commit: value.commit,
+                  latest: { state: "update", commit: latest.commit, ...(version && { version }) },
+                } satisfies PackUpdate,
+              ],
+            ];
+          }
+          if (latest.state === "latest" || latest.state === "pinned") {
+            return [[id, { at: value.at, commit: value.commit, latest: { state: latest.state } }]];
+          }
+          return [];
+        }),
+      );
+    } catch {
+      return new Map();
+    }
+  }
+
+  /**
+   * Looks for updates of the packs from GitHub, each at most every `UPDATE_EVERY` unless `force`,
+   * one after the other: GitHub answers 60 times an hour without signing in. Installs nothing; an
+   * update shows where packs are listed, for people to look at. `only` looks for one pack.
+   */
+  async lookForUpdates(options: { readonly force?: boolean; readonly only?: string } = {}) {
+    const now = Date.now();
+    const due = this.#snapshot.installed.filter(({ id, kept }) => {
+      if (kept.source.kind !== "github") return false;
+      if (options.only !== undefined && id !== options.only) return false;
+      if (this.#snapshot.looking.has(id)) return false;
+      const found = this.#snapshot.updates.get(id);
+      return (
+        options.force === true ||
+        !found ||
+        found.commit !== kept.source.commit ||
+        found.latest.state === "failed" ||
+        now - found.at > UPDATE_EVERY
+      );
+    });
+    for (const { id, kept } of due) {
+      if (kept.source.kind !== "github") continue;
+      this.#snapshot = { ...this.#snapshot, looking: new Set([...this.#snapshot.looking, id]) };
+      this.#emitter.emit();
+      let latest: GitHubLatest;
+      try {
+        latest = await latestOf(kept.source, this.#options.fetcher);
+      } catch {
+        latest = { state: "failed", failure: "network" };
+      }
+      const updates = new Map(this.#snapshot.updates);
+      updates.set(id, { at: Date.now(), commit: kept.source.commit, latest });
+      const looking = new Set(this.#snapshot.looking);
+      looking.delete(id);
+      this.#snapshot = { ...this.#snapshot, updates, looking };
+      this.#keepUpdates();
+      this.#emitter.emit();
+      // Too many questions: the rest wait.
+      if (latest.state === "failed" && latest.failure === "rate") break;
+    }
+  }
+
+  #keepUpdates(): void {
+    const kept = Object.fromEntries(
+      [...this.#snapshot.updates].filter(([, found]) => found.latest.state !== "failed"),
+    );
+    try {
+      this.#options.memory?.write(UPDATES_KEY, JSON.stringify(kept));
+    } catch {
+      // Then the next reload asks again.
+    }
+  }
+
+  /** The update found of an installed pack, where there is one for the version installed now. */
+  updateOf(id: string): (GitHubLatest & { readonly state: "update" }) | undefined {
+    const installed = this.installedOf(id);
+    const found = this.#snapshot.updates.get(id);
+    if (installed?.kept.source.kind !== "github" || !found) return undefined;
+    if (found.commit !== installed.kept.source.commit) return undefined;
+    return found.latest.state === "update" ? found.latest : undefined;
   }
 
   subscribe = this.#emitter.subscribe;
@@ -193,7 +404,7 @@ export class ModelPacks {
 
   #set(installed: readonly InstalledPack[]): void {
     const usable = installed.flatMap(({ pack }) => (pack ? [pack] : []));
-    this.#snapshot = { installed, packs: [...builtinPacks(), ...usable] };
+    this.#snapshot = { ...this.#snapshot, installed, packs: [...builtinPacks(), ...usable] };
     this.#emitter.emit();
   }
 
@@ -246,12 +457,13 @@ export class ModelPacks {
    * Puts a pack in, or a new version in place of the one with its id, once people saw it. It is
    * checked again here: only what passes is kept.
    */
-  install(files: ReadonlyMap<string, string>, source: PackSource): PackCheck {
+  install(files: ReadonlyMap<string, string>, source: PackSource, readme?: PackReadme): PackCheck {
     const check = checkPack(files);
     const pack = check.pack;
     if (!pack) return check;
     const before = this.installedOf(pack.id);
-    const { previous: older = [], ...last } = before?.kept ?? {};
+    // Versions kept for conversations need no README.
+    const { previous: older = [], readme: _readme, ...last } = before?.kept ?? {};
     const previous =
       before && before.pack?.hash !== pack.hash
         ? [last as KeptPack, ...older].slice(0, PREVIOUS)
@@ -264,9 +476,23 @@ export class ModelPacks {
       toolset: TOOLSET_VERSION,
       defaults: defaultsOf(pack),
       ...(previous.length > 0 && { previous }),
+      // From GitHub it is read again where it is, at the commit: the settings stay small.
+      ...(readme && source.kind !== "github" && source.kind !== "discover" && { readme }),
     };
     const installed: InstalledPack = { id: pack.id, kept, pack, problems: [], dropped: [] };
     const others = this.#snapshot.installed.filter(({ id }) => id !== pack.id);
+    // Just taken from GitHub: the newest there is, for now.
+    const updates = new Map(this.#snapshot.updates);
+    if (source.kind === "github") {
+      const pinned = isCommit(gitHubPlace(source.url)?.ref ?? "");
+      updates.set(pack.id, {
+        at: Date.now(),
+        commit: source.commit,
+        latest: { state: pinned ? "pinned" : "latest" },
+      });
+    } else updates.delete(pack.id);
+    this.#snapshot = { ...this.#snapshot, updates };
+    this.#keepUpdates();
     this.#save([...others, installed].toSorted((a, b) => a.kept.installedAt - b.kept.installedAt));
     return check;
   }
@@ -276,24 +502,7 @@ export class ModelPacks {
   }
 }
 
-const decoder = new TextDecoder("utf-8", { fatal: true });
-
 type Read = Map<string, string | Uint8Array | PackFileTooLarge>;
-
-/** Text where it is UTF-8, bytes where not, so that the check can tell which files are not. */
-function asText(path: string, bytes: Uint8Array, into: Read): void {
-  try {
-    into.set(path, decoder.decode(bytes));
-  } catch {
-    into.set(path, bytes);
-  }
-}
-
-/** The files a pack is made of, for `checkPack`: pack.json and those it names. */
-export type PackInput = ReadonlyMap<string, string | Uint8Array | PackFileTooLarge>;
-
-/** The most of one file that is read: a little more than a pack may have, for the check to say so. */
-const MOST = MAX_FILE_BYTES + 1;
 
 /** A file people picked, unless it is larger than a pack may have: then only its size. */
 async function readPicked(path: string, file: File, into: Read): Promise<void> {
@@ -326,6 +535,24 @@ export async function readFolder(files: readonly File[]): Promise<PackInput> {
   return read;
 }
 
+/**
+ * The README.md of a folder people picked, as much as shows, to read in the install dialog and in
+ * the details of the pack; nothing where it has none. Its case does not matter, as on most
+ * computers.
+ */
+export async function readFolderReadme(files: readonly File[]): Promise<PackReadme | undefined> {
+  const file = files.find((each) => {
+    const relative =
+      (each as File & { webkitRelativePath?: string }).webkitRelativePath || each.name;
+    const parts = relative.split("/");
+    const path = parts.length > 1 ? parts.slice(1).join("/") : relative;
+    return path.toLowerCase() === "readme.md";
+  });
+  if (!file) return undefined;
+  const bytes = new Uint8Array(await file.slice(0, README_BYTES + 1).arrayBuffer());
+  return readmeOf(bytes, false);
+}
+
 /** A pack that is one pack.json people picked. */
 export async function readManifestFile(file: File): Promise<PackInput> {
   const read: Read = new Map();
@@ -338,183 +565,6 @@ export function textFiles(input: PackInput): ReadonlyMap<string, string> {
   const files = new Map<string, string>();
   for (const [path, value] of input) if (typeof value === "string") files.set(path, value);
   return files;
-}
-
-/** A folder of a repository on GitHub, as people paste its address. */
-export interface GitHubPlace {
-  readonly owner: string;
-  readonly repo: string;
-  /** A branch, a tag or a commit; nothing for the default branch. */
-  readonly ref: string | undefined;
-  /** The folder in the repository, without slashes around it; "" for its root. */
-  readonly path: string;
-}
-
-/**
- * Where a pack is on GitHub, from an address such as
- * `https://github.com/<owner>/<repo>/tree/<branch>/<folder>`, `https://github.com/<owner>/<repo>`,
- * or the address of its pack.json (`…/blob/<branch>/<folder>/pack.json`). A branch with "/" in its
- * name is not told apart from a folder: the first part after "tree" is the branch.
- */
-export function gitHubPlace(address: string): GitHubPlace | undefined {
-  let url: URL;
-  try {
-    url = new URL(address.trim());
-  } catch {
-    return undefined;
-  }
-  if (
-    url.protocol !== "https:" ||
-    (url.hostname !== "github.com" && url.hostname !== "www.github.com")
-  ) {
-    return undefined;
-  }
-  const parts = url.pathname.split("/").filter((part) => part !== "");
-  const [owner, repoName, kind, ref, ...rest] = parts;
-  const name = /^[A-Za-z0-9_.-]+$/;
-  if (!owner || !repoName || !name.test(owner) || !name.test(repoName)) return undefined;
-  const repo = repoName.replace(/\.git$/, "");
-  if (kind === undefined) return { owner, repo, ref: undefined, path: "" };
-  if ((kind !== "tree" && kind !== "blob") || !ref) return undefined;
-  let folderParts: string[];
-  try {
-    folderParts = rest.map(decodeURIComponent);
-  } catch {
-    return undefined;
-  }
-  const unsafe = (part: string) =>
-    part === ".." || part === "." || part.includes("/") || part.includes("\\");
-  if (folderParts.some(unsafe)) return undefined;
-  if (kind === "blob" && folderParts.at(-1) !== MANIFEST) return undefined;
-  const folder = kind === "blob" ? folderParts.slice(0, -1) : folderParts;
-  return { owner, repo, ref: decodeURIComponent(ref), path: folder.join("/") };
-}
-
-/** Why a pack could not be taken from GitHub. */
-export type GitHubFailure = "address" | "notFound" | "rate" | "network";
-
-export type GitHubRead =
-  | {
-      readonly ok: true;
-      readonly files: PackInput;
-      readonly source: PackSource & { kind: "github" };
-    }
-  | { readonly ok: false; readonly failure: GitHubFailure };
-
-/**
- * The body of a response, up to a size: what says it is larger is not read, and what turns out
- * larger stops being read there, so that a large file never sits in memory whole.
- */
-async function upTo(
-  response: Response,
-  max: number,
-): Promise<Uint8Array | PackFileTooLarge | "network"> {
-  const length = Number(response.headers.get("content-length") ?? Number.NaN);
-  if (Number.isFinite(length) && length > max) {
-    await response.body?.cancel().catch(() => undefined);
-    return { tooLarge: length };
-  }
-  const reader = response.body?.getReader();
-  if (!reader) return new Uint8Array();
-  const parts: Uint8Array[] = [];
-  let size = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.length;
-      if (size > max) {
-        await reader.cancel().catch(() => undefined);
-        return { tooLarge: size };
-      }
-      parts.push(value);
-    }
-  } catch {
-    return "network";
-  }
-  const bytes = new Uint8Array(size);
-  let at = 0;
-  for (const part of parts) {
-    bytes.set(part, at);
-    at += part.length;
-  }
-  return bytes;
-}
-
-const API = "https://api.github.com";
-const RAW = "https://raw.githubusercontent.com";
-
-/**
- * A pack from a public repository on GitHub, straight from this browser: both GitHub's API and its
- * raw files answer pages of any address (CORS), so this needs no platform and works in the local
- * version too. The branch or tag is pinned to its commit first, so that all files come from the
- * same one and an update can be told by it. Without signing in, GitHub answers 60 such questions an
- * hour for an address.
- */
-export async function readGitHub(
-  address: string,
-  fetcher: typeof fetch = fetch,
-): Promise<GitHubRead> {
-  const place = gitHubPlace(address);
-  if (!place) return { ok: false, failure: "address" };
-  const repo = `${encodeURIComponent(place.owner)}/${encodeURIComponent(place.repo)}`;
-  const get = async (url: string): Promise<Response | GitHubFailure> => {
-    try {
-      const response = await fetcher(url, { credentials: "omit", referrerPolicy: "no-referrer" });
-      if (response.status === 404) return "notFound";
-      if (response.status === 403 || response.status === 429) return "rate";
-      if (!response.ok) return "network";
-      return response;
-    } catch {
-      return "network";
-    }
-  };
-  let ref = place.ref;
-  if (ref === undefined) {
-    const info = await get(`${API}/repos/${repo}`);
-    if (typeof info === "string") return { ok: false, failure: info };
-    const branch = ((await info.json()) as { default_branch?: unknown }).default_branch;
-    if (typeof branch !== "string") return { ok: false, failure: "notFound" };
-    ref = branch;
-  }
-  const commitAnswer = await get(`${API}/repos/${repo}/commits/${encodeURIComponent(ref)}`);
-  if (typeof commitAnswer === "string") return { ok: false, failure: commitAnswer };
-  const commit = ((await commitAnswer.json()) as { sha?: unknown }).sha;
-  if (typeof commit !== "string" || !/^[0-9a-f]{40}$/.test(commit)) {
-    return { ok: false, failure: "notFound" };
-  }
-  const folder =
-    place.path === "" ? "" : `${place.path.split("/").map(encodeURIComponent).join("/")}/`;
-  const read: Read = new Map();
-  const take = async (path: string): Promise<GitHubFailure | undefined> => {
-    const file = await get(
-      `${RAW}/${repo}/${commit}/${folder}${path.split("/").map(encodeURIComponent).join("/")}`,
-    );
-    if (typeof file === "string") return file === "notFound" ? undefined : file;
-    const bytes = await upTo(file, MOST);
-    if (bytes === "network") return bytes;
-    if (bytes instanceof Uint8Array) asText(path, bytes, read);
-    else read.set(path, bytes);
-    return undefined;
-  };
-  const failed = await take(MANIFEST);
-  if (failed) return { ok: false, failure: failed };
-  const manifest = read.get(MANIFEST);
-  // A pack.json too large is for the check to say, as of any file.
-  if (manifest === undefined) return { ok: false, failure: "notFound" };
-  if (typeof manifest === "string") {
-    // Only files a pack may name: in it, of the kinds it may have, and not many of them.
-    const named = filesNamedIn(manifest).filter(isPackPath).slice(0, 64);
-    for (const path of named) {
-      const error = await take(path);
-      if (error) return { ok: false, failure: error };
-    }
-  }
-  return {
-    ok: true,
-    files: read,
-    source: { kind: "github", url: address.trim(), commit },
-  };
 }
 
 /** All there is to say of a pack, for its page of details. */

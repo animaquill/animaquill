@@ -1,8 +1,9 @@
 import type { TFunction } from "i18next";
 import type { CallChange, CallSettings, ModelPack, PackProblem } from "@animaquill/tools";
-import { COMPARISON_PACK_ID, DEFAULT_PACK } from "@animaquill/tools";
+import { COMPARISON_PACK_ID, DEFAULT_PACK, nameIssues } from "@animaquill/tools";
 import type { PackNote } from "@animaquill/agent";
-import { gitHubPlace, type PackSource } from "./packs.ts";
+import { isAccount, isRepository, placeOf } from "./github-packs.ts";
+import { gitHubPlace, type ModelPacksSnapshot, type PackSource } from "./packs.ts";
 
 /** A model pack as people see it named: what AnimaQuill calls its own, else its name. */
 export function packName(t: TFunction, pack: Pick<ModelPack, "id" | "name">): string {
@@ -14,23 +15,132 @@ export function packName(t: TFunction, pack: Pick<ModelPack, "id" | "name">): st
 }
 
 /**
- * A pack with whose it is: "Claude 5（内置）" for one that comes with AnimaQuill, and for any other
- * "Steady（第三方 · lin/steady）". The mark of others and their id are always there, so that no name
- * or author a pack has can make it read as AnimaQuill's own.
+ * Where a pack is from, as the editor knows it: never from the pack. With AnimaQuill (`builtin`, set
+ * only by AnimaQuill's own code), from "发现", from a GitHub account (as GitHub spells it: letters,
+ * digits and "-", so it cannot read "内置"), or from this computer. `gone` is for what an answer
+ * recorded of a pack that is not installed any more.
  */
-export function packLabel(t: TFunction, pack: Pick<ModelPack, "id" | "name" | "builtin">): string {
-  const name = packName(t, pack);
-  return pack.builtin
-    ? t("ai.packs.labelBuiltin", { name })
-    : t("ai.packs.labelThirdParty", { name, id: pack.id });
+export type PackOrigin =
+  | { readonly kind: "builtin" }
+  | { readonly kind: "discover" }
+  | {
+      readonly kind: "github";
+      readonly owner: string | undefined;
+      readonly repo: string | undefined;
+    }
+  | { readonly kind: "local" }
+  | { readonly kind: "gone" };
+
+/** Where a pack is from: AnimaQuill's own, or as it was installed. */
+export function originOf(
+  pack: Pick<ModelPack, "builtin">,
+  source: PackSource | undefined,
+): PackOrigin {
+  if (pack.builtin) return { kind: "builtin" };
+  if (!source) return { kind: "gone" };
+  if (source.kind === "discover") return { kind: "discover" };
+  if (source.kind === "github") {
+    const place = gitHubPlace(source.url);
+    const owner = source.owner ?? place?.owner;
+    const repo = source.repo ?? place?.repo;
+    return {
+      kind: "github",
+      owner: owner !== undefined && isAccount(owner) ? owner : undefined,
+      repo: repo !== undefined && isRepository(repo) ? repo : undefined,
+    };
+  }
+  return { kind: "local" };
 }
 
-/** What an answer recorded of its pack, as `packLabel` says it. */
-export function noteLabel(t: TFunction, note: PackNote, id: string | undefined): string {
-  const name = id === undefined ? note.name : packName(t, { id, name: note.name });
-  return note.builtin
-    ? t("ai.packs.labelBuiltin", { name })
-    : t("ai.packs.labelThirdParty", { name, id: id ?? "?" });
+/** Where a pack among those there are is from. */
+export function originIn(
+  pack: Pick<ModelPack, "id" | "builtin">,
+  packs: Pick<ModelPacksSnapshot, "installed">,
+): PackOrigin {
+  return originOf(pack, packs.installed.find(({ id }) => id === pack.id)?.kept.source);
+}
+
+/** Where a pack is from, in a word: "内置", "发现", "pipi", "本机". */
+export function originText(t: TFunction, origin: PackOrigin): string {
+  switch (origin.kind) {
+    case "github":
+      return origin.owner ?? t("ai.packs.origin.github");
+    case "builtin":
+    case "discover":
+    case "local":
+    case "gone":
+      return t(`ai.packs.origin.${origin.kind}`);
+  }
+}
+
+/** A pack as its label shows it: its name, and where it is from. */
+export interface PackLabelParts {
+  /** The name, or what stands for one that is not allowed (`allowed`). */
+  readonly name: string;
+  readonly origin: string;
+  /** Its name keeps to the rules of names: else it shows as one that does not, see `nameIssues`. */
+  readonly allowed: boolean;
+}
+
+/**
+ * The parts of the label of a pack, "名字(来源)": the name a pack has, and where it is from, which
+ * only the editor says (`originOf`). A name that does not keep to the rules (a pack installed
+ * before they held) shows as such, never as it is. Of two packs of one name from one account, each
+ * says its repository too: "稳重版(pipi/aq-opus)".
+ */
+export function labelParts(
+  t: TFunction,
+  pack: Pick<ModelPack, "id" | "name" | "builtin">,
+  origin: PackOrigin,
+  packs?: Pick<ModelPacksSnapshot, "installed">,
+): PackLabelParts {
+  const allowed = pack.builtin === true || nameIssues(pack.name).length === 0;
+  let where = originText(t, origin);
+  if (origin.kind === "github" && origin.repo && packs) {
+    const twin = packs.installed.some(
+      (each) =>
+        each.id !== pack.id &&
+        each.pack !== undefined &&
+        each.pack.name === pack.name &&
+        originText(t, originOf(each.pack, each.kept.source)) === where,
+    );
+    if (twin) where = `${where}/${origin.repo}`;
+  }
+  return {
+    name: allowed ? packName(t, pack) : t("ai.packs.nameNotAllowed"),
+    origin: where,
+    allowed,
+  };
+}
+
+/** A label as text, for where there is only text (a native list, a line in the chat). */
+export function labelText(t: TFunction, parts: PackLabelParts, auto = false): string {
+  const label = t("ai.packs.label", { name: parts.name, origin: parts.origin });
+  return auto ? t("ai.packs.autoLabel", { label }) : label;
+}
+
+/** A pack among those there are, as text: "Opus 稳重版(pipi)". */
+export function packLabel(
+  t: TFunction,
+  pack: Pick<ModelPack, "id" | "name" | "builtin">,
+  packs: Pick<ModelPacksSnapshot, "installed">,
+  auto = false,
+): string {
+  return labelText(t, labelParts(t, pack, originIn(pack, packs), packs), auto);
+}
+
+/**
+ * What an answer recorded of its pack, as `packLabel` says it: where it is from as installed now,
+ * or that it is not installed any more.
+ */
+export function noteLabel(
+  t: TFunction,
+  note: PackNote,
+  id: string | undefined,
+  packs: Pick<ModelPacksSnapshot, "installed">,
+): string {
+  const pack = { id: id ?? "", name: note.name, builtin: note.builtin === true };
+  return labelText(t, labelParts(t, pack, originIn(pack, packs), packs));
 }
 
 /** Who wrote a pack, as it says: the author and their address. */
@@ -40,13 +150,41 @@ export function authorText(t: TFunction, pack: ModelPack): string {
   return url ? `${name} <${url}>` : name;
 }
 
+/** Where a pack was installed from, in a line: its repository and commit, or its folder. */
 export function sourceText(t: TFunction, source: PackSource): string {
-  if (source.kind === "github") {
-    return t("ai.packs.sourceGitHub", { url: source.url, commit: source.commit.slice(0, 7) });
+  switch (source.kind) {
+    case "github": {
+      const place = placeOf(source);
+      const where = place
+        ? `github.com/${place.owner}/${place.repo}${place.path ? `/${place.path}` : ""}`
+        : source.url;
+      return source.ref && source.ref !== source.commit
+        ? t(source.tag ? "ai.packs.sourceGitHubTag" : "ai.packs.sourceGitHubBranch", {
+            where,
+            commit: source.commit.slice(0, 7),
+            ref: source.ref,
+          })
+        : t("ai.packs.sourceGitHub", { where, commit: source.commit.slice(0, 7) });
+    }
+    case "discover":
+      return t("ai.packs.sourceDiscover", { commit: source.commit.slice(0, 7) });
+    case "folder":
+      return t("ai.packs.sourceFolder", { name: source.name });
+    case "file":
+      return t("ai.packs.sourceFile", { name: source.name });
   }
-  return source.kind === "folder"
-    ? t("ai.packs.sourceFolder", { name: source.name })
-    : t("ai.packs.sourceFile", { name: source.name });
+}
+
+/** The address of the repository of a pack, to open on GitHub; nothing for one not from there. */
+export function repositoryOf(source: PackSource | undefined): string | undefined {
+  if (source?.kind !== "github") return undefined;
+  const place = placeOf(source);
+  if (!place) return undefined;
+  return `https://github.com/${place.owner}/${place.repo}${
+    place.path
+      ? `/tree/${place.commit}/${place.path.split("/").map(encodeURIComponent).join("/")}`
+      : ""
+  }`;
 }
 
 /** Why a pack does not pass, in a line each. */
@@ -142,7 +280,7 @@ export function originDiffers(
   const author = (each: ModelPack) => `${each.author?.name ?? ""}\n${each.author?.url ?? ""}`;
   if (author(pack) !== author(installed)) return true;
   if (source === undefined || installedSource === undefined) return false;
-  const online = (each: PackSource) => each.kind === "github";
+  const online = (each: PackSource) => each.kind === "github" || each.kind === "discover";
   if (online(source) !== online(installedSource)) return true;
   return (
     source.kind === "github" &&

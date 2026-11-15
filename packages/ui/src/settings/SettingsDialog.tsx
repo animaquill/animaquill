@@ -29,6 +29,7 @@ import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import { AiModelsPage } from "../chat/AiModelsPage.tsx";
 import { ModelPacksSettings } from "../chat/ModelPacksSettings.tsx";
+import { labelParts, originIn } from "../chat/packText.ts";
 import { CloudSyncPage } from "../cloud/CloudSyncPage.tsx";
 import {
   SETTINGS_SECTIONS,
@@ -167,6 +168,7 @@ function SettingsDialog() {
   const place = useSyncExternalStore(settingsNav.subscribe, settingsNav.getSnapshot);
   // The names of a service and a model in the crumbs follow them as they are renamed.
   useSyncExternalStore(workbench.ai.subscribe, workbench.ai.getSnapshot);
+  useSyncExternalStore(workbench.packs.subscribe, workbench.packs.getSnapshot);
   const groups = useGroups();
   const narrow = useNarrow();
   const [query, setQuery] = useState("");
@@ -259,6 +261,17 @@ function SettingsDialog() {
     service !== undefined && place.depth === 3 && place.model !== undefined
       ? (workbench.ai.modelOf(place.service ?? "", place.model)?.name ?? place.model)
       : undefined;
+  // The page of a model pack: its name, as its label has it.
+  const pack =
+    group === "packs" && place.depth >= 2 && place.pack !== undefined
+      ? (() => {
+          const shown = workbench.packs.packOf(place.pack);
+          return shown
+            ? labelParts(t, shown, originIn(shown, workbench.packs.getSnapshot())).name
+            : place.pack;
+        })()
+      : undefined;
+  const opened = service ?? pack;
   const showList = !narrow || (depth === 0 && found === undefined);
   const showPage = found === undefined && (!narrow || depth > 0);
 
@@ -352,7 +365,7 @@ function SettingsDialog() {
                   {depth === 3 ? (service ?? title) : depth === 2 ? title : t("settings.title")}
                 </button>
                 <h2 className={styles.title}>
-                  {depth === 3 ? (model ?? title) : depth === 2 ? (service ?? title) : title}
+                  {depth === 3 ? (model ?? title) : depth === 2 ? (opened ?? title) : title}
                 </h2>
               </>
             ) : (
@@ -361,7 +374,7 @@ function SettingsDialog() {
                 {!narrow && (
                   <span className={styles.crumb} data-testid="settings-crumb">
                     {found === undefined
-                      ? `› ${title}${service === undefined ? "" : ` › ${service}`}${model === undefined ? "" : ` › ${model}`}`
+                      ? `› ${title}${opened === undefined ? "" : ` › ${opened}`}${model === undefined ? "" : ` › ${model}`}`
                       : `› ${t("settings.searchResults")}`}
                   </span>
                 )}

@@ -442,17 +442,15 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
   await expect(choice.locator("option", { hasText: "2026.1 旧写法" })).toHaveCount(0);
   await expect(settings.getByText("开发者选项")).toHaveCount(0);
   await packs.getByTestId("pack-show-hidden").check();
-  await expect(choice.locator("option:checked")).toHaveText(
-    "推荐（自动）：通用（没有专门的适配包）",
-  );
-  await choice.selectOption({ label: "2026.1 旧写法（对照）（内置）" });
+  await expect(choice.locator("option:checked")).toHaveText("自动：通用(内置)");
+  await choice.selectOption({ label: "对照用的 2026.1 旧写法(内置)" });
   // Hidden again, the choice stays and is still shown.
   await packs.getByTestId("pack-show-hidden").uncheck();
-  await expect(choice.locator("option:checked")).toHaveText("2026.1 旧写法（对照）（内置）");
+  await expect(choice.locator("option:checked")).toHaveText("对照用的 2026.1 旧写法(内置)");
   await closeSettings(page);
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-pack")).toHaveText(
-    "适配包：2026.1 旧写法（对照）（内置）",
+    "适配包：对照用的 2026.1 旧写法(内置)",
   );
   await send(page, "你好");
   await expect(chat(page).getByText("好的。")).toBeVisible();
@@ -465,11 +463,11 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
   );
   // Back to the one recommended: the conversation keeps its words, also after a reload.
   await openSettingsPage(page, "模型适配包");
-  await choice.selectOption({ label: "推荐（自动）：通用（没有专门的适配包）" });
+  await choice.selectOption({ label: "自动：通用(内置)" });
   await page.reload();
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-pack")).toHaveText(
-    "适配包：2026.1 旧写法（对照）（内置）",
+    "适配包：对照用的 2026.1 旧写法(内置)",
   );
 });
 

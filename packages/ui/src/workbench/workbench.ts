@@ -395,9 +395,11 @@ export class Workbench {
         })(),
       },
     );
-    this.packs = new ModelPacks(this.aiSync.settings, {
-      saveFailed: () => this.notifications.push(t("ai.packs.saveFailed")),
-    });
+    this.packs = new ModelPacks(
+      this.aiSync.settings,
+      { saveFailed: () => this.notifications.push(t("ai.packs.saveFailed")) },
+      { memory: host.windowMemory },
+    );
     const sink = host.diagnostics;
     this.#sink = sink;
     let names: { state: unknown; keys: ReadonlySet<string>; found: Set<string> } | undefined;

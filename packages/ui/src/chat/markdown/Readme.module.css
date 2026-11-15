@@ -1,0 +1,44 @@
+/* A README of a model pack: a page to read, wider than an answer in the chat. */
+.readme {
+  font-size: 13px;
+}
+
+.readme h1 {
+  font-size: 18px;
+}
+
+.readme h2 {
+  font-size: 15px;
+}
+
+.picture {
+  display: inline-block;
+  max-width: 100%;
+  height: auto;
+  vertical-align: middle;
+}
+
+.elsewhere {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 2px 0;
+  padding: 10px 12px;
+  color: var(--aq-text-muted);
+  border: 1px dashed var(--aq-border);
+  border-radius: 4px;
+}
+
+.elsewhere button {
+  padding: 0;
+  color: var(--aq-link, var(--aq-accent));
+  font: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.elsewhere button:hover {
+  text-decoration: underline;
+}

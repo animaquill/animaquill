@@ -72,6 +72,8 @@ export interface SettingsPlace {
   readonly back?: "chat" | undefined;
   /** A setting to show and make stand out for a moment, as one found by searching. */
   readonly item?: string | undefined;
+  /** The model pack whose page is shown (`depth` 2), in the group of model packs. */
+  readonly pack?: string | undefined;
 }
 
 /** Where the window keeps the group the settings were last in, see `WindowMemory`. */

@@ -1,18 +1,17 @@
-import { closenessFor, DEFAULT_PACK } from "@animaquill/tools";
+import { closenessFor } from "@animaquill/tools";
 import { useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import { packLabel } from "./packText.ts";
 
-/** The value of "recommended" in the list: no choice, so the pack recommended for the model. */
+/** The value of "automatic" in the list: no choice, so the pack chosen by the rules for the model. */
 const RECOMMENDED = "";
 
 /**
- * Which model pack a model uses, as a list to choose from, the same where a conversation picks its
- * model and in the settings: first "recommended (automatic)" with the pack that is, then the packs
- * made for the model, then the other ones there are. Each says whose it is (`packLabel`); hidden
- * ones only show when the settings show them, or for the model that has one. Choosing goes through
- * `onChoose`, nothing for the one recommended.
+ * Which model pack a model uses, as a native list to choose from, in the settings: first "自动：" with
+ * the pack the rules choose, then the packs made for the model, then the other ones there are. Each
+ * is "名字(来源)" (`packLabel`); hidden ones only show when the settings show them, or for the model
+ * that has one. Choosing goes through `onChoose`, nothing for automatic.
  */
 export function PackSelect(props: {
   readonly model: string;
@@ -22,15 +21,12 @@ export function PackSelect(props: {
   const { chat, ai, packs } = useWorkbench();
   const { t } = useTranslation();
   useSyncExternalStore(ai.subscribe, ai.getSnapshot);
-  useSyncExternalStore(packs.subscribe, packs.getSnapshot);
+  const snapshot = useSyncExternalStore(packs.subscribe, packs.getSnapshot);
   const { model } = props;
   const options = chat.packOptions(model);
   const fits = options.packs.filter(({ pack }) => closenessFor(pack, model) !== undefined);
   const others = options.packs.filter((each) => !fits.includes(each));
-  const auto =
-    options.recommended.id === DEFAULT_PACK.id
-      ? t("ai.packs.choice.autoNone")
-      : t("ai.packs.choice.auto", { name: packLabel(t, options.recommended) });
+  const auto = packLabel(t, options.recommended, snapshot, true);
   return (
     <select
       aria-label={t("ai.packs.choose", { model })}
@@ -45,7 +41,7 @@ export function PackSelect(props: {
         <optgroup label={t("ai.packs.choice.fits", { model })}>
           {fits.map(({ pack }) => (
             <option key={pack.id} value={pack.id}>
-              {packLabel(t, pack)}
+              {packLabel(t, pack, snapshot)}
             </option>
           ))}
         </optgroup>
@@ -54,7 +50,7 @@ export function PackSelect(props: {
         <optgroup label={fits.length > 0 ? t("ai.packs.choice.others") : t("ai.packs.choice.all")}>
           {others.map(({ pack }) => (
             <option key={pack.id} value={pack.id}>
-              {packLabel(t, pack)}
+              {packLabel(t, pack, snapshot)}
             </option>
           ))}
         </optgroup>

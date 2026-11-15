@@ -419,7 +419,8 @@ test("settings of before come up with their services, models, choices and keys",
   await expect(settings.getByRole("textbox", { name: "一次任务最多调用工具" })).toHaveValue("77");
   await leaveSettings(page);
   await tab(page, "chat").click();
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
+  // The pack chosen for the model before is said beside it.
+  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test · Claude 5");
 
   // Written as version 3 once something changes, with what a page of before reads, and the service
   // this editor cannot read kept.

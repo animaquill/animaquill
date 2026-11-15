@@ -1,0 +1,29 @@
+/* A name that shortens, and where it is from, which never does. */
+.label {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+  align-items: baseline;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.auto {
+  flex: none;
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.name[data-allowed="no"] {
+  color: var(--aq-warning);
+}
+
+.origin {
+  flex: none;
+  color: var(--aq-text-muted);
+  font-weight: normal;
+}

@@ -698,6 +698,15 @@
   text-overflow: ellipsis;
 }
 
+/* The pack people chose for the model, after its name; the name alone where the chat is narrow. */
+.pickPack {
+  min-width: 0;
+  max-width: 16ch;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* Its bubble grows up from the top of the input box, not from the button. */
 .pickerWrap {
   flex: 0 1 auto;
@@ -876,13 +885,51 @@
   color: var(--aq-accent);
 }
 
-.modelRowName {
+.modelRowText {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.modelRowName {
   min-width: 0;
   overflow: hidden;
   text-align: left;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+/* Under the model of this conversation: the pack it uses. */
+.modelRowPack {
+  display: flex;
+  min-width: 0;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  font-weight: normal;
+}
+
+.capability {
+  display: inline-flex;
+  width: 14px;
+}
+
+.panel .more {
+  display: inline-flex;
+  flex: none;
+  align-self: center;
+  margin-right: 4px;
+  padding: 3px;
+  color: var(--aq-text-muted);
+  background: transparent;
+}
+
+.modelRow[data-menu] {
+  background: var(--aq-bg-hover);
+}
+
+.modelRow[data-menu] .more {
+  color: var(--aq-text-strong);
 }
 
 .modelMeta {
@@ -920,52 +967,6 @@
   }
 }
 
-/* The model pack of the model under the cursor: which, whose, and another one. */
-.packPart {
-  flex: none;
-  padding: 2px 0 6px;
-  border-top: 1px solid var(--aq-border);
-}
-
-.panel .packRow {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  width: 100%;
-  padding: 4px 12px;
-  text-align: left;
-  background: transparent;
-  border-radius: 0;
-}
-
-.panel .packRow:hover {
-  background: var(--aq-bg-hover);
-}
-
-.packLine {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  padding: 3px 12px;
-}
-
-.packLine select {
-  flex: 1;
-  min-width: 0;
-}
-
-.packWhen {
-  margin: 2px 12px 0;
-  color: var(--aq-text-muted);
-  font-size: 11px;
-}
-
-.packWhich {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
 .tag {
   margin-left: 4px;
   padding: 0 4px;
@@ -980,11 +981,10 @@
   border-color: var(--aq-accent);
 }
 
-.packWhich .muted {
-  display: block;
-}
-
 .bubbleFoot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
   padding: 4px 8px 6px;
   border-top: 1px solid var(--aq-border);
 }
@@ -1293,6 +1293,11 @@
 
   .pickName {
     max-width: 14ch;
+  }
+
+  .pickPack,
+  .capability {
+    display: none;
   }
 
   .meterCost,

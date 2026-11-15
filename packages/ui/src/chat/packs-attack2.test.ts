@@ -1,6 +1,6 @@
 /**
- * The second review of model packs (6.5b ⑦): marks for blank in the install dialog, labels, the
- * hidden pack to compare with. What were holes at the second review are fixed, and their cases say
+ * The second review of model packs (6.5b ⑦): marks for blank in the install dialog, labels (since
+ * 2026-11-15 "名字(来源)"), the hidden pack to compare with. What were holes at the second review are fixed, and their cases say
  * how.
  */
 import { builtinPacks, checkPack, COMPARISON_PACK_ID, type ModelPack } from "@animaquill/tools";
@@ -8,7 +8,7 @@ import type { TFunction } from "i18next";
 import { isValidElement, type ReactElement } from "react";
 import { describe, expect, it } from "vitest";
 import { visible } from "./PackDialog.tsx";
-import { packLabel } from "./packText.ts";
+import { labelParts } from "./packText.ts";
 
 const t = ((key: string, values?: Record<string, unknown>) =>
   `${key}${values ? JSON.stringify(values) : ""}`) as unknown as TFunction;
@@ -33,14 +33,29 @@ describe("对话框的空白标记", () => {
 });
 
 describe("标签", () => {
-  it("[挡住] “第三方 · id”在名字前面，长名字挤不掉；名字里不能有别的空白", () => {
+  it("[挡住] 来源是单独的一段，和名字多长无关；名字超过 40 个字、两头有空白、有别的空白都装不上", () => {
     const made = (name: string) =>
       checkPack(
         new Map([["pack.json", JSON.stringify({ format: 1, id: "m/p", name, version: "1.0.0" })]]),
       );
     expect(made(`Claude 5${"　".repeat(20)}.`).pack).toBeUndefined();
-    const pack = made(`Claude 5 ${"x".repeat(40)}`).pack as ModelPack;
-    expect(packLabel(t, pack).startsWith("ai.packs.labelThirdParty")).toBe(true);
+    expect(made("x".repeat(41)).problems.map(({ code }) => code)).toEqual(["name-long"]);
+    expect(made(" Steady").problems.map(({ code }) => code)).toEqual(["name-edge"]);
+    const pack = made("x".repeat(40)).pack as ModelPack;
+    const parts = labelParts(t, pack, { kind: "github", owner: "pipi", repo: "aq" });
+    expect(parts.origin).toBe("pipi");
+    expect(parts.name).toBe("x".repeat(40));
+  });
+
+  it("[说明] 名字长度、空白这些新规则只管新装的：以前装的照常读出", () => {
+    const files = new Map([
+      [
+        "pack.json",
+        JSON.stringify({ format: 1, id: "m/p", name: `${"x".repeat(50)}(内)`, version: "1.0.0" }),
+      ],
+    ]);
+    expect(checkPack(files).pack).toBeUndefined();
+    expect(checkPack(files, { mode: "load" }).pack?.name).toBe(`${"x".repeat(50)}(内)`);
   });
 });
 

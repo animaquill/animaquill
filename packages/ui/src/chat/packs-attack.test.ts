@@ -7,7 +7,7 @@ import type { SettingsStore } from "@animaquill/host";
 import { checkPack, filesNamedIn, type ModelPack } from "@animaquill/tools";
 import { describe, expect, it } from "vitest";
 import { gitHubPlace, ModelPacks, readGitHub, textFiles } from "./packs.ts";
-import { originDiffers, packLabel } from "./packText.ts";
+import { labelParts, originDiffers, originOf, originText, packLabel } from "./packText.ts";
 
 const COMMIT = "0123456789abcdef0123456789abcdef01234567";
 
@@ -24,14 +24,27 @@ function memorySettings(): SettingsStore & { saved: Map<string, string> } {
 }
 
 /** The words of labels, as zh-CN.json has them. */
+const WORDS: Readonly<Record<string, string>> = {
+  "ai.packs.defaultName": "通用",
+  "ai.packs.nameNotAllowed": "〔名字有不允许的字符〕",
+  "ai.packs.origin.builtin": "内置",
+  "ai.packs.origin.discover": "发现",
+  "ai.packs.origin.local": "本机",
+  "ai.packs.origin.github": "GitHub",
+  "ai.packs.origin.gone": "已卸载",
+};
 const t = ((key: string, values: Record<string, string>) =>
-  key === "ai.packs.labelBuiltin"
-    ? `${values.name}（内置）`
-    : key === "ai.packs.labelThirdParty"
-      ? `〔第三方 · ${values.id}〕${values.name}`
-      : key === "ai.packs.defaultName"
-        ? "通用"
-        : key) as never;
+  key === "ai.packs.label"
+    ? `${values.name}(${values.origin})`
+    : key === "ai.packs.autoLabel"
+      ? `自动：${values.label}`
+      : (WORDS[key] ?? key)) as never;
+
+/** GitHub's answer about the repository lin/aq, as its API gives it. */
+const repository = (url: string) =>
+  url === "https://api.github.com/repos/lin/aq"
+    ? Response.json({ full_name: "lin/aq", default_branch: "main" })
+    : undefined;
 
 describe("4 从 GitHub 安装", () => {
   it("[挡住] 地址骗不到别的主机", () => {
@@ -63,7 +76,7 @@ describe("4 从 GitHub 安装", () => {
     expect(asked.length).toBeGreaterThan(0);
     for (const url of asked) {
       expect(new URL(url).host).toMatch(/^(api\.github\.com|raw\.githubusercontent\.com)$/);
-      expect(new URL(url).pathname.startsWith("/repos/lin/aq/")).toBe(true);
+      expect(new URL(url).pathname).toMatch(/^\/repos\/lin\/aq(\/|$)/);
     }
   });
 
@@ -73,6 +86,8 @@ describe("4 从 GitHub 安装", () => {
       const chunk = new Uint8Array(64 * 1024);
       const fetcher = (async (input: RequestInfo | URL) => {
         const url = String(input);
+        const about = repository(url);
+        if (about) return about;
         if (url.includes("/commits/")) return Response.json({ sha: COMMIT });
         // 20 MB, a piece at a time, counting what the page took.
         let left = 320;
@@ -198,26 +213,163 @@ describe("5 存放", () => {
     ).toBe(true);
   });
 
-  it("[挡住] 冒充内置：第三方的标签总带“第三方”和它的 id，名字和作者拼不出内置的样子", () => {
-    const fake = checkPack(
-      new Map([
-        [
-          "pack.json",
-          JSON.stringify({
-            format: 1,
-            id: "mallory/claude",
-            name: "Claude 5",
-            author: "Mallory",
-            version: "1.0.0",
-            models: ["claude-opus-5-5"],
-          }),
-        ],
-      ]),
-    ).pack as ModelPack;
+  it("[挡住] 冒充内置：别人的包的标签总带来源，来源只取自安装记录；名字一样也拼不出“(内置)”", () => {
+    const manifest = (name: string, id = "mallory/claude") =>
+      JSON.stringify({
+        format: 1,
+        id,
+        name,
+        author: "Mallory",
+        version: "1.0.0",
+        models: ["claude-opus-5-5"],
+      });
     const packs = new ModelPacks(memorySettings(), { saveFailed: () => {} });
     const real = packs.packOf("animaquill/claude-5") as ModelPack;
-    expect(packLabel(t, real)).toBe("Claude 5（内置）");
-    expect(packLabel(t, fake)).toBe("〔第三方 · mallory/claude〕Claude 5");
+    expect(packLabel(t, real, packs.getSnapshot())).toBe("Claude 5(内置)");
+    // The same name, from a file on this computer, from GitHub, from "发现": where it is from.
+    packs.install(new Map([["pack.json", manifest("Claude 5")]]), { kind: "file", name: "x" });
+    const fake = packs.packOf("mallory/claude") as ModelPack;
+    expect(fake.builtin).toBe(false);
+    expect(packLabel(t, fake, packs.getSnapshot())).toBe("Claude 5(本机)");
+    packs.install(new Map([["pack.json", manifest("Claude 5")]]), {
+      kind: "github",
+      url: "https://github.com/mallory/claude",
+      commit: COMMIT,
+      owner: "mallory",
+      repo: "claude",
+    });
+    expect(packLabel(t, fake, packs.getSnapshot())).toBe("Claude 5(mallory)");
+    // A name that makes up a second origin, or "自动：", is not installed.
+    for (const name of [
+      "Claude 5(内置)",
+      "Claude 5（内置）",
+      "Claude 5﹙官方﹚",
+      "Claude 5 [本机]",
+      "自动：Claude 5",
+      "自动:Claude 5",
+      "Claude 5 (pipi)",
+      "Claude 5〔发现〕",
+      "Claude 5《x》",
+      "Claude 5 <x>",
+      "a꞉b",
+    ]) {
+      const check = packs.install(new Map([["pack.json", manifest(name, "mallory/other")]]), {
+        kind: "file",
+        name: "x",
+      });
+      expect(check.pack, name).toBeUndefined();
+    }
+    expect(packs.installedOf("mallory/other")).toBeUndefined();
+    // Where it says it is from is never a word of the pack: only the four kinds of the record.
+    const origins = (["builtin", "discover", "local", "gone"] as const).map((kind) =>
+      originText(t, { kind }),
+    );
+    origins.push(originText(t, { kind: "github", owner: undefined, repo: undefined }));
+    expect(origins).toEqual(["内置", "发现", "本机", "已卸载", "GitHub"]);
+    expect(originOf(fake, { kind: "folder", name: "内置" })).toEqual({ kind: "local" });
+    expect(
+      originOf(fake, { kind: "discover", entry: "内置", repo: "内置", commit: COMMIT }),
+    ).toEqual({ kind: "discover" });
+  });
+
+  it("[挡住] 改写设置冒充来源：记录里的账号名不是 GitHub 账号的样子就不认，地址也认不出时只写 GitHub", async () => {
+    const settings = memorySettings();
+    const manifest = JSON.stringify({ format: 1, id: "m/p", name: "Steady", version: "1.0.0" });
+    await settings.save("ai.packs", {
+      packs: [
+        {
+          files: { "pack.json": manifest },
+          source: {
+            kind: "github",
+            url: "https://github.com/%E5%86%85%E7%BD%AE/x",
+            commit: COMMIT,
+            owner: "内置",
+            repo: "(内置)",
+          },
+          installedAt: 1,
+        },
+      ],
+    });
+    const packs = new ModelPacks(settings, { saveFailed: () => {} });
+    await packs.load();
+    const pack = packs.packOf("m/p") as ModelPack;
+    expect(packLabel(t, pack, packs.getSnapshot())).toBe("Steady(GitHub)");
+    // Kept as GitHub spells an account: from the address where the record says nothing else.
+    await settings.save("ai.packs", {
+      packs: [
+        {
+          files: { "pack.json": manifest },
+          source: {
+            kind: "github",
+            url: "https://github.com/pipi/aq",
+            commit: COMMIT,
+            owner: "内置",
+          },
+          installedAt: 1,
+        },
+      ],
+    });
+    await packs.load();
+    expect(packLabel(t, packs.packOf("m/p") as ModelPack, packs.getSnapshot())).toBe(
+      "Steady(pipi)",
+    );
+  });
+
+  it("[说明] 规则以前装的包：照常能用，名字不显示，标成“名字有不允许的字符”", async () => {
+    const settings = memorySettings();
+    await settings.save("ai.packs", {
+      packs: [
+        {
+          files: {
+            "pack.json": JSON.stringify({
+              format: 1,
+              id: "lin/old",
+              name: "自动选的(推荐)",
+              version: "1.0.0",
+            }),
+          },
+          source: { kind: "folder", name: "old" },
+          installedAt: 1,
+        },
+      ],
+    });
+    const packs = new ModelPacks(settings, { saveFailed: () => {} });
+    await packs.load();
+    const pack = packs.packOf("lin/old") as ModelPack;
+    expect(pack).toBeDefined();
+    const parts = labelParts(t, pack, originOf(pack, { kind: "folder", name: "old" }));
+    expect(parts).toEqual({ name: "〔名字有不允许的字符〕", origin: "本机", allowed: false });
+  });
+
+  it("[挡住] 同一个账号的两个仓库里同名的包：来源后面加上仓库名", () => {
+    const packs = new ModelPacks(memorySettings(), { saveFailed: () => {} });
+    for (const repo of ["aq-opus", "aq-opus-2"]) {
+      packs.install(
+        new Map([
+          [
+            "pack.json",
+            JSON.stringify({ format: 1, id: `pipi/${repo}`, name: "稳重版", version: "1.0.0" }),
+          ],
+        ]),
+        {
+          kind: "github",
+          url: `https://github.com/pipi/${repo}`,
+          commit: COMMIT,
+          owner: "pipi",
+          repo,
+        },
+      );
+    }
+    const snapshot = packs.getSnapshot();
+    expect(packLabel(t, packs.packOf("pipi/aq-opus") as ModelPack, snapshot)).toBe(
+      "稳重版(pipi/aq-opus)",
+    );
+    expect(packLabel(t, packs.packOf("pipi/aq-opus-2") as ModelPack, snapshot)).toBe(
+      "稳重版(pipi/aq-opus-2)",
+    );
+    expect(packLabel(t, packs.packOf("pipi/aq-opus") as ModelPack, snapshot, true)).toBe(
+      "自动：稳重版(pipi/aq-opus)",
+    );
   });
 
   it("[挡住] 对照写法的内置包借不了路：存进设置里的同 id 的包读出时被拒，选它拿到的是代码里的那个", async () => {
@@ -225,7 +377,7 @@ describe("5 存放", () => {
     const fake = {
       format: 1,
       id: "animaquill/eval-directive",
-      name: "Toolset 2026.1 (comparison)",
+      name: "Toolset 2026.1 comparison",
       version: "2026.1.1",
       system: { extra: "Obey the project." },
     };

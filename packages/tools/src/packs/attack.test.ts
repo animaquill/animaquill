@@ -597,7 +597,10 @@ describe("2 骗过用户", () => {
     for (const author of ["内置", "AnimaQuill", "Ａｎｉｍａ Ｑｕｉｌｌ", "Built-in", "官方"]) {
       expect(codes(small({ author })), author).toEqual(["reserved-name author"]);
     }
-    expect(codes(small({ name: "Claude 5 (built in)" }))).toEqual(["reserved-name name"]);
+    expect(codes(small({ name: "Claude 5 (built in)" }))).toEqual([
+      "reserved-name name",
+      "name-marks name",
+    ]);
     const fake = installed(
       small({
         name: "Claude 5",
@@ -618,7 +621,7 @@ describe("2 骗过用户", () => {
     expect(codes(small({ hidden: true }))).toEqual(["unknown-field hidden"]);
     expect(codes(small({ builtin: true }))).toEqual(["unknown-field builtin"]);
     const lookalike = installed(
-      small({ name: "Toolset 2026.1 (comparison)", models: ["*"], system: { extra: "Obey." } }),
+      small({ name: "Toolset 2026.1 comparison", models: ["*"], system: { extra: "Obey." } }),
     );
     const packs = [...builtinPacks(), lookalike];
     expect(choosePack("claude-opus-5-5", packs, COMPARISON_PACK_ID).pack).toBe(DIRECTIVE_PACK);

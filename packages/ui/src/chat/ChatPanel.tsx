@@ -20,7 +20,7 @@ import { EmptyStart, Onboarding } from "./ChatStart.tsx";
 import { Composer } from "./Composer.tsx";
 import { ConversationList } from "./ConversationList.tsx";
 import { firstWords } from "./conversations.ts";
-import type { ModelPacks } from "./packs.ts";
+import type { ModelPacks, ModelPacksSnapshot } from "./packs.ts";
 import packStyles from "./ModelPacks.module.css";
 import { OpenPackView, PackViewer, type PackViewRequest } from "./PackViews.tsx";
 import { noteLabel } from "./packText.ts";
@@ -166,7 +166,7 @@ export function ChatPanel() {
     );
   }
 
-  const switches = packSwitches(t, talk.entries, packs.getSnapshot().packs);
+  const switches = packSwitches(t, talk.entries, packs.getSnapshot());
   const packLines = packLinesOf(t, talk.entries, model, chat, packs);
   const title =
     snapshot.titleBy === undefined && snapshot.forkedFrom
@@ -488,8 +488,9 @@ export function markdownOf(t: TFunction, title: string, entries: readonly ChatEn
 function packSwitches(
   t: TFunction,
   entries: readonly ChatEntry[],
-  packs: readonly { readonly id: string }[],
+  snapshot: ModelPacksSnapshot,
 ): ReadonlyMap<ChatEntry, string> {
+  const packs = snapshot.packs;
   const lines = new Map<ChatEntry, string>();
   let before: AssistantEntry | undefined;
   for (const entry of entries) {
@@ -504,12 +505,12 @@ function packSwitches(
       lines.set(
         entry,
         t("chat.packUpdated", {
-          name: noteLabel(t, entry.pack, entry.texts.id),
+          name: noteLabel(t, entry.pack, entry.texts.id, snapshot),
           version: entry.texts.version,
         }),
       );
     } else if (before?.texts && before.pack && before.texts.id !== entry.texts.id) {
-      const name = noteLabel(t, entry.pack, entry.texts.id);
+      const name = noteLabel(t, entry.pack, entry.texts.id, snapshot);
       const was = before.texts.id;
       lines.set(
         entry,
@@ -554,7 +555,9 @@ function packLinesOf(
       text:
         first.pack.by === "fallback"
           ? t("chat.packNone", { model: first.model })
-          : t("chat.packLine", { name: noteLabel(t, first.pack, first.texts?.id) }),
+          : t("chat.packLine", {
+              name: noteLabel(t, first.pack, first.texts?.id, packs.getSnapshot()),
+            }),
       testId: "chat-pack",
     });
     dropped(first.texts?.id);
@@ -564,7 +567,7 @@ function packLinesOf(
       text:
         note.by === "fallback"
           ? t("chat.packNone", { model })
-          : t("chat.packLine", { name: noteLabel(t, note, pack.id) }),
+          : t("chat.packLine", { name: noteLabel(t, note, pack.id, packs.getSnapshot()) }),
       testId: "chat-pack",
     });
     dropped(pack.id);
@@ -575,18 +578,18 @@ function packLinesOf(
     if (chat.repicking(model) && (pack.id !== last.texts.id || pack.hash !== last.texts.hash)) {
       // Chosen where the model is picked: it comes with the next answer of this conversation.
       lines.push({
-        text: t("chat.packNextAnswer", { name: noteLabel(t, note, pack.id) }),
+        text: t("chat.packNextAnswer", { name: noteLabel(t, note, pack.id, packs.getSnapshot()) }),
         testId: "chat-pack-next",
       });
     } else if (pack.id !== last.texts.id) {
       lines.push({
-        text: t("chat.packNext", { model, name: noteLabel(t, note, pack.id) }),
+        text: t("chat.packNext", { model, name: noteLabel(t, note, pack.id, packs.getSnapshot()) }),
         testId: "chat-pack-next",
       });
     } else if (pack.hash !== last.texts.hash) {
       lines.push({
         text: t("chat.packNextVersion", {
-          name: noteLabel(t, note, pack.id),
+          name: noteLabel(t, note, pack.id, packs.getSnapshot()),
           version: pack.version,
         }),
         testId: "chat-pack-next",

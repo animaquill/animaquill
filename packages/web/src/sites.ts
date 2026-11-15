@@ -77,16 +77,24 @@ export interface PolicyOptions {
 }
 
 /**
+ * Where the README of a model pack shows pictures of its repository from (GitHub's raw files, of the
+ * commit installed): where the pack's files come from too. Pictures from anywhere else are not shown,
+ * and open in a tab of their own when people ask for them.
+ */
+export const PACK_PICTURES = "https://raw.githubusercontent.com";
+
+/**
  * The policy of the editor's page. It runs only its own scripts, and shows only the compositor in a
  * frame. It talks to any https address, and to services on this computer, because the browser agent
- * talks to the AI services people set up themselves (2026-11-10, user's decision).
+ * talks to the AI services people set up themselves (2026-11-10, user's decision). Pictures come only
+ * from the page, from the READMEs of model packs (`PACK_PICTURES`), and from what a deployment adds.
  *
  * The code editor (Monaco) writes `<style>` elements and `style=""` attributes and does not work
  * without `'unsafe-inline'` for styles. A style can still reach nothing outside, because `img-src`
  * and `font-src` stay with this site. Workers are files of this site, never blobs.
  */
 export function editorPolicy(sites: Sites, options: PolicyOptions = {}): string {
-  const images = ["'self'", "data:", "blob:", ...(options.images ?? [])];
+  const images = ["'self'", "data:", "blob:", PACK_PICTURES, ...(options.images ?? [])];
   return [
     "default-src 'none'",
     "script-src 'self'",

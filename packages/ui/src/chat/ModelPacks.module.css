@@ -155,7 +155,7 @@
  */
 .table {
   display: grid;
-  grid-template-columns: minmax(110px, 0.9fr) minmax(150px, 1.3fr) minmax(150px, 1.2fr) max-content;
+  grid-template-columns: minmax(110px, 1fr) minmax(180px, 1.4fr) max-content max-content;
   column-gap: 10px;
   align-items: center;
 }
@@ -587,4 +587,254 @@
   color: inherit;
   text-decoration: line-through;
   background: color-mix(in srgb, var(--aq-danger) 30%, transparent);
+}
+
+/* The page of one pack: its name and badges, what can be done with it, a line of what it is. */
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: center;
+  margin: 0 0 6px;
+}
+
+.headName {
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  color: var(--aq-text-strong);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.badge {
+  padding: 0 5px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+}
+
+.badge[data-kind="update"] {
+  color: var(--aq-accent);
+  border-color: var(--aq-accent);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.actions > button,
+.actions .buttonLink,
+.forModels > button {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  padding: 3px 10px;
+  color: var(--aq-text);
+  font: inherit;
+  white-space: nowrap;
+  text-decoration: none;
+  background: var(--aq-bg-input);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.actions > button:hover,
+.actions .buttonLink:hover,
+.forModels > button:hover {
+  background: var(--aq-bg-hover);
+}
+
+.actions > button:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.actions > button.primary {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}
+
+.actions > button.danger {
+  color: var(--aq-on-accent);
+  background: var(--aq-danger);
+}
+
+.forModels {
+  position: relative;
+}
+
+.forModelsList {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 5;
+  min-width: 220px;
+  padding: 8px 10px;
+  background: var(--aq-bg-menu, var(--aq-bg-raised));
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+  box-shadow: var(--aq-shadow);
+}
+
+.forModelsList p {
+  margin: 0 0 4px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+.facts1 {
+  margin: 0 0 8px;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.facts1 a,
+.linkButton {
+  padding: 0;
+  color: var(--aq-match);
+  font: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.note {
+  margin: 0 0 8px;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+.warning {
+  margin: 0 0 8px;
+  color: var(--aq-warning);
+  font-size: 12px;
+}
+
+.pageTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  margin: 4px 0 12px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.pageTabs > button {
+  margin-bottom: -1px;
+  padding: 6px 2px;
+  color: var(--aq-text-muted);
+  font: inherit;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  cursor: pointer;
+}
+
+.pageTabs > button[aria-selected="true"] {
+  color: var(--aq-text-strong);
+  border-bottom-color: var(--aq-accent);
+}
+
+.intro {
+  padding: 12px 14px;
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+}
+
+.readmeNote {
+  margin: 12px 0 0;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+/* The page of packs: the title with the ways to install one beside it. */
+.titleRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 0 0 4px;
+}
+
+.titleRow h2 {
+  margin: 0;
+}
+
+/* The packs installed: one a row, AnimaQuill's own last in one. */
+.installedList {
+  margin: 6px 0 8px;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.installedItem {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 8px 10px;
+}
+
+.installedItem + .installedItem {
+  border-top: 1px solid var(--aq-border);
+}
+
+.installedMain {
+  display: flex;
+  flex: 1 1 260px;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.installedMain small {
+  color: var(--aq-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.installedHead {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.installedName {
+  color: var(--aq-text-strong);
+  font-size: 13px;
+}
+
+.installedActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+}
+
+.builtinNames {
+  color: var(--aq-text-strong);
+}
+
+.nameLink {
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.nameLink:hover {
+  text-decoration: underline;
 }

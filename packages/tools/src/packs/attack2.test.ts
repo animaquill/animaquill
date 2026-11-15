@@ -100,12 +100,16 @@ describe("空白，换个写法", () => {
 
 describe("名字和作者", () => {
   it("[拒绝] 换个写法冒充内置：连字符、西里尔字母、I 当 l、繁体、夹组合符号", () => {
-    for (const name of ["Anima-Quill", "АnimaQuill", "AnimaQuiII", "Claude 5（內置）", "官́方"]) {
+    for (const name of ["Anima-Quill", "АnimaQuill", "AnimaQuiII", "官́方"]) {
       expect(codes(small({ name })), name).toEqual(["reserved-name name"]);
     }
+    expect(codes(small({ name: "Claude 5（內置）" }))).toEqual([
+      "reserved-name name",
+      "name-marks name",
+    ]);
   });
 
-  it("[说明] 别的说法仍然能过：标签固定带“〔第三方 · id〕”，在名字前面，这才是兜底", () => {
+  it("[说明] 别的说法仍然能过：标签固定带编辑器写的“(来源)”，名字拼不出第二个，这才是兜底", () => {
     for (const name of ["公式パック", "Offiziell", "原装 Claude 5", "默认"]) {
       expect(codes(small({ name })), name).toEqual([]);
     }
@@ -116,6 +120,36 @@ describe("名字和作者", () => {
     expect(codes(small({ name: "Claude  5" }))).toEqual(["name-blank name"]);
     expect(codes(small({ author: "Lin Q" }))).toEqual(["name-blank author"]);
     expect(codes(small({ name: "DeepSeek steady" }))).toEqual([]);
+  });
+
+  it("[拒绝] 名字里拼出编辑器写的部分：任何括号、冒号（全角、小号、形近的），“发现”“本机”“自动”", () => {
+    for (const name of [
+      "Steady(pipi)",
+      "Steady（pipi）",
+      "Steady﹙pipi﹚",
+      "Steady［pipi］",
+      "Steady【pipi】",
+      "Steady〔pipi〕",
+      "Steady「pipi」",
+      "Steady<pipi>",
+      "Steady《pipi》",
+      "Steady{pipi}",
+      "Steady«pipi»",
+      "a:b",
+      "a：b",
+      "a﹕b",
+      "a꞉b",
+    ]) {
+      expect(codes(small({ name })), name).toEqual(["name-marks name"]);
+    }
+    for (const name of ["发现精选", "本机版", "自动挡", "自動"]) {
+      expect(codes(small({ name })), name).toEqual(["reserved-name name"]);
+    }
+    expect(codes(small({ name: "x".repeat(41) }))).toEqual(["name-long name"]);
+    expect(codes(small({ name: "Steady " }))).toEqual(["name-edge name"]);
+    // Packs installed before these rules still load, as they are.
+    const old = small({ name: "自动(推荐)" });
+    expect(checkPack(files(old), { mode: "load" }).pack?.name).toBe("自动(推荐)");
   });
 });
 

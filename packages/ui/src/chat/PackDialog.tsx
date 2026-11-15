@@ -22,11 +22,15 @@ import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import dialogStyles from "../app/DialogHost.module.css";
 import styles from "./ModelPacks.module.css";
-import type { PackSource } from "./packs.ts";
+import { PackIntro } from "./PackIntro.tsx";
+import type { PackReadme, PackSource } from "./packs.ts";
 import {
   authorText,
   callText,
+  labelParts,
+  labelText,
   originDiffers,
+  originOf,
   packLabel,
   packName,
   problemText,
@@ -44,6 +48,8 @@ export interface PackDialogProps {
   readonly installedSource?: PackSource | undefined;
   readonly source?: PackSource | undefined;
   readonly problems?: readonly PackProblem[];
+  /** What the pack says of itself for people, its README.md, read with it. */
+  readonly readme?: PackReadme | undefined;
   /** People said yes, and what their models are to use from now on. */
   readonly onConfirm?: (choice: PackDialogChoice) => void;
   readonly onClose: () => void;
@@ -75,10 +81,14 @@ export function PackDialog(props: PackDialogProps) {
     installedSource,
     source,
     problems = [],
+    readme,
     onConfirm,
     onClose,
   } = props;
   const { t } = useTranslation();
+  const { packs } = useWorkbench();
+  const snapshot = useSyncExternalStore(packs.subscribe, packs.getSnapshot);
+  const [tab, setTab] = useState<"changes" | "readme">("changes");
   const dialog = useRef<HTMLDialogElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
   const [agreed, setAgreed] = useState(false);
@@ -136,7 +146,7 @@ export function PackDialog(props: PackDialogProps) {
         {pack && (
           <p className={styles.meta}>
             {[
-              packLabel(t, pack),
+              labelText(t, labelParts(t, pack, originOf(pack, source), snapshot)),
               t("ai.packs.version", { version: pack.version }),
               pack.license && t("ai.packs.license", { license: pack.license }),
               source && sourceText(t, source),
@@ -202,7 +212,25 @@ export function PackDialog(props: PackDialogProps) {
           </div>
         )}
 
-        {pack && mode !== "view" && (
+        {pack && (
+          <div className={styles.pageTabs} role="tablist">
+            {(["changes", "readme"] as const).map((each) => (
+              <button
+                key={each}
+                type="button"
+                role="tab"
+                aria-selected={tab === each}
+                data-testid={`pack-dialog-tab-${each}`}
+                onClick={() => setTab(each)}
+              >
+                {t(`ai.packs.dialog.tab.${each}`)}
+              </button>
+            ))}
+          </div>
+        )}
+        {pack && tab === "readme" && <PackIntro pack={pack} source={source} readme={readme} />}
+
+        {pack && tab === "changes" && mode !== "view" && (
           <div className={styles.section} data-testid="pack-models">
             <h3>{t("ai.packs.dialog.models")}</h3>
             {models.length === 0 ? (
@@ -217,7 +245,7 @@ export function PackDialog(props: PackDialogProps) {
                   >
                     {t(`ai.packs.dialog.model.${effect}`, {
                       model,
-                      current: packLabel(t, current),
+                      current: packLabel(t, current, snapshot),
                     })}
                   </li>
                 ))}
@@ -248,7 +276,7 @@ export function PackDialog(props: PackDialogProps) {
           </div>
         )}
 
-        {pack && (
+        {pack && tab === "changes" && (
           <div className={styles.section} data-testid="pack-call">
             <h3>{t("ai.packs.dialog.call")}</h3>
             {calls.length === 0 ? (
@@ -268,7 +296,7 @@ export function PackDialog(props: PackDialogProps) {
           </div>
         )}
 
-        {pack && (
+        {pack && tab === "changes" && (
           <div className={styles.section} data-testid="pack-words">
             <h3>{t("ai.packs.dialog.words")}</h3>
             {rest.length === 0 ? (

@@ -75,6 +75,15 @@ export type PackProblemCode =
   /** A name or author with a space other than the plain one, or two in a row. */
   | "name-blank"
   /**
+   * When installing: a name with brackets or a colon, which the editor writes after names and
+   * before them ("自动：名字(内置)"), so that no name can make up a second one.
+   */
+  | "name-marks"
+  /** When installing: a name longer than `MAX_NAME`. */
+  | "name-long"
+  /** When installing: a name that begins or ends with blank. */
+  | "name-edge"
+  /**
    * When loading: the default words a pack replaced changed with a new version of the tools, so its
    * words may say what is no longer so; those words are left out.
    */
@@ -324,6 +333,43 @@ const reservedIn = (text: string) => {
 };
 
 /**
+ * Words the editor writes next to names of packs, which names may not have either, from 2026-11-15
+ * (docs/model-packs.md): where a pack came from ("内置", "发现", "本机") and "自动". Packs installed
+ * before with one of them still load; their name shows as one that is not allowed.
+ */
+const LABEL_WORDS = ["发现", "發現", "本机", "本機", "自动", "自動"].map(folded);
+
+/** The most characters a name may have, from 2026-11-15; packs installed before may have 60. */
+export const MAX_NAME = 40;
+
+/**
+ * Brackets and colons of any script, as NFKC has them: "(", "（", "﹙", "［", "〔", "《", "<" and the
+ * like, and ":", "：", "﹕"; with the few that look so and are other characters.
+ */
+const MARKS = /[\p{Ps}\p{Pe}<>:«»‹›꞉ː˸׃∶⁚]/u;
+
+/**
+ * What is wrong with a name of a pack by the rules of 2026-11-15, which hold when one is installed:
+ * the editor writes a name as "名字(来源)", and "自动：" before it, so that a name with brackets, a
+ * colon or a word the editor writes there could pass for something it is not. Empty when it passes.
+ * The editor asks the same of packs installed before, to show the name of one that does not pass
+ * as such.
+ */
+export function nameIssues(name: string): readonly PackProblemCode[] {
+  const issues: PackProblemCode[] = [];
+  const normal = name.normalize("NFKC");
+  if (MARKS.test(normal) || MARKS.test(name)) issues.push("name-marks");
+  const word = folded(name);
+  if (reservedIn(name) || LABEL_WORDS.some((each) => word.includes(each))) {
+    issues.push("reserved-name");
+  }
+  if (blankIn(name)) issues.push("name-blank");
+  if (/^\s|\s$/u.test(name)) issues.push("name-edge");
+  if ([...name].length > MAX_NAME) issues.push("name-long");
+  return issues;
+}
+
+/**
  * Whether a name or author has blank that could push what the editor writes after it out of
  * sight: any space but the plain one, or two of them in a row.
  */
@@ -568,6 +614,14 @@ function checkedPack(files: PackFiles, options: CheckOptions): PackCheck {
     ] as const) {
       if (reservedIn(text)) problems.push({ code: "reserved-name", at });
       if (blankIn(text)) problems.push({ code: "name-blank", at });
+    }
+    // The rules of names from 2026-11-15 hold for what is installed from now on.
+    if (mode === "install") {
+      for (const code of nameIssues(manifest.name)) {
+        if (!problems.some((each) => each.code === code && each.at === "name")) {
+          problems.push({ code, at: "name" });
+        }
+      }
     }
   }
 

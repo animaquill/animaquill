@@ -80,8 +80,8 @@ test("each conversation keeps its own model; the star changes the default, for n
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
 
-  // The bubble: the models that are on, by service, the tick on this conversation's, the star on
-  // the default, and the model pack of the model under the cursor.
+  // The bubble: the models that are on, by service, the tick on this conversation's with the pack
+  // it uses under it, and the star on the default.
   await chat(page).getByTestId("chat-model").click();
   const bubble = chat(page).getByTestId("chat-model-bubble");
   await expect(bubble.getByTestId("chat-model-option")).toHaveCount(2);
@@ -92,7 +92,10 @@ test("each conversation keeps its own model; the star changes the default, for n
   await expect(
     option(page, "claude-test").getByRole("button", { name: "默认模型（新对话用）" }),
   ).toBeVisible();
-  await expect(bubble.getByTestId("chat-model-pack")).toContainText("适配包");
+  await expect(option(page, "claude-test").getByTestId("chat-model-row-pack")).toHaveText(
+    "适配包：自动：通用(内置)",
+  );
+  await expect(bubble.getByTestId("chat-model-row-pack")).toHaveCount(1);
   await shoot(page, "bubble", chat(page).getByTestId("chat"));
   // Found by a part of its name; Enter takes it.
   await bubble.getByRole("textbox", { name: "搜模型、服务" }).fill("OTHER");
