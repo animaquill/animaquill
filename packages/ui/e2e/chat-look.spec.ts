@@ -247,7 +247,21 @@ test("AI looks at frames: small pictures with their times and boxes, a line of w
   await expect(large).toBeVisible();
   await expect(large).toContainText("AI 看的画面 · 主线 0:02.5 · 1024×576");
   await expect(large.getByTestId("chat-look-large-picture")).toHaveAttribute("data-role", "frame");
+  await expect(large).toHaveAttribute("aria-modal", "true");
   await shoot(page, "L2-large");
+  // The arrows go from picture to picture while it has the keyboard, and Esc gives the focus back.
+  await page.keyboard.press("ArrowRight");
+  await expect(large).toContainText("AI 看的画面 · 主线 0:04");
+  await page.keyboard.press("ArrowLeft");
+  await expect(large).toContainText("AI 看的画面 · 主线 0:02.5");
+  await page.keyboard.press("Escape");
+  await expect(large).toBeHidden();
+  await expect(pictures.nth(1)).toBeFocused();
+  // Out of it, the arrows are the editor's again.
+  await box(page).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(large).toBeHidden();
+  await pictures.nth(1).click();
   await large.getByTestId("chat-look-marks").uncheck();
   await expect(large.getByTestId("chat-look-large-picture")).toHaveAttribute("data-role", "clean");
   await shoot(page, "L2-large-clean");
@@ -260,6 +274,9 @@ test("AI looks at frames: small pictures with their times and boxes, a line of w
   // The same row at the width of a phone.
   await page.setViewportSize({ width: 390, height: 844 });
   await tab(page, "chat").click();
+  // Its words wrap there: what it cost shows too.
+  await row.getByTestId("chat-tool-summary").scrollIntoViewIfNeeded();
+  await expect(row.getByTestId("chat-tool-summary")).toBeInViewport();
   await shoot(page, "L1-look-390");
 });
 
@@ -335,11 +352,19 @@ test("a comparison shows before, after and what differs; an overview its one pic
   await shoot(page, "L1-compare-diff-large");
   await page.keyboard.press("Escape");
   await overview.getByTestId("chat-look-picture").click();
+  await expect(page.getByTestId("chat-look-large")).toContainText("主线 0:00–0:30");
   await shoot(page, "L1-overview-large");
   await page.keyboard.press("Escape");
   await zoom.getByTestId("chat-look-picture").click();
+  await expect(page.getByTestId("chat-look-large")).toContainText("主线 0:01 · 左下角");
   await shoot(page, "L1-zoom-large");
   await page.keyboard.press("Escape");
+
+  // The card of what AI changed says it in words, without the paths of fields inside.
+  const card = chat(page).getByTestId("chat-changes");
+  await expect(card).toContainText("片段「标题」");
+  await expect(card).not.toContainText("properties.");
+  await shoot(page, "change-card", chat(page).getByTestId("chat-card"));
 });
 
 test("while people play, AI waits for them to stop, and says so", async ({ page }) => {
@@ -430,7 +455,7 @@ test("a frame that cannot be rendered is no picture: the row is red and says why
   const row = look(page);
   await expect(row).toHaveAttribute("data-state", "failed");
   await expect(row.getByTestId("chat-tool-summary")).toHaveText(
-    "0:01 画不出来：片段「擦除」的转场这个版本还画不了",
+    "0:01 画不出来：片段「擦除」的转场这个版本还画不了，换成别的转场",
   );
   await expect(row.getByTestId("chat-look-picture")).toHaveCount(0);
   const parts = lastToolResult(sent[1] as Sent);

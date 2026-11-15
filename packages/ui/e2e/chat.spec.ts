@@ -291,12 +291,12 @@ test("AI changes the timeline, and the whole task goes back in one step", async 
   await expect(changes).toContainText("加一个蓝色片段和一个标记");
   const rows = changes.getByTestId("chat-change");
   await expect(rows).toHaveCount(2);
-  await expect(rows.filter({ hasText: "新加片段" })).toHaveCount(1);
+  await expect(rows.filter({ hasText: "新加了片段" })).toHaveCount(1);
   // A clip without a name has what people call it elsewhere, never its inner id.
-  await expect(rows.filter({ hasText: "新加片段" })).toContainText(/新加片段「.+」/);
-  await expect(rows.filter({ hasText: "新加片段" })).not.toContainText("clip_");
-  await expect(rows.filter({ hasText: "新加标记「AI」" })).toHaveCount(1);
-  await rows.filter({ hasText: "新加片段" }).getByRole("button", { name: "定位" }).click();
+  await expect(rows.filter({ hasText: "新加了片段" })).toContainText(/新加了片段「.+」/);
+  await expect(rows.filter({ hasText: "新加了片段" })).not.toContainText("clip_");
+  await expect(rows.filter({ hasText: "新加了标记「AI」" })).toHaveCount(1);
+  await rows.filter({ hasText: "新加了片段" }).getByRole("button", { name: "定位" }).click();
 
   // Straight to the service, with the key, the tools of AnimaQuill and the system prompt in parts.
   const first = requests[0] as Request;

@@ -4,7 +4,7 @@ import { describeChanges, type ObjectChange } from "@animaquill/tools";
 import type { TFunction } from "i18next";
 import type { TurnChange } from "../chat/summary.ts";
 import type { FolderMerge } from "../folder/session.ts";
-import { changeLine } from "../local-ai/change-line.ts";
+import { changeLine } from "../chat/change-line.ts";
 import {
   ToolNotes,
   knownTool,

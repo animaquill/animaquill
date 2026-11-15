@@ -1,7 +1,7 @@
 import type { ToolCallEntry, ToolEntry, ToolPicture } from "@animaquill/agent";
 import type { LookData, LookFinding, LookShotData } from "@animaquill/tools";
 import { Check, ChevronDown, ChevronLeft, ChevronRight, LoaderCircle, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
@@ -405,20 +405,47 @@ function LookViewer({
       : undefined;
   const shown = !marks && clean ? clean : item.picture;
   const url = usePictureUrl(shown.image);
+  const box = useRef<HTMLDivElement>(null);
+  // Open, it has the keyboard; closed, it gives it back to where it was.
   useEffect(() => {
-    const keys = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-      else if (event.key === "ArrowLeft" && at > 0) onMove(at - 1);
-      else if (event.key === "ArrowRight" && at < items.length - 1) onMove(at + 1);
-    };
-    addEventListener("keydown", keys);
-    return () => removeEventListener("keydown", keys);
-  }, [at, items.length, onClose, onMove]);
+    const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    box.current?.focus();
+    return () => before?.focus();
+  }, []);
+  /** Keys only while it has the focus, and arrows not where they move a caret. */
+  const keys = (event: ReactKeyboardEvent) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      onClose();
+      return;
+    }
+    const target = event.target as HTMLElement;
+    const typing =
+      target.isContentEditable ||
+      target.tagName === "TEXTAREA" ||
+      (target.tagName === "INPUT" && (target as HTMLInputElement).type !== "checkbox");
+    if (typing) return;
+    if (event.key === "ArrowLeft" && at > 0) onMove(at - 1);
+    else if (event.key === "ArrowRight" && at < items.length - 1) onMove(at + 1);
+  };
   const time = shot.data?.t;
   const timeline = look.timelineName ?? look.timeline;
+  const range =
+    look.kind === "overview" && look.shots.length > 0
+      ? t("chat.look.viewerRange", {
+          from: timeText(look.range?.from ?? look.shots[0]?.t),
+          to: timeText(look.range?.to ?? look.shots.at(-1)?.t),
+        })
+      : undefined;
+  const where =
+    look.kind === "zoom" && look.region
+      ? (t as unknown as Say)(`chat.look.where.${whereOf(look.region, look.stage)}`)
+      : undefined;
   const title = [
     t("chat.look.viewer"),
     time === undefined ? undefined : `${timeline} ${timeText(time)}`,
+    range === undefined ? undefined : `${timeline} ${range}`,
+    where,
     item.label,
     `${shown.width}×${shown.height}`,
   ]
@@ -428,11 +455,18 @@ function LookViewer({
     <div
       className={styles.lookViewer}
       role="dialog"
+      aria-modal="true"
       aria-label={title}
       data-testid="chat-look-large"
       onClick={onClose}
+      onKeyDown={keys}
     >
-      <div className={styles.lookViewerBox} onClick={(event) => event.stopPropagation()}>
+      <div
+        ref={box}
+        tabIndex={-1}
+        className={styles.lookViewerBox}
+        onClick={(event) => event.stopPropagation()}
+      >
         <div className={styles.lookViewerHead}>
           <span>{title}</span>
           <button

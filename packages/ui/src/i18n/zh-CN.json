@@ -860,7 +860,7 @@
           "keywords": "send enter 回车 发送 换行 快捷键"
         },
         "shotSize": {
-          "name": "截图的大小",
+          "name": "截图按钮发给 AI 的大小",
           "help": "截取播放头画面发给 AI 时，长边最多多少像素。1568 是 Anthropic 建议的上限，再大服务也会先缩小，只多花 token。",
           "keywords": "screenshot 截图 画面 图片 分辨率 大小 像素"
         },
@@ -3492,15 +3492,7 @@
       "saidMore": "还有 {{count}} 句",
       "locate": "定位",
       "open": "打开",
-      "gone": "已经不在了",
-      "added": "新加{{kind}}",
-      "removed": "删了{{kind}}",
-      "changed": "{{kind}}",
-      "fieldsMore": "等 {{count}} 项",
-      "lines": "+{{added}} −{{removed}} 行",
-      "set": "{{field}} 设为 {{after}}",
-      "cleared": "去掉了{{field}}",
-      "from": "{{field}} {{before}} → {{after}}"
+      "gone": "已经不在了"
     },
     "kinds": {
       "project": "项目",
@@ -3785,11 +3777,11 @@
         "missing-file": "素材「{{asset}}」不在这台电脑上",
         "cannot-decode": "素材「{{asset}}」这个浏览器解不开",
         "scene": "片段「{{clip}}」的场景没有在运行",
-        "transition": "片段「{{clip}}」的转场这个版本还画不了",
+        "transition": "片段「{{clip}}」的转场这个版本还画不了，换成别的转场",
         "scene-frame": "片段「{{clip}}」的场景没给出这一帧",
-        "compositor": "渲染器没有回应",
-        "encoder": "画的时候出错了",
-        "failed": "画的时候出错了",
+        "compositor": "渲染器没有回应，再让 AI 试一次",
+        "encoder": "画的时候出错了，再让 AI 试一次",
+        "failed": "画的时候出错了，再让 AI 试一次",
         "stopped": "任务停下了"
       },
       "where": {
@@ -3826,7 +3818,8 @@
       "playhead": "把播放头移到这里",
       "previous": "上一张",
       "next": "下一张",
-      "list": "AI 收到的清单（英文原文）"
+      "list": "AI 收到的清单（英文原文）",
+      "viewerRange": "{{from}}–{{to}}"
     }
   },
   "account": {

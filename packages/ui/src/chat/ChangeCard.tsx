@@ -2,6 +2,7 @@ import type { ChatEntry, ToolEntry } from "@animaquill/agent";
 import { pathOfObject, type ObjectRef, type ProjectState } from "@animaquill/core";
 import { TriangleAlert } from "lucide-react";
 import { useState } from "react";
+import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import styles from "./ChatPanel.module.css";
@@ -12,7 +13,7 @@ import {
   type OtherRow,
   type TurnChange,
 } from "./summary.ts";
-import { changeName } from "./objectName.ts";
+import { changeLine, fieldName } from "./change-line.ts";
 import type { Say } from "./toolSummary.ts";
 
 /** The tools before these, which read, for the count of changes of an earlier conversation. */
@@ -160,7 +161,7 @@ function otherText(say: Say, row: OtherRow): string {
   const what = `${say(`chat.kinds.${kind}`)}${name ? `「${name}」` : ` ${id}`}`;
   const named = fields
     .slice(0, SHOWN_FIELDS)
-    .map((path) => say(`chat.fields.${path.split(".")[0] ?? path}`, { defaultValue: path }));
+    .map((path) => fieldName(say as unknown as TFunction, path));
   return named.length > 0 ? `${what} ${named.join("、")}` : what;
 }
 
@@ -195,9 +196,7 @@ function ChangesView({
         const there = change.change !== "removed" && isThere(state, ref);
         return (
           <div key={change.key} className={styles.change} data-testid="chat-change">
-            <span className={styles.changeText}>
-              {changeText(t as unknown as Say, change, changeName(t, change, state))}
-            </span>
+            <span className={styles.changeText}>{changeLine(t, change, state)}</span>
             {change.change !== "removed" && change.kind !== "project" && (
               <button
                 type="button"
@@ -225,31 +224,4 @@ function ChangesView({
       )}
     </div>
   );
-}
-
-/** One change in a line: what it is, and how up to three of its fields changed. */
-function changeText(say: Say, change: TurnChange, named: string | undefined): string {
-  const t = say;
-  const kind = t(`chat.kinds.${change.kind}`);
-  const name = named ? `「${named}」` : "";
-  const head = `${t(`chat.summary.${change.change}`, { kind })}${name}`;
-  if (change.lines) {
-    return `${head}  ${t("chat.summary.lines", change.lines)}`;
-  }
-  if (change.change !== "changed") return head;
-  const fieldName = (path: string) => {
-    const field = path.split(".")[0] ?? path;
-    return t(`chat.fields.${field}`, { defaultValue: path });
-  };
-  const fields = change.fields.slice(0, SHOWN_FIELDS).map(({ path, before, after }) => {
-    const field = fieldName(path);
-    if (after === undefined) return t("chat.summary.cleared", { field });
-    if (before === undefined) return t("chat.summary.set", { field, after });
-    return t("chat.summary.from", { field, before, after });
-  });
-  const more =
-    change.fields.length > SHOWN_FIELDS
-      ? [t("chat.summary.fieldsMore", { count: change.fields.length - SHOWN_FIELDS })]
-      : [];
-  return [head, ...fields, ...more].join("  ");
 }

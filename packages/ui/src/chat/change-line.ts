@@ -1,7 +1,7 @@
 import { nameKeyOf, type ProjectState } from "@animaquill/core";
 import type { TFunction } from "i18next";
-import { changeName } from "../chat/objectName.ts";
-import type { TurnChange } from "../chat/summary.ts";
+import { changeName } from "./objectName.ts";
+import type { TurnChange } from "./summary.ts";
 import { textOf } from "../properties/names.ts";
 
 /** Text from a project is text, whatever it looks like. */
@@ -11,7 +11,7 @@ const asText = { interpolation: { escapeValue: false } } as const;
 const isNone = (value: string | undefined) => value === undefined || value === "none";
 
 /** What a field of an object is called: a property by its name, anything else as the chat has it. */
-function fieldName(t: TFunction, path: string): string {
+export function fieldName(t: TFunction, path: string): string {
   if (path.startsWith("properties.")) {
     const property = path.slice("properties.".length);
     return textOf(t, `property.name.${nameKeyOf(property)}`, property);

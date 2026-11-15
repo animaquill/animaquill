@@ -1874,8 +1874,20 @@ span.sentPicture {
   max-height: 200px;
 }
 
-/* Why a frame has no picture is the point of the row: it wraps rather than being cut. */
+/* What AI looked at, what it cost and why a frame has no picture wrap rather than being cut. */
+.panel .tool[data-look] .toolHead {
+  flex-wrap: wrap;
+}
+
+.tool[data-look] .toolArgs {
+  min-width: 8em;
+  white-space: normal;
+}
+
 .tool[data-look][data-state="failed"] .toolArgs {
   color: var(--aq-danger-text);
-  white-space: normal;
+}
+
+.lookViewerBox:focus {
+  outline: none;
 }
