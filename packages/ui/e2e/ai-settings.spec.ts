@@ -105,7 +105,7 @@ test("adds a service from the cards: tested, its recommended models on, the firs
   expect(sent[0]).toMatchObject({ model: "claude-haiku-5-5", max_tokens: 16 });
   expect(await page.content()).not.toContain("SECRET");
   const kept = await saved(page);
-  expect(kept?.version).toBe(3);
+  expect(kept?.version).toBe(4);
   expect(kept?.services[0]?.enabled).toEqual([
     "claude-opus-5-5",
     "claude-sonnet-5-5",
@@ -422,14 +422,14 @@ test("settings of before come up with their services, models, choices and keys",
   // The pack chosen for the model before is said beside it.
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test · Claude 5");
 
-  // Written as version 3 once something changes, with what a page of before reads, and the service
+  // Written as version 4 once something changes, with what a page of before reads, and the service
   // this editor cannot read kept.
   await openSettingsPage(page, "AI 模型");
   await service
     .locator('[data-testid="ai-model"][data-model="claude-opus-5-5"]')
     .getByRole("switch")
     .check();
-  await expect.poll(async () => (await saved(page))?.version).toBe(3);
+  await expect.poll(async () => (await saved(page))?.version).toBe(4);
   const kept = await saved(page);
   expect(kept?.current).toBe("service-old");
   expect(kept?.services.map(({ id }) => id)).toEqual(["service-old", "x"]);

@@ -10,13 +10,34 @@
  * (0.3.65) has everything of each model people set up or a catalog filled in (`ModelConfig`), and
  * for servers of one's own the protocol and headers; version 2 had only a size for models people
  * named themselves, which version 3 reads as theirs (docs/design/settings-and-properties.md of
- * AnimaQuill Cloud, 6.5). Pages of version 2 leave settings of version 3 alone (`newer`).
+ * AnimaQuill Cloud, 6.5). Pages of version 2 leave settings of version 3 alone (`newer`). Version 4
+ * (0.3.72) keeps the address and headers of each service and model apart, with its key, as what is
+ * secret of it (`ServiceSecret`): the settings as saved have none of them (`writeAiSettings`,
+ * `secretsOf`), and they are put back as they are read (`withSecrets`). It has no header of its
+ * own for the key either: what version 3 had of one becomes a header like any other
+ * (`AiSettingsReading.keyHeaders`). Pages of version 3 leave settings of version 4 alone.
  */
 import { COMPARISON_PACK_ID, REASONING } from "@animaquill/tools";
 import type { ModelCost, ReasoningLevel, ThinkingLevelMap } from "./model-discovery.ts";
 import { checkBaseUrl, kindOf, type Route } from "./services.ts";
 
-export const AI_SETTINGS_VERSION = 3;
+export const AI_SETTINGS_VERSION = 4;
+
+/** Headers people send a service or a model, by their names. */
+export type Headers = Readonly<Record<string, string>>;
+
+/**
+ * What is secret of a service, kept apart from the settings with its key (see `KeyStore` of the
+ * host): the key, the address, the headers, and the address and headers each model has of its own.
+ */
+export interface ServiceSecret {
+  readonly key?: string;
+  readonly baseUrl?: string;
+  readonly headers?: Headers;
+  readonly models?: Readonly<
+    Record<string, { readonly baseUrl?: string; readonly headers?: Headers }>
+  >;
+}
 
 /** The protocols people can choose for a server of their own, and for a model of any service. */
 export const MODEL_APIS = [
@@ -138,13 +159,16 @@ export interface ServiceConfig {
   readonly route: Route;
   /** How a server of one's own is talked to, where people chose; else as its kind is. */
   readonly api?: ModelApi;
-  /** Headers that go with every request to it, such as what a gateway of a company wants. */
+  /**
+   * Headers that go with every request to it, such as what a gateway of a company wants, or the key
+   * of a server of one's own that wants it in a header of its own (`api-key: …`).
+   */
   readonly headers?: Readonly<Record<string, string>>;
   /**
-   * The header the key goes in, for a server of one's own that wants it elsewhere than its
-   * protocol puts it, such as Azure's `api-key`. The key itself is kept apart as any key.
+   * When what is secret of it (`ServiceSecret`) last changed here, so that whatever reads the
+   * settings knows to read that again: it is kept apart, and changes on its own.
    */
-  readonly keyHeader?: string;
+  readonly secretAt?: number;
   /** The models people turned on, by their names at the service, in order. */
   readonly enabled: readonly string[];
   /** The models that were on as people turned the whole service off, to turn on again. */
@@ -228,11 +252,25 @@ export const EMPTY_AI_SETTINGS: AiSettings = {
 export type AiSettingsReading =
   | {
       readonly kind: "ok";
+      /**
+       * What was read. A service of version 4 has no address and no headers until they are put
+       * back from what is secret of it (`withSecrets`).
+       */
       readonly settings: AiSettings;
-      /** The version they were written in: 1 and 2 are upgraded as they are read. */
-      readonly from: 1 | 2 | 3;
+      /** The version they were written in: 1, 2 and 3 are upgraded as they are read. */
+      readonly from: 1 | 2 | 3 | 4;
       /** Headers that cannot be sent were left out, such as one with letters `fetch` refuses. */
       readonly headersLeftOut?: true;
+      /**
+       * They have addresses or headers in them, as versions before 4 do: those go into what is
+       * secret of each service, and the settings are saved again without them.
+       */
+      readonly inline?: true;
+      /**
+       * The header a service's key went in, by service, as version 3 had it: the key goes into the
+       * headers under that name (`keyIntoHeader`), and it is no key any more.
+       */
+      readonly keyHeaders?: Readonly<Record<string, string>>;
     }
   /** Written by a newer editor: not to be written over, see `readAiSettings`. */
   | { readonly kind: "newer" }
@@ -296,6 +334,7 @@ const SERVICE_FIELDS = new Set([
   "api",
   "headers",
   "keyHeader",
+  "secretAt",
   "enabled",
   "paused",
   "models",
@@ -341,8 +380,8 @@ export const MOST_HEADERS = 32;
 export const MOST_HEADER_BYTES = 8 * 1024;
 /**
  * Headers that are never people's own: those of the browser and the connection, and those of the
- * platform. A header named like a secret is theirs to send: the settings only remind them, see
- * `looksSecret`, and the key has a header of its own to go in (`ServiceConfig.keyHeader`).
+ * platform. A header named like a secret is theirs to send, such as the key of a server that wants
+ * it in a header of its own: headers are kept as secret as keys.
  */
 const NOT_A_HEADER =
   /^(?:host|cookie2?|set-cookie2?|user-agent|origin|referer|connection|keep-alive|content-length|content-type|transfer-encoding|te|trailer|upgrade|expect|accept-encoding|proxy-.*|sec-.*|x-forwarded-.*|forwarded|via|x-real-ip|true-client-ip|cf-connecting-ip|x-client-ip|x-animaquill.*|aq-.*|x-aq-.*)$/i;
@@ -361,23 +400,21 @@ export function tooManyHeaders(headers: Readonly<Record<string, string>>): boole
   return values.length > MOST_HEADERS || bytes > MOST_HEADER_BYTES;
 }
 
-/**
- * Whether the value of a header looks like a key (`sk-…`, `Bearer …`, a long random string): the
- * settings remind people that headers go with the account as they are, and keys belong in the key.
- */
-export const looksSecret = (value: string): boolean =>
-  /^\s*(?:sk-|bearer\s|basic\s|ghp_|xox[bp]-|AIza)/i.test(value) ||
-  (value.match(/[A-Za-z0-9_+/=-]{32,}/g) ?? []).some(
-    (run) =>
-      // An id such as a UUID, with or without its dashes, is no secret.
-      !/^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$/i.test(run) &&
-      /[A-Za-z]/.test(run) &&
-      /[0-9]/.test(run),
-  );
-
-/** A name of a header the key can go in. */
-export const isKeyHeader = (value: unknown): value is string =>
+/** A name of a header the key went in, as version 3 had it. */
+const isKeyHeader = (value: unknown): value is string =>
   typeof value === "string" && headerProblem(value, "") === undefined;
+
+/**
+ * The headers of a service once the key goes in one of them, as version 3 had it with a header of
+ * its own for the key (`api-key`): `Authorization` gets `Bearer <key>`, any other the key itself.
+ */
+export function keyIntoHeader(headers: Headers | undefined, name: string, key: string): Headers {
+  const value = name.toLowerCase() === "authorization" ? `Bearer ${key}` : key;
+  const others = Object.entries(headers ?? {}).filter(
+    ([each]) => each.toLowerCase() !== name.toLowerCase(),
+  );
+  return Object.fromEntries([...others, [name, value]]);
+}
 
 /** Whether reading the settings now left out a header that cannot be sent, see `readAiSettings`. */
 let headersLeftOut = false;
@@ -526,7 +563,7 @@ export function readModel(value: unknown): ModelConfig | undefined {
 /** The models of a service, each once; version 2's are models people named, with their size. */
 function readModels(
   value: unknown,
-  version: 1 | 2 | 3,
+  version: 1 | 2 | 3 | 4,
 ): { models: ModelConfig[] | undefined; extra: Record<string, Record<string, unknown>> } {
   const extra: Record<string, Record<string, unknown>> = {};
   if (!Array.isArray(value) || version === 1) return { models: undefined, extra };
@@ -555,17 +592,25 @@ function readModels(
 
 /**
  * A service as any version wrote it, or nothing where it cannot be read. Version 1 has the one
- * model in `model`, which becomes the one turned on.
+ * model in `model`, which becomes the one turned on. Version 4 has no address (an empty one until
+ * what is secret of it is put back) and no header for the key.
  */
 function readService(
   value: unknown,
-  version: 1 | 2 | 3,
-): { service: ServiceConfig; modelFields: Record<string, Record<string, unknown>> } | undefined {
+  version: 1 | 2 | 3 | 4,
+):
+  | {
+      service: ServiceConfig;
+      modelFields: Record<string, Record<string, unknown>>;
+      keyHeader?: string;
+    }
+  | undefined {
   if (!isRecord(value)) return undefined;
-  const { id, kind, name, baseUrl, route } = value;
+  const { id, kind, name, route } = value;
   if (typeof id !== "string" || id === "" || typeof kind !== "string" || !kindOf(kind)) {
     return undefined;
   }
+  const baseUrl = version === 4 && value.baseUrl === undefined ? "" : value.baseUrl;
   if (typeof name !== "string" || typeof baseUrl !== "string") return undefined;
   if (route !== "direct" && route !== "relay") return undefined;
   let enabled: string[];
@@ -578,9 +623,9 @@ function readService(
   }
   const { models, extra } = readModels(value.models, version);
   const custom = kindOf(kind)?.custom === true;
-  const headers = version === 3 ? readHeaders(value.headers) : undefined;
+  const headers = version >= 3 ? readHeaders(value.headers) : undefined;
   const paused =
-    version === 3 && Array.isArray(value.paused)
+    version >= 3 && Array.isArray(value.paused)
       ? [...new Set(value.paused as unknown[])].filter(isModelName)
       : [];
   return {
@@ -590,16 +635,16 @@ function readService(
       name,
       baseUrl,
       route,
-      ...(version === 3 && custom && isApi(value.api) && { api: value.api }),
-      ...(version === 3 &&
-        custom &&
-        isKeyHeader(value.keyHeader) && { keyHeader: value.keyHeader }),
+      ...(version >= 3 && custom && isApi(value.api) && { api: value.api }),
       ...(headers && { headers }),
+      ...(version === 4 &&
+        positiveInteger(value.secretAt) !== undefined && { secretAt: value.secretAt as number }),
       enabled,
       ...(paused.length > 0 && enabled.length === 0 && { paused }),
       ...(models && { models }),
     },
     modelFields: extra,
+    ...(version >= 3 && custom && isKeyHeader(value.keyHeader) && { keyHeader: value.keyHeader }),
   };
 }
 
@@ -661,10 +706,18 @@ export function readAiSettings(value: unknown): AiSettingsReading {
   headersLeftOut = false;
   if (!isRecord(value) || !Array.isArray(value.services)) return { kind: "broken" };
   const version = value.version;
-  if (version !== undefined && version !== 1 && version !== 2 && version !== AI_SETTINGS_VERSION) {
+  if (
+    version !== undefined &&
+    version !== 1 &&
+    version !== 2 &&
+    version !== 3 &&
+    version !== AI_SETTINGS_VERSION
+  ) {
     return { kind: "newer" };
   }
-  const from = version === AI_SETTINGS_VERSION ? 3 : version === 2 ? 2 : 1;
+  const from = version === 4 ? 4 : version === 3 ? 3 : version === 2 ? 2 : 1;
+  const keyHeaders: Record<string, string> = {};
+  let inline = from < 4;
   const services: ServiceConfig[] = [];
   const unread: unknown[] = [];
   const serviceFields: Record<string, Readonly<Record<string, unknown>>> = {};
@@ -679,6 +732,20 @@ export function readAiSettings(value: unknown): AiSettingsReading {
     const { service } = read;
     ids.add(service.id);
     services.push(service);
+    if (read.keyHeader !== undefined) keyHeaders[service.id] = read.keyHeader;
+    if (
+      from === 4 &&
+      isRecord(raw) &&
+      (raw.baseUrl !== undefined ||
+        raw.headers !== undefined ||
+        raw.keyHeader !== undefined ||
+        (Array.isArray(raw.models) &&
+          raw.models.some(
+            (model) =>
+              isRecord(model) && (model.baseUrl !== undefined || model.headers !== undefined),
+          )))
+    )
+      inline = true;
     const extra = unknownFields(raw as Record<string, unknown>, SERVICE_FIELDS);
     if (extra) serviceFields[service.id] = extra;
     if (Object.keys(read.modelFields).length > 0) modelFields[service.id] = read.modelFields;
@@ -735,23 +802,102 @@ export function readAiSettings(value: unknown): AiSettingsReading {
   };
   // Set while the services were read, which control flow does not see.
   const leftOut = headersLeftOut as boolean;
-  return { kind: "ok", settings, from, ...(leftOut && { headersLeftOut: true as const }) };
-}
-
-/** A model as it is saved: only what it has, with what was not understood back in place. */
-export function writeModel(
-  model: ModelConfig,
-  kept?: Readonly<Record<string, unknown>>,
-): Record<string, unknown> {
   return {
-    ...kept,
-    ...Object.fromEntries(Object.entries(model).filter(([, value]) => value !== undefined)),
+    kind: "ok",
+    settings,
+    from,
+    ...(leftOut && { headersLeftOut: true as const }),
+    ...(inline && services.length > 0 && { inline: true as const }),
+    ...(Object.keys(keyHeaders).length > 0 && { keyHeaders }),
   };
 }
 
 /**
- * The settings as they are saved: version 3, with what was not understood back in place, and with
- * `current` and each service's `model` as version 1 had them, for a page of before.
+ * A model as it is saved: only what it has, with what was not understood back in place, and
+ * without its address and headers, which are secret (`secretsOf`).
+ */
+export function writeModel(
+  model: ModelConfig,
+  kept?: Readonly<Record<string, unknown>>,
+): Record<string, unknown> {
+  const { baseUrl: _baseUrl, headers: _headers, ...rest } = model;
+  return {
+    ...kept,
+    ...Object.fromEntries(Object.entries(rest).filter(([, value]) => value !== undefined)),
+  };
+}
+
+/**
+ * What is secret of each service of the settings, by its id, but its key: its address, its
+ * headers, and those of its models that have their own. See `ServiceSecret`.
+ */
+export function secretsOf(settings: Pick<AiSettings, "services">): Map<string, ServiceSecret> {
+  const secrets = new Map<string, ServiceSecret>();
+  for (const service of settings.services) {
+    const models: Record<string, { baseUrl?: string; headers?: Headers }> = {};
+    for (const model of service.models ?? []) {
+      const own = {
+        ...(model.baseUrl !== undefined && { baseUrl: model.baseUrl }),
+        ...(model.headers && Object.keys(model.headers).length > 0 && { headers: model.headers }),
+      };
+      if (Object.keys(own).length > 0) models[model.id] = own;
+    }
+    secrets.set(service.id, {
+      ...(service.baseUrl !== "" && { baseUrl: service.baseUrl }),
+      ...(service.headers &&
+        Object.keys(service.headers).length > 0 && { headers: service.headers }),
+      ...(Object.keys(models).length > 0 && { models }),
+    });
+  }
+  return secrets;
+}
+
+/**
+ * The settings with what is secret of each service put back: its address and headers, and those of
+ * its models. A service without any keeps what it has. What does not make sense of them is left
+ * out, as it is of settings that are read.
+ */
+export function withSecrets(
+  settings: AiSettings,
+  secretOf: (service: string) => ServiceSecret | undefined,
+): AiSettings {
+  return {
+    ...settings,
+    services: settings.services.map((service) => {
+      const secret = secretOf(service.id);
+      if (!secret) return service;
+      const headers = readHeaders(secret.headers);
+      const baseUrl =
+        typeof secret.baseUrl === "string" && secret.baseUrl.length <= 2000
+          ? secret.baseUrl
+          : service.baseUrl;
+      const { headers: _headers, ...rest } = service;
+      return {
+        ...rest,
+        baseUrl,
+        ...(headers && { headers }),
+        ...(service.models && {
+          models: service.models.map((model) => {
+            const own = secret.models?.[model.id];
+            const { baseUrl: _url, headers: _own, ...plain } = model;
+            if (!own) return plain;
+            const read = readModel({ id: model.id, baseUrl: own.baseUrl, headers: own.headers });
+            return {
+              ...plain,
+              ...(read?.baseUrl !== undefined && { baseUrl: read.baseUrl }),
+              ...(read?.headers && { headers: read.headers }),
+            };
+          }),
+        }),
+      };
+    }),
+  };
+}
+
+/**
+ * The settings as they are saved: version 4, without what is secret of the services (see
+ * `secretsOf`), with what was not understood back in place, and with `current` and each service's
+ * `model` as version 1 had them, for a page of before.
  */
 export function writeAiSettings(settings: AiSettings): Record<string, unknown> {
   const { kept } = settings;
@@ -761,11 +907,9 @@ export function writeAiSettings(settings: AiSettings): Record<string, unknown> {
     id: service.id,
     kind: service.kind,
     name: service.name,
-    baseUrl: service.baseUrl,
     route: service.route,
     ...(service.api && { api: service.api }),
-    ...(service.keyHeader && { keyHeader: service.keyHeader }),
-    ...(service.headers && Object.keys(service.headers).length > 0 && { headers: service.headers }),
+    ...(service.secretAt !== undefined && { secretAt: service.secretAt }),
     enabled: service.enabled,
     ...(service.paused && service.paused.length > 0 && { paused: service.paused }),
     ...(service.models &&
@@ -836,12 +980,28 @@ export function recoverOldWrite(latest: AiSettings, old: unknown): AiSettings | 
   }
   if (reading.kind !== "ok" || reading.from !== 1 || !isRecord(old)) return undefined;
   const now = reading.settings;
-  // What the page of before read: the settings of version 2 as version 1 has them.
-  const read = readAiSettings({ ...writeAiSettings(latest), version: undefined });
+  // What the page of before read: the settings of version 2 as version 1 has them, with the
+  // addresses, which settings of before version 4 had in them. Where it wrote no services at all,
+  // it read those of version 4, without addresses: it saw none of them.
+  const written = writeAiSettings(latest);
+  const sawNone =
+    now.services.length === 0 && (!Array.isArray(old.services) || old.services.length === 0);
+  const read = readAiSettings({
+    ...written,
+    version: undefined,
+    services: sawNone
+      ? []
+      : (written.services as unknown[]).map((service) => {
+          const known = isRecord(service)
+            ? latest.services.find(({ id }) => id === service.id)
+            : undefined;
+          return known && isRecord(service) ? { ...service, baseUrl: known.baseUrl } : service;
+        }),
+  });
   if (read.kind !== "ok") return undefined;
   const was = read.settings;
   const before = new Map(was.services.map((service) => [service.id, service]));
-  const services = now.services.map((service): ServiceConfig => {
+  const taken = now.services.map((service): ServiceConfig => {
     const base = latest.services.find(({ id }) => id === service.id);
     const seen = before.get(service.id);
     if (!base || !seen) return service;
@@ -857,6 +1017,12 @@ export function recoverOldWrite(latest: AiSettings, old: unknown): AiSettings | 
       enabled: changed && !base.enabled.includes(picked) ? [...base.enabled, picked] : base.enabled,
     };
   });
+  // What that page could not read (a service of version 4 has no address for it) it never saw,
+  // and did not take away.
+  const unseen = latest.services.filter(
+    (service) => !before.has(service.id) && !taken.some(({ id }) => id === service.id),
+  );
+  const services = [...taken, ...unseen];
   const sameDefault =
     now.default?.service === was.default?.service && now.default?.model === was.default?.model;
   const samePacks =
@@ -929,7 +1095,6 @@ function recoverVersion2(
     return {
       ...rest,
       ...(base.api && { api: base.api }),
-      ...(base.keyHeader && { keyHeader: base.keyHeader }),
       ...(base.headers && { headers: base.headers }),
       ...(all.length > 0 && { models: all }),
     };

@@ -118,12 +118,32 @@ test("each conversation keeps its own model; the star changes the default, for n
   );
   await expect(bubble.getByTestId("chat-model-row-pack")).toHaveCount(1);
   await shoot(page, "bubble", chat(page).getByTestId("chat"));
-  // Found by a part of its name; Enter takes it.
-  await bubble.getByRole("textbox", { name: "搜模型、服务" }).fill("OTHER");
+  // Clicked, a model is chosen and the bubble stays, to see what is chosen or choose again.
+  await option(page, "claude-other").getByRole("option").click();
+  await expect(bubble).toBeVisible();
+  await expect(option(page, "claude-other").getByRole("option")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-other");
+  await page.screenshot({ path: test.info().outputPath("bubble-chosen-stays.png") });
+  // Clicking outside it closes it.
+  await chat(page)
+    .getByRole("textbox", { name: /给 AI 发消息/ })
+    .click();
+  await expect(bubble).toBeHidden();
+  // Found by a part of its name; Enter takes it, and the bubble stays; Esc closes it.
+  await chat(page).getByTestId("chat-model").click();
+  await bubble.getByRole("textbox", { name: "搜模型、服务" }).fill("TEST");
   await expect(bubble.getByTestId("chat-model-option")).toHaveCount(1);
   await bubble.getByRole("textbox", { name: "搜模型、服务" }).press("Enter");
-  await expect(bubble).toBeHidden();
+  await expect(bubble).toBeVisible();
+  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
+  await bubble.getByRole("textbox", { name: "搜模型、服务" }).fill("OTHER");
+  await bubble.getByRole("textbox", { name: "搜模型、服务" }).press("Enter");
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-other");
+  await page.keyboard.press("Escape");
+  await expect(bubble).toBeHidden();
   await send(page, "第一个对话");
   await expect(chat(page).getByText("claude-other 回答")).toBeVisible({ timeout: 15_000 });
   expect(asked.at(-1)?.model).toBe("claude-other");

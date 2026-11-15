@@ -1,6 +1,8 @@
 import {
   EMPTY_AI_SETTINGS,
   canonical,
+  readAiSettings,
+  withSecrets,
   entriesOfPacks,
   entriesOfSettings,
   entryChanges,
@@ -14,8 +16,8 @@ import {
   AI_SYNC_FORMAT,
   AI_SYNC_KEYS,
   AI_SYNC_MODELS_FORMAT,
+  AI_SYNC_SECRETS_FORMAT,
   AiSyncNewer,
-  AiSyncOff,
   AiSyncTooLarge,
   CloudOtherAccount,
   CloudSignedOut,
@@ -27,6 +29,7 @@ import {
   type AiEntry,
   type AiSyncAccess,
   type KeyStore,
+  type ServiceSecret,
   type SettingsStore,
 } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
@@ -51,6 +54,13 @@ import { Emitter } from "../workbench/emitter.ts";
  * One window of the browser talks to the platform (the lock `animaquill.ai-sync.leader`): it reads
  * as it starts, as a window of the browser comes to the front, as the browser goes online, every
  * two minutes; and gives what changed a second after it did, also what other windows changed.
+ *
+ * Whether they go with the account is up to this device (docs/design/settings-and-properties.md of
+ * AnimaQuill Cloud, 9.2): turned off here (`setEnabled`), this device neither gives nor takes
+ * anything, and keeps the account's as it has them; the platform and other devices go on as ever.
+ * Turned on again, they are merged entry by entry, as the first time. As people sign in with it on,
+ * this device's own settings (those of before signing in) go into the account's where they changed
+ * since they last did (`deviceMerged`).
  */
 
 /** What the settings store and the model packs keep under, which go with the account. */
@@ -66,6 +76,13 @@ const stateKey = (account: string) => `ai.sync@${account}`;
  * people sign out, for the page of the cloud features to say so.
  */
 const mergedKey = (account: string) => `device.merged@${account}`;
+/**
+ * What this device's settings were as this editor first saw them (`print`), for accounts they
+ * never went into: they changed since only where they differ from it, see `#changedFor`.
+ */
+const BASELINE = "device.baseline";
+/** What a print is of: the settings with what is secret of each service, as of 0.3.72. */
+const PRINT_VERSION = 2;
 
 /** A short sum of a text, to tell whether it changed: FNV-1a. */
 const sumOf = (text: string): string => {
@@ -99,7 +116,7 @@ interface SyncState {
   revision: number;
   /** The format the platform has them in, as it said last: what is given is never lower. */
   format?: number;
-  /** People turned it off, on this device or another one. */
+  /** They go with the account on this device: people can turn it off here. */
   enabled: boolean;
   /** When everything was last in step with the platform. */
   syncedAt?: number;
@@ -138,7 +155,7 @@ export type AiSyncStatus =
   /** Changes wait for the platform to be reachable. */
   | "offline"
   | "failed"
-  /** Turned off for the account. */
+  /** Turned off on this device. */
   | "off"
   /** A newer editor wrote the account's settings: this one leaves them alone. */
   | "newer"
@@ -172,14 +189,13 @@ export interface AiSyncQuestion {
   readonly deviceKeys: number;
   /** How many services the account has already. */
   readonly accountServices: number;
-  /** Whether they go with the account, as people last said on any device (on by default). */
-  readonly enabled: boolean;
 }
 
 /**
- * What came of asking: whether the settings go with the account (`on`), and whether this device's
- * go into the account's (`put`), which they do also while off, as this device's copy of it.
- * "elsewhere": another window of this browser answered, and starts them.
+ * What came of asking: whether the settings go with the account on this device (`on`), and
+ * whether this device's go into the account's (`put`), which they do also while off, as this
+ * device's copy of it. Where they do not, they still do while on where they changed since they
+ * last did (`deviceMerged`). "elsewhere": another window of this browser answered, and starts them.
  */
 export type AiSyncAnswer = { readonly on: boolean; readonly put: boolean } | "elsewhere";
 
@@ -207,6 +223,10 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 /** What the settings are while there are none. */
 const emptyOf = (key: string): unknown =>
   key === SETTINGS ? writeAiSettings(EMPTY_AI_SETTINGS) : key === PACKS ? { packs: [] } : undefined;
+
+/** Whether there is anything at all. */
+const hasAnyCounts = (counts: AiCounts): boolean =>
+  counts.services > 0 || counts.models > 0 || counts.packs > 0;
 
 /** How much there is of AI settings as saved, and of packs as saved. */
 export function countsOf(settings: unknown, packs: unknown): AiCounts {
@@ -302,6 +322,8 @@ export class AiSync {
           .then(async (scope) => {
             if (typeof scope === "string" && isState(await this.#base.load(stateKey(scope))))
               this.#setScope(scope);
+            // What this device's settings are before anything here changes them, see `#changedFor`.
+            await this.#baseline(await this.#devicePrint());
           })
           .catch(() => {})
       : Promise.resolve();
@@ -433,13 +455,49 @@ export class AiSync {
       return;
     }
     if (this.#scope === id) return;
-    if (isState(await this.#base.load(stateKey(id)))) {
+    const kept = await this.#base.load(stateKey(id));
+    if (isState(kept)) {
       await this.#base.save(SCOPE, id);
       this.#setScope(id);
+      if (kept.enabled) await this.#mergeChanged();
       void this.sync();
       return;
     }
     await this.#begin(id);
+  }
+
+  /** This device's settings go into the account's in use, where they changed since they last did. */
+  async #mergeChanged(): Promise<void> {
+    const account = this.#scope;
+    if (account === undefined || !(await this.#changedFor(account))) return;
+    await this.mergeDevice().catch((error: unknown) =>
+      console.warn("The AI settings of this device could not go into the account", error),
+    );
+  }
+
+  /**
+   * Whether this device's settings, of before signing in, changed since they last went into an
+   * account, or, where they never did, since this editor first saw them: what was there then had
+   * its chance (it was not put in, as people said), and only what they changed since goes in, so
+   * that a service taken away on another device does not come back as people sign in again.
+   */
+  async #changedFor(account: string): Promise<boolean> {
+    if (!hasAnyCounts(await this.deviceCounts())) return false;
+    const print = await this.#devicePrint();
+    const kept = (await this.#base.load(mergedKey(account)).catch(() => undefined)) as
+      { print?: unknown; version?: unknown } | undefined;
+    if (kept?.version === PRINT_VERSION) return kept.print !== print;
+    const baseline = await this.#baseline(print);
+    return baseline !== print;
+  }
+
+  /** What this device's settings were as this editor first saw them, noted the first time. */
+  async #baseline(print: string): Promise<string> {
+    const kept = (await this.#base.load(BASELINE).catch(() => undefined)) as
+      { print?: unknown } | undefined;
+    if (typeof kept?.print === "string") return kept.print;
+    await this.#base.save(BASELINE, { at: this.#now(), print }).catch(() => {});
+    return print;
   }
 
   /**
@@ -463,11 +521,10 @@ export class AiSync {
         ? await this.#options.ask({
             account,
             device: await this.deviceCounts(),
-            deviceKeys: (await this.#options.keys.list().catch(() => [])).length,
+            deviceKeys: await this.#deviceKeys(),
             accountServices,
-            enabled: remote.enabled,
           })
-        : { on: remote.enabled, put: true };
+        : { on: true, put: true };
       if (answer === undefined) return;
       if (answer === "elsewhere" || (await this.holds(account))) {
         // Another window answered: it starts them, and this one takes them as they are there.
@@ -477,25 +534,18 @@ export class AiSync {
         void this.sync();
         return;
       }
-      const started = await this.#lock(account, async () => {
-        if (await this.#readState(account)) return false;
-        const state = newState(remote.enabled && answer.on);
+      const put = answer.put || (answer.on && (await this.#changedFor(account)));
+      await this.#lock(account, async () => {
+        if (await this.#readState(account)) return;
+        const state = newState(answer.on);
         // Off: this device keeps what it has, and nothing of the account's is taken here.
         if (answer.on) await this.#merge(account, state, remote);
-        state.enabled = remote.enabled && answer.on;
-        if (answer.put) await this.#putDevice(account, state);
+        if (put && hasAnyCounts(await this.deviceCounts())) await this.#putDevice(account, state);
         await this.#writeState(account, state);
-        return true;
       });
       await this.#base.save(SCOPE, account);
       this.#setScope(account);
-      if (!started) {
-        void this.sync();
-        return;
-      }
-      if (answer.on && !remote.enabled) await this.setEnabled(true);
-      else if (!answer.on && remote.enabled) await this.setEnabled(false);
-      else void this.sync();
+      void this.sync();
     } catch (error) {
       console.warn("The AI settings could not start to go with the account", error);
       this.#set({ status: globalThis.navigator?.onLine === false ? "offline" : "failed" });
@@ -519,6 +569,14 @@ export class AiSync {
       stop = this.#base.listen(stateKey(account), () => void check());
       void check();
     });
+  }
+
+  /** How many keys this device has, of those used while nobody is signed in. */
+  async #deviceKeys(): Promise<number> {
+    let count = 0;
+    for (const service of await this.#options.keys.list().catch(() => []))
+      if ((await this.#options.keys.read(service).catch(() => undefined))?.key) count += 1;
+    return count;
   }
 
   /** What the settings of this device have, which go into an account as people say so. */
@@ -555,17 +613,6 @@ export class AiSync {
   }
 
   /**
-   * Takes away the settings and keys of this device, those used while nobody is signed in: not
-   * those of the account in use.
-   */
-  async forgetDevice(): Promise<void> {
-    if (this.#scope === undefined) return;
-    for (const key of [SETTINGS, LATEST, PACKS]) await this.#base.remove?.(key);
-    for (const service of await this.#options.keys.list().catch(() => []))
-      await this.#options.keys.remove(service);
-  }
-
-  /**
    * Puts this device's settings and keys into the account, under what the account has: a service
    * of the same kind at the same address is the account's, and an entry the account has already
    * stays as it has it. Resolves to the names of the services that went in.
@@ -574,17 +621,28 @@ export class AiSync {
     const device = entriesOfSettings(await this.#base.load(SETTINGS).catch(() => undefined));
     const packs = entriesOfPacks(await this.#base.load(PACKS).catch(() => undefined));
     const same = new Map<string, string>();
-    const theirs = Object.entries(state.entries).flatMap(([name, entry]) =>
-      name.startsWith("service:") && !entry.deleted && isRecord(entry.value) ? [entry.value] : [],
-    );
+    const keys = this.#accountKeys.of(account);
+    // Where a service is: in what is secret of it, or in it, as settings of before version 4 have it.
+    const whereOf = async (service: Record<string, unknown>, store: KeyStore) => {
+      const secret =
+        typeof service.id === "string"
+          ? await store.read(service.id).catch(() => undefined)
+          : undefined;
+      return secret?.baseUrl ?? (typeof service.baseUrl === "string" ? service.baseUrl : undefined);
+    };
+    const theirs: { value: Record<string, unknown>; baseUrl: string | undefined }[] = [];
+    for (const [name, entry] of Object.entries(state.entries))
+      if (name.startsWith("service:") && !entry.deleted && isRecord(entry.value))
+        theirs.push({ value: entry.value, baseUrl: await whereOf(entry.value, keys) });
     const added: string[] = [];
     // Older than anything the account has, so that what it has stays.
     const at = 1;
     for (const [name, value] of [...(device ?? []), ...packs]) {
       if (name.startsWith("service:") && isRecord(value)) {
+        const baseUrl = await whereOf(value, this.#options.keys);
         const twin = theirs.find(
-          (other) => other.kind === value.kind && other.baseUrl === value.baseUrl,
-        );
+          (other) => other.value.kind === value.kind && other.baseUrl === baseUrl,
+        )?.value;
         if (twin && typeof twin.id === "string" && typeof value.id === "string") {
           same.set(value.id, twin.id);
           continue;
@@ -601,31 +659,48 @@ export class AiSync {
       state.entries[name] = { at, value };
       state.pending.push(name);
     }
-    const keys = this.#accountKeys.of(account);
     for (const service of await this.#options.keys.list().catch(() => [])) {
       const target = same.get(service) ?? service;
       if (state.keys[target] && !state.keys[target].deleted) continue;
-      const key = await this.#options.keys.read(service).catch(() => undefined);
-      if (key === undefined) continue;
-      await keys.write(target, key);
+      const secret = await this.#options.keys.read(service).catch(() => undefined);
+      if (secret === undefined) continue;
+      await keys.write(target, secret);
       state.keys[target] = { at };
       state.pendingKeys.push(target);
     }
     await this.#writeDocs(account, state);
     await this.#base
-      .save(mergedKey(account), { at: this.#now(), print: await this.#devicePrint() })
+      .save(mergedKey(account), {
+        at: this.#now(),
+        print: await this.#devicePrint(),
+        version: PRINT_VERSION,
+      })
       .catch(() => {});
     return added;
   }
 
-  /** What the settings and keys of this device are, in short, to tell whether they changed. */
+  /**
+   * What the settings and keys of this device are, in short, to tell whether they changed: the
+   * settings as they are read, with what is secret of each service, so that the same settings
+   * written another way (as settings of before version 4 go to version 4) are the same.
+   */
   async #devicePrint(): Promise<string> {
-    const settings = await this.#base.load(SETTINGS).catch(() => undefined);
+    const saved = await this.#base.load(SETTINGS).catch(() => undefined);
     const packs = await this.#base.load(PACKS).catch(() => undefined);
-    const keys: string[] = [];
-    for (const service of (await this.#options.keys.list().catch(() => [])).toSorted())
-      keys.push(`${service}=${(await this.#options.keys.read(service).catch(() => "")) ?? ""}`);
-    return sumOf(canonical({ settings: settings ?? null, packs: packs ?? null, keys }));
+    const secrets = new Map<string, ServiceSecret>();
+    for (const service of (await this.#options.keys.list().catch(() => [])).toSorted()) {
+      const secret = await this.#options.keys.read(service).catch(() => undefined);
+      if (secret) secrets.set(service, secret);
+    }
+    const reading = readAiSettings(saved);
+    const settings =
+      reading.kind === "ok"
+        ? withSecrets(reading.settings, (id) => secrets.get(id)).services.map(
+            ({ secretAt: _at, ...service }) => service,
+          )
+        : (saved ?? null);
+    const keys = [...secrets].map(([service, { key }]) => [service, key ?? null]);
+    return sumOf(canonical({ settings, packs: packs ?? null, keys }));
   }
 
   /**
@@ -635,9 +710,18 @@ export class AiSync {
   async deviceMerged(): Promise<number | undefined> {
     const account = this.#scope;
     if (account === undefined) return undefined;
+    return this.deviceMergedFor(account);
+  }
+
+  /** The same, of an account, whether it is in use or not yet. */
+  async deviceMergedFor(account: string): Promise<number | undefined> {
     const kept = (await this.#base.load(mergedKey(account)).catch(() => undefined)) as
-      { at?: unknown; print?: unknown } | undefined;
-    if (typeof kept?.at !== "number" || kept.print !== (await this.#devicePrint()))
+      { at?: unknown; print?: unknown; version?: unknown } | undefined;
+    if (
+      typeof kept?.at !== "number" ||
+      kept.version !== PRINT_VERSION ||
+      kept.print !== (await this.#devicePrint())
+    )
       return undefined;
     return kept.at;
   }
@@ -841,7 +925,8 @@ export class AiSync {
         await keys.remove(service);
         state.keys[service] = { at: entry.at, deleted: true };
       } else {
-        if ((await keys.read(service)) !== entry.key) await keys.write(service, entry.key);
+        if (canonical((await keys.read(service)) ?? null) !== canonical(entry.secret))
+          await keys.write(service, entry.secret);
         state.keys[service] = { at: entry.at };
       }
       pendingKeys.delete(service);
@@ -854,7 +939,6 @@ export class AiSync {
     }
     state.pendingKeys = [...pendingKeys];
     state.revision = remote.revision;
-    state.enabled = remote.enabled;
     await this.#writeDocs(account, state);
   }
 
@@ -884,34 +968,35 @@ export class AiSync {
     clearTimeout(this.#pushTimer);
     const before = await this.#readState(account);
     if (!before) return;
+    // Off on this device: nothing goes, and nothing comes.
+    if (!before.enabled) {
+      this.#showState(before);
+      return;
+    }
     let retry = PULL_MS;
     try {
       {
-        // Everything where it is off here, or went wrong: whether it is on again, and what is
-        // there; else only whether anything changed.
-        const whole = before.problem !== undefined || !before.enabled;
+        // Everything where it went wrong, or was off; else only whether anything changed.
+        const whole = before.problem !== undefined || before.revision < 0;
         const remote = await access.read(whole ? undefined : before.revision);
         if (remote.account !== account) throw new CloudOtherAccount("Somebody else is signed in");
         await this.#lock(account, async () => {
           const state = await this.#readState(account);
-          if (!state) return;
+          if (!state?.enabled) return;
           if ("entries" in remote) {
             if (remote.format > AI_SYNC_FORMAT) {
               state.problem = "newer";
               await this.#writeState(account, state);
               return;
             }
-            const wasOff = !state.enabled;
             state.format = Math.max(state.format ?? 1, remote.format);
             await this.#merge(account, state, remote);
-            // Turned on again elsewhere: what this device has goes too.
-            if (wasOff && remote.enabled) this.#giveAll(state);
-          } else state.enabled = remote.enabled;
+          }
           delete state.problem;
           await this.#writeState(account, state);
         });
       }
-      await this.#push(account, false);
+      await this.#push(account);
       await this.#lock(account, async () => {
         const state = await this.#readState(account);
         if (!state) return;
@@ -932,15 +1017,15 @@ export class AiSync {
     state.pendingKeys = Object.keys(state.keys).filter((service) => !state.keys[service]!.deleted);
   }
 
-  /** Gives the platform what changed here, in batches; `enable` turns it on again. */
-  async #push(account: string, enable: boolean): Promise<void> {
+  /** Gives the platform what changed here, in batches. */
+  async #push(account: string): Promise<void> {
     const access = this.#options.access!;
     const keys = this.#accountKeys.of(account);
     // A batch at a time, as long as there is more; never for good, whatever the platform says.
     for (let round = 0; round < 50; round += 1) {
       const state = await this.#readState(account);
-      if (!state || (!state.enabled && !enable)) return;
-      if (state.pending.length === 0 && state.pendingKeys.length === 0 && !enable) return;
+      if (!state?.enabled) return;
+      if (state.pending.length === 0 && state.pendingKeys.length === 0) return;
       const entries = state.pending.slice(0, AI_SYNC_BATCH).flatMap((name) => {
         const entry = state.entries[name];
         return entry ? [{ name, ...entry }] : [];
@@ -951,27 +1036,36 @@ export class AiSync {
             const entry = state.keys[service];
             if (!entry) return undefined;
             if (entry.deleted) return { service, at: entry.at, deleted: true as const };
-            const key = await keys.read(service);
-            return key === undefined
+            const secret = await keys.read(service);
+            return secret === undefined
               ? { service, at: entry.at, deleted: true as const }
-              : { service, at: entry.at, key };
+              : { service, at: entry.at, secret };
           }),
         )
       ).filter((each) => each !== undefined);
       // Entries of models are of format 2: an editor before them would write the settings back
-      // without them (AI_SYNC_MODELS_FORMAT), so from the first one, it leaves them alone.
+      // without them (AI_SYNC_MODELS_FORMAT), so from the first one, it leaves them alone. Services
+      // without their address are of format 3, which an editor of format 2 cannot read.
       const models = Object.keys(state.entries).some((name) => name.startsWith("model:"));
-      const format = Math.max(state.format ?? 1, models ? AI_SYNC_MODELS_FORMAT : 1);
+      const secrets = Object.entries(state.entries).some(
+        ([name, entry]) =>
+          name.startsWith("service:") &&
+          !entry.deleted &&
+          isRecord(entry.value) &&
+          entry.value.baseUrl === undefined,
+      );
+      const format = Math.max(
+        state.format ?? 1,
+        secrets ? AI_SYNC_SECRETS_FORMAT : models ? AI_SYNC_MODELS_FORMAT : 1,
+      );
       const answer = await access.change({
         account,
         entries,
         keys: given,
-        ...(enable && { enable: true }),
         ...(format > 1 && { format }),
       });
       if (answer.state.account !== account)
         throw new CloudOtherAccount("Somebody else is signed in");
-      enable = false;
       await this.#lock(account, async () => {
         const after = await this.#readState(account);
         if (!after) return;
@@ -1005,24 +1099,19 @@ export class AiSync {
       await this.#options.account?.refresh();
       return;
     }
-    const problem: SyncState["problem"] | "off" =
-      error instanceof AiSyncOff
-        ? "off"
-        : error instanceof AiSyncNewer
-          ? "newer"
-          : error instanceof AiSyncTooLarge
-            ? "tooLarge"
-            : globalThis.navigator?.onLine === false
-              ? "offline"
-              : "failed";
+    const problem: SyncState["problem"] =
+      error instanceof AiSyncNewer
+        ? "newer"
+        : error instanceof AiSyncTooLarge
+          ? "tooLarge"
+          : globalThis.navigator?.onLine === false
+            ? "offline"
+            : "failed";
     if (problem === "failed") console.warn("The AI settings could not go with the account", error);
     await this.#lock(account, async () => {
       const state = await this.#readState(account);
       if (!state) return;
-      if (problem === "off") {
-        state.enabled = false;
-        delete state.problem;
-      } else state.problem = problem;
+      state.problem = problem;
       await this.#writeState(account, state);
     });
   }
@@ -1034,38 +1123,27 @@ export class AiSync {
   }
 
   /**
-   * Turns the settings going with the account on or off, for all devices. Off, the platform keeps
-   * nothing of them, keys included; this device keeps what it has. On again, what this device has
-   * goes, merged with what another device that turned it on before gave.
+   * Turns the settings going with the account on or off, on this device. Off, nothing goes or comes
+   * here any more, and this device keeps what it has; the platform and other devices go on as ever.
+   * On again, what this device has and what the platform has are merged, entry by entry, the later
+   * winning: everything goes as changed, and what the platform has comes.
    */
   async setEnabled(on: boolean): Promise<void> {
     const account = this.#scope;
-    const access = this.#options.access;
-    if (account === undefined || !access) return;
-    if (!on) {
-      await access.turnOff(account);
-      await this.#lock(account, async () => {
-        const state = await this.#readState(account);
-        if (!state) return;
-        state.enabled = false;
-        delete state.problem;
-        await this.#writeState(account, state);
-      });
-      return;
-    }
+    if (account === undefined || !this.#options.access) return;
     await this.#lock(account, async () => {
       const state = await this.#readState(account);
       if (!state) return;
-      this.#giveAll(state);
+      state.enabled = on;
+      delete state.problem;
+      // Whatever it had of the platform's is read again, whole.
+      if (on) {
+        state.revision = -1;
+        this.#giveAll(state);
+      }
       await this.#writeState(account, state);
     });
-    try {
-      await this.#push(account, true);
-      await this.sync();
-    } catch (error) {
-      await this.#failed(account, error);
-      throw error;
-    }
+    if (on) await this.sync();
   }
 
   dispose(): void {
@@ -1191,7 +1269,7 @@ export class ScopedKeys implements KeyStore {
     return this.#now.where;
   }
 
-  read(service: string): Promise<string | undefined> {
+  read(service: string): Promise<ServiceSecret | undefined> {
     return this.#now.read(service);
   }
 
@@ -1199,11 +1277,11 @@ export class ScopedKeys implements KeyStore {
     return this.#now.list();
   }
 
-  async write(service: string, key: string): Promise<void> {
+  async write(service: string, secret: ServiceSecret): Promise<void> {
     const account = this.#sync.scope;
     if (account !== undefined && !(await this.#sync.holds(account)))
       throw new Error("The account was signed out of in another window");
-    await this.#now.write(service, key);
+    await this.#now.write(service, secret);
     if (account !== undefined) await this.#sync.keyChanged(account, service, false);
   }
 

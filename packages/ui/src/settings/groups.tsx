@@ -5,27 +5,10 @@ import type { TFunction } from "i18next";
 import { ExternalLink } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import { useLayout, useSession, useWorkbench } from "../app/context.ts";
+import { useSession, useWorkbench } from "../app/context.ts";
 import { GitHubRow, useAccount } from "../cloud/CloudParts.tsx";
-import type { Quality } from "../export/codecs.ts";
-import { DEFAULT_LIST_WIDTH } from "../keyframes/editor.ts";
-import { QUALITY_CHOICES, type QualityChoice } from "../preview/quality.ts";
-import { DEFAULT_HEADER_WIDTH } from "../timeline/editor.ts";
-import type { InputChoice } from "../workbench/input-mode.ts";
-import type { SettingsGroup } from "../workbench/settings-nav.ts";
-import type { SettingId } from "./registry.ts";
 
-import {
-  Button,
-  Choice,
-  GroupPage,
-  RowsHeading,
-  Segmented,
-  SettingRow,
-  Toggle,
-  useGroups,
-  type Option,
-} from "./parts.tsx";
+import { Button, Choice, GroupPage, Segmented, SettingRow, Toggle } from "./parts.tsx";
 import { usageOfChats, clearLocalChats, type ChatsUsage } from "./storage.ts";
 import cloudStyles from "../cloud/CloudSync.module.css";
 import styles from "./Settings.module.css";
@@ -35,19 +18,11 @@ export const REPOSITORY = "https://github.com/animaquill/animaquill";
 
 // ---- 常规
 
-const INPUT_CHOICES: readonly InputChoice[] = ["auto", "mouse", "trackpad", "touch"];
-
 export function GeneralGroup() {
-  const { input } = useWorkbench();
   const { t } = useTranslation();
-  const { choice } = useSyncExternalStore(input.subscribe, input.getSnapshot);
-  const later = (value: string, label: string): Option<string> => ({ value, label, later: true });
   return (
     <GroupPage title={t("settings.groups.general")}>
-      <SettingRow
-        id="general.language"
-        below={<span className={styles.note}>{t("settings.moreLanguages")}</span>}
-      >
+      <SettingRow id="general.language">
         <Choice
           label={t("settings.items.general.language.name")}
           value="zh-CN"
@@ -55,176 +30,16 @@ export function GeneralGroup() {
           onChange={() => {}}
         />
       </SettingRow>
-      <SettingRow id="general.theme">
-        <Segmented
-          label={t("settings.items.general.theme.name")}
-          value="dark"
-          options={[
-            { value: "dark", label: t("settings.theme.dark") },
-            later("light", t("settings.theme.light")),
-            later("system", t("settings.theme.system")),
-          ]}
-          onChange={() => {}}
-        />
-      </SettingRow>
-      <SettingRow id="general.fontSize">
-        <Segmented
-          label={t("settings.items.general.fontSize.name")}
-          value="standard"
-          options={[
-            later("small", t("settings.fontSize.small")),
-            { value: "standard", label: t("settings.fontSize.standard") },
-            later("large", t("settings.fontSize.large")),
-          ]}
-          onChange={() => {}}
-        />
-      </SettingRow>
-      <SettingRow id="general.input">
-        <Choice
-          label={t("settings.items.general.input.name")}
-          value={choice}
-          options={INPUT_CHOICES.map((value) => ({ value, label: t(`input.${value}`) }))}
-          onChange={(value) => input.choose(value)}
-        />
-      </SettingRow>
-      <LayoutRow />
-      <SeeAlso />
     </GroupPage>
-  );
-}
-
-/** Where what people may look for here is instead, a link each, to go there and see it. */
-function SeeAlso() {
-  const { settingsNav } = useWorkbench();
-  const { t } = useTranslation();
-  const groups = useGroups();
-  const link = (group: SettingsGroup, item: SettingId, words: string) => (
-    <button
-      type="button"
-      className={styles.link}
-      onClick={() => settingsNav.go({ group, depth: 1, item })}
-    >
-      {words}
-    </button>
-  );
-  return (
-    <>
-      <RowsHeading>{t("settings.seeAlso")}</RowsHeading>
-      {groups.includes("cloud") && (
-        <p className={styles.note} data-testid="settings-see-cloud">
-          {t("settings.seeAlsoLinks.cloud")}{" "}
-          {link("cloud", "cloud.newProjectsInCloud", t("settings.seeAlsoLinks.cloudGroup"))}
-          {t("settings.seeAlsoLinks.tail")}
-        </p>
-      )}
-      <p className={styles.note} data-testid="settings-see-editing">
-        {t("settings.seeAlsoLinks.editing")}{" "}
-        {link("editing", "editing.snapping", t("settings.seeAlsoLinks.editingGroup"))}
-        {t("settings.seeAlsoLinks.tail")}
-      </p>
-    </>
-  );
-}
-
-/**
- * The layouts: which one this window shows, and managing them: renaming and deleting people's own,
- * and putting the one shown back as it was, with the sizes dragged in the timeline and keyframes.
- */
-function LayoutRow() {
-  const workbench = useWorkbench();
-  const { layout, dialogs, timeline, keyframes } = workbench;
-  const { t } = useTranslation();
-  const { layout: current, layouts } = useLayout();
-  const [managing, setManaging] = useState(false);
-  const own = layouts.filter((choice) => choice.custom);
-
-  const rename = async (id: string, name: string) => {
-    const next = await dialogs.prompt({
-      title: t("layout.renameTitle"),
-      value: name,
-      confirm: t("layout.renameConfirm"),
-    });
-    if (next !== undefined) layout.rename(id, next);
-  };
-  const remove = async (id: string, name: string) => {
-    const first = layouts[0]?.title(t) ?? "";
-    const sure = await dialogs.confirm({
-      title: t("layout.deleteTitle", { name }),
-      message: t("layout.deleteMessage", { first }),
-      confirm: t("layout.deleteConfirm"),
-      danger: true,
-    });
-    if (sure) layout.remove(id);
-  };
-  const reset = async () => {
-    const name = layouts.find((choice) => choice.id === current)?.title(t) ?? "";
-    const sure = await dialogs.confirm({
-      title: t("settings.layout.resetTitle", { name }),
-      message: t("settings.layout.resetMessage"),
-      confirm: t("settings.layout.reset"),
-    });
-    if (!sure) return;
-    layout.resetLayout();
-    timeline.setHeaderWidth(DEFAULT_HEADER_WIDTH);
-    timeline.saveHeaderWidth();
-    keyframes.setListWidth(DEFAULT_LIST_WIDTH);
-    keyframes.saveListWidth();
-  };
-
-  return (
-    <SettingRow
-      id="general.layout"
-      below={
-        managing && (
-          <div className={styles.manage} data-testid="settings-layouts">
-            {own.length === 0 && (
-              <span className={styles.note}>{t("settings.layout.noneOwn")}</span>
-            )}
-            {own.map((choice) => {
-              const name = choice.title(t);
-              return (
-                <div key={choice.id} className={styles.manageRow} data-layout={choice.id}>
-                  <span className={styles.manageName}>{name}</span>
-                  <Button onClick={() => void rename(choice.id, name)}>
-                    {t("settings.layout.rename")}
-                  </Button>
-                  <Button danger onClick={() => void remove(choice.id, name)}>
-                    {t("settings.layout.delete")}
-                  </Button>
-                </div>
-              );
-            })}
-            <div className={styles.manageRow}>
-              <span className={styles.manageName}>{t("settings.layout.resetHelp")}</span>
-              <Button onClick={() => void reset()}>{t("settings.layout.reset")}</Button>
-            </div>
-          </div>
-        )
-      }
-    >
-      <Choice
-        label={t("settings.items.general.layout.name")}
-        value={current}
-        options={layouts.map((choice) => ({ value: choice.id, label: choice.title(t) }))}
-        onChange={(id) => layout.switchLayout(id)}
-      />
-      <Button onClick={() => setManaging(!managing)}>
-        {t(managing ? "settings.layout.done" : "settings.layout.manage")}
-      </Button>
-    </SettingRow>
   );
 }
 
 // ---- 编辑
 
 export function EditingGroup() {
-  const { trials, timeline } = useWorkbench();
+  const { trials } = useWorkbench();
   const { t } = useTranslation();
   const { enabled, count } = useSyncExternalStore(trials.subscribe, trials.getSnapshot);
-  const { snapping, overwriting, multiSelecting } = useSyncExternalStore(
-    timeline.subscribe,
-    timeline.getSnapshot,
-  );
   return (
     <GroupPage title={t("settings.groups.editing")}>
       <SettingRow
@@ -242,31 +57,6 @@ export function EditingGroup() {
           onChange={(on) => trials.setEnabled(on)}
         />
       </SettingRow>
-      <RowsHeading>{t("settings.timeline")}</RowsHeading>
-      <SettingRow id="editing.snapping">
-        <Toggle
-          label={t("settings.items.editing.snapping.name")}
-          checked={snapping}
-          onChange={(on) => on !== snapping && timeline.toggleSnapping()}
-        />
-      </SettingRow>
-      <SettingRow id="editing.overwriting">
-        <Toggle
-          label={t("settings.items.editing.overwriting.name")}
-          checked={overwriting}
-          onChange={(on) => on !== overwriting && timeline.toggleOverwriting()}
-        />
-      </SettingRow>
-      <SettingRow id="editing.multiSelecting">
-        <Toggle
-          label={t("settings.items.editing.multiSelecting.name")}
-          checked={multiSelecting}
-          onChange={(on) => on !== multiSelecting && timeline.toggleMultiSelecting()}
-        />
-      </SettingRow>
-      <SettingRow id="editing.timecode">
-        <span className={styles.value}>{t("settings.timecodeValue")}</span>
-      </SettingRow>
     </GroupPage>
   );
 }
@@ -274,26 +64,11 @@ export function EditingGroup() {
 // ---- 预览和播放
 
 export function PlaybackGroup() {
-  const { previewQuality, proxyOffer } = useWorkbench();
+  const { proxyOffer } = useWorkbench();
   const { t } = useTranslation();
-  const { choice } = useSyncExternalStore(previewQuality.subscribe, previewQuality.getSnapshot);
   const offer = useSyncExternalStore(proxyOffer.subscribe, proxyOffer.getSnapshot);
   return (
     <GroupPage title={t("settings.groups.playback")}>
-      <SettingRow
-        id="playback.quality"
-        below={<span className={styles.note}>{t(`preview.quality.about.${choice}`)}</span>}
-      >
-        <Choice<QualityChoice>
-          label={t("settings.items.playback.quality.name")}
-          value={choice}
-          options={QUALITY_CHOICES.map((value) => ({
-            value,
-            label: t(`preview.quality.${value}`),
-          }))}
-          onChange={(value) => previewQuality.choose(value)}
-        />
-      </SettingRow>
       <SettingRow id="playback.proxyOffer">
         <Toggle
           label={t("settings.items.playback.proxyOffer.name")}
@@ -307,15 +82,11 @@ export function PlaybackGroup() {
 
 // ---- 导出
 
-const QUALITIES: readonly Quality[] = ["small", "standard", "high"];
-
 export function ExportGroup() {
   const { videos } = useWorkbench();
   const { t } = useTranslation();
-  const [quality, setQuality] = useState<Quality>();
   const [failed, setFailed] = useState<ReadonlyMap<VideoCodecName, number>>();
   const read = useCallback(() => {
-    void videos.defaultQuality().then(setQuality);
     void videos.hardwareFailed().then(setFailed);
   }, [videos]);
   useEffect(read, [read]);
@@ -323,22 +94,6 @@ export function ExportGroup() {
   const failures = failed ? [...failed.keys()] : [];
   return (
     <GroupPage title={t("settings.groups.export")}>
-      <SettingRow id="export.quality">
-        {quality && (
-          <Segmented<Quality>
-            label={t("settings.items.export.quality.name")}
-            value={quality}
-            options={QUALITIES.map((value) => ({
-              value,
-              label: t(`export.video.qualities.${value}`),
-            }))}
-            onChange={(value) => {
-              setQuality(value);
-              void videos.setDefaultQuality(value);
-            }}
-          />
-        )}
-      </SettingRow>
       <SettingRow
         id="export.hardware"
         below={
@@ -505,11 +260,6 @@ export function AccountGroup() {
       <GroupPage title={t("settings.groups.account")}>
         <div className={styles.signIn} data-testid="settings-sign-in">
           <p>{t("settings.account.signedOut")}</p>
-          <ul>
-            <li>{t("settings.account.why.cloud")}</li>
-            <li>{t("settings.account.why.sync")}</li>
-            <li>{t("settings.account.why.ai")}</li>
-          </ul>
           {who.status === "signedOut" ? (
             <button
               type="button"
@@ -626,15 +376,29 @@ export function StorageGroup() {
   );
 }
 
+/**
+ * Whether the browser keeps what is stored here until people clear it: asked for on its own, the
+ * first time; only where the browser said no does anything show, to ask again.
+ */
 function PersistRow() {
   const { persistence, notifications } = useWorkbench();
   const { t } = useTranslation();
   const [kept, setKept] = useState<boolean>();
   const [asking, setAsking] = useState(false);
   useEffect(() => {
-    void persistence?.persisted().then(setKept);
+    if (!persistence) return;
+    let gone = false;
+    void (async () => {
+      const now =
+        (await persistence.persisted()) ||
+        (!persistence.wasAsked() && (await persistence.persist()));
+      if (!gone) setKept(now);
+    })();
+    return () => {
+      gone = true;
+    };
   }, [persistence]);
-  if (!persistence) return null;
+  if (!persistence || kept !== false) return null;
   const ask = async () => {
     setAsking(true);
     const now = await (persistence.askAgain ?? persistence.persist)();
@@ -643,26 +407,10 @@ function PersistRow() {
     if (!now) notifications.push(t("settings.persist.refused"));
   };
   return (
-    <SettingRow
-      id="storage.persist"
-      below={
-        kept !== undefined && (
-          <span
-            className={styles.status}
-            data-testid="settings-persist"
-            data-state={kept ? "kept" : "notKept"}
-          >
-            {t(kept ? "settings.persist.kept" : "settings.persist.notKept")}
-            {!kept && persistence.clearsWhenIdle && ` ${t("settings.persist.idle")}`}
-          </span>
-        )
-      }
-    >
-      {kept === false && (
-        <Button disabled={asking} onClick={() => void ask()}>
-          {t("settings.persist.ask")}
-        </Button>
-      )}
+    <SettingRow id="storage.persist" name={t("settings.persist.notKept")}>
+      <Button disabled={asking} onClick={() => void ask()}>
+        {t("settings.persist.ask")}
+      </Button>
     </SettingRow>
   );
 }
@@ -683,23 +431,19 @@ function KeysRow() {
   return (
     <SettingRow
       id="storage.keys"
-      below={
-        <span
-          className={styles.status}
-          data-testid="ai-keys-where"
-          title={snapshot.keysWhere}
-          data-where={snapshot.keysWhere}
-        >
-          {snapshot.keysWhere === undefined
-            ? t("ai.keysNowhere")
-            : snapshot.keyed.size === 0
-              ? t("settings.keys.none")
-              : t("settings.keys.count", { count: snapshot.keyed.size })}
+      name={
+        <span data-testid="ai-keys-where" data-where={snapshot.keysWhere}>
+          {t("settings.keys.line", { count: snapshot.keyed.size })}
         </span>
+      }
+      below={
+        snapshot.keysWhere === undefined && (
+          <span className={styles.status}>{t("ai.keysNowhere")}</span>
+        )
       }
     >
       <Button danger disabled={snapshot.keyed.size === 0} onClick={() => void removeAll()}>
-        {t("ai.removeAllKeys")}
+        {t("settings.keys.removeAll")}
       </Button>
     </SettingRow>
   );
@@ -751,23 +495,15 @@ function ChatsRow() {
   return (
     <SettingRow
       id="storage.chats"
-      below={
-        <span className={styles.status} data-testid="settings-chats">
+      name={
+        <span data-testid="settings-chats">
           {usage === undefined
-            ? t("settings.space.reading")
+            ? t("settings.chats.reading")
             : usage === "failed"
               ? t("settings.chats.failed")
-              : t("settings.chats.usage", {
-                  count: usage.all.count,
-                  size: formatBytes(t, usage.all.bytes),
-                  local: usage.local.count,
-                }) +
-                (usage.images.count > 0
-                  ? t("settings.chats.images", {
-                      count: usage.images.count,
-                      size: formatBytes(t, usage.images.bytes),
-                    })
-                  : "")}
+              : t("settings.chats.line", {
+                  size: formatBytes(t, usage.all.bytes + usage.images.bytes),
+                })}
         </span>
       }
     >
@@ -845,7 +581,6 @@ export function AboutGroup() {
           {t("settings.about.performanceOpen")}
         </Button>
       </SettingRow>
-      <SettingRow id="about.errors" />
     </GroupPage>
   );
 }

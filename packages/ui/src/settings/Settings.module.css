@@ -272,16 +272,8 @@
   height: 100%;
 }
 
-.wholeWhere {
-  position: absolute;
-  top: 14px;
-  right: 22px;
-  z-index: 1;
-}
-
-.whole[data-group="models"] .wholeWhere {
-  top: 4px;
-  right: 12px;
+.crumbWhere {
+  margin: 0 4px 0 2px;
 }
 
 .scroll {
@@ -376,20 +368,29 @@
   justify-content: flex-start;
 }
 
+.nameLine {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
 .where {
+  display: inline-flex;
   flex: none;
-  padding: 1px 6px;
+  width: 13px;
+  height: 13px;
   color: var(--aq-text-muted);
-  font-size: 11px;
-  font-weight: 400;
-  white-space: nowrap;
-  border: 1px solid var(--aq-border);
-  border-radius: 3px;
+  vertical-align: -2px;
+}
+
+.where svg {
+  width: 100%;
+  height: 100%;
 }
 
 .where[data-where="account"] {
   color: var(--aq-cloud);
-  border-color: color-mix(in srgb, var(--aq-cloud) 50%, transparent);
 }
 
 .segmented {
@@ -593,28 +594,6 @@
   border-radius: 3px;
 }
 
-.manage {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-  padding: 8px 10px;
-  background: var(--aq-bg-input);
-  border-radius: 4px;
-}
-
-.manageRow {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.manageName {
-  flex: 1;
-  min-width: 0;
-  color: var(--aq-text);
-}
-
 .signIn {
   max-width: 560px;
   margin-top: 8px;
@@ -623,12 +602,6 @@
 
 .signIn p {
   margin: 0 0 4px;
-}
-
-.signIn ul {
-  margin: 0 0 14px;
-  padding-left: 18px;
-  color: var(--aq-text-muted);
 }
 
 .picture {

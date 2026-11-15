@@ -8,8 +8,9 @@
  * when it last changed (`at`), and an entry taken away stays as such (`deleted`), the newest
  * `DELETED_KEPT` of them. Two copies are merged entry by entry, the later wins, so that two devices
  * that each add a service keep both. What an entry holds is the editor's to read: the platform only
- * checks that it is made as such an entry is, see `checkAiEntry`. Keys of services are entries of
- * their own (`AiSyncKey`), which the platform seals before they go into its database.
+ * checks that it is made as such an entry is, see `checkAiEntry`. What is secret of a service (its
+ * key, address and headers, `ServiceSecret`) goes apart (`AiSyncKey`), which the platform seals
+ * before it goes into its database: the entries have none of it.
  */
 
 /**
@@ -17,9 +18,15 @@
  * has each model of a service as an entry of its own (`model:<service>/<model>`): an editor of
  * format 1 makes its settings without them, and would write that back as all there is.
  */
-export const AI_SYNC_FORMAT = 2;
+export const AI_SYNC_FORMAT = 3;
 /** The first format with entries of models, which an editor gives once it has any. */
 export const AI_SYNC_MODELS_FORMAT = 2;
+/**
+ * The first format whose services and models have their address and headers in their
+ * `ServiceSecret` (0.3.72): an editor of format 2 reads a service without an address as none, and
+ * would write its settings back without it.
+ */
+export const AI_SYNC_SECRETS_FORMAT = 3;
 /** All entries of a person together, as JSON, at most. */
 export const AI_SYNC_BYTES = 512 * 1024;
 /** One entry at most: an installed pack can be 256 KB. */
@@ -29,6 +36,8 @@ export const AI_SYNC_BATCH = 500;
 export const AI_SYNC_KEYS = 100;
 /** How long a key of a service can be, in characters. */
 export const AI_KEY_LENGTH = 8192;
+/** All of what is secret of one service, as JSON, at most: its models' headers included. */
+export const AI_SECRET_BYTES = 64 * 1024;
 /**
  * How many entries taken away a person's settings keep as such, and as many keys, the newest: the
  * oldest beyond go. Each is only a name and a time.
@@ -40,10 +49,28 @@ export type AiEntry =
   | { readonly at: number; readonly value: unknown; readonly deleted?: undefined }
   | { readonly at: number; readonly deleted: true; readonly value?: undefined };
 
-/** The key of a service as it goes with the account; `key` is missing where it was taken away. */
+/** Headers people send a service or a model, by their names. */
+export type SecretHeaders = Readonly<Record<string, string>>;
+
+/**
+ * What is secret of a service people set up, kept apart from its settings and sealed on a platform
+ * (docs/design/settings-and-properties.md of AnimaQuill Cloud, 6.5): its key, its address and the
+ * headers that go with it, and the same of each of its models that has its own, by the id of the
+ * model. All of it goes, and is kept, as one.
+ */
+export interface ServiceSecret {
+  readonly key?: string;
+  readonly baseUrl?: string;
+  readonly headers?: SecretHeaders;
+  readonly models?: Readonly<
+    Record<string, { readonly baseUrl?: string; readonly headers?: SecretHeaders }>
+  >;
+}
+
+/** What is secret of a service as it goes with the account, see `ServiceSecret`. */
 export type AiSyncKey =
-  | { readonly at: number; readonly key: string; readonly deleted?: undefined }
-  | { readonly at: number; readonly deleted: true; readonly key?: undefined };
+  | { readonly at: number; readonly secret: ServiceSecret; readonly deleted?: undefined }
+  | { readonly at: number; readonly deleted: true; readonly secret?: undefined };
 
 /**
  * The name of an entry: a kind, and after a colon what it is of, such as `service:<id>` or
@@ -107,6 +134,56 @@ const textsOrNothing = (value: unknown): boolean =>
   value === undefined ||
   (isRecord(value) && Object.values(value).every((each) => isText(each, 4000)));
 
+/** Headers as a secret has them: up to 64, names of up to 200 characters, values of up to 8000. */
+function readSecretHeaders(value: unknown): SecretHeaders | undefined | false {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) return false;
+  const entries = Object.entries(value);
+  if (entries.length > 64) return false;
+  for (const [name, each] of entries)
+    if (name === "" || name.length > 200 || !isText(each, 8000)) return false;
+  return entries.length > 0 ? (value as SecretHeaders) : undefined;
+}
+
+/**
+ * What is secret of a service as it can be kept, see `ServiceSecret`, or undefined where anything of
+ * it is not as it should be, or it is larger than `AI_SECRET_BYTES`. Whatever else it has is left
+ * out. What an address or a header is like is the editor's to check, as it is of the settings: here
+ * only that each is a text.
+ */
+export function readServiceSecret(value: unknown): ServiceSecret | undefined {
+  if (!isRecord(value)) return undefined;
+  const { key, baseUrl, headers, models } = value;
+  if (key !== undefined && (typeof key !== "string" || key === "" || key.length > AI_KEY_LENGTH))
+    return undefined;
+  if (baseUrl !== undefined && !isText(baseUrl)) return undefined;
+  const ownHeaders = readSecretHeaders(headers);
+  if (ownHeaders === false) return undefined;
+  let own: Record<string, { baseUrl?: string; headers?: SecretHeaders }> | undefined;
+  if (models !== undefined) {
+    if (!isRecord(models) || Object.keys(models).length > 1000) return undefined;
+    own = {};
+    for (const [id, model] of Object.entries(models)) {
+      if (id === "" || id.length > 300 || !isRecord(model)) return undefined;
+      if (model.baseUrl !== undefined && !isText(model.baseUrl)) return undefined;
+      const modelHeaders = readSecretHeaders(model.headers);
+      if (modelHeaders === false) return undefined;
+      if (model.baseUrl === undefined && modelHeaders === undefined) continue;
+      own[id] = {
+        ...(model.baseUrl !== undefined && { baseUrl: model.baseUrl as string }),
+        ...(modelHeaders && { headers: modelHeaders }),
+      };
+    }
+  }
+  const secret: ServiceSecret = {
+    ...(key !== undefined && { key }),
+    ...(baseUrl !== undefined && { baseUrl: baseUrl as string }),
+    ...(ownHeaders && { headers: ownHeaders }),
+    ...(own && Object.keys(own).length > 0 && { models: own }),
+  };
+  return jsonBytes(secret) > AI_SECRET_BYTES ? undefined : secret;
+}
+
 export const isEntryName = (name: unknown): name is string =>
   typeof name === "string" && ENTRY_NAME.test(name);
 
@@ -117,8 +194,8 @@ export const isEntryName = (name: unknown): name is string =>
  */
 export function checkAiEntry(name: string, value: unknown): boolean {
   if (!isEntryName(name) || value === undefined) return false;
-  // The headers people send a service or a model are theirs to name (the settings remind them that
-  // they go as they are); anything else under the name of a secret is not taken.
+  // The headers an editor of format 2 sent with a service or a model are theirs to name; anything
+  // else under the name of a secret is not taken. Format 3 has them in the `ServiceSecret`.
   const named =
     isRecord(value) && isRecord(value.headers) && /^(?:service|model):/.test(name)
       ? { ...value, headers: undefined }
@@ -136,8 +213,7 @@ export function checkAiEntry(name: string, value: unknown): boolean {
         value.id === of &&
         isText(value.kind, 100) &&
         isText(value.name) &&
-        isText(value.baseUrl) &&
-        !urlHasSecret(value.baseUrl) &&
+        (value.baseUrl === undefined || (isText(value.baseUrl) && !urlHasSecret(value.baseUrl))) &&
         (value.route === "direct" || value.route === "relay") &&
         Array.isArray(value.enabled) &&
         value.enabled.every((model) => isText(model, 300)) &&

@@ -2,8 +2,14 @@ import { IDBFactory } from "fake-indexeddb";
 import { describe, expect, it } from "vitest";
 import { AiSyncBusy, browserAiSyncAccess, browserChatSyncAccess } from "./ai-sync-access.ts";
 import { browserAccountKeys } from "./ai.ts";
-import { checkAiEntry, isLaterEntry, urlHasSecret } from "./ai-sync-rules.ts";
-import { AiSyncNewer, AiSyncOff, AiSyncTooLarge, ChatNewer, CloudOtherAccount } from "./index.ts";
+import {
+  AI_SECRET_BYTES,
+  checkAiEntry,
+  isLaterEntry,
+  readServiceSecret,
+  urlHasSecret,
+} from "./ai-sync-rules.ts";
+import { AiSyncNewer, AiSyncTooLarge, ChatNewer, CloudOtherAccount } from "./index.ts";
 
 /** The AI settings, keys and conversations that go with an account, as the browser reaches them. */
 
@@ -26,14 +32,19 @@ describe("the AI settings of an account, over HTTP", () => {
           sent.push({ url: input, body: JSON.parse(String(init.body)), headers: init.headers });
         const state = {
           account: "u",
-          enabled: true,
           revision: 3,
           format: 1,
           entries: {
             "field:a": { at: clock + 3600_000, value: 1 },
             "service:x": { at: 5, deleted: true },
           },
-          keys: { s1: { at: clock + 3600_000, key: "sk" } },
+          keys: {
+            s1: { at: clock + 3600_000, key: "sk" },
+            s2: {
+              at: 7,
+              secret: { key: "sk-2", baseUrl: "https://gw.example", headers: { a: "b" } },
+            },
+          },
         };
         return init?.method === "POST"
           ? json(200, { now: clock + 3600_000, refused: ["field:b"], state })
@@ -42,6 +53,13 @@ describe("the AI settings of an account, over HTTP", () => {
     });
     const read = await access.read();
     expect("entries" in read && read.entries["field:a"]).toEqual({ at: 1_000_015, value: 1 });
+    // A key alone, as a platform of before has it, is what is secret of its service.
+    expect("keys" in read && read.keys.s1).toEqual({ at: 1_000_015, secret: { key: "sk" } });
+    expect("keys" in read && read.keys.s2?.secret).toEqual({
+      key: "sk-2",
+      baseUrl: "https://gw.example",
+      headers: { a: "b" },
+    });
     const changed = await access.change({
       account: "u",
       entries: [{ name: "field:a", at: 1, value: 2 }],
@@ -62,7 +80,6 @@ describe("the AI settings of an account, over HTTP", () => {
       browserAiSyncAccess({ api: (path) => path, fetch: async () => json(status, body, headers) });
     const change = (status: number, body: unknown, headers?: Record<string, string>) =>
       answering(status, body, headers).change({ account: "u", entries: [], keys: [] });
-    await expect(change(409, { error: "off" })).rejects.toBeInstanceOf(AiSyncOff);
     await expect(change(409, { error: "newer" })).rejects.toBeInstanceOf(AiSyncNewer);
     await expect(change(409, { error: "otherAccount" })).rejects.toBeInstanceOf(CloudOtherAccount);
     await expect(change(413, { error: "tooLarge" })).rejects.toBeInstanceOf(AiSyncTooLarge);
@@ -74,7 +91,6 @@ describe("the AI settings of an account, over HTTP", () => {
       answering(200, {
         now: 1,
         account: "u",
-        enabled: true,
         revision: 1,
         format: 1,
         entries: { "Bad Name": { at: 1, value: 1 } },
@@ -100,13 +116,13 @@ describe("keys of accounts in this browser", () => {
   it("each account's apart, and gone with it", async () => {
     const factory = new IDBFactory();
     const keys = browserAccountKeys(() => factory);
-    await keys.of("u1").write("s1", "sk-1");
-    await keys.of("u2").write("s1", "sk-2");
-    expect(await keys.of("u1").read("s1")).toBe("sk-1");
+    await keys.of("u1").write("s1", { key: "sk-1", baseUrl: "https://a.example" });
+    await keys.of("u2").write("s1", { key: "sk-2" });
+    expect(await keys.of("u1").read("s1")).toEqual({ key: "sk-1", baseUrl: "https://a.example" });
     expect(await keys.of("u2").list()).toEqual(["s1"]);
     await keys.forget("u1");
     expect(await keys.of("u1").list()).toEqual([]);
-    expect(await keys.of("u2").read("s1")).toBe("sk-2");
+    expect(await keys.of("u2").read("s1")).toEqual({ key: "sk-2" });
   });
 });
 
@@ -240,5 +256,40 @@ describe("the pictures of conversations of an account, over HTTP", () => {
     expect(new Uint8Array(await got!.arrayBuffer())).toEqual(bytes);
     stored = new Uint8Array([9, 9, 9, 9]);
     await expect(access.getImage!(ref)).rejects.toThrow();
+  });
+});
+
+describe("what is secret of a service", () => {
+  it("is its key, address and headers, and those of its models, as texts", () => {
+    const secret = {
+      key: "sk-1",
+      baseUrl: "https://gw.example/v1?key=abc",
+      headers: { "api-key": "sk-2" },
+      models: { "m/1": { baseUrl: "https://other.example", headers: { a: "b" } }, empty: {} },
+    };
+    // Its address can carry a key now: it is sealed as the key is.
+    expect(readServiceSecret({ ...secret, extra: 1 })).toEqual({
+      ...secret,
+      models: { "m/1": secret.models["m/1"] },
+    });
+    expect(readServiceSecret({})).toEqual({});
+    for (const wrong of [
+      "sk",
+      { key: "" },
+      { key: 1 },
+      { baseUrl: 1 },
+      { headers: { a: 1 } },
+      { headers: "a" },
+      { models: { m: { headers: { a: 1 } } } },
+      { key: "x".repeat(AI_SECRET_BYTES) },
+    ])
+      expect(readServiceSecret(wrong), JSON.stringify(wrong).slice(0, 80)).toBeUndefined();
+  });
+
+  it("is not in a service of format 3, which has no address", () => {
+    const service = { id: "s", kind: "custom", name: "s", route: "direct", enabled: [] };
+    expect(checkAiEntry("service:s", service)).toBe(true);
+    expect(checkAiEntry("service:s", { ...service, baseUrl: "https://a.example" })).toBe(true);
+    expect(checkAiEntry("service:s", { ...service, baseUrl: "https://u:p@a.example" })).toBe(false);
   });
 });

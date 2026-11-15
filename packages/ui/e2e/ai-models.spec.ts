@@ -360,8 +360,8 @@ test("headers go with every request, a key that is wrong and a model that cannot
   const service = await addGateway(page);
   const settings = settingsOf(page);
 
-  // A header of the gateway's: sent with every request. One whose value looks like a key is
-  // taken, with a reminder; one that fetch cannot send is said so and not taken.
+  // A header of the gateway's: sent with every request, kept as secret as a key, so one that
+  // looks like a key is taken as it is; one that fetch cannot send is said so and not taken.
   await service.getByTestId("ai-headers").locator("summary").click();
   await service.getByRole("button", { name: "＋ 加一个请求头" }).click();
   await service.getByRole("textbox", { name: "名字" }).fill("x-team");
@@ -369,10 +369,9 @@ test("headers go with every request, a key that is wrong and a model that cannot
   await service.getByRole("textbox", { name: "值" }).press("Enter");
   await expect(service.getByTestId("ai-header-problem")).toContainText("只能是英文、数字和符号");
   await service.getByRole("textbox", { name: "值" }).fill("sk-team-0123456789abcdef");
-  await expect(service.getByTestId("ai-header-secret")).toContainText("明文同步到账号");
+  await expect(service.getByTestId("ai-header-secret")).toHaveCount(0);
   await service.getByRole("textbox", { name: "值" }).fill("abc");
   await service.getByRole("textbox", { name: "值" }).press("Enter");
-  await expect(service.getByTestId("ai-header-secret")).toHaveCount(0);
   await expect(service.getByTestId("ai-headers").locator("summary")).toContainText("请求头（1）");
   await service.getByRole("button", { name: "测试连接" }).click();
   await expect(service.getByTestId("ai-test")).toContainText("连上了");
@@ -476,7 +475,10 @@ test("narrow: the service, and the details of a model, one level at a time", asy
   await expect(back).toHaveText("AI 模型");
 });
 
-test("a gateway that takes its key in a header of its own, as Azure's does", async ({ page }) => {
+test("a gateway that takes its key in a header of its own, as Azure's does: a header like any other", async ({
+  page,
+  problems,
+}) => {
   const seen = await pretend(page);
   await openSettingsPage(page, "AI 模型");
   const settings = settingsOf(page);
@@ -484,13 +486,21 @@ test("a gateway that takes its key in a header of its own, as Azure's does", asy
   await wall.locator('[data-testid="ai-kind"][data-kind="openai-compatible"]').click();
   const form = wall.getByTestId("ai-add-form");
   await form.getByLabel("地址").fill(GATEWAY);
-  await form.getByLabel("Key 用哪个请求头").fill("api-key");
-  await form.getByLabel("Key", { exact: true }).fill(KEY);
+  // No cell for which header the key goes in: as pi-web, it goes in the headers.
+  await expect(form.getByLabel("Key 用哪个请求头")).toHaveCount(0);
   await form.getByRole("button", { name: "测试并添加" }).click();
+  // Without its key the gateway says no: added anyway, the key goes in a header next.
+  await form.getByTestId("ai-add-anyway").click();
   const service = settings.getByTestId("ai-service");
+  await expect(service.getByTestId("ai-key-header")).toHaveCount(0);
+  await service.getByTestId("ai-headers").locator("summary").click();
+  await service.getByRole("button", { name: "＋ 加一个请求头" }).click();
+  await service.getByRole("textbox", { name: "名字" }).fill("api-key");
+  await service.getByRole("textbox", { name: "值" }).fill(KEY);
+  await service.getByRole("textbox", { name: "值" }).press("Enter");
+  await service.getByRole("button", { name: "测试连接" }).click();
   await expect(service.getByTestId("ai-test")).toContainText("连上了");
-  await expect(service.getByTestId("ai-key-header").getByRole("textbox")).toHaveValue("api-key");
-  const listed = seen.find((each) => each.url.endsWith("/models"));
+  const listed = seen.findLast((each) => each.url.endsWith("/models"));
   expect(listed?.headers["api-key"]).toBe(KEY);
   expect(listed?.headers["authorization"]).toBeUndefined();
   await service.getByRole("button", { name: "＋ 手动加" }).click();
@@ -501,12 +511,13 @@ test("a gateway that takes its key in a header of its own, as Azure's does", asy
   const asked = seen.findLast((each) => each.url.endsWith("/chat/completions"));
   expect(asked?.headers["api-key"]).toBe(KEY);
   expect(asked?.headers["authorization"]).toBeUndefined();
-  // The key is not among the settings, which go with the account as they are.
-  expect(await page.evaluate(() => localStorage.getItem("animaquill.ai"))).not.toContain(KEY);
-  // Back to the protocol's own header: the key goes as Bearer again.
-  await service.getByTestId("ai-key-header").getByRole("textbox").fill("");
-  await service.getByTestId("ai-key-header").getByRole("textbox").press("Enter");
-  await service.getByRole("button", { name: "测试连接" }).click();
-  await expect(service.getByTestId("ai-test")).toContainText("连上了");
-  expect(seen.at(-1)?.headers["authorization"]).toBe(`Bearer ${KEY}`);
+  // Neither the header nor the address is among the settings: they are kept with the key.
+  const plain = await page.evaluate(() => localStorage.getItem("animaquill.ai"));
+  expect(plain).not.toContain(KEY);
+  expect(plain).not.toContain(new URL(GATEWAY).host);
+  problems.splice(
+    0,
+    problems.length,
+    ...problems.filter((p) => !/Failed to load resource|401/.test(p)),
+  );
 });

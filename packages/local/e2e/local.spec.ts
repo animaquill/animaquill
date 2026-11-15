@@ -333,7 +333,7 @@ test.describe("the editor on this computer", () => {
       await page.screenshot({ path: test.info().outputPath("local.png") });
       await settings.getByRole("button", { name: "存储和数据", exact: true }).click();
       const keys = settings.getByTestId("ai-keys-where");
-      await expect(keys).toHaveText("现在存了 1 个。");
+      await expect(keys).toHaveText("AI 服务的 key：1 个");
       await expect(keys).toHaveAttribute("data-where", "animaquill-keys");
       await page.screenshot({ path: test.info().outputPath("local-storage.png") });
       await settings.getByRole("button", { name: "关闭设置" }).click();

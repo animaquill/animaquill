@@ -178,9 +178,18 @@ function SettingsDialog() {
               <h2 className={styles.title}>{t("settings.title")}</h2>
               {!narrow && (
                 <span className={styles.crumb} data-testid="settings-crumb">
-                  {found === undefined
-                    ? `› ${title}${opened === undefined ? "" : ` › ${opened}`}${model === undefined ? "" : ` › ${model}`}`
-                    : `› ${t("settings.searchResults")}`}
+                  {found === undefined ? (
+                    <>
+                      {"› "}
+                      {/* The AI settings go with the account as a whole, where they do. */}
+                      {(group === "models" || group === "packs") && (
+                        <GroupWhere where="ai" className={styles.crumbWhere} />
+                      )}
+                      {`${title}${opened === undefined ? "" : ` › ${opened}`}${model === undefined ? "" : ` › ${model}`}`}
+                    </>
+                  ) : (
+                    `› ${t("settings.searchResults")}`
+                  )}
                 </span>
               )}
             </>
@@ -291,7 +300,9 @@ function SettingsDialog() {
                     }}
                   >
                     <span className={styles.resultGroup}>{groupName} ›</span> {name}
-                    <span className={styles.resultHelp}>{t(`settings.items.${item.id}.help`)}</span>
+                    <span className={styles.resultHelp}>
+                      {t(`settings.items.${item.id}.help`, { defaultValue: "" })}
+                    </span>
                   </button>
                 ))
               )}
@@ -319,14 +330,12 @@ function GroupPage({ group }: { readonly group: SettingsGroup }) {
     case "models":
       return (
         <div className={styles.whole} data-group="models">
-          <GroupWhere where="ai" className={styles.wholeWhere} />
           <AiModelsPage />
         </div>
       );
     case "packs":
       return (
         <div className={styles.whole}>
-          <GroupWhere where="ai" className={styles.wholeWhere} />
           <div className={styles.scroll}>
             <ModelPacksSettings />
           </div>
@@ -335,7 +344,6 @@ function GroupPage({ group }: { readonly group: SettingsGroup }) {
     case "cloud":
       return (
         <div className={styles.whole}>
-          <GroupWhere where="account" className={styles.wholeWhere} />
           <CloudSyncPage />
         </div>
       );

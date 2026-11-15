@@ -2,6 +2,8 @@ import { describe, expect, test } from "vitest";
 import {
   EMPTY_AI_SETTINGS,
   readAiSettings,
+  secretsOf,
+  withSecrets,
   writeAiSettings,
   type AiSettings,
 } from "./ai-settings.ts";
@@ -79,8 +81,11 @@ describe("entries of the AI settings", () => {
     const back = readAiSettings(settingsOfEntries(entries));
     expect(back.kind).toBe("ok");
     if (back.kind !== "ok") return;
-    expect(back.from).toBe(3);
-    expect(back.settings.services).toEqual(
+    expect(back.from).toBe(4);
+    // Where each service is, and its headers, are not in the entries: they are secret.
+    const secrets = secretsOf(settings);
+    expect(JSON.stringify([...entries])).not.toContain("https://");
+    expect(withSecrets(back.settings, (id) => secrets.get(id)).services).toEqual(
       settings.services.map((service) => ({
         ...service,
         ...(service.models && {
@@ -125,7 +130,7 @@ describe("entries of the AI settings", () => {
       ["order", ["s"]],
     ]);
     const saved = settingsOfEntries(entries);
-    expect(saved.version).toBe(3);
+    expect(saved.version).toBe(4);
     expect((saved.services as { models: unknown[] }[])[0]?.models).toEqual([
       { id: "a", contextWindow: 5000 },
       { id: "b", contextWindow: 2000 },
@@ -148,13 +153,13 @@ describe("entries of the AI settings", () => {
     ]);
   });
 
-  test("what is not settings of version 2 or 3 gives nothing, rather than everything gone", () => {
+  test("what is not settings of version 2, 3 or 4 gives nothing, rather than everything gone", () => {
     for (const not of [
       undefined,
       null,
       [],
       { services: {} },
-      { version: 4, services: [] },
+      { version: 5, services: [] },
       { services: [] },
     ])
       expect(entriesOfSettings(not), JSON.stringify(not)).toBeUndefined();

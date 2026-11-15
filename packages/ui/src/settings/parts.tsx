@@ -4,13 +4,14 @@ import { useWorkbench } from "../app/context.ts";
 import { useAccount } from "../cloud/CloudParts.tsx";
 import type { SettingId, SettingWhere } from "./registry.ts";
 import { settingItem } from "./registry.ts";
+import { WhereIcon } from "./WhereIcon.tsx";
 import { visibleGroups, type SettingsGroup } from "../workbench/settings-nav.ts";
 import styles from "./Settings.module.css";
 
 /**
- * Where a setting is kept, "这台设备" or "跟账号", for people who are signed in: before that
- * everything is on this device, and nothing is said (4.2). Settings of AI go with the account while
- * their sync is on.
+ * Where a setting is kept, on this device or with the account, for people who are signed in:
+ * before that everything is on this device, and nothing is said (4.2). Settings of AI go with the
+ * account while their sync is on here.
  */
 export function useWhere(where: SettingWhere | undefined): "device" | "account" | undefined {
   const { account, aiSync } = useWorkbench();
@@ -21,22 +22,14 @@ export function useWhere(where: SettingWhere | undefined): "device" | "account" 
   return where;
 }
 
+/** Where a whole group is kept, as `WhereIcon`, once people are signed in. */
 export function GroupWhere(props: {
   readonly where: SettingWhere;
   readonly className?: string | undefined;
 }) {
-  const { t } = useTranslation();
   const shown = useWhere(props.where);
   if (!shown) return null;
-  return (
-    <span
-      className={`${styles.where} ${props.className ?? ""}`}
-      title={t(`settings.whereHelp.${shown}`)}
-      data-where={shown}
-    >
-      {t(`settings.where.${shown}`)}
-    </span>
-  );
+  return <WhereIcon where={shown} className={props.className} />;
 }
 
 /** A group of rows, under its title. */
@@ -60,9 +53,10 @@ export function RowsHeading({ children }: { readonly children: ReactNode }) {
 }
 
 /**
- * One setting: its name and what it does on the left, how it is set on the right, with where it is
- * kept. The name and the words come from the texts of the setting (`settings.items.<id>`), unless
- * given; whatever names the control is the name.
+ * One setting: its name on the left, with where it is kept left of it, and what it does under it
+ * where that needs saying; how it is set on the right. The name and the words come from the texts
+ * of the setting (`settings.items.<id>`), unless given: an empty `help` there says nothing.
+ * Whatever names the control is the name.
  */
 export function SettingRow(props: {
   readonly id: SettingId;
@@ -78,6 +72,7 @@ export function SettingRow(props: {
   const label = useId();
   const item = settingItem(props.id);
   const where = useWhere(item?.where);
+  const help = props.help ?? t(`settings.items.${props.id}.help`, { defaultValue: "" });
   return (
     <div
       className={styles.row}
@@ -87,24 +82,16 @@ export function SettingRow(props: {
       aria-labelledby={label}
     >
       <div className={styles.words}>
-        <span className={styles.name} id={label}>
-          {props.name ?? t(`settings.items.${props.id}.name`)}
+        <span className={styles.nameLine}>
+          {where && <WhereIcon where={where} />}
+          <span className={styles.name} id={label}>
+            {props.name ?? t(`settings.items.${props.id}.name`)}
+          </span>
         </span>
-        <span className={styles.help}>{props.help ?? t(`settings.items.${props.id}.help`)}</span>
+        {help !== "" && <span className={styles.help}>{help}</span>}
         {props.below}
       </div>
-      <div className={styles.control}>
-        {props.children}
-        {where && (
-          <span
-            className={styles.where}
-            title={t(`settings.whereHelp.${where}`)}
-            data-where={where}
-          >
-            {t(`settings.where.${where}`)}
-          </span>
-        )}
-      </div>
+      <div className={styles.control}>{props.children}</div>
     </div>
   );
 }

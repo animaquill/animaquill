@@ -5,7 +5,6 @@ import {
   checkBaseUrl,
   enabledCountOf,
   filterModels,
-  isKeyHeader,
   isLastEnabled,
   kindOf,
   type ModelApi,
@@ -188,7 +187,6 @@ function ServiceFields(props: { readonly service: ServiceConfig; readonly known:
           )}
         </label>
         <RouteField service={service} />
-        {kind?.custom && <KeyHeaderField service={service} />}
         <div className={styles.field}>
           <span>{t("ai.api")}</span>
           {kind?.custom ? (
@@ -330,43 +328,6 @@ function KeyField(props: {
       )}
       {!snapshot.keysWhere && <span className={styles.warning}>{t("ai.keysNowhere")}</span>}
     </div>
-  );
-}
-
-/**
- * The header the key goes in, for a server of one's own: as its protocol puts it unless people
- * name another, such as Azure's `api-key` or `Ocp-Apim-Subscription-Key`. The key stays the key.
- */
-function KeyHeaderField({ service }: { readonly service: ServiceConfig }) {
-  const { ai } = useWorkbench();
-  const { t } = useTranslation();
-  const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
-  const [text, setText] = useDraft(service.keyHeader ?? "");
-  const trimmed = text.trim();
-  const invalid = trimmed !== "" && !isKeyHeader(trimmed);
-  const save = () => {
-    if (invalid || trimmed === (service.keyHeader ?? "")) return;
-    ai.update(service.id, { keyHeader: trimmed });
-  };
-  return (
-    <label className={styles.field} data-testid="ai-key-header">
-      <span>{t("ai.keyHeader.label")}</span>
-      <input
-        className={`${styles.input} ${styles.mono}`}
-        value={text}
-        placeholder={t(`ai.keyHeader.default.${protocolOf(service) ?? "openai-completions"}`)}
-        spellCheck={false}
-        disabled={snapshot.held !== undefined}
-        aria-label={t("ai.keyHeader.label")}
-        aria-invalid={invalid}
-        onChange={(event) => setText(event.target.value)}
-        onBlur={save}
-        onKeyDown={(event) => event.key === "Enter" && save()}
-      />
-      <span className={invalid ? styles.warning : styles.help}>
-        {invalid ? t("ai.headers.problem.name") : t("ai.keyHeader.help")}
-      </span>
-    </label>
   );
 }
 

@@ -64,8 +64,6 @@ export interface StartOrganizerOptions {
    * while not. Always where it is not given.
    */
   readonly allowed?: (account: string) => boolean;
-  /** The platform says people turned it off for the account. */
-  readonly off?: () => void;
   /** Only tests: how the account is gone a round with. */
   readonly sync?: OrganizerSync;
   readonly now?: () => number;
@@ -132,7 +130,6 @@ export class StartOrganizer {
     account,
     cloud,
     allowed,
-    off,
     sync,
     now = Date.now,
     newId = () => crypto.randomUUID(),
@@ -154,7 +151,6 @@ export class StartOrganizer {
               return id !== undefined && (allowed?.(id) ?? true) ? id : undefined;
             },
             otherAccount: () => void account.refresh(),
-            ...(off && { off }),
           })
         : undefined);
   }

@@ -33,7 +33,7 @@ export const isPackEntry = (name: string): boolean => name.startsWith("installed
  */
 export function entriesOfSettings(saved: unknown): Map<string, unknown> | undefined {
   if (!isRecord(saved) || !Array.isArray(saved.services)) return undefined;
-  if (saved.version !== 2 && saved.version !== 3) return undefined;
+  if (saved.version !== 2 && saved.version !== 3 && saved.version !== 4) return undefined;
   const entries = new Map<string, unknown>();
   const order: string[] = [];
   for (const service of saved.services) {
@@ -136,7 +136,7 @@ export function settingsOfEntries(entries: ReadonlyMap<string, unknown>): Record
   };
   return {
     ...fields,
-    version: 3,
+    version: 4,
     services: ids.map(withModels),
     ...(isRecord(chosen) && { default: chosen }),
     ...(Object.keys(reasoningFor).length > 0 && { reasoningFor }),

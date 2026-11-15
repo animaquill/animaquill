@@ -991,12 +991,7 @@ export { browserCloud, browserCloudLinks, webSocketConnection } from "./cloud.ts
 export { browserOrganizer } from "./organizer.ts";
 export { browserCoverAccess, browserCoverStore, memoryCoverStore } from "./covers.ts";
 export { browserOrganizerAccess, OrganizerBusy } from "./organizer-access.ts";
-export {
-  AiSyncBusy,
-  browserAiSyncAccess,
-  browserChatSyncAccess,
-  browserCloudSwitchesAccess,
-} from "./ai-sync-access.ts";
+export { AiSyncBusy, browserAiSyncAccess, browserChatSyncAccess } from "./ai-sync-access.ts";
 export { browserAccountKeys } from "./ai.ts";
 export { browserModelCatalogAccess } from "./model-catalog-access.ts";
 export type { BrowserCoverAccessOptions } from "./covers.ts";

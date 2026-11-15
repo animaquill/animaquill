@@ -7,7 +7,6 @@ import {
   withinTime,
 } from "./answers.ts";
 import {
-  CloudFeatureOff,
   CloudOtherAccount,
   CloudSignedOut,
   ORGANIZER_BATCH,
@@ -139,7 +138,6 @@ export function browserOrganizerAccess(options: BrowserOrganizerAccessOptions): 
       throw new CloudSignedOut("Nobody is signed in");
     if (response.status === 409 && said === "otherAccount")
       throw new CloudOtherAccount("Somebody else is signed in");
-    if (response.status === 409 && said === "off") throw new CloudFeatureOff("Turned off");
     if (response.status === 429) {
       const seconds = Number(response.headers.get("retry-after"));
       throw new OrganizerBusy(Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 60_000);

@@ -10,16 +10,18 @@ export type SettingId = {
 }[keyof Items];
 
 /**
- * Where a setting is kept, as the settings say beside it once people are signed in: on this device
- * only, with the account, or with the account where the AI settings go with it ("ai", see
- * `CloudSync`), else on this device.
+ * Where a setting is kept, as the settings show left of it once people are signed in: on this
+ * device only, with the account, or with the account where the AI settings go with it on this
+ * device ("ai", see `AiSync`), else on this device. The switches of the cloud features are of this
+ * device, whatever they are of.
  */
 export type SettingWhere = "device" | "account" | "ai";
 
 /**
  * One setting, as searching finds it and as the settings go to it: its group, and where it is kept.
- * What it is called, what it does and other words people may look for it by are in the texts, under
- * `settings.items.<id>`: `name`, `help` and `keywords`.
+ * What it is called and other words people may look for it by are in the texts, under
+ * `settings.items.<id>`: `name` and `keywords`, and `help` where what it does needs saying under
+ * its name (most do not: a setting should be clear without it).
  */
 export interface SettingItem {
   readonly id: SettingId;
@@ -34,18 +36,8 @@ export interface SettingItem {
  */
 export const SETTING_ITEMS: readonly SettingItem[] = [
   { id: "general.language", group: "general", where: "device" },
-  { id: "general.theme", group: "general", where: "device" },
-  { id: "general.fontSize", group: "general", where: "device" },
-  { id: "general.input", group: "general", where: "device" },
-  { id: "general.layout", group: "general", where: "device" },
   { id: "editing.trial", group: "editing", where: "device" },
-  { id: "editing.snapping", group: "editing", where: "device" },
-  { id: "editing.overwriting", group: "editing", where: "device" },
-  { id: "editing.multiSelecting", group: "editing", where: "device" },
-  { id: "editing.timecode", group: "editing" },
-  { id: "playback.quality", group: "playback", where: "device" },
   { id: "playback.proxyOffer", group: "playback", where: "device" },
-  { id: "export.quality", group: "export", where: "device" },
   { id: "export.hardware", group: "export", where: "device" },
   { id: "keys.bindings", group: "keys", where: "device" },
   { id: "models.services", group: "models", where: "ai" },
@@ -66,11 +58,10 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
   { id: "account.who", group: "account" },
   { id: "account.github", group: "account" },
   { id: "account.space", group: "account" },
-  { id: "cloud.ai", group: "cloud", where: "account" },
-  { id: "cloud.organizer", group: "cloud", where: "account" },
-  { id: "cloud.chats", group: "cloud", where: "account" },
-  { id: "cloud.newProjectsInCloud", group: "cloud", where: "account" },
-  { id: "cloud.device", group: "cloud", where: "device" },
+  { id: "cloud.ai", group: "cloud", where: "device" },
+  { id: "cloud.organizer", group: "cloud", where: "device" },
+  { id: "cloud.chats", group: "cloud", where: "device" },
+  { id: "cloud.newProjectsInCloud", group: "cloud", where: "device" },
   { id: "storage.persist", group: "storage", where: "device" },
   { id: "storage.keys", group: "storage", where: "device" },
   { id: "storage.chats", group: "storage", where: "device" },
@@ -79,7 +70,6 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
   { id: "about.license", group: "about" },
   { id: "about.feedback", group: "about" },
   { id: "about.performance", group: "about" },
-  { id: "about.errors", group: "about" },
 ];
 
 const itemsById = new Map<string, SettingItem>(SETTING_ITEMS.map((item) => [item.id, item]));
@@ -114,7 +104,7 @@ export function searchSettings(
     const group = t(`settings.groups.${item.group}`);
     const named = fold(`${name} ${group}`);
     const all = fold(
-      `${named} ${t(`settings.items.${item.id}.help`)} ${t(`settings.items.${item.id}.keywords`)}`,
+      `${named} ${t(`settings.items.${item.id}.help`, { defaultValue: "" })} ${t(`settings.items.${item.id}.keywords`)}`,
     );
     if (!words.every((word) => all.includes(word))) continue;
     const rank = words.every((word) => fold(name).includes(word))

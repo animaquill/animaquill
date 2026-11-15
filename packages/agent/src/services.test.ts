@@ -134,18 +134,14 @@ describe("services", () => {
 
   it("list the models of one that takes its key in a header of its own", async () => {
     const seen: Headers[] = [];
-    const listed = await listModels(
-      "openai-completions",
-      "https://azure.example/v1",
-      "k-123456789",
-      {
-        keyHeader: { name: "api-key" },
-        fetch: async (_input, init) => {
-          seen.push(new Headers(init?.headers));
-          return Response.json({ data: [{ id: "a" }] });
-        },
+    // The key is among the service's own headers, and there is no key besides.
+    const listed = await listModels("openai-completions", "https://azure.example/v1", "", {
+      headers: { "api-key": "k-123456789" },
+      fetch: async (_input, init) => {
+        seen.push(new Headers(init?.headers));
+        return Response.json({ data: [{ id: "a" }] });
       },
-    );
+    });
     expect(listed.ok).toBe(true);
     expect(seen[0]?.get("api-key")).toBe("k-123456789");
     expect(seen[0]?.has("authorization")).toBe(false);

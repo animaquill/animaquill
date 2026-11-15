@@ -737,12 +737,8 @@
     "searchNone": "没有和“{{query}}”有关的设置。",
     "later": "在做",
     "where": {
-      "device": "这台设备",
-      "account": "跟账号"
-    },
-    "whereHelp": {
-      "device": "存在这个浏览器里，别的设备上可以不一样。",
-      "account": "跟着账号走，登录同一个账号的设备都一样。"
+      "device": "只在这台设备",
+      "account": "跟账号同步"
     },
     "sections": {
       "ai": "AI",
@@ -767,28 +763,7 @@
       "general": {
         "language": {
           "name": "语言",
-          "help": "界面的语言。AI 回答用你说话的语言，不受这一项影响。",
           "keywords": "language 中文 英文 界面语言 i18n"
-        },
-        "theme": {
-          "name": "颜色主题",
-          "help": "编辑器的配色。预览画面和导出不受影响。",
-          "keywords": "theme 深色 浅色 暗色 亮色 跟随系统 外观 配色 dark light"
-        },
-        "fontSize": {
-          "name": "界面字号",
-          "help": "菜单、面板和聊天的文字大小。",
-          "keywords": "font 字体 字号 文字大小 缩放 外观"
-        },
-        "input": {
-          "name": "输入设备",
-          "help": "决定滚轮、双指和手指怎样操作时间轴。状态栏右下角也能切，改的是同一个值。",
-          "keywords": "input 鼠标 触控板 触屏 触控 滚轮 手势 mouse trackpad touch"
-        },
-        "layout": {
-          "name": "布局",
-          "help": "面板怎么摆。标题栏的布局菜单也能切；这里能改名、删掉自己存的布局，或把现在的布局恢复默认。",
-          "keywords": "layout 布局 面板 选项卡 排布 恢复默认 工作区"
         }
       },
       "editing": {
@@ -796,34 +771,9 @@
           "name": "先试改再保存",
           "help": "手动改属性和关键帧时先进入试改，预览马上生效，保存后才写进项目。关掉后每次改动立即保存。",
           "keywords": "trial 试改 保存 自动保存"
-        },
-        "snapping": {
-          "name": "吸附",
-          "help": "拖动时贴到片段边缘和播放头，按住 Alt 暂时不吸附。时间轴工具栏上的按钮改的是同一个值。",
-          "keywords": "snap 吸附 对齐 时间轴 磁铁"
-        },
-        "overwriting": {
-          "name": "覆盖",
-          "help": "打开后拖到别的片段上会盖住它们；关闭时片段落到最近的空位。时间轴工具栏上的按钮改的是同一个值。",
-          "keywords": "overwrite 覆盖 插入 推开 时间轴"
-        },
-        "multiSelecting": {
-          "name": "多选",
-          "help": "打开后点片段就加入选择，再点一次取消，不用按 Shift，适合触屏。时间轴工具栏上的按钮改的是同一个值。",
-          "keywords": "多选 选择 触屏 时间轴 select"
-        },
-        "timecode": {
-          "name": "时间码",
-          "help": "时间轴和属性里的时间写成“秒:帧”。现在只有这一种。",
-          "keywords": "timecode 时间码 帧 秒 时间格式 帧率 fps"
         }
       },
       "playback": {
-        "quality": {
-          "name": "预览画质",
-          "help": "只影响预览，导出始终是全分辨率、用原片。预览工具栏和状态栏也能切，改的是同一个值。",
-          "keywords": "preview quality 画质 分辨率 清晰度 卡顿 流畅 代理 帧率 fps"
-        },
         "proxyOffer": {
           "name": "卡顿时提示生成代理文件",
           "help": "播放时某个视频解码跟不上，提示你为它生成一份小一些的预览版。关掉后不再提示，资源管理器里右键视频照样能生成。",
@@ -831,11 +781,6 @@
         }
       },
       "export": {
-        "quality": {
-          "name": "默认码率",
-          "help": "导出视频时先选中的码率。导出对话框里选过别的，下次就用那个。",
-          "keywords": "export bitrate quality 码率 画质 导出 视频 文件大小 fps 帧率"
-        },
         "hardware": {
           "name": "显卡编码",
           "help": "显卡编码失败过的格式，30 天内改用处理器编码。显卡驱动更新后可以重试。",
@@ -933,123 +878,74 @@
       "account": {
         "who": {
           "name": "账号",
-          "help": "登录的账号和登录方式，退出登录。",
           "keywords": "account 账号 登录 退出 github 用户"
         },
         "github": {
           "name": "关联 GitHub",
-          "help": "装 AnimaQuill 的 GitHub App，云端项目才能存到你的仓库；装过的可以管理授权的仓库。",
           "keywords": "github app 仓库 关联 授权 安装"
         },
         "space": {
           "name": "云端空间",
-          "help": "大文件放在云端空间里，额度由管理员开通。这里只能看，不能改。",
           "keywords": "storage space quota 空间 额度 用量 云端 素材 大文件"
         }
       },
       "cloud": {
         "ai": {
           "name": "同步模型列表",
-          "help": "AI 服务、key、启用的模型和参数、默认模型、适配包和 AI 聊天的偏好跟账号走。",
+          "help": "key 也会上传，加密存储。",
           "keywords": "sync ai 同步 模型 key 云 账号"
         },
         "organizer": {
           "name": "开始页的收藏和分组",
-          "help": "星标、你建的分组和每个项目放在哪组，跟账号走。",
           "keywords": "sync 收藏 星标 分组 开始页 同步"
         },
         "chats": {
           "name": "云端项目的 AI 对话",
-          "help": "云端项目里和 AI 的对话存到平台，换设备能接着聊。",
           "keywords": "sync chat 对话 聊天 同步 云端"
         },
         "newProjectsInCloud": {
           "name": "新建项目默认存云端",
-          "help": "开着时新建对话框先选中“云端”；关掉先选“本地”。",
           "keywords": "new project 新建 项目 云端 本地 默认"
-        },
-        "device": {
-          "name": "没登录时用的那份 AI 设置",
-          "help": "登录前这台设备上配的 AI 服务，可以并进账号或删掉。",
-          "keywords": "ai 设置 设备 合并 并进 key"
         }
       },
       "storage": {
         "persist": {
           "name": "浏览器会不会清掉数据",
-          "help": "浏览器空间紧张时可能清掉网站存的东西：只在这个浏览器里的项目和还没同步出去的改动会跟着没有。允许长期保存后，只有你自己清除时才会删。",
           "keywords": "persist storage 存储 持久 清除 数据 丢失 浏览器"
         },
         "keys": {
-          "name": "这台设备上的 key",
-          "help": "AI 服务的 key 只存在这个浏览器里，不进项目、不进报告。清除这个网站的数据会一起删掉。",
+          "name": "AI 服务的 key",
           "keywords": "key api key 密钥 删除 清除 浏览器"
         },
         "chats": {
           "name": "AI 对话",
-          "help": "这个浏览器里存的 AI 对话占多大。本地项目的对话只在这里，清除后找不回；云端项目的对话不受影响。",
           "keywords": "chat 对话 聊天 记录 清除 空间 占用"
         },
         "usage": {
           "name": "使用记录",
-          "help": "命令面板和资源浏览里的“最近用过”。清除后从头记。",
           "keywords": "history recent 最近 使用记录 清除 命令面板"
         }
       },
       "about": {
         "version": {
           "name": "版本",
-          "help": "现在用的是哪一版，每一版改了什么。",
           "keywords": "version 版本 更新 更新记录 changelog"
         },
         "license": {
           "name": "许可",
-          "help": "AnimaQuill 的代码以 AGPL-3.0 公开。部分代码改编自 pi-web（MIT）。",
           "keywords": "license 许可 开源 agpl mit pi-web 第三方"
         },
         "feedback": {
           "name": "问题反馈",
-          "help": "遇到问题或有建议，在 GitHub 上提一个 issue。",
           "keywords": "feedback bug issue 反馈 建议 问题"
         },
         "performance": {
           "name": "运行情况",
-          "help": "卡顿或报错时，在“运行情况”选项卡里记录一段，看每帧耗时，由你决定发不发报告。",
           "keywords": "performance diagnostics 性能 运行情况 卡顿 报告 诊断"
-        },
-        "errors": {
-          "name": "错误报告",
-          "help": "出错时编辑器会问你要不要发报告，不会自动发。报告不含项目名、文件名和内容。",
-          "keywords": "error report 错误 报告 崩溃 隐私"
         }
       }
     },
-    "moreLanguages": "更多语言在做。",
-    "theme": {
-      "dark": "深色",
-      "light": "浅色",
-      "system": "跟随系统"
-    },
-    "fontSize": {
-      "small": "小",
-      "standard": "标准",
-      "large": "大"
-    },
-    "seeAlso": "另见",
-    "layout": {
-      "manage": "管理布局…",
-      "done": "收起",
-      "rename": "改名",
-      "delete": "删除",
-      "noneOwn": "还没有自己存的布局。在标题栏的布局菜单里“另存为布局”。",
-      "reset": "恢复默认",
-      "resetHelp": "把现在的布局恢复成默认的排布，时间轴轨道头和关键帧列表的宽度一起恢复。",
-      "resetTitle": "把“{{name}}”恢复默认？",
-      "resetMessage": "面板回到这个布局默认的位置，时间轴轨道头和关键帧列表的宽度也恢复默认。别的布局不变。"
-    },
     "trialPending": "还有 {{count}} 处试改，保存或放弃之后才生效。",
-    "timeline": "时间轴",
-    "timecodeValue": "秒:帧",
     "hardware": {
       "fine": "显卡编码没有失败过，导出时优先用显卡。",
       "failed": "{{codecs}} 上次用显卡编码失败，暂时用处理器编码。",
@@ -1062,43 +958,36 @@
     },
     "account": {
       "via": "用 GitHub 登录",
-      "signedOut": "登录以后多了这些，不登录照样能在这台电脑上做项目：",
-      "why": {
-        "cloud": "云端项目：存到你的 GitHub 仓库，换设备接着做。",
-        "sync": "云同步：模型列表、开始页的收藏和分组、云端项目的 AI 对话跟账号走。",
-        "ai": "云端 AI：在平台上跑 AI，关掉页面也不停。"
-      }
+      "signedOut": "登录以后能用云端项目、云同步和云端 AI。"
     },
     "bytes": "{{value}} {{unit}}",
     "space": {
       "reading": "正在读…",
       "failed": "没读到。",
       "off": "这个平台现在没有开放云端空间。",
-      "none": "还没有云端空间。需要的话请管理员开通。",
+      "none": "还没有云端空间。",
       "used": "已用 {{used}} / 额度 {{limit}}",
       "readonly": "已用 {{used}} / 额度 {{limit}}。云端空间现在只读，暂时不能放新文件。"
     },
     "persist": {
-      "kept": "已允许长期保存：只有你自己清除时才会删。",
-      "notKept": "没允许长期保存：空间紧张时浏览器可能清掉。",
-      "idle": "Safari 七天没打开这个网站也会清掉，装成应用可以避免。",
+      "notKept": "浏览器可能清掉这里的数据",
       "ask": "再申请",
       "refused": "浏览器没有答应。把网站加进书签或装成应用后再试，浏览器更容易答应。"
     },
     "keys": {
-      "count": "现在存了 {{count}} 个。",
-      "none": "现在一个也没存。"
+      "line": "AI 服务的 key：{{count}} 个",
+      "removeAll": "删除全部"
     },
     "chats": {
-      "usage": "{{count}} 个对话，占 {{size}}；其中本地项目的 {{local}} 个。",
-      "failed": "没读到对话占多大。",
-      "clear": "清除本地项目的对话",
+      "line": "AI 对话：占 {{size}}",
+      "reading": "AI 对话：正在读…",
+      "failed": "AI 对话：没读到占多大",
+      "clear": "清除",
       "clearTitle": "清除本地项目的对话？",
       "clearMessage": "{{projects}} 个本地项目的 {{count}} 个对话会从这个浏览器删掉，找不回来，只在这些对话里的图片也一起删掉。云端项目的对话不受影响。",
       "cleared": "清除了 {{count}} 个对话。",
       "clearedButRunning": "清除了 {{count}} 个对话。正在回答的那个项目的对话留着。",
-      "clearFailed": "没能清除对话，请再试一次。",
-      "images": "对话和草稿里的图片 {{count}} 张，占 {{size}}。"
+      "clearFailed": "没能清除对话，请再试一次。"
     },
     "usage": {
       "clear": "清除使用记录",
@@ -1115,13 +1004,6 @@
     },
     "elsewhereWords": {
       "project": "帧率 fps 分辨率 画幅 尺寸 宽高 项目 名称 封面 语言 安全区 背景"
-    },
-    "seeAlsoLinks": {
-      "cloud": "新建项目默认存云端还是本地，在",
-      "cloudGroup": "云同步",
-      "editing": "时间轴的吸附、覆盖、多选（和时间轴工具栏上的按钮是同一个值），在",
-      "editingGroup": "编辑",
-      "tail": "里。"
     },
     "accountMenu": "账号设置…",
     "shotSize": {
@@ -3350,8 +3232,7 @@
         "name": "名字只能用字母、数字和 -，也不能是浏览器或平台自己管的头（比如 Host、Cookie、Set-Cookie、User-Agent，经平台转发时也不会带上）。",
         "value": "值只能是英文、数字和符号（不能有中文或别的文字），最长 4000 个字符。",
         "many": "最多 {{count}} 个请求头，值加起来最多 8 KB。"
-      },
-      "secret": "这个值看起来像密钥。请求头会明文同步到账号，密钥请填在 Key 里（Key 加密存储，可以在“Key 用哪个请求头”里指定它放在哪个头）。"
+      }
     },
     "catalog": {
       "idle": "目录还没加载。",
@@ -3502,18 +3383,7 @@
       "idTaken": "这个服务已经有这个 ID 的模型了。",
       "long": "最多 200 个字符。"
     },
-    "headersLeftOut": "有请求头里有发不出去的字符（只能是英文、数字和符号），已经去掉了：请到“设置 › AI 模型”重新填写。",
-    "keyHeader": {
-      "label": "Key 用哪个请求头",
-      "help": "空着就按接口类型放；Azure 这类网关可以填 api-key 或 Ocp-Apim-Subscription-Key。Key 仍单独加密存储。",
-      "default": {
-        "openai-completions": "Authorization: Bearer（默认）",
-        "openai-responses": "Authorization: Bearer（默认）",
-        "anthropic-messages": "x-api-key（默认）",
-        "google-generative-ai": "x-goog-api-key（默认）",
-        "mistral-conversations": "Authorization: Bearer（默认）"
-      }
-    }
+    "headersLeftOut": "有请求头里有发不出去的字符（只能是英文、数字和符号），已经去掉了：请到“设置 › AI 模型”重新填写。"
   },
   "chat": {
     "model": "模型",
@@ -5098,23 +4968,16 @@
       "syncedAgo": "已同步 · {{ago}}",
       "offline": "离线，连上后同步",
       "failed": "同步出错",
-      "off": "同步已关闭，只在这台设备",
+      "off": "关着，只在这台设备",
       "newer": "账号里的 AI 设置是更新版本的编辑器写的，先刷新页面更新编辑器",
       "tooLarge": "AI 设置超过了平台能存的 512 KB，多半是装的适配包太多"
     },
     "line": "AI 设置：{{status}}",
     "retry": "重试",
-    "offTitle": "关掉模型列表的同步？",
-    "offMessage": "所有设备一起停止同步，平台上存的 AI 设置和 key 会马上删掉。每台设备留着自己现在的那份，之后各改各的。",
-    "offConfirm": "关掉并删掉平台上的",
-    "offFailed": "没能关掉同步：平台没有回应，稍后再试。",
-    "onFailed": "没能打开同步：平台没有回应，稍后再试。",
-    "signOutNote": "退出后，从账号同步下来的 AI 设置和 key 会从这个浏览器删掉，云端项目的对话的本地副本也会删掉；登录前这台设备上的设置回来。",
     "chatCopied": "对话《{{title}}》在另一台设备上也改过，已换成那边的版本；这台设备上的版本另存成了“{{copy}}”，在对话列表里。"
   },
   "cloudSync": {
     "title": "云同步",
-    "intro": "账号 {{name}}。开着的东西会存到平台，你在别的设备登录同一个账号就能接着用。",
     "counts": {
       "services": "{{count}} 个 AI 服务",
       "servicesShort": "{{count}} 个服务",
@@ -5123,19 +4986,16 @@
     },
     "ai": {
       "name": "同步模型列表",
-      "help": "AI 服务、key、启用的模型和参数、默认模型、推理强度、装的适配包和选择、AI 聊天的偏好。key 加密存储，平台能解开（云端 AI 要用）。关掉时平台上的那份删掉，每台设备留着自己的。"
+      "help": "key 也会上传，加密存储。"
     },
     "organizer": {
-      "name": "开始页的收藏和分组",
-      "help": "星标、你建的分组和每个项目放在哪组。关掉以后只在这台设备，平台上的那份删掉。"
+      "name": "开始页的收藏和分组"
     },
     "chats": {
-      "name": "云端项目的 AI 对话",
-      "help": "云端项目里和 AI 的对话存到平台，换设备能接着聊。本地项目的对话始终只在这台设备。关掉以后平台上的对话删掉，每台设备留着自己的。"
+      "name": "云端项目的 AI 对话"
     },
     "newProjectsInCloud": {
-      "name": "新建项目默认存云端",
-      "help": "开着时新建对话框先选中“云端”；关掉先选“本地”。每次新建仍能改选。"
+      "name": "新建项目默认存云端"
     },
     "github": {
       "name": "关联 GitHub",
@@ -5161,40 +5021,12 @@
     },
     "aiStatus": "{{status}} · {{counts}}",
     "retry": "重试",
-    "switchesFailed": "没连上平台，开关暂时看不到最新的，也改不了。",
-    "changeFailed": "没能改：平台没有回应，稍后再试。",
-    "organizerOffTitle": "关掉收藏和分组的同步？",
-    "organizerOffMessage": "所有设备一起停止同步，平台上存的星标和分组会马上删掉。每台设备留着自己现在的那份，之后各改各的。",
-    "chatsOffTitle": "关掉云端项目 AI 对话的同步？",
-    "chatsOffMessage": "所有设备一起停止同步，平台上存的对话会马上删掉。每台设备留着自己现在有的对话，之后各聊各的。",
-    "offConfirm": "关掉并删掉平台上的",
-    "device": {
-      "title": "这台设备上的",
-      "name": "没登录时用的那份 AI 设置",
-      "help": "登录前这台设备上配的 {{counts}}。登录后不再用它，退出登录后回到它。",
-      "merge": "把它并进账号…",
-      "forget": "删掉",
-      "mergeTitle": "把这台设备上的 AI 设置并进账号？",
-      "mergeMessage": "{{counts}}和它们的 key 会放进账号；同类同地址的服务算同一个，账号里已有的设置不变。",
-      "mergeKeys": "key 会上传，加密存储，平台能解开。",
-      "mergeOff": "“同步模型列表”关着，只放进这台设备上账号的那份，不上传。",
-      "mergeConfirm": "并进去",
-      "merged": "已并进账号：{{names}}",
-      "mergedNothing": "没有新的服务要并进去，账号里都有了。",
-      "mergeFailed": "没能并进去，稍后再试。",
-      "forgetTitle": "删掉没登录时用的那份 AI 设置？",
-      "forgetMessage": "这台设备上登录前配的 {{counts}}和 key 会删掉，退出登录后这台设备上就没有 AI 设置了。账号里的不受影响。",
-      "forgetConfirm": "删掉",
-      "mergedHelp": "登录前这台设备上配的 {{counts}}，{{ago}}已并进账号。登录后不再用它，退出登录后回到它；之后在这里改了，才需要再并。",
-      "forgetOnly": "删掉这台设备上的那份"
-    },
-    "githubInAccount": "装 GitHub App、管理授权的仓库，都在“账号”里。",
+    "changeFailed": "没能改，稍后再试。",
     "githubGo": "去账号里管理",
     "chatImages": {
       "usage": "对话里的图片 {{used}} / {{limit}}",
       "manage": "管理",
       "hide": "收起",
-      "intro": "同步到平台的对话图片，按对话列出。删掉一个对话，会把它连同图片从平台和你所有设备上删掉；删掉的图 24 小时后释放空间。",
       "row": "{{project}} · {{count}} 张 · {{size}}",
       "none": "平台上还没有对话图片。",
       "untitled": "（没有标题）",
@@ -5203,44 +5035,28 @@
       "deleteMessage": "这个对话会连同它的图片从平台和你所有设备上删掉，不能恢复。图片占的空间 24 小时后释放。",
       "deleteFailed": "没能删掉，稍后再试。",
       "failed": "没读到对话图片的占用。",
-      "deleteConfirm": "删掉这个对话",
-      "released": "删掉的图 24 小时后释放空间"
+      "deleteConfirm": "删掉这个对话"
     }
   },
   "welcome": {
     "title": "欢迎，{{name}}",
-    "intro": "登录以后这些云功能可以用。选好按“开始使用”，以后在 设置 › 云同步 里随时能改。",
-    "footer": "按哪个都会按上面的开关开始，以后在 设置 › 云同步 里随时能改。",
+    "footer": "以后在 设置 › 云同步 里随时能改。",
     "start": "开始使用",
     "later": "以后再说",
     "close": "关闭",
-    "starting": "正在开始…",
-    "failed": "没连上平台，还没开始。连上后按“再试一次”，或先收起，连上后会再弹。",
     "ai": {
       "name": "同步模型列表",
-      "putMerge": "这台设备上的 {{device}}会放进账号；账号里已经有的 {{count}} 个服务会合并进来。",
-      "put": "这台设备上的 {{device}}会放进账号。",
-      "take": "账号里的 {{count}} 个 AI 服务会出现在这台设备上，连同它们的 key。",
-      "nothing": "以后在这台设备上配的 AI 服务、模型和适配包会放进账号，换设备不用重配。",
-      "keys": "这台设备上的 key 也会上传，加密存储，平台能解开（云端 AI 要用）。",
-      "off": "关着：模型列表只在这台设备上，不上传。",
-      "offDeletes": "账号里已经有的那份（含 key）会从平台删掉，别的设备留着自己的。",
-      "laterKeys": "以后在这里填的 key 也会上传，加密存储，平台能解开（云端 AI 要用）。"
+      "keys": "key 也会上传，加密存储。"
     },
     "organizer": {
-      "name": "开始页的收藏和分组跟账号",
-      "help": "星标和分组在所有设备一样。"
+      "name": "开始页的收藏和分组"
     },
     "chats": {
-      "name": "云端项目的 AI 对话跟账号",
-      "help": "换设备能接着聊。本地项目的对话始终只在这台设备。"
+      "name": "云端项目的 AI 对话"
     },
     "newProjectsInCloud": {
-      "name": "新建项目默认存云端",
-      "help": "新建时先选中“云端”：多设备打开、实时同步、存到 GitHub。每次仍能改选本地。"
-    },
-    "again": "再试一次",
-    "putOff": "先收起"
+      "name": "新建项目默认存云端"
+    }
   },
   "projectProps": {
     "title": "项目属性",

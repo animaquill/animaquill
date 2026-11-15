@@ -558,23 +558,26 @@ describe("what people set of a model, as pi gets it", () => {
   });
 });
 
-describe("a key in a header of people's choosing", () => {
+describe("a key that a server takes in a header of its own, among people's headers", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  /** Asks each protocol for a word, and keeps what headers went. */
+  const KEY = "sk-azure-0123456789";
+  const own = (headers: Record<string, string>) => ({ headers });
+
+  /** Asks each protocol for a word, without a key, and keeps what headers went. */
   async function headersSent(endpoint: Endpoint): Promise<Headers> {
     const sent: Headers[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
       sent.push(new Headers(init?.headers ?? (input instanceof Request ? input.headers : {})));
       return new Response("{}", { status: 500 });
     });
-    await testModel(endpoint, "sk-azure-0123456789");
+    await testModel(endpoint, "");
     return sent[0] ?? new Headers();
   }
 
-  it("goes there alone, for every protocol, and nowhere else", async () => {
+  it("goes there alone, for every protocol: the libraries' own go empty", async () => {
     for (const protocol of [
       "openai-completions",
       "openai-responses",
@@ -586,33 +589,22 @@ describe("a key in a header of people's choosing", () => {
         protocol,
         baseUrl: "https://azure.example/openai",
         model: "gpt-x",
-        keyHeader: "api-key",
+        settings: own({ "api-key": KEY }),
       });
-      expect(headers.get("api-key"), protocol).toBe("sk-azure-0123456789");
-      // Not in the protocol's own header: Google's library always sends one, which goes empty.
-      for (const other of ["authorization", "x-api-key", "x-goog-api-key"])
-        expect(headers.get(other) ?? "", `${protocol} ${other}`).not.toContain("sk-azure");
+      expect(headers.get("api-key"), protocol).toBe(KEY);
+      // Google's library always sends its own, which it does not let go empty.
       if (protocol !== "google-generative-ai")
         expect(headers.has("authorization") || headers.has("x-api-key"), protocol).toBe(false);
     }
-    const apim = await headersSent({
-      service: "openai-compatible",
-      protocol: "openai-completions",
-      baseUrl: "https://apim.example/v1",
-      model: "gpt-x",
-      keyHeader: "Ocp-Apim-Subscription-Key",
-    });
-    expect(apim.get("ocp-apim-subscription-key")).toBe("sk-azure-0123456789");
-    expect(apim.has("authorization")).toBe(false);
-    // In Authorization, after "Bearer ", as people would write it.
+    // In Authorization, after "Bearer ", as people write it: theirs, not the library's.
     const bearer = await headersSent({
       service: "openai-compatible",
       protocol: "anthropic-messages",
       baseUrl: "https://gw.example",
       model: "claude-x",
-      keyHeader: "Authorization",
+      settings: own({ Authorization: `Bearer ${KEY}` }),
     });
-    expect(bearer.get("authorization")).toBe("Bearer sk-azure-0123456789");
+    expect(bearer.get("authorization")).toBe(`Bearer ${KEY}`);
     expect(bearer.has("x-api-key")).toBe(false);
   });
 
@@ -628,9 +620,9 @@ describe("a key in a header of people's choosing", () => {
         protocol: "openai-completions",
         baseUrl: "https://azure.example/openai",
         model: "gpt-x",
-        keyHeader: "api-key",
+        settings: own({ "api-key": KEY }),
       },
-      key: async () => "sk-azure-0123456789",
+      key: async () => undefined,
       system: "test",
       tools: [],
       history: [],
@@ -638,7 +630,7 @@ describe("a key in a header of people's choosing", () => {
       signal: new AbortController().signal,
       onEvent: () => {},
     });
-    expect(sent[0]?.get("api-key")).toBe("sk-azure-0123456789");
+    expect(sent[0]?.get("api-key")).toBe(KEY);
     expect(sent[0]?.has("authorization")).toBe(false);
   });
 
@@ -646,33 +638,40 @@ describe("a key in a header of people's choosing", () => {
     const headers = await headersSent({
       service: "openai-compatible",
       protocol: "openai-completions",
-      baseUrl: "https://azure.example/openai",
-      model: "gpt-x",
-      keyHeader: "api-key",
-      relay: {
-        baseUrl: "https://platform.example/api/llm-relay/https/azure.example/openai",
-        headers: { "x-animaquill": "1" },
-        passPrefix: "aq-pass-",
-      },
-    });
-    expect(headers.get("aq-pass-api-key")).toBe("sk-azure-0123456789");
-    expect(headers.has("authorization")).toBe(false);
-    expect(headers.get("x-animaquill")).toBe("1");
-    // In Authorization too: the library's own goes empty, so the relay takes people's.
-    const bearer = await headersSent({
-      service: "openai-compatible",
-      protocol: "openai-completions",
       baseUrl: "https://gw.example/v1",
       model: "gpt-x",
-      keyHeader: "Authorization",
+      settings: own({ Authorization: `Bearer ${KEY}` }),
       relay: {
         baseUrl: "https://platform.example/api/llm-relay/https/gw.example/v1",
         headers: { "x-animaquill": "1" },
         passPrefix: "aq-pass-",
       },
     });
-    expect(bearer.get("aq-pass-authorization")).toBe("Bearer sk-azure-0123456789");
-    expect(bearer.has("authorization")).toBe(false);
+    // The library's own goes empty, so the relay takes people's.
+    expect(headers.get("aq-pass-authorization")).toBe(`Bearer ${KEY}`);
+    expect(headers.has("authorization")).toBe(false);
+    expect(headers.get("x-animaquill")).toBe("1");
+  });
+
+  it("with a key, the libraries put it where the protocol does", async () => {
+    vi.stubGlobal("fetch", async () => new Response("{}", { status: 500 }));
+    const sent: Headers[] = [];
+    vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+      sent.push(new Headers(init?.headers ?? {}));
+      return new Response("{}", { status: 500 });
+    });
+    await testModel(
+      {
+        service: "openai-compatible",
+        protocol: "openai-completions",
+        baseUrl: "https://gw.example/v1",
+        model: "gpt-x",
+        settings: own({ "x-team": "video" }),
+      },
+      KEY,
+    );
+    expect(sent[0]?.get("authorization")).toBe(`Bearer ${KEY}`);
+    expect(sent[0]?.get("x-team")).toBe("video");
   });
 });
 

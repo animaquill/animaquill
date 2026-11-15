@@ -25,9 +25,15 @@
   border-radius: 0;
 }
 
+.nameLine {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 0 0 2px;
+}
+
 .name {
   display: block;
-  margin: 0 0 2px;
   color: var(--aq-text-strong);
   font-weight: 600;
 }
@@ -156,9 +162,6 @@
 }
 
 /* What goes with a line of status, quieter than it. */
-.aside {
-  opacity: 0.8;
-}
 
 /* Which conversations have pictures on the platform, under the switch of the conversations. */
 .imageList {

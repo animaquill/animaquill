@@ -303,6 +303,7 @@ test("the chat says which pack a conversation has, and a new one when the model 
     .locator('[data-testid="chat-model-option"][data-model="claude-other"]')
     .getByRole("option")
     .click();
+  await page.keyboard.press("Escape");
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-other");
   await send(page, "再说");
   await expect(chat(page).getByText("回答 2")).toBeVisible({ timeout: 15_000 });
@@ -562,12 +563,12 @@ test("in the bubble only models; a model's packs are a menu beside it, chosen fo
     .filter({ hasText: "DeepSeek steady" })
     .getByRole("menuitemradio")
     .click();
-  await expect(bubble).toBeHidden();
+  // The menu goes; the bubble stays, to see what is chosen, until people click outside or press Esc.
   await expect(menu).toHaveCount(0);
+  await expect(bubble).toBeVisible();
   await expect(chat(page).getByTestId("chat-model")).toHaveText(
     "Claude Opus 5.5 · DeepSeek steady",
   );
-  await chat(page).getByTestId("chat-model").click();
   await expect(opus.getByTestId("chat-model-row-pack")).toHaveText("适配包：DeepSeek steady(本机)");
   // From the keyboard: → opens the menu, ← closes it, Esc closes the bubble.
   await bubble.getByRole("textbox", { name: "搜模型、服务" }).press("ArrowRight");
@@ -640,8 +641,10 @@ test("in the bubble only models; a model's packs are a menu beside it, chosen fo
   await bubble.getByRole("textbox", { name: "搜模型、服务" }).press("ArrowRight");
   await expect(menu.getByRole("menuitemradio").first()).toBeFocused();
   await page.keyboard.press("Enter");
-  await expect(bubble).toBeHidden();
+  await expect(menu).toHaveCount(0);
   await expect(chat(page).getByTestId("chat-model")).toHaveText("Claude Opus 5.5");
+  await page.keyboard.press("Escape");
+  await expect(bubble).toBeHidden();
   await send(page, "四");
   await expect(chat(page).getByText("回答 4")).toBeVisible({ timeout: 15_000 });
   expect(systemOf(requests[3])).not.toContain(steady);

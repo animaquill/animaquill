@@ -424,13 +424,9 @@ export class Workbench {
     });
     this.cloudSync = new CloudSync({
       settings: host.settings,
-      access: host.account && host.cloud?.switches,
+      platform: host.cloud?.aiSync !== undefined,
       account: host.account,
       aiSync: this.aiSync,
-      ...(host.organizer && {
-        resendOrganizer: (account: string) => host.organizer!.resend(account),
-      }),
-      detachChats: async (account) => this.chatSync?.detach(account),
       changed: () => {
         this.organizer.allowedChanged();
         if (this.chatSync) void this.chatSync.retry().then(() => this.chat.reloadList());
@@ -706,8 +702,6 @@ export class Workbench {
             copied: (title, copy) =>
               this.notifications.push(t("aiSync.chatCopied", { title, copy })),
             allowed: (account) => this.cloudSync.allows("chats", account),
-            heardEpoch: (account, epoch) => this.cloudSync.heardChatsEpoch(account, epoch),
-            off: () => void this.cloudSync.refresh(),
             ...(host.chatImages && { images: host.chatImages }),
           })
         : undefined;
@@ -917,7 +911,6 @@ export class Workbench {
       account: host.account,
       cloud: cloud?.organizer,
       allowed: (account) => this.cloudSync.allows("organizer", account),
-      off: () => void this.cloudSync.refresh(),
     });
     this.startCovers = new StartCovers({
       ...(host.covers && { covers: host.covers }),

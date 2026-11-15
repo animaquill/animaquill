@@ -1,6 +1,7 @@
 import {
   EMPTY_AI_SETTINGS,
   TOOL_CALL_LIMITS,
+  canonical,
   catalogValues,
   editField,
   effectiveValues,
@@ -11,16 +12,19 @@ import {
   knownModels,
   listModels,
   liveOf,
+  keyIntoHeader,
   readAiSettings,
   recommendedOf,
   recoverOldWrite,
   revertField,
   saysRed,
+  secretsOf,
   settledDefault,
   supportedLevels,
   testModel,
   testModelPicture,
   undoFill,
+  withSecrets,
   writeAiSettings,
   type AiSettings,
   type CatalogSay,
@@ -32,6 +36,7 @@ import {
   type ModelField,
   type ModelRef,
   type ModelValues,
+  type AiSettingsReading,
   type Protocol,
   type ReasoningLevel,
   type Relayed,
@@ -39,6 +44,7 @@ import {
   type ServiceConfig,
   type ServiceFailure,
   type ServiceKind,
+  type ServiceSecret,
   type SendWith,
   type ShotSide,
 } from "@animaquill/agent";
@@ -124,6 +130,8 @@ export type SettingsHeld = "newer" | "broken";
 export interface AiSettingsSnapshot extends AiSettings {
   /** The services that have a key in this browser. */
   readonly keyed: ReadonlySet<string>;
+  /** How many services have anything secret kept in this browser, set up or not any more. */
+  readonly secrets: number;
   /** The last characters of each key, by service, for people to tell which one it is. */
   readonly hints: ReadonlyMap<string, string>;
   /** What services said about their models, by service. Only for this page. */
@@ -163,7 +171,6 @@ export interface ServiceDraft {
   readonly route: Route;
   readonly api?: ModelApi;
   readonly headers?: Readonly<Record<string, string>>;
-  readonly keyHeader?: string;
 }
 
 /**
@@ -226,8 +233,12 @@ function cheapestOf(models: readonly ListedModel[]): ListedModel | undefined {
 }
 
 /**
- * The AI services people set up, shared by all windows like every setting, and their keys, which
- * are kept apart in `KeyStore`: never in settings, a project or a report. Keys that this page has
+ * The AI services people set up, shared by all windows like every setting, and what is secret of
+ * each, which is kept apart in `KeyStore` (`ServiceSecret`: the key, the address, the headers):
+ * never in settings, a project or a report. The settings say when that changed (`secretAt`), so
+ * that every window reads it again. Settings of before version 4 have the address and headers in
+ * them: they go into what is secret as the settings are read, and the settings are saved again
+ * without them (`#take`). Keys that this page has
  * read stay known here only so that reports can leave them out.
  *
  * Settings that cannot be taken (written by a newer editor, or not settings at all) are `held`:
@@ -242,6 +253,12 @@ export class AiSettingsStore {
   #snapshot: AiSettingsSnapshot;
   /** What this page knows of keys, by service, so that reports can leave them out. */
   readonly #known = new Map<string, string>();
+  /** What is secret of each service, as this page last read or wrote it. */
+  #secrets = new Map<string, ServiceSecret>();
+  /** Writes of what is secret, one after the other, each before the settings that go with it. */
+  #writing: Promise<unknown> = Promise.resolve();
+  /** How many of those are not done yet: while none are, settings are saved at once. */
+  #pending = 0;
   #knownSet: ReadonlySet<string> = new Set();
   /** Settings that other windows saved, taken one after the other. */
   #taking: Promise<void> = Promise.resolve();
@@ -269,6 +286,7 @@ export class AiSettingsStore {
     this.#snapshot = {
       ...EMPTY_AI_SETTINGS,
       keyed: new Set(),
+      secrets: 0,
       hints: new Map(),
       listings: new Map(),
       known: new Map(),
@@ -316,20 +334,21 @@ export class AiSettingsStore {
       this.#hold(reading.kind);
       return;
     }
+    await this.#readSecrets();
     if (reading.from < 3) {
       // What another window said may be old by now: another page of version 2 may have saved since.
       const saved = await this.#settings.load(SETTINGS_KEY).catch(() => value);
       const current = readAiSettings(saved);
-      if (current.kind === "ok" && current.from === 3) {
-        this.#adopt(current.settings, undefined);
+      if (current.kind === "ok" && current.from >= 3) {
+        await this.#taken(current);
         return;
       }
       if (current.kind === "ok") value = saved;
       const latest = await this.#settings.load(LATEST_KEY).catch(() => undefined);
       const before = readAiSettings(latest);
       const recovered =
-        before.kind === "ok" && before.from === 3
-          ? recoverOldWrite(before.settings, value)
+        before.kind === "ok" && before.from >= 3
+          ? recoverOldWrite(this.#joined(before.settings), value)
           : undefined;
       if (recovered) {
         this.#snapshot = { ...this.#snapshot, held: undefined };
@@ -338,14 +357,103 @@ export class AiSettingsStore {
       }
     }
     const taken = readAiSettings(value);
-    if (taken.kind === "ok") {
-      this.#adopt(taken.settings, undefined);
+    if (taken.kind === "ok") await this.#taken(taken);
+  }
+
+  /**
+   * Takes settings that were read, with what is secret of each service. Those of before version 4
+   * have their addresses and headers, and the header of a key, in them: they go into what is
+   * secret, and the settings are saved again without them, once.
+   */
+  async #taken(reading: Extract<AiSettingsReading, { kind: "ok" }>): Promise<void> {
+    const moving = reading.inline === true || reading.keyHeaders !== undefined;
+    if (!moving) {
+      this.#adopt(this.#joined(reading.settings), undefined);
       // Written back without them at once, so that they are said once, not at every load.
-      if (taken.headersLeftOut) {
+      if (reading.headersLeftOut) {
         this.#messages.headersLeftOut?.();
-        this.#save(taken.settings);
+        this.#save(this.#snapshot);
       }
+      return;
     }
+    // What is secret of a service already wins: it is what a newer page wrote.
+    const settings = withSecrets(reading.settings, (id) => {
+      const secret = this.#secrets.get(id);
+      return secret?.baseUrl !== undefined || secret?.headers || secret?.models
+        ? secret
+        : undefined;
+    });
+    const services = settings.services.map((service) => {
+      const header = reading.keyHeaders?.[service.id];
+      const key = this.#secrets.get(service.id)?.key;
+      if (header === undefined || key === undefined) return service;
+      return { ...service, headers: keyIntoHeader(service.headers, header, key) };
+    });
+    // The key that went into a header is no key any more.
+    for (const [id] of Object.entries(reading.keyHeaders ?? {})) {
+      const secret = this.#secrets.get(id);
+      if (secret?.key === undefined) continue;
+      const { key: _key, ...rest } = secret;
+      this.#secrets.set(id, rest);
+      this.#writeSecret(id, rest);
+    }
+    if (reading.headersLeftOut) this.#messages.headersLeftOut?.();
+    this.#adopt({ ...settings, services }, undefined);
+    this.#save(this.#settingsNow());
+    await this.#writing;
+  }
+
+  /** The settings with what is secret of each service, as this page last read it. */
+  #joined(settings: AiSettings): AiSettings {
+    return withSecrets(settings, (id) => this.#secrets.get(id));
+  }
+
+  /** Reads what is secret of every service again. What cannot be read is as if there were none. */
+  async #readSecrets(): Promise<void> {
+    await this.#writing;
+    try {
+      const ids = await this.#keys.list();
+      const secrets = new Map<string, ServiceSecret>();
+      for (const id of ids) {
+        const secret = await this.#keys.read(id);
+        if (secret) secrets.set(id, secret);
+      }
+      this.#secrets = secrets;
+    } catch (error) {
+      console.warn("What is secret of the AI services could not be read", error);
+    }
+  }
+
+  /** Runs a write after those before it, which writes of the settings wait for. */
+  #after(work: () => Promise<unknown>): Promise<void> {
+    this.#pending += 1;
+    const write = this.#writing.then(work).finally(() => {
+      this.#pending -= 1;
+    });
+    this.#writing = write.catch(() => {});
+    return write.then(() => {});
+  }
+
+  /**
+   * Keeps the address and headers of a service with its key as it is kept now, which another window
+   * may have changed since this page read it.
+   */
+  #writeParts(id: string, parts: Omit<ServiceSecret, "key">): Promise<void> {
+    return this.#after(async () => {
+      const key = (await this.#keys.read(id).catch(() => undefined))?.key;
+      const secret: ServiceSecret = { ...(key !== undefined && { key }), ...parts };
+      this.#secrets.set(id, secret);
+      if (Object.keys(secret).length === 0) await this.#keys.remove(id);
+      else await this.#keys.write(id, secret);
+    });
+  }
+
+  /** Keeps what is secret of a service, after what was kept before it; nothing left takes it away. */
+  #writeSecret(id: string, secret: ServiceSecret): Promise<void> {
+    return this.#after(async () => {
+      if (Object.keys(secret).length === 0) await this.#keys.remove(id);
+      else await this.#keys.write(id, secret);
+    });
   }
 
   #hold(held: SettingsHeld): void {
@@ -382,7 +490,7 @@ export class AiSettingsStore {
    */
   endpointOf(
     service: Pick<ServiceConfig, "kind" | "baseUrl" | "route"> &
-      Partial<Pick<ServiceConfig, "api" | "headers" | "models" | "keyHeader">>,
+      Partial<Pick<ServiceConfig, "api" | "headers" | "models">>,
     model: string,
   ): Endpoint | "badUrl" | "relayMissing" | "relayUrl" | undefined {
     const kind = kindOf(service.kind);
@@ -411,7 +519,6 @@ export class AiSettingsStore {
       catalog: kind.catalog,
       ...(route.relay && { relay: route.relay }),
       ...(Object.keys(settings).length > 0 && { settings }),
-      ...(service.keyHeader && { keyHeader: service.keyHeader }),
     };
   }
 
@@ -440,19 +547,17 @@ export class AiSettingsStore {
   }
 
   async #refreshKeyed(): Promise<void> {
-    try {
-      const ids = await this.#keys.list();
-      const hints = new Map<string, string>();
-      for (const id of ids) {
-        const key = await this.#keys.read(id);
-        this.#know(id, key);
-        if (key) hints.set(id, key.slice(-HINT_LENGTH));
-      }
-      this.#snapshot = { ...this.#snapshot, keyed: new Set(ids), hints };
-      this.#emitter.emit();
-    } catch (error) {
-      console.warn("Which services have a key could not be read", error);
+    await this.#readSecrets();
+    const hints = new Map<string, string>();
+    const keyed = new Set<string>();
+    for (const [id, { key }] of this.#secrets) {
+      if (key === undefined) continue;
+      this.#know(id, key);
+      keyed.add(id);
+      hints.set(id, key.slice(-HINT_LENGTH));
     }
+    this.#snapshot = { ...this.#snapshot, keyed, hints, secrets: this.#secrets.size };
+    this.#emitter.emit();
   }
 
   /** The settings as they are now, without what only this page has. */
@@ -485,20 +590,58 @@ export class AiSettingsStore {
     };
   }
 
-  /** Saves settings, with a default that is on. Held settings are not written over. */
+  /**
+   * Saves settings, with a default that is on. Held settings are not written over. What is secret
+   * of a service that changed goes first, apart, and the settings say when it did (`secretAt`).
+   */
   #save(changed: AiSettings): boolean {
     if (this.#snapshot.held) return false;
-    const settings = { ...changed, default: settledDefault(changed.services, changed.default) };
+    const secrets = secretsOf(changed);
+    const at = Date.now();
+    const services = changed.services.map((service) => {
+      const before = this.#secrets.get(service.id);
+      const { key, ...was } = before ?? {};
+      const now = secrets.get(service.id) ?? {};
+      if (canonical(was) === canonical(now)) return service;
+      this.#secrets.set(service.id, { ...(key !== undefined && { key }), ...now });
+      this.#writeParts(service.id, now).catch((error: unknown) => {
+        console.warn("What is secret of an AI service could not be kept", error);
+        this.#messages.keyFailed();
+      });
+      return { ...service, secretAt: Math.max(at, (service.secretAt ?? 0) + 1) };
+    });
+    const settings = {
+      ...changed,
+      services,
+      default: settledDefault(services, changed.default),
+    };
     this.#adopt(settings, undefined);
     const written = writeAiSettings(settings);
-    Promise.all([
-      this.#settings.save(LATEST_KEY, written),
-      this.#settings.save(SETTINGS_KEY, written),
-    ]).catch((error: unknown) => {
+    const write = () =>
+      Promise.all([
+        this.#settings.save(LATEST_KEY, written),
+        this.#settings.save(SETTINGS_KEY, written),
+      ]);
+    // After what is secret of it, where any is on its way; at once otherwise.
+    (this.#pending > 0 ? this.#after(write) : write()).catch((error: unknown) => {
       console.warn("The AI services could not be saved", error);
       this.#messages.saveFailed();
     });
     return true;
+  }
+
+  /** What is secret of a service changed on its own, as its key: the settings say so. */
+  #secretChanged(id: string): void {
+    const now = this.#settingsNow();
+    if (!now.services.some((service) => service.id === id)) return;
+    this.#save({
+      ...now,
+      services: now.services.map((service) =>
+        service.id === id
+          ? { ...service, secretAt: Math.max(Date.now(), (service.secretAt ?? 0) + 1) }
+          : service,
+      ),
+    });
   }
 
   /**
@@ -554,8 +697,6 @@ export class AiSettingsStore {
       readonly enabled?: readonly string[];
       readonly api?: ModelApi | undefined;
       readonly headers?: Readonly<Record<string, string>> | undefined;
-      /** The header the key goes in, for a server of one's own, see `ServiceConfig.keyHeader`. */
-      readonly keyHeader?: string | undefined;
       /** What the service listed, for the models it starts with that pi does not know. */
       readonly listed?: readonly ListedModel[] | undefined;
     } = {},
@@ -579,7 +720,6 @@ export class AiSettingsStore {
       // Where there is no relay, straight is all there is.
       route: this.#relay ? (options.route ?? found.route) : "direct",
       ...(found.custom && options.api && { api: options.api }),
-      ...(found.custom && options.keyHeader && { keyHeader: options.keyHeader }),
       ...(options.headers &&
         Object.keys(options.headers).length > 0 && { headers: options.headers }),
       enabled,
@@ -598,9 +738,7 @@ export class AiSettingsStore {
 
   update(
     id: string,
-    changes: Partial<
-      Pick<ServiceConfig, "name" | "baseUrl" | "route" | "api" | "headers" | "keyHeader">
-    >,
+    changes: Partial<Pick<ServiceConfig, "name" | "baseUrl" | "route" | "api" | "headers">>,
   ): void {
     const before = this.serviceOf(id);
     this.#changeService(id, (service) => {
@@ -622,7 +760,6 @@ export class AiSettingsStore {
         ("api" in changes && changes.api !== before.api) ||
         ("headers" in changes &&
           JSON.stringify(changes.headers) !== JSON.stringify(before.headers)) ||
-        ("keyHeader" in changes && changes.keyHeader !== before.keyHeader) ||
         ("route" in changes && changes.route !== before.route))
     )
       this.#forgetListing(id);
@@ -662,13 +799,20 @@ export class AiSettingsStore {
     return undefined;
   }
 
-  /** Takes a service away, and its key with it. */
+  /** Takes a service away, and all that is secret of it with it. */
   async remove(id: string): Promise<void> {
     const now = this.#settingsNow();
     if (!this.#save({ ...now, services: now.services.filter((service) => service.id !== id) })) {
       return;
     }
-    await this.removeKey(id);
+    this.#forgetTests(id);
+    this.#forgetListing(id);
+    this.#secrets.delete(id);
+    await this.#writeSecret(id, {}).catch((error: unknown) => {
+      console.warn("What is secret of an AI service could not be taken away", error);
+      this.#messages.keyFailed();
+    });
+    await this.#refreshKeyed();
   }
 
   /**
@@ -1082,7 +1226,8 @@ export class AiSettingsStore {
 
   async keyOf(id: string): Promise<string | undefined> {
     try {
-      const key = await this.#keys.read(id);
+      await this.#writing;
+      const key = (await this.#keys.read(id))?.key;
       this.#know(id, key);
       return key;
     } catch (error) {
@@ -1098,8 +1243,18 @@ export class AiSettingsStore {
     this.#know(id, trimmed);
     this.#forgetTests(id);
     this.#forgetListing(id);
+    await this.#changeKey(id, trimmed);
+  }
+
+  /** A key of a service, or none, beside what else is secret of it. */
+  async #changeKey(id: string, key: string | undefined): Promise<void> {
     try {
-      await this.#keys.write(id, trimmed);
+      await this.#writing;
+      const { key: _was, ...rest } = (await this.#keys.read(id)) ?? {};
+      const secret: ServiceSecret = { ...rest, ...(key !== undefined && { key }) };
+      this.#secrets.set(id, secret);
+      await this.#writeSecret(id, secret);
+      this.#secretChanged(id);
     } catch (error) {
       console.warn("A key could not be kept", error);
       this.#messages.keyFailed();
@@ -1110,19 +1265,25 @@ export class AiSettingsStore {
   async removeKey(id: string): Promise<void> {
     this.#forgetTests(id);
     this.#forgetListing(id);
-    try {
-      await this.#keys.remove(id);
-    } catch (error) {
-      console.warn("A key could not be taken away", error);
-      this.#messages.keyFailed();
-    }
-    await this.#refreshKeyed();
+    await this.#changeKey(id, undefined);
   }
 
-  /** Every key in this browser goes, also of services that are no longer set up. */
+  /**
+   * Every key in this browser goes, also of services that are no longer set up, with all that was
+   * secret of those; services that are keep their addresses and headers.
+   */
   async removeAllKeys(): Promise<void> {
     try {
-      await this.#keys.clear();
+      await this.#writing;
+      const ids = new Set(this.#snapshot.services.map((service) => service.id));
+      for (const id of await this.#keys.list()) {
+        const { key, ...rest } = (await this.#keys.read(id)) ?? {};
+        if (!ids.has(id)) await this.#keys.remove(id);
+        else if (key !== undefined) {
+          await this.#keys.write(id, rest);
+          this.#secretChanged(id);
+        }
+      }
     } catch (error) {
       console.warn("The keys could not be taken away", error);
       this.#messages.keyFailed();
@@ -1146,7 +1307,7 @@ export class AiSettingsStore {
       protocolOf(service) ?? kind.protocol,
       route.relay?.baseUrl ?? route.baseUrl,
       key,
-      { headers: this.#listHeaders(service, route), keyHeader: this.#keyHeader(service, route) },
+      { headers: this.#listHeaders(service, route) },
     );
     // Changed meanwhile: what it listed is of what it was, so it is asked again.
     if (this.serviceOf(id) !== service) {
@@ -1169,19 +1330,6 @@ export class AiSettingsStore {
   ): Record<string, string> {
     if (!route.relay) return { ...service.headers };
     return { ...relayPassHeaders(service.headers), ...route.relay.headers };
-  }
-
-  /** The header the key of a service goes in, where it has one of its own, as it is sent. */
-  #keyHeader(
-    service: Pick<ServiceConfig, "keyHeader">,
-    route: Exclude<ServiceRoute, string>,
-  ): { readonly name: string; readonly sent: string } | undefined {
-    const name = service.keyHeader;
-    if (!name) return undefined;
-    return {
-      name,
-      sent: route.relay ? `${RELAY_PASS_PREFIX}${name.toLowerCase()}` : name,
-    };
   }
 
   /** What a service listed no longer counts: where it is or how it is talked to changed. */
@@ -1386,7 +1534,7 @@ export class AiSettingsStore {
       draft.api ?? kind.protocol,
       route.relay?.baseUrl ?? route.baseUrl,
       key,
-      { headers: this.#listHeaders(draft, route), keyHeader: this.#keyHeader(draft, route) },
+      { headers: this.#listHeaders(draft, route) },
     );
     const ms = Date.now() - started;
     if (!listed.ok) return { test: { state: "failed", ms, failure: listed.failure } };

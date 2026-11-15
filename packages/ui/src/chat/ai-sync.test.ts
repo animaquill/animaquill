@@ -6,7 +6,6 @@ import {
 } from "@animaquill/agent";
 import {
   AiSyncNewer,
-  AiSyncOff,
   isLaterEntry,
   memoryAccountKeys,
   memoryKeys,
@@ -34,7 +33,6 @@ function platformOf() {
   const accounts = new Map<
     string,
     {
-      enabled: boolean;
       revision: number;
       format?: number;
       entries: Record<string, AiEntry>;
@@ -46,8 +44,7 @@ function platformOf() {
   const tooLarge = new Set<string>();
   const of = (account: string) => {
     let kept = accounts.get(account);
-    if (!kept)
-      accounts.set(account, (kept = { enabled: true, revision: 0, entries: {}, keys: {} }));
+    if (!kept) accounts.set(account, (kept = { revision: 0, entries: {}, keys: {} }));
     return kept;
   };
   const stateOf = (account: string): AccountAiSettings => {
@@ -65,9 +62,6 @@ function platformOf() {
       // A newer editor wrote them: what one of an older format gives is not taken.
       if ((kept.format ?? 1) > (changes.format ?? 1)) throw new AiSyncNewer("newer");
       kept.format = Math.max(kept.format ?? 1, changes.format ?? 1);
-      if (!kept.enabled && !changes.enable) throw new AiSyncOff("off");
-      if (!kept.enabled) kept.entries = {};
-      kept.enabled = true;
       const large: string[] = [];
       for (const { name, ...entry } of changes.entries)
         if (tooLarge.has(name) && !entry.deleted) large.push(name);
@@ -76,10 +70,6 @@ function platformOf() {
         if (isLaterEntry(kept.keys[service], key)) kept.keys[service] = key as AiSyncKey;
       kept.revision += 1;
       return { state: stateOf(who()), refused: [], tooLarge: large };
-    },
-    async turnOff(account) {
-      const kept = of(account);
-      Object.assign(kept, { enabled: false, entries: {}, keys: {}, revision: kept.revision + 1 });
     },
   });
   return {
@@ -214,8 +204,8 @@ describe("AI settings going with the account", () => {
     await settle();
     expect(names(a.ai)).toEqual(["乙", "甲"]);
     expect(names(b.ai)).toEqual(["乙", "甲"]);
-    expect(await one.accountKeys.of("u1").read(first)).toBe("sk-one");
-    expect(await two.accountKeys.of("u1").read(first)).toBe("sk-one");
+    expect((await one.accountKeys.of("u1").read(first))?.key).toBe("sk-one");
+    expect((await two.accountKeys.of("u1").read(first))?.key).toBe("sk-one");
     expect(b.ai.getSnapshot().keyed.has(first)).toBe(true);
     expect(second).toBeDefined();
     // Not on the device: the device's own keys never had it.
@@ -316,18 +306,20 @@ describe("AI settings going with the account", () => {
       device: { services: 2, models: 1, packs: 0 },
       deviceKeys: 1,
       accountServices: 1,
-      enabled: true,
     });
     expect(window.sync.scope).toBe("u1");
+    // The two at the same address, which is secret of each, are one.
     expect(names(window.ai)).toEqual(["账号里的", "设备上的"].toSorted());
-    expect(await browser.accountKeys.of("u1").read(mine)).toBe("sk-device");
-    // Said so on the page of the cloud features, until this device's change.
+    expect((await browser.accountKeys.of("u1").read(mine))?.key).toBe("sk-device");
+    // Noted, so that it does not go in again unless it changed here.
     expect(await window.sync.deviceMerged()).toEqual(expect.any(Number));
-    expect(platform.accounts.get("u1")!.keys[mine]).toMatchObject({ key: "sk-device" });
+    expect(platform.accounts.get("u1")!.keys[mine]).toMatchObject({
+      secret: { key: "sk-device", baseUrl: "https://api.anthropic.com" },
+    });
     // This device's stay as they were, for when people sign out.
-    expect(await browser.keys.read(mine)).toBe("sk-device");
+    expect((await browser.keys.read(mine))?.key).toBe("sk-device");
     // Changed on this device since: not as it went into the account any more.
-    await browser.keys.write(mine, "sk-device-changed");
+    await browser.keys.write(mine, { key: "sk-device-changed" });
     expect(await window.sync.deviceMerged()).toBeUndefined();
   });
 
@@ -335,12 +327,14 @@ describe("AI settings going with the account", () => {
     const platform = platformOf();
     const browser = browserOf();
     const account = accountOf(undefined);
-    const window = await windowOf(browser, platform, account, { on: true, put: false });
+    // Off: this device's do not go into the account.
+    const window = await windowOf(browser, platform, account, { on: false, put: false });
     window.ai.add("anthropic", "设备上的");
     await settle();
     account.as("u1");
     await settle();
     expect(names(window.ai)).toEqual([]);
+    await window.sync.setEnabled(true);
     const theirs = window.ai.add("deepseek", "u1 的")!;
     await window.ai.setKey(theirs, "sk-u1");
     await settle();
@@ -357,12 +351,13 @@ describe("AI settings going with the account", () => {
     expect(window.ai.getSnapshot().keyed.has(theirs)).toBe(false);
 
     // Somebody else signs in on this browser: nothing of the first.
+    window.ask.mockResolvedValue({ on: false, put: false });
     account.as("u2");
     await settle();
     await window.sync.sync();
     await settle();
     expect(window.sync.scope).toBe("u2");
-    // Asked, and people said no: the account's own, which are none.
+    // Off there too: the account's own, which are none.
     expect(names(window.ai)).toEqual([]);
     expect(await browser.accountKeys.of("u2").read(theirs)).toBeUndefined();
     expect(platform.accounts.get("u2")!.keys[theirs]).toBeUndefined();
@@ -390,7 +385,7 @@ describe("AI settings going with the account", () => {
     ).toBe(true);
   });
 
-  test("turned off: the platform keeps nothing, other devices stop, and keep what they have", async () => {
+  test("turned off on one device: only that one stops; the platform and the others go on", async () => {
     const platform = platformOf();
     const a = await windowOf(browserOf(), platform, accountOf("u1"));
     const b = await windowOf(browserOf(), platform, accountOf("u1"));
@@ -401,23 +396,33 @@ describe("AI settings going with the account", () => {
     await b.sync.sync();
     await settle();
     await a.sync.setEnabled(false);
-    expect(platform.accounts.get("u1")).toMatchObject({ enabled: false, entries: {}, keys: {} });
     expect(a.sync.getSnapshot().status).toBe("off");
+    // Nothing is taken away from the platform.
+    const kept = platform.accounts.get("u1")!;
+    expect(kept.entries[`service:${id}`]).toBeDefined();
+    expect(kept.keys[id]).toMatchObject({ secret: { key: "sk-one" } });
+    // The other device goes on, both ways.
     await b.sync.sync();
-    expect(b.sync.getSnapshot().status).toBe("off");
-    // Changes stay on the device.
-    b.ai.add("deepseek", "乙");
+    expect(b.sync.getSnapshot().status).toBe("synced");
+    const theirs = b.ai.add("deepseek", "乙")!;
     await settle();
     await b.sync.sync();
-    expect(platform.accounts.get("u1")!.entries).toEqual({});
-    expect(names(b.ai)).toEqual(["乙", "甲"]);
-    // On again from a: a's go; b gives its own as it hears.
-    await a.sync.setEnabled(true);
-    await b.sync.sync();
+    expect(kept.entries[`service:${theirs}`]).toBeDefined();
+    // This one neither takes nor gives meanwhile.
+    a.ai.add("openai", "只在这台");
+    await settle();
     await a.sync.sync();
     await settle();
-    expect(names(a.ai)).toEqual(["乙", "甲"]);
-    expect(platform.accounts.get("u1")!.keys[id]).toMatchObject({ key: "sk-one" });
+    expect(names(a.ai)).toEqual(["只在这台", "甲"]);
+    expect(Object.keys(kept.entries).filter((n) => n.startsWith("service:"))).toHaveLength(2);
+    // On again: merged both ways, entry by entry.
+    await a.sync.setEnabled(true);
+    await settle();
+    await b.sync.sync();
+    await settle();
+    expect(names(a.ai)).toEqual(["乙", "只在这台", "甲"]);
+    expect(names(b.ai)).toEqual(["乙", "只在这台", "甲"]);
+    expect(a.sync.getSnapshot().status).toBe("synced");
   });
 
   test("settings of the account start as the page loads, without this device's first", async () => {
@@ -479,7 +484,7 @@ describe("AI settings going with the account", () => {
     expect(browser.values.has("ai.sync@u1")).toBe(false);
   });
 
-  test("answered with the switch off: the platform keeps nothing; this device keeps its own", async () => {
+  test("answered with the switch off: nothing goes or comes; the platform keeps its own", async () => {
     const platform = platformOf();
     const browser = browserOf();
     const account = accountOf(undefined);
@@ -498,72 +503,115 @@ describe("AI settings going with the account", () => {
     await settle();
     expect(window.sync.scope).toBe("u1");
     expect(window.sync.getSnapshot().status).toBe("off");
-    expect(platform.accounts.get("u1")).toMatchObject({ enabled: false, entries: {}, keys: {} });
+    const before = structuredClone(platform.accounts.get("u1")!);
+    expect(Object.keys(before.entries).filter((n) => n.startsWith("service:"))).toHaveLength(1);
     // What this device has, also while signed in; nothing of the account's.
     expect(names(window.ai)).toEqual(["设备上的"]);
-    expect(await browser.accountKeys.of("u1").read(mine)).toBe("sk-device");
+    expect((await browser.accountKeys.of("u1").read(mine))?.key).toBe("sk-device");
     // Changed afterwards: still nothing goes.
     window.ai.add("openai", "后来的");
     await settle();
     await window.sync.sync();
-    expect(platform.accounts.get("u1")!.entries).toEqual({});
+    expect(platform.accounts.get("u1")).toEqual(before);
   });
 
-  test("answered with the switch on, where the account had it off: on again, with this device's", async () => {
-    const platform = platformOf();
-    const elsewhere = await windowOf(browserOf(), platform, accountOf("u1"));
-    await elsewhere.sync.setEnabled(false);
-    const browser = browserOf();
-    const account = accountOf(undefined);
-    const window = await windowOf(browser, platform, account, { on: true, put: true });
-    const mine = window.ai.add("anthropic", "设备上的")!;
-    await window.ai.setKey(mine, "sk-device");
-    await settle();
-    account.as("u1");
-    await settle();
-    await window.sync.sync();
-    await settle();
-    expect(window.ask).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
-    expect(platform.accounts.get("u1")!.enabled).toBe(true);
-    expect(platform.accounts.get("u1")!.entries[`service:${mine}`]).toBeDefined();
-    expect(platform.accounts.get("u1")!.keys[mine]).toMatchObject({ key: "sk-device" });
-    expect(window.sync.getSnapshot().status).toBe("synced");
-  });
-
-  test("this device's, of before signing in: put into the account later, or taken away", async () => {
+  test("this device's, of before signing in: put into the account as people sign in with it on, where it changed", async () => {
     const platform = platformOf();
     const browser = browserOf();
     const account = accountOf(undefined);
+    // As the welcome answered before, on: they go in as they never did.
     const window = await windowOf(browser, platform, account, { on: true, put: false });
     const mine = window.ai.add("anthropic", "设备上的", {
       enabled: ["claude-opus-5", "claude-x"],
     })!;
     await window.ai.setKey(mine, "sk-device");
     await settle();
+    expect(await window.sync.deviceCounts()).toEqual({ services: 1, models: 2, packs: 0 });
     account.as("u1");
     await settle();
     await window.sync.sync();
-    expect(names(window.ai)).toEqual([]);
-    expect(await window.sync.deviceCounts()).toEqual({ services: 1, models: 2, packs: 0 });
-    expect(await window.sync.counts()).toEqual({ services: 0, models: 0, packs: 0 });
-    expect(await window.sync.deviceMerged()).toBeUndefined();
-
-    expect(await window.sync.mergeDevice()).toEqual(["设备上的"]);
-    expect(await window.sync.deviceMerged()).toEqual(expect.any(Number));
     await settle();
-    await window.sync.sync();
+    expect(await window.sync.deviceMerged()).toEqual(expect.any(Number));
     expect(names(window.ai)).toEqual(["设备上的"]);
-    expect(platform.accounts.get("u1")!.keys[mine]).toMatchObject({ key: "sk-device" });
+    expect(platform.accounts.get("u1")!.keys[mine]).toMatchObject({ secret: { key: "sk-device" } });
     expect(await window.sync.counts()).toEqual({ services: 1, models: 2, packs: 0 });
     // Again: nothing new.
     expect(await window.sync.mergeDevice()).toEqual([]);
+  });
 
-    await window.sync.forgetDevice();
-    expect(await window.sync.deviceCounts()).toEqual({ services: 0, models: 0, packs: 0 });
-    expect(await browser.keys.list()).toEqual([]);
-    // The account's are as they were.
+  test("signed in again with it on: this device's go in only where they changed since", async () => {
+    const platform = platformOf();
+    const browser = browserOf();
+    const account = accountOf(undefined);
+    // As the welcome answered before: this device's go in as they changed, never merged yet.
+    const window = await windowOf(browser, platform, account, { on: true, put: false });
+    const mine = window.ai.add("anthropic", "设备上的")!;
+    await settle();
+    account.as("u1");
+    await settle();
+    await window.sync.sync();
+    await settle();
     expect(names(window.ai)).toEqual(["设备上的"]);
-    expect(await browser.accountKeys.of("u1").read(mine)).toBe("sk-device");
+    // Taken away elsewhere, while this device is signed out.
+    await window.sync.beforeSignOut();
+    account.as(undefined);
+    await settle();
+    const elsewhere = await windowOf(browserOf(), platform, accountOf("u1"));
+    await elsewhere.ai.remove(mine);
+    await settle();
+    await elsewhere.sync.sync();
+    // Back, unchanged here: what was taken away does not come back.
+    account.as("u1");
+    await settle();
+    await window.sync.sync();
+    await settle();
+    expect(names(window.ai)).toEqual([]);
+    // Changed here, signed out, and in again: it goes in.
+    await window.sync.beforeSignOut();
+    account.as(undefined);
+    await settle();
+    window.ai.add("deepseek", "后来加的");
+    await settle();
+    account.as("u1");
+    await settle();
+    await window.sync.sync();
+    await settle();
+    expect(names(window.ai)).toContain("后来加的");
+    expect(
+      Object.values(platform.accounts.get("u1")!.entries).some(
+        (entry) => (entry.value as { name?: string } | undefined)?.name === "后来加的",
+      ),
+    ).toBe(true);
+  });
+
+  test("set up before this editor, and not put in then: it stays out until it changes", async () => {
+    const platform = platformOf();
+    const browser = browserOf();
+    const account = accountOf(undefined);
+    // As a page of before left it: this device's settings, never put into the account.
+    const before = await windowOf(browser, platform, account, { on: true, put: false });
+    before.ai.add("anthropic", "以前不要的");
+    await settle();
+    browser.values.delete("device.baseline");
+    before.sync.dispose();
+    const window = await windowOf(browser, platform, account, { on: true, put: false });
+    account.as("u1");
+    await settle();
+    await window.sync.sync();
+    await settle();
+    expect(window.sync.scope).toBe("u1");
+    expect(names(window.ai)).toEqual([]);
+    // Changed while signed out: it goes in, the next time.
+    await window.sync.beforeSignOut();
+    account.as(undefined);
+    await settle();
+    window.ai.add("deepseek", "后来改的");
+    await settle();
+    account.as("u1");
+    await settle();
+    await window.sync.sync();
+    await settle();
+    expect(names(window.ai)).toEqual(["以前不要的", "后来改的"].toSorted());
   });
 
   test("another window answered: this one takes the account's as that one starts them", async () => {
@@ -632,18 +680,23 @@ describe("the settings of this device, while nobody is signed in", () => {
 });
 
 describe("entries of models, which editors before them would write back without", () => {
-  test("go with format 2, which an editor of format 1 then leaves alone", async () => {
+  test("go with format 3, without addresses, which an editor of format 2 then leaves alone", async () => {
     const platform = platformOf();
     const a = await windowOf(browserOf(), platform, accountOf("u1"));
     const id = a.ai.add("openai-compatible", "网关", { baseUrl: "https://gw.example/v1" })!;
-    await settle();
-    await a.sync.sync();
-    expect(platform.accounts.get("u1")?.format ?? 1).toBe(1);
     a.ai.addModels(id, [{ id: "mine", added: "hand" }]);
     await settle();
     await a.sync.sync();
-    expect(platform.accounts.get("u1")?.format).toBe(2);
+    expect(platform.accounts.get("u1")?.format).toBe(3);
     expect(platform.accounts.get("u1")?.entries[`model:${id}/mine`]).toBeDefined();
+    // The address is in what is secret of the service, which the platform seals.
+    expect(JSON.stringify(platform.accounts.get("u1")?.entries)).not.toContain("gw.example");
+    expect(platform.accounts.get("u1")?.keys[id]).toMatchObject({
+      secret: { baseUrl: "https://gw.example/v1" },
+    });
+    await expect(
+      platform.access(() => "u1").change({ account: "u1", entries: [], keys: [], format: 2 }),
+    ).rejects.toBeInstanceOf(AiSyncNewer);
     // An editor of format 1 that gives anything now is told a newer one wrote them.
     await expect(
       platform.access(() => "u1").change({ account: "u1", entries: [], keys: [] }),

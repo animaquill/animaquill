@@ -5,14 +5,15 @@ import {
   DEFAULT_MAX_TOOL_CALLS,
   EMPTY_AI_SETTINGS,
   headerProblem,
-  isKeyHeader,
-  looksSecret,
+  keyIntoHeader,
   enabledCountOf,
   enabledModelsOf,
   isSecretName,
   readAiSettings,
   recoverOldWrite,
+  secretsOf,
   settledDefault,
+  withSecrets,
   writeAiSettings,
   type AiSettings,
 } from "./ai-settings.ts";
@@ -36,6 +37,26 @@ function settingsOf(value: unknown): AiSettings {
   const reading = readAiSettings(value);
   if (reading.kind !== "ok") throw new Error(`not read: ${reading.kind}`);
   return reading.settings;
+}
+
+/** Settings as they are saved and read again, with what is secret of each service kept apart. */
+function roundTrip(settings: AiSettings): AiSettings {
+  const secrets = secretsOf(settings);
+  return withSecrets(settingsOf(writeAiSettings(settings)), (id) => secrets.get(id));
+}
+
+/**
+ * Settings as written, with the address of each service in it, as versions before 4 wrote them,
+ * which the pages of before read.
+ */
+function withAddresses(written: Record<string, unknown>, settings: AiSettings) {
+  return {
+    ...written,
+    services: (written.services as Record<string, unknown>[]).map((service) => {
+      const known = settings.services.find(({ id }) => id === service.id);
+      return known ? { ...service, baseUrl: known.baseUrl } : service;
+    }),
+  };
 }
 
 describe("AI settings of version 1", () => {
@@ -202,14 +223,14 @@ describe("AI settings of version 2", () => {
     expect(settings.reasoningFor).toEqual({ "claude-opus-5-5": "high" });
     expect(settings).toMatchObject({ maxToolCalls: 70, autoTitle: false, expandThinking: true });
     expect(settings.sendWith).toBeUndefined();
-    expect(settingsOf(writeAiSettings(settings))).toEqual(settings);
+    expect(roundTrip(settings)).toEqual(settings);
   });
 
   it("send with Ctrl+Enter only where people chose it, and nothing else said for it", () => {
     const chosen = settingsOf({ ...two, sendWith: "modEnter" });
     expect(chosen.sendWith).toBe("modEnter");
     expect(writeAiSettings(chosen).sendWith).toBe("modEnter");
-    expect(settingsOf(writeAiSettings(chosen))).toEqual(chosen);
+    expect(roundTrip(chosen)).toEqual(chosen);
     for (const other of ["enter", "ctrl", 1, null]) {
       const read = settingsOf({ ...two, sendWith: other });
       expect(read.sendWith, String(other)).toBeUndefined();
@@ -247,7 +268,7 @@ describe("AI settings of version 2", () => {
   });
 
   it("are left alone when a newer editor wrote them", () => {
-    expect(readAiSettings({ ...two, version: 4 })).toEqual({ kind: "newer" });
+    expect(readAiSettings({ ...two, version: 5 })).toEqual({ kind: "newer" });
     expect(readAiSettings({ ...two, version: "2.1" })).toEqual({ kind: "newer" });
   });
 
@@ -304,7 +325,10 @@ describe("a page of version 1 that wrote over version 2", () => {
   });
   /** What that page writes: what it read of version 2, as version 1, with its changes. */
   const oldWrite = (change: (value: Record<string, unknown>) => void = () => {}) => {
-    const value = structuredClone(writeAiSettings(latest)) as Record<string, unknown> & {
+    const value = structuredClone(withAddresses(writeAiSettings(latest), latest)) as Record<
+      string,
+      unknown
+    > & {
       services: Record<string, unknown>[];
     };
     value.services = value.services.map(({ id, kind, name, baseUrl, model, route }) => ({
@@ -420,7 +444,10 @@ describe("review of CM1: what a page of version 1 never saw, and names of secret
       value: Record<string, unknown> & { services: Record<string, unknown>[] },
     ) => void = () => {},
   ) => {
-    const written = structuredClone(writeAiSettings(latest)) as Record<string, unknown> & {
+    const written = structuredClone(withAddresses(writeAiSettings(latest), latest)) as Record<
+      string,
+      unknown
+    > & {
       services: Record<string, unknown>[];
     };
     const value = {
@@ -589,7 +616,7 @@ describe("AI settings of version 3", () => {
   };
 
   it("keep everything of each model, and of a server of one's own, field by field", () => {
-    expect(AI_SETTINGS_VERSION).toBe(3);
+    expect(AI_SETTINGS_VERSION).toBe(4);
     const reading = readAiSettings(full);
     expect(reading).toMatchObject({ kind: "ok", from: 3 });
     const [service] = settingsOf(full).services;
@@ -626,13 +653,25 @@ describe("AI settings of version 3", () => {
       },
       { id: "broken" },
     ]);
+    expect(reading).toMatchObject({ inline: true });
     const written = writeAiSettings(settingsOf(full));
-    expect(written.version).toBe(3);
+    expect(written.version).toBe(4);
     // What this editor does not know of a model goes back as it was.
     expect(
       (written.services as { models: Record<string, unknown>[] }[])[0]?.models[0],
     ).toMatchObject({ future: { a: 1 } });
-    expect(settingsOf(written)).toEqual(settingsOf(full));
+    // Addresses and headers are not in it: they are secret, and kept apart with the key.
+    expect(JSON.stringify(written)).not.toMatch(/gateway\.example|x-team|x-route/);
+    expect(secretsOf(settingsOf(full)).get("g")).toEqual({
+      baseUrl: "https://gateway.example/v1",
+      headers: { "x-team": "video", "x-api-key": KEY },
+      models: {
+        "team-claude": { baseUrl: "https://gateway.example/claude", headers: { "x-route": "a" } },
+      },
+    });
+    expect(readAiSettings(written)).toMatchObject({ kind: "ok", from: 4 });
+    expect(readAiSettings(written)).not.toHaveProperty("inline");
+    expect(roundTrip(settingsOf(full))).toEqual(settingsOf(full));
   });
 
   it("let only servers of one's own say how they are talked to", () => {
@@ -686,21 +725,9 @@ describe("AI settings of version 3", () => {
     expect(headerProblem("x-team", "视频")).toBe("value");
     expect(headerProblem("x-team", "é")).toBe("value");
     expect(() => new Headers({ "x-team": "video-1 a=b" })).not.toThrow();
-    // A value that looks like a key is said so, not refused.
-    expect(looksSecret("sk-ant-api03-ABCDEFGHIJKLMNOP")).toBe(true);
-    expect(looksSecret("Bearer abc")).toBe(true);
-    expect(looksSecret("a1B2c3D4e5F6g7H8i9J0k1L2m3N4o5P6q7")).toBe(true);
-    expect(looksSecret("video")).toBe(false);
-    // Ids are no secrets: a UUID, with or without dashes, or a long name without digits.
-    expect(looksSecret("3f2b8c1e-9d4a-4e6b-8f1a-2c3d4e5f6a7b")).toBe(false);
-    expect(looksSecret("3f2b8c1e9d4a4e6b8f1a2c3d4e5f6a7b")).toBe(false);
-    expect(looksSecret("tenant-production-eastasia-gateway-routing")).toBe(false);
-    // Headers the browser or the platform keep for themselves, which the key cannot go in either.
-    for (const name of ["Set-Cookie", "User-Agent", "Cookie", "Host"]) {
+    // Headers the browser or the platform keep for themselves.
+    for (const name of ["Set-Cookie", "User-Agent", "Cookie", "Host"])
       expect(headerProblem(name, "x"), name).toBe("name");
-      expect(isKeyHeader(name), name).toBe(false);
-    }
-    expect(isKeyHeader("api-key")).toBe(true);
     // Read, what cannot be sent is left out, and said so; and only so many.
     const reading = readAiSettings({
       ...full,
@@ -722,7 +749,7 @@ describe("AI settings of version 3", () => {
     ).not.toHaveProperty("headersLeftOut");
   });
 
-  it("keep the header a server of one's own takes its key in, and no address with a secret", () => {
+  it("say the header a server of one's own took its key in, to go into its headers; no address with a secret", () => {
     const azure = {
       ...full,
       services: [
@@ -737,19 +764,27 @@ describe("AI settings of version 3", () => {
         },
       ],
     };
+    const reading = readAiSettings(azure);
+    expect(reading).toMatchObject({ kind: "ok", keyHeaders: { g: "api-key" } });
     const [service] = settingsOf(azure).services;
-    expect(service?.keyHeader).toBe("api-key");
+    expect(service).not.toHaveProperty("keyHeader");
     expect(service?.models?.map((model) => model.baseUrl)).toEqual([
       undefined,
       undefined,
       "https://x.example/v1",
     ]);
-    expect(writeAiSettings(settingsOf(azure)).services).toEqual([
-      expect.objectContaining({ keyHeader: "api-key" }),
-    ]);
-    // Only servers of one's own say where their key goes.
+    expect(JSON.stringify(writeAiSettings(settingsOf(azure)))).not.toContain("keyHeader");
+    // Only servers of one's own had a header of their own for the key.
     const other = { ...azure, services: [{ ...azure.services[0], kind: "openai" }] };
-    expect(settingsOf(other).services[0]?.keyHeader).toBeUndefined();
+    expect(readAiSettings(other)).not.toHaveProperty("keyHeaders");
+    // The key goes in it, after Bearer where the header is Authorization.
+    expect(keyIntoHeader({ "x-team": "v" }, "api-key", "sk-1")).toEqual({
+      "x-team": "v",
+      "api-key": "sk-1",
+    });
+    expect(keyIntoHeader({ authorization: "old" }, "Authorization", "sk-1")).toEqual({
+      Authorization: "Bearer sk-1",
+    });
   });
 });
 
@@ -850,7 +885,7 @@ describe("a page of 0.3.57 to 0.3.63 that makes its settings from the entries of
       ],
       default: { service: "g", model: "mine" },
     });
-    const entries = entriesOfSettings(writeAiSettings(latest))!;
+    const entries = entriesOfSettings(withAddresses(writeAiSettings(latest), latest))!;
     const old = settingsOfEntriesThen(entries) as Record<string, unknown>;
     expect(old.version).toBe(2);
     const models = recoverOldWrite(latest, old)?.services[0]?.models ?? [];

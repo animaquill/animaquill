@@ -21,7 +21,7 @@ const found = (query: string, groups = all) =>
   searchSettings(t, query, groups).map(({ item }) => item.id);
 
 describe("the list", () => {
-  it("gives every setting a group there is, a name, what it does and words to find it by", () => {
+  it("gives every setting a group there is, a name and words to find it by; what it does only where said", () => {
     const texts = zhCN.settings.items as Record<string, Record<string, Record<string, string>>>;
     for (const item of SETTING_ITEMS) {
       expect(all, item.id).toContain(item.group);
@@ -29,7 +29,7 @@ describe("the list", () => {
       expect(group, item.id).toBe(item.group);
       const words = texts[group]?.[name];
       expect(words?.name?.trim(), item.id).toBeTruthy();
-      expect(words?.help?.trim(), item.id).toBeTruthy();
+      if (words?.help !== undefined) expect(words.help.trim(), item.id).toBeTruthy();
       expect(words?.keywords?.trim(), item.id).toBeTruthy();
     }
   });
@@ -51,6 +51,34 @@ describe("the list", () => {
     expect(named.toSorted()).toEqual(ids.toSorted());
   });
 
+  it("has none of what is not a setting: what is changed while editing, or not made yet", () => {
+    const ids = SETTING_ITEMS.map(({ id }) => id as string);
+    for (const gone of [
+      "general.theme",
+      "general.fontSize",
+      "general.input",
+      "general.layout",
+      "editing.snapping",
+      "editing.overwriting",
+      "editing.multiSelecting",
+      "editing.timecode",
+      "playback.quality",
+      "export.quality",
+      "cloud.device",
+    ])
+      expect(ids, gone).not.toContain(gone);
+    // What needs saying under its name: only these.
+    const texts = zhCN.settings.items as Record<string, Record<string, { help?: string }>>;
+    const said = SETTING_ITEMS.filter(({ id }) => {
+      const [group, name] = id.split(".") as [string, string];
+      return texts[group]?.[name]?.help !== undefined;
+    }).map(({ id }) => id);
+    for (const id of ["general.language", "account.space", "storage.persist", "storage.keys"])
+      expect(said, id).not.toContain(id);
+    for (const id of ["editing.trial", "playback.proxyOffer", "export.hardware", "cloud.ai"])
+      expect(said, id).toContain(id);
+  });
+
   it("names every group", () => {
     for (const group of all)
       expect(t(`settings.groups.${group}`)).not.toBe(`settings.groups.${group}`);
@@ -67,15 +95,14 @@ describe("searching", () => {
   });
 
   it("finds by words a setting is also known by", () => {
-    expect(found("帧率")).toContain("playback.quality");
-    expect(found("暗色")).toEqual(["general.theme"]);
+    expect(found("暗色")).toEqual([]);
     expect(found("回车")).toEqual(["chat.sendWith"]);
-    expect(found("fps")).toEqual(expect.arrayContaining(["editing.timecode", "playback.quality"]));
+    expect(found("代理")).toContain("playback.proxyOffer");
     expect(found("额度")).toContain("account.space");
   });
 
   it("finds by the name of a group, and by every word given", () => {
-    expect(found("导出")).toEqual(expect.arrayContaining(["export.quality", "export.hardware"]));
+    expect(found("导出")).toEqual(expect.arrayContaining(["export.hardware"]));
     expect(found("导出 显卡")).toEqual(["export.hardware"]);
     expect(found("没有这种设置")).toEqual([]);
     expect(found("   ")).toEqual([]);

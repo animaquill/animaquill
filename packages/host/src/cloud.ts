@@ -13,7 +13,6 @@ import type {
   OrganizerAccess,
   AiSyncAccess,
   ChatSyncAccess,
-  CloudSwitchesAccess,
   LfsAccess,
   LfsAccountAccess,
   RepositoryAccess,
@@ -390,7 +389,6 @@ export interface BrowserCloudOptions {
   readonly organizer?: OrganizerAccess;
   readonly aiSync?: AiSyncAccess;
   readonly chats?: ChatSyncAccess;
-  readonly switches?: CloudSwitchesAccess;
   readonly modelCatalog?: CloudAccess["modelCatalog"];
   readonly database?: () => IDBFactory;
   readonly locks?: () => LockManager | undefined;
@@ -415,7 +413,6 @@ export function browserCloud(options: BrowserCloudOptions): CloudAccess {
     ...(options.organizer && { organizer: options.organizer }),
     ...(options.aiSync && { aiSync: options.aiSync }),
     ...(options.chats && { chats: options.chats }),
-    ...(options.switches && { switches: options.switches }),
     ...(options.modelCatalog && { modelCatalog: options.modelCatalog }),
   };
 }

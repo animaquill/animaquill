@@ -310,15 +310,23 @@ function Bubble({
     return () => document.removeEventListener("pointerdown", close);
   }, [onClose]);
 
+  /**
+   * Chooses a model: the bubble stays open, to see what is chosen or to choose again, until people
+   * click outside it or press Esc.
+   */
   const choose = (row: Row) => {
     chat.chooseModel({ service: row.service, model: row.model.id });
-    onClose();
+    setCursor(keyOf(row));
   };
-  /** A model and a pack for it, from the menu: this conversation takes both from its next turn. */
+  /**
+   * A model and a pack for it, from the menu: this conversation takes both from its next turn. The
+   * menu goes, the bubble stays.
+   */
   const choosePack = (row: Row, pack: string | undefined) => {
     chat.chooseModel({ service: row.service, model: row.model.id });
     chat.choosePack(row.model.id, pack, "now");
-    onClose();
+    setCursor(keyOf(row));
+    closeMenu();
   };
   const openMenu = (key: string, focus: boolean) => {
     clearTimeout(timer.current);

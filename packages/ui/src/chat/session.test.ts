@@ -583,8 +583,8 @@ describe("AI services", () => {
     expect(ai.getSnapshot().keyed.has(id)).toBe(true);
     expect(await ai.keyOf(id)).toBe("sk-ant-secret-0123456789");
     expect(ai.knownKeys.has("sk-ant-secret-0123456789")).toBe(true);
-    expect(JSON.stringify([...values])).not.toContain("secret");
-    expect(JSON.stringify(ai.getSnapshot().services)).not.toContain("secret");
+    expect(JSON.stringify([...values])).not.toContain("sk-ant-secret");
+    expect(JSON.stringify(ai.getSnapshot().services)).not.toContain("sk-ant-secret");
 
     await ai.remove(id);
     expect(ai.getSnapshot().keyed.has(id)).toBe(false);

@@ -25,7 +25,7 @@ async function setUpService(page: Page) {
   // Where the keys are is said with what this browser keeps.
   await goToSettingsGroup(page, "存储和数据");
   const keys = settingsOf(page).getByTestId("ai-keys-where");
-  await expect(keys).toHaveText("现在存了 1 个。");
+  await expect(keys).toHaveText("AI 服务的 key：1 个");
   await expect(keys).toHaveAttribute("data-where", "animaquill-keys");
   await closeSettings(page);
   await tab(page, "chat").click();

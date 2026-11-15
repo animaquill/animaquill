@@ -29,14 +29,40 @@ describe("keys of AI services", () => {
     const factory = new IDBFactory();
     const keys = browserKeys(() => factory);
     expect(keys.where).toBe(KEYS_DATABASE);
-    await keys.write("a", "sk-one");
-    await keys.write("b", "sk-two");
-    expect(await browserKeys(() => factory).read("a")).toBe("sk-one");
+    await keys.write("a", { key: "sk-one" });
+    await keys.write("b", { baseUrl: "http://localhost:11434/v1", headers: { "api-key": "x" } });
+    expect(await browserKeys(() => factory).read("a")).toEqual({ key: "sk-one" });
+    expect(await keys.read("b")).toEqual({
+      baseUrl: "http://localhost:11434/v1",
+      headers: { "api-key": "x" },
+    });
     expect((await keys.list()).toSorted()).toEqual(["a", "b"]);
     await keys.remove("a");
     expect(await keys.read("a")).toBeUndefined();
     await keys.clear();
     expect(await keys.list()).toEqual([]);
+  });
+
+  it("read a key as pages of before 0.3.72 kept it, and keep it where they read it", async () => {
+    const factory = new IDBFactory();
+    // As those pages wrote it: the key alone.
+    const opened = factory.open(KEYS_DATABASE, 1);
+    opened.onupgradeneeded = () => opened.result.createObjectStore("keys", { keyPath: "service" });
+    await new Promise((resolve) => (opened.onsuccess = resolve));
+    const old = opened.result.transaction("keys", "readwrite");
+    old.objectStore("keys").put({ service: "a", key: "sk-old" });
+    await new Promise((resolve) => (old.oncomplete = resolve));
+    opened.result.close();
+    const keys = browserKeys(() => factory);
+    expect(await keys.read("a")).toEqual({ key: "sk-old" });
+    await keys.write("a", { key: "sk-old", baseUrl: "https://gw.example" });
+    // Where they read it.
+    const again = factory.open(KEYS_DATABASE, 1);
+    await new Promise((resolve) => (again.onsuccess = resolve));
+    const read = again.result.transaction("keys").objectStore("keys").get("a");
+    await new Promise((resolve) => (read.onsuccess = resolve));
+    expect(read.result).toEqual({ service: "a", key: "sk-old", baseUrl: "https://gw.example" });
+    again.result.close();
   });
 
   it("are nowhere settings are", async () => {
@@ -49,9 +75,13 @@ describe("keys of AI services", () => {
       () => undefined,
     );
     await host.settings.save("ai", { services: [{ id: "a" }] });
-    await host.keys?.write("a", "sk-secret-123456");
+    await host.keys?.write("a", {
+      key: "sk-secret-123456",
+      baseUrl: "https://secret-gateway.example",
+      headers: { "x-secret": "sk-secret-header" },
+    });
     for (let index = 0; index < local.length; index += 1) {
-      expect(local.getItem(local.key(index) ?? "")).not.toContain("sk-secret");
+      expect(local.getItem(local.key(index) ?? "")).not.toMatch(/sk-secret|secret-gateway/);
     }
     const databases = await factory.databases();
     expect(databases.map(({ name }) => name)).toContain(KEYS_DATABASE);

@@ -1,3 +1,4 @@
+import { readServiceSecret, type ServiceSecret } from "./ai-sync-rules.ts";
 import type {
   ChatImageRef,
   ChatImageStore,
@@ -27,10 +28,18 @@ const BY_PROJECT = "project";
 /** Conversations of one project that are kept: the ones people talked in last. */
 export const MAX_CHATS_PER_PROJECT = 50;
 
-interface KeyRecord {
-  readonly service: string;
-  readonly key: string;
-}
+/**
+ * What is secret of a service as it is kept: its key where pages of before 0.3.72 read it, and the
+ * rest of its `ServiceSecret` beside it.
+ */
+type KeyRecord = { readonly service: string } & ServiceSecret;
+
+/** What a record has, or undefined where it has nothing that can be read. */
+const secretOf = (found: unknown): ServiceSecret | undefined => {
+  if (typeof found !== "object" || found === null) return undefined;
+  const { service: _service, account: _account, ...rest } = found as Record<string, unknown>;
+  return readServiceSecret(rest);
+};
 
 const resultOf = <T>(request: IDBRequest<T>) =>
   new Promise<T>((resolve, reject) => {
@@ -86,16 +95,15 @@ export function browserKeys(factory: () => IDBFactory): KeyStore {
     where: KEYS_DATABASE,
     async read(service) {
       const transaction = (await database()).transaction(KEYS, "readonly");
-      const found = (await resultOf(transaction.objectStore(KEYS).get(service))) as
-        KeyRecord | undefined;
-      return typeof found?.key === "string" ? found.key : undefined;
+      return secretOf(await resultOf(transaction.objectStore(KEYS).get(service)));
     },
     async list() {
       const transaction = (await database()).transaction(KEYS, "readonly");
       const keys = await resultOf(transaction.objectStore(KEYS).getAllKeys());
       return keys.filter((key): key is string => typeof key === "string");
     },
-    write: (service, key) => change((store) => store.put({ service, key } satisfies KeyRecord)),
+    write: (service, secret) =>
+      change((store) => store.put({ ...secret, service } satisfies KeyRecord)),
     remove: (service) => change((store) => store.delete(service)),
     clear: () => change((store) => store.clear()),
   };
@@ -109,11 +117,7 @@ export interface AccountKeys {
   forget(account: string): Promise<void>;
 }
 
-interface AccountKeyRecord {
-  readonly account: string;
-  readonly service: string;
-  readonly key: string;
-}
+type AccountKeyRecord = { readonly account: string; readonly service: string } & ServiceSecret;
 
 /** Keys of accounts in this browser, each account's apart. */
 export function browserAccountKeys(factory: () => IDBFactory): AccountKeys {
@@ -142,9 +146,7 @@ export function browserAccountKeys(factory: () => IDBFactory): AccountKeys {
       where: ACCOUNT_KEYS_DATABASE,
       async read(service) {
         const transaction = (await database()).transaction(KEYS, "readonly");
-        const found = (await resultOf(transaction.objectStore(KEYS).get([account, service]))) as
-          AccountKeyRecord | undefined;
-        return typeof found?.key === "string" ? found.key : undefined;
+        return secretOf(await resultOf(transaction.objectStore(KEYS).get([account, service])));
       },
       async list() {
         const transaction = (await database()).transaction(KEYS, "readonly");
@@ -153,8 +155,8 @@ export function browserAccountKeys(factory: () => IDBFactory): AccountKeys {
         )) as AccountKeyRecord[];
         return found.map(({ service }) => service);
       },
-      write: (service, key) =>
-        change((store) => store.put({ account, service, key } satisfies AccountKeyRecord)),
+      write: (service, secret) =>
+        change((store) => store.put({ ...secret, account, service } satisfies AccountKeyRecord)),
       remove: (service) => change((store) => store.delete([account, service])),
       clear: () => forget(account),
     }),
@@ -282,12 +284,15 @@ const sizeOf = (chat: SavedChat): number => {
 
 /** Keys that last as long as the page, where there is nowhere to keep them. */
 export function memoryKeys(): KeyStore {
-  const keys = new Map<string, string>();
+  const keys = new Map<string, ServiceSecret>();
   return {
     where: undefined,
-    read: async (service) => keys.get(service),
+    read: async (service) => {
+      const found = keys.get(service);
+      return found && structuredClone(found);
+    },
     list: async () => [...keys.keys()],
-    write: async (service, key) => void keys.set(service, key),
+    write: async (service, secret) => void keys.set(service, structuredClone(secret)),
     remove: async (service) => void keys.delete(service),
     clear: async () => keys.clear(),
   };

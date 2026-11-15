@@ -9,11 +9,9 @@ import {
 } from "./answers.ts";
 import {
   AiSyncNewer,
-  AiSyncOff,
   AiSyncTooLarge,
   ChatImagesMissing,
   ChatNewer,
-  CloudFeatureOff,
   CloudOtherAccount,
   CloudSignedOut,
   type AccountAiSettings,
@@ -22,15 +20,13 @@ import {
   type ChatImageRef,
   type ChatImageUsage,
   type ChatSyncAccess,
-  type CloudSwitchChanges,
-  type CloudSwitches,
-  type CloudSwitchesAccess,
   type SavedChat,
 } from "./index.ts";
 import {
   AI_SYNC_BATCH,
   AI_SYNC_KEYS,
   isEntryName,
+  readServiceSecret,
   type AiEntry,
   type AiSyncKey,
 } from "./ai-sync-rules.ts";
@@ -70,8 +66,14 @@ const keyOf = (value: unknown, clock: Clock): AiSyncKey | undefined => {
   const at = count(value.at);
   if (at === undefined) return undefined;
   if (value.deleted === true) return { at: clock(at), deleted: true };
-  const key = text(value.key);
-  return key === undefined ? undefined : { at: clock(at), key };
+  // A platform of before 0.3.72 has the key only.
+  const secret =
+    value.secret !== undefined
+      ? readServiceSecret(value.secret)
+      : text(value.key) !== undefined
+        ? readServiceSecret({ key: value.key })
+        : undefined;
+  return secret === undefined ? undefined : { at: clock(at), secret };
 };
 
 const stateOf = (value: unknown, clock: Clock): AccountAiSettings | undefined => {
@@ -80,7 +82,6 @@ const stateOf = (value: unknown, clock: Clock): AccountAiSettings | undefined =>
   const revision = count(value.revision);
   const format = count(value.format);
   if (account === undefined || revision === undefined || format === undefined) return undefined;
-  if (typeof value.enabled !== "boolean") return undefined;
   const entries: Record<string, AiEntry> = {};
   for (const [name, raw] of Object.entries(value.entries)) {
     const entry = entryOf(raw, clock);
@@ -94,7 +95,7 @@ const stateOf = (value: unknown, clock: Clock): AccountAiSettings | undefined =>
     if (!key) return undefined;
     keys[service] = key;
   }
-  return { account, enabled: value.enabled, revision, format, entries, keys };
+  return { account, revision, format, entries, keys };
 };
 
 /** Asks the platform, and has its times agree with this computer's clock. */
@@ -112,10 +113,6 @@ function asker(options: BrowserAiSyncOptions) {
       throw new CloudSignedOut("Nobody is signed in");
     if (response.status === 409 && said === "otherAccount")
       throw new CloudOtherAccount("Somebody else is signed in");
-    if (response.status === 409 && said === "off")
-      throw path.startsWith("/me/chats")
-        ? new CloudFeatureOff("Turned off")
-        : new AiSyncOff("Turned off");
     if (response.status === 409 && said === "newer") {
       const revision = isObject(answer) ? count(answer.revision) : undefined;
       if (path.startsWith("/me/chats/")) throw new ChatNewer(revision ?? 0);
@@ -142,12 +139,11 @@ const clockOf = (answer: unknown, sent: number, came: number): Clock => {
 /**
  * The AI settings of the person on a platform, over its HTTP API, see `AiSyncAccess`:
  *
- * - `GET <api>/me/ai-settings[?since=<revision>]`: `{now, account, enabled, revision, format,
- *   entries, keys}` by the platform's clock, or `{now, account, enabled, revision, unchanged: true}`
- *   where the revision is still `since`.
- * - `POST <api>/me/ai-settings` `{now, account, format, entries, keys, enable?}`, by this
- *   computer's clock and what that says as it sends them: `{now, refused, tooLarge, state}`.
- * - `DELETE <api>/me/ai-settings?account=`: turned off, nothing kept. 204.
+ * - `GET <api>/me/ai-settings[?since=<revision>]`: `{now, account, revision, format, entries,
+ *   keys}` by the platform's clock, or `{now, account, revision, unchanged: true}` where the
+ *   revision is still `since`. Each of `keys` is `{at, secret}` or `{at, deleted: true}`.
+ * - `POST <api>/me/ai-settings` `{now, account, format, entries, keys}`, by this computer's clock
+ *   and what that says as it sends them: `{now, refused, tooLarge, state}`.
  */
 export function browserAiSyncAccess(options: BrowserAiSyncOptions): AiSyncAccess {
   const ask = asker(options);
@@ -164,13 +160,9 @@ export function browserAiSyncAccess(options: BrowserAiSyncOptions): AiSyncAccess
         if (answer.unchanged === true) {
           const revision = count(answer.revision);
           const account = text(answer.account);
-          if (
-            revision === undefined ||
-            account === undefined ||
-            typeof answer.enabled !== "boolean"
-          )
+          if (revision === undefined || account === undefined)
             throw new Error("The platform answered something that cannot be read");
-          return { revision, unchanged: true, account, enabled: answer.enabled };
+          return { revision, unchanged: true, account };
         }
         const state = stateOf(answer, clock);
         if (!state) throw new Error("The platform answered something that cannot be read");
@@ -204,15 +196,6 @@ export function browserAiSyncAccess(options: BrowserAiSyncOptions): AiSyncAccess
           tooLarge: names(answer.tooLarge),
         };
       }),
-    turnOff: (account) =>
-      withinTime(timeout ?? REQUEST_TIMEOUT_MS, async (signal) => {
-        const { response } = await ask(
-          `/me/ai-settings?account=${encodeURIComponent(account)}`,
-          { method: "DELETE", headers: { ...options.changeHeaders } },
-          signal,
-        );
-        if (!response.ok) throw new Error(`The platform answered ${response.status}`);
-      }),
   };
 }
 
@@ -234,8 +217,8 @@ const summaryOf = (value: unknown): AccountChatSummary | undefined => {
  * The conversations of the person about projects of a platform, over its HTTP API, see
  * `ChatSyncAccess`:
  *
- * - `GET <api>/me/chats?project=`: `{chats: [{revision, summary}], epoch}`, newest first.
- * - `GET <api>/me/chats/<project>/<id>`: `{revision, chat, epoch}`; 404 where there is none.
+ * - `GET <api>/me/chats?project=`: `{chats: [{revision, summary}]}`, newest first.
+ * - `GET <api>/me/chats/<project>/<id>`: `{revision, chat}`; 404 where there is none.
  * - `PUT <api>/me/chats/<project>/<id>` `{base, chat}`: `{revision}`; 409 `{error: "newer",
  *   revision}`; 404 for a project that is not the person's, 413 for one too large.
  *   409 `{error: "missingImages", images}` for pictures it names that the platform does not have.
@@ -272,7 +255,6 @@ export function browserChatSyncAccess(options: BrowserAiSyncOptions): ChatSyncAc
             const summary = summaryOf(each);
             return summary ? [summary] : [];
           }),
-          epoch: count(answer.epoch),
         };
       }),
     load: (project, id) =>
@@ -285,7 +267,7 @@ export function browserChatSyncAccess(options: BrowserAiSyncOptions): ChatSyncAc
         const chat = answer.chat as unknown as SavedChat;
         if (!Array.isArray(chat.entries) || chat.id !== id)
           throw new Error("The platform answered something that cannot be read");
-        return { revision, chat, epoch: count(answer.epoch) };
+        return { revision, chat };
       }),
     save: (project, chat, base) =>
       withinTime(CHANGE_TIMEOUT_MS, async (signal) => {
@@ -405,78 +387,6 @@ export function browserChatSyncAccess(options: BrowserAiSyncOptions): ChatSyncAc
           });
         }
         return { used, limit, chats };
-      }),
-  };
-}
-
-const switchesOf = (value: unknown): CloudSwitches | undefined => {
-  if (!isObject(value) || !isObject(value.prefs)) return undefined;
-  const account = text(value.account);
-  const organizerEpoch = count(value.organizerEpoch);
-  const chatsEpoch = count(value.chatsEpoch);
-  const { ai, organizer, chats } = value;
-  const cloud = value.prefs.newProjectsInCloud;
-  if (
-    account === undefined ||
-    organizerEpoch === undefined ||
-    chatsEpoch === undefined ||
-    typeof ai !== "boolean" ||
-    typeof organizer !== "boolean" ||
-    typeof chats !== "boolean" ||
-    typeof cloud !== "boolean"
-  )
-    return undefined;
-  return {
-    account,
-    ai,
-    organizer,
-    organizerEpoch,
-    chats,
-    chatsEpoch,
-    newProjectsInCloud: cloud,
-  };
-};
-
-/**
- * The switches of the cloud features of the person on a platform, over its HTTP API, see
- * `CloudSwitchesAccess`:
- *
- * - `GET <api>/me/cloud`: `{now, account, ai, organizer, organizerEpoch, chats, chatsEpoch,
- *   prefs: {newProjectsInCloud}}`.
- * - `POST <api>/me/cloud` `{account, organizer?, chats?, prefs?: {newProjectsInCloud?}}`: the same.
- */
-export function browserCloudSwitchesAccess(options: BrowserAiSyncOptions): CloudSwitchesAccess {
-  const ask = asker(options);
-  const timeout = options.timeoutMs;
-  const answered = (response: Response, answer: unknown) => {
-    if (!response.ok) throw new Error(`The platform answered ${response.status}`);
-    const switches = switchesOf(answer);
-    if (!switches) throw new Error("The platform answered something that cannot be read");
-    return switches;
-  };
-  return {
-    read: () =>
-      withinTime(timeout ?? REQUEST_TIMEOUT_MS, async (signal) => {
-        const { response, answer } = await ask("/me/cloud", {}, signal);
-        return answered(response, answer);
-      }),
-    change: (account: string, changes: CloudSwitchChanges) =>
-      withinTime(timeout ?? CHANGE_TIMEOUT_MS, async (signal) => {
-        const { newProjectsInCloud, ...switches } = changes;
-        const { response, answer } = await ask(
-          "/me/cloud",
-          {
-            method: "POST",
-            headers: { ...options.changeHeaders, "content-type": "application/json" },
-            body: JSON.stringify({
-              account,
-              ...switches,
-              ...(newProjectsInCloud !== undefined && { prefs: { newProjectsInCloud } }),
-            }),
-          },
-          signal,
-        );
-        return answered(response, answer);
       }),
   };
 }

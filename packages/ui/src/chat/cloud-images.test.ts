@@ -37,7 +37,7 @@ function platformOf(room = Infinity) {
   const state = { room, down: false };
   const used = () => [...pictures.values()].reduce((sum, blob) => sum + blob.size, 0);
   const access: ChatSyncAccess = {
-    list: async () => ({ chats: [], epoch: 0 }),
+    list: async () => ({ chats: [] }),
     load: async (project, id) => chats.get(`${project}/${id}`),
     save: async (project, chat, base) => {
       const there = chats.get(`${project}/${chat.id}`);

@@ -102,14 +102,14 @@ afterEach(() => {
 });
 
 describe("AI settings of before", () => {
-  it("come up as version 3 with every service, key, model and pack choice", async () => {
+  it("come up as version 4 with every service, key, model and pack choice", async () => {
     const { values, keys, open } = browser({
       services: [v1Service("a", "anthropic", "claude-opus-5-5"), v1Service("b", "deepseek", "")],
       current: "a",
       maxToolCalls: 80,
       packFor: { "claude-opus-5-5": "lin/steady" },
     });
-    await keys.write("a", "sk-ant-0123456789abcd");
+    await keys.write("a", { key: "sk-ant-0123456789abcd" });
     const ai = await open();
     const snapshot = ai.getSnapshot();
     expect(snapshot.services.map(({ id, enabled }) => [id, enabled])).toEqual([
@@ -120,13 +120,24 @@ describe("AI settings of before", () => {
     expect(snapshot.keyed.has("a")).toBe(true);
     expect(snapshot.hints.get("a")).toBe("abcd");
     expect(snapshot.packFor).toEqual({ "claude-opus-5-5": "lin/steady" });
-    // Read, not written: nothing changes until people change something.
-    expect(values.get("ai")).not.toHaveProperty("version");
+    // The addresses went into what is secret of each service at once, and nothing else changed.
+    await settle();
+    expect(values.get("ai")).toMatchObject({ version: 4, current: "a", maxToolCalls: 80 });
+    expect(JSON.stringify(values.get("ai"))).not.toContain("https://");
+    expect(await keys.read("a")).toEqual({
+      key: "sk-ant-0123456789abcd",
+      baseUrl: "https://api.anthropic.com",
+    });
+    expect(await keys.read("b")).toEqual({ baseUrl: "https://api.deepseek.com" });
+    expect(snapshot.services.map(({ baseUrl }) => baseUrl)).toEqual([
+      "https://api.anthropic.com",
+      "https://api.deepseek.com",
+    ]);
 
     ai.setEnabled("a", "claude-sonnet-5-5", true);
     const saved = values.get("ai") as Record<string, unknown>;
     expect(saved).toMatchObject({
-      version: 3,
+      version: 4,
       current: "a",
       maxToolCalls: 80,
       packFor: { "claude-opus-5-5": "lin/steady" },
@@ -139,7 +150,7 @@ describe("AI settings of before", () => {
       }),
       expect.objectContaining({ id: "b", enabled: [], model: "" }),
     ]);
-    expect(await keys.read("a")).toBe("sk-ant-0123456789abcd");
+    expect((await keys.read("a"))?.key).toBe("sk-ant-0123456789abcd");
   });
 
   it("with the words to compare with on keep them for the models that were on", async () => {
@@ -178,7 +189,7 @@ describe("AI settings of before", () => {
 
 describe("AI settings this editor cannot take", () => {
   it("are left as they are, until people start again", async () => {
-    const newer = { version: 4, services: [{ id: "a", kind: "anthropic", future: true }] };
+    const newer = { version: 5, services: [{ id: "a", kind: "anthropic", future: true }] };
     const { values, open } = browser(newer);
     const ai = await open();
     expect(ai.getSnapshot().held).toBe("newer");
@@ -204,7 +215,7 @@ describe("AI settings this editor cannot take", () => {
   });
 
   it("are taken once another window writes ones it can", async () => {
-    const { open } = browser({ version: 4, services: [] });
+    const { open } = browser({ version: 5, services: [] });
     const held = await open();
     expect(held.getSnapshot().held).toBe("newer");
     const other = await open();
@@ -308,24 +319,16 @@ describe("two windows", () => {
       enabled: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
     }) as string;
     ai.setReasoning("claude-opus-5-5", "high");
+    await settle();
     // A page of 0.3.56 reads what is there, people change the limit there, and it writes back
-    // what it knows: one model per service, no version.
+    // what it knows: one model per service, no version. A service without its address it cannot
+    // read, and leaves out.
     const old = structuredClone(values.get("ai")) as {
       services: Record<string, unknown>[];
       current: string;
     };
-    const written = {
-      services: old.services.map(({ id, kind, name, baseUrl, model, route }) => ({
-        id,
-        kind,
-        name,
-        baseUrl,
-        model,
-        route,
-      })),
-      current: old.current,
-      maxToolCalls: 9,
-    };
+    expect(old.services[0]).not.toHaveProperty("baseUrl");
+    const written = { services: [], current: old.current, maxToolCalls: 9 };
     values.set("ai", written);
     // This window hears of it, as of any window.
     const other = await open();
@@ -339,8 +342,10 @@ describe("two windows", () => {
       reasoningFor: { "claude-opus-5-5": "high" },
       default: { service: a, model: "claude-opus-5-5" },
     });
-    // And version 2 is back where the page of before reads, which it takes as it is.
-    expect(values.get("ai")).toMatchObject({ version: 3, maxToolCalls: 9, current: a });
+    // Where it is stays, as what is secret of it.
+    expect(other.serviceOf(a)?.baseUrl).toBe("https://api.anthropic.com");
+    // And version 4 is back where the page of before reads, which it takes as it is.
+    expect(values.get("ai")).toMatchObject({ version: 4, maxToolCalls: 9, current: a });
   });
 });
 
@@ -351,22 +356,11 @@ describe("a page of before, while two of version 2 are open", () => {
     const a = one.add("anthropic", "Anthropic", {
       enabled: ["claude-opus-5-5", "claude-sonnet-5-5"],
     }) as string;
+    await settle();
     const two = await open();
-    // The page of before writes what it read; before the second window hears of it, the first one
-    // renames the service, which is saved at once.
-    const old = structuredClone(values.get("ai")) as { services: Record<string, unknown>[] };
-    const written = {
-      services: old.services.map(({ id, kind, name, baseUrl, model, route }) => ({
-        id,
-        kind,
-        name,
-        baseUrl,
-        model,
-        route,
-      })),
-      current: a,
-      maxToolCalls: 50,
-    };
+    // The page of before writes what it read (nothing, without addresses); before the second window
+    // hears of it, the first one renames the service, which is saved at once.
+    const written = { services: [], current: a, maxToolCalls: 50 };
     oldWrite(written);
     one.update(a, { name: "公司的 Anthropic" });
     await settle();
@@ -374,7 +368,7 @@ describe("a page of before, while two of version 2 are open", () => {
       name: "公司的 Anthropic",
       enabled: ["claude-opus-5-5", "claude-sonnet-5-5"],
     });
-    expect(values.get("ai")).toMatchObject({ version: 3 });
+    expect(values.get("ai")).toMatchObject({ version: 4 });
   });
 });
 
@@ -712,17 +706,110 @@ describe("headers of before that cannot be sent", () => {
       save: async (key, value) => void values.set(key, structuredClone(value)),
       listen: () => () => {},
     };
-    const first = new AiSettingsStore(store, memoryKeys(), messages);
+    const keys = memoryKeys();
+    const first = new AiSettingsStore(store, keys, messages);
     await first.load();
     expect(messages.headersLeftOut).toHaveBeenCalledTimes(1);
     await settle();
-    expect((values.get("ai") as { services: { headers: unknown }[] }).services[0]?.headers).toEqual(
-      {
-        "x-ok": "1",
-      },
-    );
-    const again = new AiSettingsStore(store, memoryKeys(), messages);
+    expect((await keys.read("g"))?.headers).toEqual({ "x-ok": "1" });
+    expect(values.get("ai")).toMatchObject({ version: 4 });
+    const again = new AiSettingsStore(store, keys, messages);
     await again.load();
     expect(messages.headersLeftOut).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("what is secret of a service: its key, address and headers", () => {
+  const gateway = {
+    id: "g",
+    kind: "openai-compatible",
+    name: "网关",
+    baseUrl: "https://gw.example/v1",
+    route: "direct",
+    api: "openai-completions",
+    headers: { "x-team": "video" },
+    keyHeader: "api-key",
+    enabled: ["m"],
+    models: [
+      { id: "m", added: "hand", baseUrl: "https://gw.example/claude", headers: { "x-m": "1" } },
+    ],
+  };
+
+  it("of version 3 go into it, the key into its header, and nothing of them is lost", async () => {
+    const { values, keys, open } = browser({ version: 3, services: [gateway], default: null });
+    await keys.write("g", { key: "sk-gw-0123456789" });
+    const ai = await open();
+    await settle();
+    const service = ai.serviceOf("g");
+    expect(service).toMatchObject({
+      baseUrl: "https://gw.example/v1",
+      headers: { "x-team": "video", "api-key": "sk-gw-0123456789" },
+    });
+    expect(ai.modelOf("g", "m")?.config).toMatchObject({
+      baseUrl: "https://gw.example/claude",
+      headers: { "x-m": "1" },
+    });
+    // Which is a header like any other now: no key, and no header of its own for it.
+    expect(service).not.toHaveProperty("keyHeader");
+    expect(ai.getSnapshot().keyed.has("g")).toBe(false);
+    expect(await keys.read("g")).toEqual({
+      baseUrl: "https://gw.example/v1",
+      headers: { "x-team": "video", "api-key": "sk-gw-0123456789" },
+      models: { m: { baseUrl: "https://gw.example/claude", headers: { "x-m": "1" } } },
+    });
+    // The settings have none of it.
+    const saved = JSON.stringify(values.get("ai"));
+    expect(saved).not.toMatch(/gw\.example|x-team|x-m|api-key|keyHeader|sk-gw/);
+    expect(JSON.stringify(values.get("ai.latest"))).not.toMatch(/gw\.example|sk-gw/);
+    // Read again, by another window: the same.
+    const again = await open();
+    expect(again.serviceOf("g")).toMatchObject({
+      baseUrl: "https://gw.example/v1",
+      headers: { "x-team": "video", "api-key": "sk-gw-0123456789" },
+    });
+  });
+
+  it("an Authorization of its own gets Bearer before the key", async () => {
+    const { keys, open } = browser({
+      version: 3,
+      services: [{ ...gateway, keyHeader: "Authorization", headers: undefined, models: [] }],
+    });
+    await keys.write("g", { key: "sk-1" });
+    const ai = await open();
+    await settle();
+    expect(ai.serviceOf("g")?.headers).toEqual({ Authorization: "Bearer sk-1" });
+  });
+
+  it("change apart from the settings, which every window hears of", async () => {
+    const { values, keys, open } = browser();
+    const one = await open();
+    const two = await open();
+    const id = one.add("openai-compatible", "网关", { baseUrl: "https://gw.example/v1" }) as string;
+    await settle();
+    one.update(id, { baseUrl: "https://other.example/v1", headers: { "x-a": "b" } });
+    await settle();
+    expect(await keys.read(id)).toEqual({
+      baseUrl: "https://other.example/v1",
+      headers: { "x-a": "b" },
+    });
+    expect(JSON.stringify(values.get("ai"))).not.toMatch(/example|x-a/);
+    expect(two.serviceOf(id)).toMatchObject({
+      baseUrl: "https://other.example/v1",
+      headers: { "x-a": "b" },
+    });
+    // A key alone changes them too: the other window knows it has one.
+    await one.setKey(id, "sk-new-0123456789");
+    await settle();
+    expect(two.getSnapshot().keyed.has(id)).toBe(true);
+    expect((await keys.read(id))?.baseUrl).toBe("https://other.example/v1");
+    // Taking all keys away leaves where the service is.
+    await two.removeAllKeys();
+    expect(await keys.read(id)).toEqual({
+      baseUrl: "https://other.example/v1",
+      headers: { "x-a": "b" },
+    });
+    // Taking the service away takes all of it.
+    await one.remove(id);
+    expect(await keys.read(id)).toBeUndefined();
   });
 });

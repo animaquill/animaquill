@@ -1,7 +1,6 @@
 import {
   ChatImagesMissing,
   ChatNewer,
-  CloudFeatureOff,
   type AccountAccess,
   type ChatImageHeld,
   type ChatImageStore,
@@ -44,15 +43,6 @@ export interface CloudChatsOptions {
    * are of this browser only. Always where it is not given.
    */
   readonly allowed?: (account: string) => boolean;
-  /** The platform says people turned them off for the account. */
-  readonly off?: () => void;
-  /**
-   * The platform said the epoch of the conversations of the account, see
-   * `CloudSwitches.chatsEpoch`: where this browser did not hear of it yet, the account's copy went
-   * as they were turned off since, and what this browser took for the account's is to go again
-   * (`detach`) before anything is taken for taken away. Resolves once that is done.
-   */
-  readonly heardEpoch?: (account: string, epoch: number) => Promise<void>;
   /**
    * The pictures of conversations in this browser: those a conversation has go to the account
    * before it, see `ChatSyncAccess.putImage`. Without it, conversations go without their pictures.
@@ -127,12 +117,11 @@ const copyId = () =>
  *
  * - Where the account's version of a conversation takes the place of one changed here (another
  *   device wrote it since), this browser's is kept first as a new conversation, "《X》在这台设备上的副本", which goes to the account in turn, and people are told; not where both say the
- *   same, as one given again by another device after they were off and on.
+ *   same.
  * - Signing out lets go only of conversations that are as the account has them; the others stay,
  *   for their link says whose project they are of, and go once that account is signed in again.
- * - The account's copy went as people turned the conversations off on another device, and on
- *   again, which this browser did not hear of (a new epoch): what it took for the account's is not
- *   taken for taken away there, and goes again.
+ * - Turned off on this device (`allowed`), conversations are of this browser only: nothing goes,
+ *   and the account's stay as they are. Turned on again, what changed here goes as above.
  */
 export class CloudChats implements ChatStore {
   readonly #options: CloudChatsOptions;
@@ -161,23 +150,12 @@ export class CloudChats implements ChatStore {
   }
 
   /** The account could not be asked: what changed here goes the next time. */
-  #failed(error: unknown): void {
-    if (error instanceof CloudFeatureOff) {
-      this.#options.off?.();
-      return;
-    }
+  #failed(): void {
     this.#snapshot = {
       ...this.#snapshot,
       status: globalThis.navigator?.onLine === false ? "offline" : "failed",
     };
     this.#emitter.emit();
-  }
-
-  /** The platform said the epoch: what this browser has goes again where it is a new one. */
-  async #heard(epoch: number | undefined): Promise<void> {
-    const snapshot = this.#options.account.getSnapshot();
-    if (epoch === undefined || snapshot.status !== "signedIn" || snapshot.id === undefined) return;
-    await this.#options.heardEpoch?.(snapshot.id, epoch);
   }
 
   /** The project of the platform a project of this browser is, while somebody is signed in. */
@@ -202,12 +180,11 @@ export class CloudChats implements ChatStore {
     let there;
     try {
       const listed = await remote.list(cloud);
-      await this.#heard(listed.epoch);
       there = listed.chats;
       this.#went();
     } catch (error) {
       console.warn("The conversations of the account could not be read", error);
-      this.#failed(error);
+      this.#failed();
       return here;
     }
     const byId = new Map(there.map((each) => [each.summary.id, each]));
@@ -245,12 +222,6 @@ export class CloudChats implements ChatStore {
     try {
       const there = await remote.load(cloud, id);
       if (!there) return here;
-      if (there.epoch !== undefined && here?.synced !== undefined) {
-        await this.#heard(there.epoch);
-        const again = await local.load(project, id).catch(() => undefined);
-        // Taken off the account since, and given again elsewhere: theirs is another conversation.
-        if (again?.synced === undefined) return await this.#take(again, there, project);
-      }
       if (here && here.synced === there.revision) {
         // What this browser changed and the account does not have yet stays, to go.
         if (isUnsent(here)) void this.#give(cloud, here).catch(() => {});
@@ -259,7 +230,7 @@ export class CloudChats implements ChatStore {
       return await this.#take(here, there, project);
     } catch (error) {
       console.warn("A conversation of the account could not be read", error);
-      this.#failed(error);
+      this.#failed();
       return here;
     }
   }
@@ -309,7 +280,7 @@ export class CloudChats implements ChatStore {
           if (!(error instanceof ChatNewer)) {
             // It stays here, and goes the next time.
             console.warn("A conversation could not go to the account", error);
-            this.#failed(error);
+            this.#failed();
             return;
           }
           const theirs = await remote.load(cloud, chat.id).catch(() => undefined);
@@ -388,7 +359,6 @@ export class CloudChats implements ChatStore {
           bytes: blob.size,
         };
         const outcome = await remote.putImage(ref, blob).catch((error: unknown) => {
-          if (error instanceof CloudFeatureOff) throw error;
           console.warn("A picture of a conversation could not go to the account", error);
           return "unavailable" as const;
         });
@@ -463,7 +433,7 @@ export class CloudChats implements ChatStore {
     project: string,
   ): Promise<SavedChat> {
     const { local } = this.#options;
-    // The same as the account has it, as one given again after they were off: nothing to keep.
+    // The same as the account has it: nothing to keep.
     if (here && isUnsent(here) && !sameContent(here, there.chat)) {
       const title = `《${here.title}》在这台设备上的副本`;
       const {
@@ -503,12 +473,7 @@ export class CloudChats implements ChatStore {
   async imageUsage(): Promise<ChatImageUsage | undefined> {
     const { remote } = this.#options;
     if (!remote.imageUsage) return undefined;
-    try {
-      return await remote.imageUsage();
-    } catch (error) {
-      if (error instanceof CloudFeatureOff) this.#options.off?.();
-      throw error;
-    }
+    return remote.imageUsage();
   }
 
   /**
@@ -554,28 +519,6 @@ export class CloudChats implements ChatStore {
     }
     // Everything of this browser is on the account, as far as it can tell.
     if (!failed) this.#went();
-  }
-
-  /**
-   * The account's copy of its conversations is gone, as people turned them off for it: what this
-   * browser has of them stays, as never on the account, and goes again once they are on, rather
-   * than being taken for gone from there.
-   */
-  async detach(account: string): Promise<void> {
-    await Promise.allSettled(this.#writing.values());
-    // Its pictures went with them.
-    if (this.#stored.account === account) this.#stored = { account, images: new Set() };
-    const { local, links, platform } = this.#options;
-    for (const link of await links.list().catch(() => [])) {
-      if (link.platform !== platform) continue;
-      if (link.owner !== undefined && link.owner !== account) continue;
-      for (const summary of await local.list(link.key).catch(() => [])) {
-        const chat = await local.load(link.key, summary.id).catch(() => undefined);
-        if (!chat || chat.synced === undefined) continue;
-        const { synced: _synced, syncedAt: _syncedAt, ...rest } = chat;
-        await local.save(rest).catch(() => {});
-      }
-    }
   }
 
   /**

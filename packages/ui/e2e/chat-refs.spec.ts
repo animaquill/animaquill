@@ -381,6 +381,9 @@ test("a model that takes no pictures: held, with another model or without them a
   await expect(bubble.locator('[data-model="claude-eyes"]')).not.toHaveAttribute("data-dim", "");
   await bubble.locator('[data-model="claude-eyes"]').getByRole("option").click();
   await expect(blocked).toBeHidden();
+  // Chosen, the bubble stays until people close it.
+  await page.keyboard.press("Escape");
+  await expect(bubble).toBeHidden();
   await box(page).press("Enter");
   await expect(chat(page).getByTestId("chat-answer")).toHaveText("好的。");
   expect(sent[0]?.model).toBe("claude-eyes");
@@ -389,6 +392,7 @@ test("a model that takes no pictures: held, with another model or without them a
   // Back to the one that takes none: the turn says its pictures do not go, and they do not.
   await chat(page).getByTestId("chat-model").click();
   await bubble.locator('[data-model="claude-test"]').getByRole("option").click();
+  await page.keyboard.press("Escape");
   await expect(chat(page).getByTestId("chat-pictures-not-sent")).toHaveText(
     "这些图片没有发给 claude-test（它看不了图）",
   );

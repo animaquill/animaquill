@@ -1,5 +1,4 @@
 import {
-  CloudFeatureOff,
   CloudOtherAccount,
   CloudSignedOut,
   ORGANIZER_BATCH,
@@ -231,8 +230,6 @@ export interface OrganizerSyncOptions {
    * is signed in is to be asked again. Nothing goes until then.
    */
   readonly otherAccount?: () => void;
-  /** People turned it off for the account, on another device: who has the switches is told. */
-  readonly off?: () => void;
 }
 
 /** How the account's copy stands, for people to see, see `OrganizerSync.getSnapshot`. */
@@ -316,12 +313,6 @@ export class OrganizerSync {
         if (error instanceof CloudSignedOut) return;
         if (error instanceof CloudOtherAccount) {
           this.#options.otherAccount?.();
-          return;
-        }
-        // Turned off elsewhere: nothing goes until it is on again, as the switches say.
-        if (error instanceof CloudFeatureOff) {
-          this.#set({ status: "idle" });
-          this.#options.off?.();
           return;
         }
         this.#failures += 1;

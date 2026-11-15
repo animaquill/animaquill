@@ -1,10 +1,4 @@
-import {
-  MOST_HEADERS,
-  headerProblem,
-  looksSecret,
-  tooManyHeaders,
-  type FieldMark,
-} from "@animaquill/agent";
+import { MOST_HEADERS, headerProblem, tooManyHeaders, type FieldMark } from "@animaquill/agent";
 import { useEffect, useRef, useState, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import styles from "./AiSettings.module.css";
@@ -163,16 +157,10 @@ export function HeadersEditor(props: {
           >
             {t("ai.headers.remove")}
           </button>
-          {problems[index] ? (
+          {problems[index] && (
             <p className={styles.warning} data-testid="ai-header-problem">
               {t(`ai.headers.problem.${problems[index]}`)}
             </p>
-          ) : (
-            looksSecret(row.value) && (
-              <p className={styles.warning} data-testid="ai-header-secret">
-                {t("ai.headers.secret")}
-              </p>
-            )
           )}
         </div>
       ))}

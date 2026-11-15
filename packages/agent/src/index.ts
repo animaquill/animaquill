@@ -64,9 +64,10 @@ export {
   MOST_HEADERS,
   MOST_HEADER_BYTES,
   headerProblem,
-  isKeyHeader,
-  looksSecret,
+  keyIntoHeader,
+  secretsOf,
   tooManyHeaders,
+  withSecrets,
   readModel,
   writeModel,
   DEFAULT_CONTEXT_WINDOW,
@@ -95,6 +96,7 @@ export {
   type SendWith,
   type ShotSide,
   type ServiceConfig,
+  type ServiceSecret,
 } from "./ai-settings.ts";
 export {
   canonical,

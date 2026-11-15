@@ -7,20 +7,21 @@ import type { ChatImageUsage } from "@animaquill/host";
 import type { AiCounts } from "../chat/ai-sync.ts";
 import { bytesText } from "../chat/shots.ts";
 import { useAiSyncText } from "../chat/AiSyncStatus.tsx";
-import type { CloudFeature } from "./cloud-sync.ts";
+import { WhereIcon } from "../settings/WhereIcon.tsx";
+import { DEFAULT_SWITCHES, type CloudFeature } from "./cloud-sync.ts";
 import { countsText, hasAny } from "./cloud-text.ts";
 import { FeatureRow, Switch, useAccount } from "./CloudParts.tsx";
 import styles from "./CloudSync.module.css";
 
 /**
  * The page "云同步" of the settings, where people are signed in (docs/design/
- * settings-and-properties.md of AnimaQuill Cloud, 9.4): the switches of the welcome, each with how
- * it stands, which people change whenever they like; and the AI settings of this device of before
- * signing in, which they can put into the account, or take away.
+ * settings-and-properties.md of AnimaQuill Cloud, 9.4): the switches of the welcome, each of this
+ * device, with how it stands, which people change whenever they like. Turning one off takes nothing
+ * away anywhere, so it asks nothing.
  */
 export function CloudSyncPage() {
   const workbench = useWorkbench();
-  const { cloudSync, aiSync, organizer, chatSync, dialogs, notifications } = workbench;
+  const { cloudSync, aiSync, organizer, chatSync, notifications } = workbench;
   const { t } = useTranslation();
   const who = useAccount(workbench.account);
   const sync = useSyncExternalStore(cloudSync.subscribe, cloudSync.getSnapshot);
@@ -35,55 +36,38 @@ export function CloudSyncPage() {
   );
   const now = useNow();
   const [counts, setCounts] = useState<AiCounts>();
-  const [device, setDevice] = useState<AiCounts>();
-  /** When this device's went into the account, as they are now. */
-  const [merged, setMerged] = useState<number>();
+  const [changing, setChanging] = useState<CloudFeature>();
 
-  // What the AI settings have, in use and of this device, read again as they change.
+  // What the AI settings have, read again as they change.
   const recount = useCallback(() => {
     void aiSync.counts().then(setCounts, () => {});
-    void aiSync.deviceCounts().then(setDevice, () => {});
-    void aiSync.deviceMerged().then(setMerged, () => {});
   }, [aiSync]);
   useEffect(() => {
     recount();
     return workbench.ai.subscribe(recount);
   }, [recount, workbench.ai]);
-  // The page opened: how the switches, the stars and groups and the conversations stand now.
-  const { welcomed: answered } = useSyncExternalStore(cloudSync.subscribe, cloudSync.getSnapshot);
+  // The page opened: how the stars and groups and the conversations stand now.
+  const { welcomed } = sync;
   useEffect(() => {
-    void cloudSync.refresh();
-    if (!answered) return;
+    if (!welcomed) return;
     void organizer.syncNow();
     void chatSync?.retry();
-  }, [cloudSync, answered, organizer, chatSync]);
+  }, [welcomed, organizer, chatSync]);
 
   if (who.status !== "signedIn") return null;
-  const { switches, welcomed, changing } = sync;
-  const known = switches !== undefined;
+  const switches = sync.switches ?? DEFAULT_SWITCHES;
   const on = (feature: CloudFeature) =>
-    feature === "ai" ? ai.snapshot.status !== "off" : (switches?.[feature] ?? true);
+    feature === "ai" ? ai.snapshot.status !== "off" : switches[feature];
 
   const toggle = async (feature: CloudFeature, next: boolean) => {
-    if (!next && feature !== "newProjectsInCloud") {
-      const words = {
-        ai: [t("aiSync.offTitle"), t("aiSync.offMessage")],
-        organizer: [t("cloudSync.organizerOffTitle"), t("cloudSync.organizerOffMessage")],
-        chats: [t("cloudSync.chatsOffTitle"), t("cloudSync.chatsOffMessage")],
-      }[feature];
-      const sure = await dialogs.confirm({
-        title: words[0]!,
-        message: words[1]!,
-        confirm: t("cloudSync.offConfirm"),
-        danger: true,
-      });
-      if (!sure) return;
-    }
+    setChanging(feature);
     try {
       await cloudSync.set(feature, next);
     } catch (error) {
       console.warn("A cloud feature could not be turned on or off", error);
       notifications.push(t("cloudSync.changeFailed"));
+    } finally {
+      setChanging(undefined);
     }
   };
 
@@ -95,75 +79,23 @@ export function CloudSyncPage() {
     return lineOf(t, status, syncedAt, now);
   };
 
-  const merge = async () => {
-    if (!device) return;
-    const words = countsText(t, device);
-    const sure = await dialogs.confirm({
-      title: t("cloudSync.device.mergeTitle"),
-      message: `${t("cloudSync.device.mergeMessage", { counts: words })}${
-        on("ai") ? t("cloudSync.device.mergeKeys") : t("cloudSync.device.mergeOff")
-      }`,
-      confirm: t("cloudSync.device.mergeConfirm"),
-    });
-    if (!sure) return;
-    try {
-      const names = await aiSync.mergeDevice();
-      notifications.push(
-        names.length > 0
-          ? t("cloudSync.device.merged", { names: names.join("、") })
-          : t("cloudSync.device.mergedNothing"),
-      );
-    } catch (error) {
-      console.warn("The AI settings of this device could not go into the account", error);
-      notifications.push(t("cloudSync.device.mergeFailed"));
-    }
-    recount();
-  };
-
-  const forget = async () => {
-    if (!device) return;
-    const sure = await dialogs.confirm({
-      title: t("cloudSync.device.forgetTitle"),
-      message: t("cloudSync.device.forgetMessage", { counts: countsText(t, device) }),
-      confirm: t("cloudSync.device.forgetConfirm"),
-      danger: true,
-    });
-    if (!sure) return;
-    await aiSync.forgetDevice().catch((error: unknown) => {
-      console.warn("The AI settings of this device could not be taken away", error);
-    });
-    recount();
-  };
-
   const aiStatus = ai.snapshot.status;
-  const canChange = known && sync.status !== "failed" && sync.status !== "offline";
+  const canChange = welcomed && changing === undefined;
+  const device = <WhereIcon where="device" />;
 
   return (
     <div className={styles.page} data-testid="cloud-sync">
       <h2>{t("cloudSync.title")}</h2>
-      <p className={styles.intro}>{t("cloudSync.intro", { name: who.name })}</p>
-      {(sync.status === "failed" || sync.status === "offline") && (
-        <p className={styles.problem} data-testid="cloud-switches-problem">
-          {t("cloudSync.switchesFailed")}{" "}
-          <button type="button" className={styles.link} onClick={() => void cloudSync.refresh()}>
-            {t("cloudSync.retry")}
-          </button>
-        </p>
-      )}
       <div className={`${styles.rows} ${styles.plain}`}>
         <FeatureRow
           id="ai"
           name={t("cloudSync.ai.name")}
+          where={device}
           help={t("cloudSync.ai.help")}
           control={
             <Switch
               checked={on("ai")}
-              disabled={
-                !canChange ||
-                changing !== undefined ||
-                !welcomed ||
-                ai.snapshot.account === undefined
-              }
+              disabled={!canChange || ai.snapshot.account === undefined}
               onChange={(next) => void toggle("ai", next)}
             />
           }
@@ -186,11 +118,11 @@ export function CloudSyncPage() {
               key={feature}
               id={feature}
               name={t(`cloudSync.${feature}.name`)}
-              help={t(`cloudSync.${feature}.help`)}
+              where={device}
               control={
                 <Switch
                   checked={on(feature)}
-                  disabled={!canChange || changing !== undefined}
+                  disabled={!canChange}
                   onChange={(next) => void toggle(feature, next)}
                 />
               }
@@ -220,11 +152,11 @@ export function CloudSyncPage() {
         <FeatureRow
           id="newProjectsInCloud"
           name={t("cloudSync.newProjectsInCloud.name")}
-          help={t("cloudSync.newProjectsInCloud.help")}
+          where={device}
           control={
             <Switch
               checked={on("newProjectsInCloud")}
-              disabled={!canChange || changing !== undefined}
+              disabled={!canChange}
               onChange={(next) => void toggle("newProjectsInCloud", next)}
             />
           }
@@ -233,7 +165,6 @@ export function CloudSyncPage() {
         <FeatureRow
           id="github"
           name={t("cloudSync.github.name")}
-          help={t("cloudSync.githubInAccount")}
           control={
             <button
               type="button"
@@ -247,42 +178,6 @@ export function CloudSyncPage() {
           }
         />
       </div>
-      {device && hasAny(device) && (
-        <>
-          <h3>{t("cloudSync.device.title")}</h3>
-          <div className={`${styles.rows} ${styles.plain}`}>
-            <FeatureRow
-              id="device"
-              name={t("cloudSync.device.name")}
-              help={
-                merged === undefined
-                  ? t("cloudSync.device.help", { counts: countsText(t, device) })
-                  : t("cloudSync.device.mergedHelp", {
-                      counts: countsText(t, device),
-                      ago: agoText(merged, Math.max(now, merged), t),
-                    })
-              }
-              control={
-                <div className={styles.actions}>
-                  {merged === undefined && (
-                    <button type="button" className={styles.button} onClick={() => void merge()}>
-                      {t("cloudSync.device.merge")}
-                    </button>
-                  )}
-                  <button type="button" className={styles.button} onClick={() => void forget()}>
-                    {t(
-                      merged === undefined
-                        ? "cloudSync.device.forget"
-                        : "cloudSync.device.forgetOnly",
-                    )}
-                  </button>
-                </div>
-              }
-            />
-          </div>
-        </>
-      )}
-      <p className={styles.note}>{t("aiSync.signOutNote")}</p>
     </div>
   );
 }
@@ -372,7 +267,6 @@ function ChatImagesUsage() {
           used: roomText(usage.used),
           limit: roomText(usage.limit),
         })}
-        <span className={styles.aside}>· {t("cloudSync.chatImages.released")}</span>
         <button
           type="button"
           className={styles.link}
@@ -385,7 +279,6 @@ function ChatImagesUsage() {
       </span>
       {open && (
         <div className={styles.imageList} data-testid="chat-images-list">
-          <p className={styles.help}>{t("cloudSync.chatImages.intro")}</p>
           {usage.chats.length === 0 && (
             <p className={styles.help}>{t("cloudSync.chatImages.none")}</p>
           )}

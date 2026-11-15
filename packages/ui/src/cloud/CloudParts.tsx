@@ -15,11 +15,15 @@ import styles from "./CloudSync.module.css";
 /** The id of the name of the row a switch is in, which names the switch. */
 const RowName = createContext<string | undefined>(undefined);
 
-/** One cloud feature: what it is, what it does, and its switch or button on the right. */
+/**
+ * One cloud feature: what it is, with where its switch is kept left of it (`where`), what it does
+ * where that needs saying, and its switch or button on the right.
+ */
 export function FeatureRow(props: {
   readonly id: string;
   readonly name: string;
-  readonly help: ReactNode;
+  readonly help?: ReactNode;
+  readonly where?: ReactNode;
   readonly children?: ReactNode;
   /** The switch, or a button. */
   readonly control: ReactNode;
@@ -33,10 +37,13 @@ export function FeatureRow(props: {
       data-setting={`cloud.${props.id}`}
     >
       <div>
-        <span className={styles.name} id={name}>
-          {props.name}
+        <span className={styles.nameLine}>
+          {props.where}
+          <span className={styles.name} id={name}>
+            {props.name}
+          </span>
         </span>
-        <span className={styles.help}>{props.help}</span>
+        {props.help !== undefined && <span className={styles.help}>{props.help}</span>}
         {props.children}
       </div>
       <RowName value={name}>{props.control}</RowName>
@@ -98,7 +105,7 @@ function useRepositoryCount(installed: boolean): { count: number; more: boolean 
  * "关联 GitHub": not a switch, a way to install the App, which saving projects of the platform to
  * repositories needs. `before` runs first, as the welcome answers itself before the page goes.
  */
-export function GitHubRow({ before }: { readonly before?: () => Promise<boolean> }) {
+export function GitHubRow({ before }: { readonly before?: () => Promise<unknown> }) {
   const workbench = useWorkbench();
   const { t } = useTranslation();
   const who = useAccount(workbench.account);
@@ -110,7 +117,7 @@ export function GitHubRow({ before }: { readonly before?: () => Promise<boolean>
   const install = async () => {
     setBusy(true);
     try {
-      if (before && !(await before())) return;
+      await before?.();
       await workbench.installApp();
     } finally {
       setBusy(false);

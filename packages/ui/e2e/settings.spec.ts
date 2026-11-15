@@ -142,8 +142,9 @@ test.describe("with an account", () => {
     await page.keyboard.press("Control+Comma");
     await goToSettingsGroup(page, "账号");
     const account = settingsOf(page).getByTestId("settings-sign-in");
-    await expect(account).toContainText("登录以后多了这些");
-    await expect(settingsOf(page).getByText("这台设备", { exact: true })).toHaveCount(0);
+    await expect(account).toHaveText(/^登录以后能用云端项目、云同步和云端 AI。/);
+    // Where each setting is kept is not said before signing in.
+    await expect(settingsOf(page).getByRole("img", { name: "只在这台设备" })).toHaveCount(0);
     await account.getByRole("button", { name: "登录" }).click();
     const menu = header(page).getByRole("button", { name: "账号：octo" });
     await expect(menu).toBeVisible();
@@ -159,9 +160,27 @@ test.describe("with an account", () => {
     await page.keyboard.press("Control+Comma");
     await expect(settingsOf(page).getByTestId("settings-account")).toContainText("octo");
     await goToSettingsGroup(page, "常规");
+    // A picture left of the name, which says it as the pointer rests on it: no words beside it.
+    const where = settingsOf(page).locator(
+      '[data-setting="general.language"] [data-where="device"]',
+    );
+    await expect(where).toHaveAttribute("title", "只在这台设备");
+    const [box, name] = await Promise.all([
+      where.boundingBox(),
+      settingsOf(page)
+        .locator('[data-setting="general.language"]')
+        .getByText("语言", { exact: true })
+        .boundingBox(),
+    ]);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(name!.x);
+    for (const group of ["常规", "编辑", "预览和播放", "导出", "AI 聊天", "存储和数据"]) {
+      await goToSettingsGroup(page, group);
+      await expect(settingsOf(page).getByText(/^(这台设备|跟账号)$/)).toHaveCount(0);
+    }
+    await goToSettingsGroup(page, "AI 模型");
     await expect(
-      settingsOf(page).locator('[data-setting="general.input"] [data-where="device"]'),
-    ).toHaveText("这台设备");
+      settingsOf(page).getByTestId("settings-crumb").locator("[data-where]"),
+    ).toHaveCount(1);
   });
 });
 
@@ -190,7 +209,7 @@ test("searching finds a setting in any group, goes there and makes it stand out"
   await search.fill("key");
   const results = settingsOf(page).getByTestId("settings-result");
   await expect(results.first()).toContainText("AI 模型 › AI 服务和 key");
-  await expect(results.filter({ hasText: "存储和数据 › 这台设备上的 key" })).toHaveCount(1);
+  await expect(results.filter({ hasText: "存储和数据 › AI 服务的 key" })).toHaveCount(1);
   await results.first().click();
   await expect(current(page)).toHaveText("AI 模型");
   await expect(settingsOf(page).getByTestId("ai-models")).toBeVisible();
@@ -223,7 +242,12 @@ test("searching finds a setting in any group, goes there and makes it stand out"
   await expect(settingsOf(page).getByTestId("settings-elsewhere")).toContainText(
     "在“项目属性”里改",
   );
-  await expect(results.filter({ hasText: "预览和播放 › 预览画质" })).toHaveCount(1);
+  await expect(results.filter({ hasText: "预览画质" })).toHaveCount(0);
+  // What is changed as people edit, or chosen as they export, is not among the settings.
+  for (const words of ["吸附", "时间码", "码率", "布局", "主题"]) {
+    await search.fill(words);
+    await expect(results, words).toHaveCount(0);
+  }
   await search.fill("画质");
   await expect(settingsOf(page).getByTestId("settings-elsewhere")).toHaveCount(0);
 
@@ -237,16 +261,39 @@ test("searching finds a setting in any group, goes there and makes it stand out"
   await expect(settingsOf(page)).toBeHidden();
 });
 
-test("“另见” goes where it says, and makes it stand out", async ({ page }) => {
+test("each group has only what is a setting, and words only where they are needed", async ({
+  page,
+}) => {
   await page.keyboard.press("Control+Comma");
-  // Nobody signed in to a platform here: nothing points to cloud sync, which is not there.
-  await expect(settingsOf(page).getByTestId("settings-see-cloud")).toHaveCount(0);
-  await settingsOf(page).getByTestId("settings-see-editing").getByRole("button").click();
-  await expect(current(page)).toHaveText("编辑");
-  await expect(settingsOf(page).locator('[data-setting="editing.snapping"]')).toHaveAttribute(
-    "data-flash",
-    "",
+  const rows = async (group: string, testId: string) => {
+    await goToSettingsGroup(page, group);
+    return settingsOf(page)
+      .getByTestId(testId)
+      .locator("[data-setting]")
+      .evaluateAll((all) => all.map((each) => each.getAttribute("data-setting")));
+  };
+  expect(await rows("常规", "settings-general")).toEqual(["general.language"]);
+  const general = settingsOf(page).getByTestId("settings-general");
+  await expect(general).toHaveText(/^常规语言简体中文$/);
+  expect(await rows("编辑", "settings-editing")).toEqual(["editing.trial"]);
+  await expect(settingsOf(page).getByTestId("settings-editing")).toContainText(
+    "手动改属性和关键帧时先进入试改",
   );
+  expect(await rows("预览和播放", "settings-playback")).toEqual(["playback.proxyOffer"]);
+  await expect(settingsOf(page).getByTestId("settings-playback")).toContainText(
+    "资源管理器里右键视频照样能生成",
+  );
+  expect(await rows("导出", "settings-export")).toEqual(["export.hardware"]);
+  await expect(settingsOf(page).getByTestId("settings-export")).toContainText("显卡驱动更新后");
+  // What is kept here, in a line each; nothing that needs reading to be understood.
+  await goToSettingsGroup(page, "存储和数据");
+  const storage = settingsOf(page).getByTestId("settings-storage");
+  await expect(storage.getByTestId("ai-keys-where")).toHaveText("AI 服务的 key：0 个");
+  await expect(storage.getByTestId("settings-chats")).toHaveText(/^AI 对话：占 .+$/);
+  await expect(storage).not.toContainText(/长期保存|不会清除|空间紧张|只存在这个浏览器里/);
+  // The timeline keeps its own switches, as ever.
+  await closeSettings(page);
+  await expect(page.getByRole("button", { name: /吸附/ }).first()).toBeVisible();
 });
 
 test("narrow: the groups, a group, and back, also with the browser's back", async ({ page }) => {
@@ -334,10 +381,6 @@ test("two windows: what one changes, the other shows", async ({ page }) => {
   await other.goto(page.url());
   await expect(tab(other, "preview")).toBeVisible();
   for (const each of [page, other]) await each.keyboard.press("Control+Comma");
-  const input = (where: Page) =>
-    settingsOf(where).getByRole("combobox", { name: "输入设备", exact: true });
-  await input(page).selectOption({ label: "触控板" });
-  await expect(input(other)).toHaveValue("trackpad");
   await goToSettingsGroup(other, "预览和播放");
   await goToSettingsGroup(page, "预览和播放");
   const offer = (where: Page) =>
@@ -345,9 +388,6 @@ test("two windows: what one changes, the other shows", async ({ page }) => {
   await expect(offer(page)).toBeChecked();
   await offer(other).uncheck();
   await expect(offer(page)).not.toBeChecked();
-  // The status bar has the same value as the settings.
-  await closeSettings(page);
-  await expect(page.getByRole("button", { name: /输入方式/ })).toContainText("触控板");
   await other.close();
 });
 

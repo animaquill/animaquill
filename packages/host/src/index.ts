@@ -1,6 +1,6 @@
 import type { AiRelay } from "./relay.ts";
 import type { CloudConnection } from "./sync-protocol.ts";
-import type { AiEntry, AiSyncKey } from "./ai-sync-rules.ts";
+import type { AiEntry, AiSyncKey, ServiceSecret } from "./ai-sync-rules.ts";
 import type { ModelCatalog } from "./model-catalog.ts";
 
 export {
@@ -20,12 +20,16 @@ export {
   AI_SYNC_FORMAT,
   AI_SYNC_KEYS,
   AI_SYNC_MODELS_FORMAT,
+  AI_SYNC_SECRETS_FORMAT,
   checkAiEntry,
   isLaterEntry,
   jsonBytes,
+  readServiceSecret,
   urlHasSecret,
   type AiEntry,
   type AiSyncKey,
+  type SecretHeaders,
+  type ServiceSecret,
 } from "./ai-sync-rules.ts";
 export {
   RELAY_PASS_PREFIX,
@@ -118,8 +122,9 @@ export interface Host {
   /** Which windows have which projects open. Without it every window is on its own. */
   readonly presence?: ProjectPresence;
   /**
-   * Keys of AI services that people set up, on this device only: not in projects, not synced, and
-   * never in a report. Without it keys last as long as the page.
+   * What is secret of the AI services people set up (their keys, addresses and headers), on this
+   * device only: not in projects, not synced, and never in a report. Without it they last as long
+   * as the page.
    */
   readonly keys?: KeyStore;
   /**
@@ -849,64 +854,10 @@ export interface CloudAccess {
    */
   readonly chats?: ChatSyncAccess;
   /**
-   * Which of the above go with the account at all, as people turned them on or off for all their
-   * devices, and the preferences that go with the account, see `CloudSwitchesAccess`.
-   */
-  readonly switches?: CloudSwitchesAccess;
-  /**
    * The open catalog of models (models.dev) as the platform has it, for a browser that cannot read
    * it itself: rejects where the platform cannot say. Asks nothing of anyone. See `ModelCatalog`.
    */
   readonly modelCatalog?: () => Promise<ModelCatalog>;
-}
-
-/**
- * Which cloud features people have on for all their devices, and their preferences that go with
- * the account (docs/design/settings-and-properties.md of AnimaQuill Cloud, 9.2). Each is on unless
- * people turned it off. Turned off, the platform keeps nothing of it.
- */
-export interface CloudSwitches {
-  /** Whose they are, see `AccountSnapshot.id`. */
-  readonly account: string;
-  /** The AI settings and keys, see `AiSyncAccess`: turned on and off there. */
-  readonly ai: boolean;
-  /** The stars and groups of the start page, see `OrganizerAccess`. */
-  readonly organizer: boolean;
-  /**
-   * Moves on each time `organizer` is turned off: what a device took to be the account's before is
-   * not there any more, and goes again.
-   */
-  readonly organizerEpoch: number;
-  /** The conversations about projects of the platform, see `ChatSyncAccess`. */
-  readonly chats: boolean;
-  /** As `organizerEpoch`, of the conversations. */
-  readonly chatsEpoch: number;
-  /** New projects are of the platform by default, where people are signed in. */
-  readonly newProjectsInCloud: boolean;
-}
-
-/** What people change of `CloudSwitches`: the AI settings go by `AiSyncAccess`. */
-export type CloudSwitchChanges = Partial<
-  Pick<CloudSwitches, "organizer" | "chats" | "newProjectsInCloud">
->;
-
-/**
- * The switches of the cloud features of the person on a platform, see `CloudSwitches`. Rejects with
- * a `CloudSignedOut` when nobody is signed in, a `CloudOtherAccount` where the session is of
- * another account than `account`.
- */
-export interface CloudSwitchesAccess {
-  read(): Promise<CloudSwitches>;
-  /** Changes them, for all devices; what is turned off is gone from the platform at once. */
-  change(account: string, changes: CloudSwitchChanges): Promise<CloudSwitches>;
-}
-
-/**
- * People turned off a cloud feature for their account, on some device: the platform keeps nothing
- * of it, and takes nothing, see `CloudSwitches`.
- */
-export class CloudFeatureOff extends Error {
-  override readonly name = "CloudFeatureOff";
 }
 
 /**
@@ -916,17 +867,12 @@ export class CloudFeatureOff extends Error {
 export interface AccountAiSettings {
   /** Whose they are, see `AccountSnapshot.id`. */
   readonly account: string;
-  /**
-   * Whether they go with the account at all: people turned it off for all their devices, and the
-   * platform keeps nothing then.
-   */
-  readonly enabled: boolean;
   /** Moves on with every change, for asking whether anything changed (`AiSyncAccess.read`). */
   readonly revision: number;
   /** The format they are in, see `AI_SYNC_FORMAT`: a newer one is not written over. */
   readonly format: number;
   readonly entries: Readonly<Record<string, AiEntry>>;
-  /** The keys of services, by the id of the service. */
+  /** What is secret of each service, by the id of the service. */
   readonly keys: Readonly<Record<string, AiSyncKey>>;
 }
 
@@ -936,8 +882,6 @@ export interface AccountAiChanges {
   readonly account: string;
   readonly entries: readonly ({ readonly name: string } & AiEntry)[];
   readonly keys: readonly ({ readonly service: string } & AiSyncKey)[];
-  /** Turns going with the account on again, where people turned it off. */
-  readonly enable?: true;
   /**
    * The format the entries are in (`AI_SYNC_FORMAT`): 1 unless said. A platform keeps the highest
    * it was given, and editors of a lower one leave the settings alone from then on.
@@ -949,9 +893,10 @@ export interface AccountAiChanges {
  * The AI settings and keys of the person on a platform (docs/design/chat-and-models.md of
  * AnimaQuill Cloud, 5): entries merged one by one, the later wins, see ai-sync-rules.ts. Rejects
  * with a `CloudSignedOut` when nobody is signed in, a `CloudOtherAccount` where the session is of
- * another account, an `AiSyncOff` where people turned it off (and `enable` was not given), an
- * `AiSyncNewer` where a newer editor wrote them, and an `AiSyncTooLarge` where they would be larger
- * than `AI_SYNC_BYTES`: nothing of the changes is kept then.
+ * another account, an `AiSyncNewer` where a newer editor wrote them, and an `AiSyncTooLarge` where
+ * they would be larger than `AI_SYNC_BYTES`: nothing of the changes is kept then. Whether they go
+ * at all is up to each device (docs/design/settings-and-properties.md of AnimaQuill Cloud, 9.2):
+ * the platform keeps what it has, whatever a device does.
  */
 export interface AiSyncAccess {
   /** Everything, or only `{revision}` where it is still `since`. */
@@ -961,7 +906,6 @@ export interface AiSyncAccess {
         readonly revision: number;
         readonly unchanged: true;
         readonly account: string;
-        readonly enabled: boolean;
       }
   >;
   /** Keeps changes, and says everything as it is then, and which entries it did not take. */
@@ -972,13 +916,6 @@ export interface AiSyncAccess {
     /** Entries not taken, as the settings would be larger than `AI_SYNC_BYTES` with them. */
     readonly tooLarge: readonly string[];
   }>;
-  /** Turns it off for all devices: the platform keeps nothing of them any more. */
-  turnOff(account: string): Promise<void>;
-}
-
-/** People turned off the AI settings going with their account, on some device. */
-export class AiSyncOff extends Error {
-  override readonly name = "AiSyncOff";
 }
 
 /** A newer editor wrote the AI settings of the account: this one leaves them alone. */
@@ -1002,26 +939,15 @@ export interface AccountChatSummary {
  * /chat-and-models.md of AnimaQuill Cloud, 5.4): a conversation is written whole, over the revision
  * it was read at (`base`, null for a new one); where another device wrote it since, that rejects
  * with a `ChatNewer`, and the editor takes theirs. Rejects with a `CloudSignedOut` when nobody is
- * signed in, a `CloudFeatureOff` where people turned the conversations off; `save` resolves to undefined where the platform does not keep it (not a project of the
+ * signed in; `save` resolves to undefined where the platform does not keep it (not a project of the
  * person's, or too large): it stays on this device.
  */
 export interface ChatSyncAccess {
-  /**
-   * `epoch` is `CloudSwitches.chatsEpoch`, where the platform says it: one this device has not heard
-   * of says the account's copy went as people turned the conversations off, not that each was taken
-   * away. Missing where the platform does not say.
-   */
-  list(project: string): Promise<{
-    readonly chats: readonly AccountChatSummary[];
-    readonly epoch?: number | undefined;
-  }>;
+  list(project: string): Promise<{ readonly chats: readonly AccountChatSummary[] }>;
   load(
     project: string,
     id: string,
-  ): Promise<
-    | { readonly revision: number; readonly chat: SavedChat; readonly epoch?: number | undefined }
-    | undefined
-  >;
+  ): Promise<{ readonly revision: number; readonly chat: SavedChat } | undefined>;
   /**
    * Rejects with a `ChatImagesMissing` where the conversation names pictures the platform does not
    * have (and that do not say they stayed here, `ChatImageRef.held`): `putImage` them, then again.
@@ -1162,9 +1088,8 @@ export interface AccountChangesAnswer {
  * each change is kept where it is later than what it has of the same field (the star, the group of a
  * project; a group as a whole), see the design of the start page, 6.6. Times are of this computer's
  * clock both ways: the host has them agree with the platform's. Rejects where the platform could not
- * say, with a `CloudSignedOut` when nobody is signed in, with a `CloudOtherAccount` where changes
- * are of another account than the one its session is of, and with a `CloudFeatureOff` where people
- * turned it off for their account.
+ * say, with a `CloudSignedOut` when nobody is signed in, and with a `CloudOtherAccount` where
+ * changes are of another account than the one its session is of.
  */
 export interface OrganizerAccess {
   read(): Promise<AccountOrganized>;
@@ -2077,16 +2002,17 @@ export interface WorkCache {
 }
 
 /**
- * Keys of AI services, by the service people set up. They stay apart from everything else, so that
- * nothing that reads settings, projects or reports can come across them.
+ * What is secret of the AI services people set up, by the service: the key, the address and the
+ * headers (`ServiceSecret`). They stay apart from everything else, so that nothing that reads
+ * settings, projects or reports can come across them.
  */
 export interface KeyStore {
   /** Where they are, to tell people: the name of the database in the browser. */
   readonly where: string | undefined;
-  read(service: string): Promise<string | undefined>;
-  /** The services that have a key. */
+  read(service: string): Promise<ServiceSecret | undefined>;
+  /** The services that have anything secret kept, a key or not. */
   list(): Promise<readonly string[]>;
-  write(service: string, key: string): Promise<void>;
+  write(service: string, secret: ServiceSecret): Promise<void>;
   remove(service: string): Promise<void>;
   clear(): Promise<void>;
 }
