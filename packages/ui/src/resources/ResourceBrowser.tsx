@@ -67,6 +67,8 @@ export interface ResourceBrowserProps<T> {
   readonly onSelect?: (resource: Resource<T>) => void;
   /** Goes up when the chosen resource was shown from elsewhere: the list goes to it. */
   readonly revealed?: number;
+  /** A resource something else points at now, such as a block of the chat: it lights up. */
+  readonly pointed?: string | undefined;
   /** What the menu of a resource has. Without it, the way to it in the explorer. */
   readonly menu?: (resource: Resource<T>) => readonly (readonly MenuItem[])[];
   /** What it says when there is nothing at all. */
@@ -446,6 +448,7 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
                           notice?.failed && notice.resource === resource.id ? "" : undefined
                         }
                         data-resource={resource.id}
+                        data-pointed={props.pointed === resource.id ? "" : undefined}
                         title={off ? `${resource.name}：${off.reason}` : resource.name}
                         draggable={
                           onDragStart !== undefined &&

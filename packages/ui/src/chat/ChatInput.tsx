@@ -9,13 +9,15 @@ import {
 } from "react";
 import styles from "./ChatPanel.module.css";
 import { iconPathOf } from "./RefChip.tsx";
-import { kindOfRef, linkOf, piecesOf, type ChatRef } from "./refs.ts";
+import { kindOfRef, linkOf, piecesOf, type ChatRef, type Piece } from "./refs.ts";
 
 /**
  * The box people write to AI in: text, and blocks for what they point at (`refs.ts`), each one
  * piece that the caret goes around and a backspace takes as a whole. Its value is the text as it is
- * kept, each block as its Markdown link. Pasted text comes in as text; pasted or dropped pictures go
- * to `onFiles`. Copied out, a block is what it says.
+ * kept, each block as its Markdown link. What goes in goes through the editing commands of the
+ * browser, so that Ctrl+Z takes back a block as it does words. Pasted text comes in as text, and
+ * blocks copied from the box as blocks again (`CHAT_TYPE`); pasted pictures go to `onFiles`, and
+ * dropped ones to the chat around it. Copied out, a block is what it says.
  */
 export interface ChatInputHandle {
   /** Puts blocks where the caret is (else at the end), with a space after them, and focuses. */
@@ -38,6 +40,26 @@ export interface ChatInputProps {
 }
 
 const CHIP = "data-href";
+
+/** The type of what the box copies besides plain text: its value, blocks as their links. */
+export const CHAT_TYPE = "text/x-animaquill-chat";
+
+const escapeHtml = (text: string) =>
+  text.replace(
+    /[&<>"]/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] ?? c,
+  );
+
+/** Pieces as the HTML the box takes in: text, line breaks and blocks. */
+function htmlOf(pieces: readonly Piece[]): string {
+  return pieces
+    .map((piece) =>
+      "ref" in piece
+        ? chipOf(piece.ref, false).outerHTML
+        : escapeHtml(piece.text).replace(/\n/g, "<br>"),
+    )
+    .join("");
+}
 
 /** A block in the box: not editable, its label as its text, its link in its attributes. */
 function chipOf(ref: ChatRef, gone: boolean): HTMLSpanElement {
@@ -170,6 +192,18 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       onChange(next);
     };
 
+    /** Puts pieces where the caret is in the box, else at its end, as one step to take back. */
+    const put = (pieces: readonly Piece[]) => {
+      const root = box.current;
+      if (!root || pieces.length === 0) return;
+      root.focus();
+      const selection = document.getSelection();
+      const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : undefined;
+      if (!range || !root.contains(range.commonAncestorContainer)) caretToEnd(root);
+      document.execCommand("insertHTML", false, htmlOf(pieces));
+      changed();
+    };
+
     useImperativeHandle(ref, () => ({
       get element() {
         return box.current;
@@ -180,53 +214,53 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         if (!root || refs.length === 0) return;
         root.focus();
         const selection = document.getSelection();
-        let range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : undefined;
-        if (!range || !root.contains(range.commonAncestorContainer)) {
-          caretToEnd(root);
-          range = document.getSelection()?.getRangeAt(0);
-        }
-        if (!range) return;
-        range.deleteContents();
-        const parts: Node[] = [];
-        refs.forEach((each, index) => {
-          if (index > 0) parts.push(document.createTextNode(" "));
-          parts.push(chipOf(each, false));
-        });
+        const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : undefined;
         // A space before a block that would touch a word, and one after to type on.
-        const before = range.startContainer;
-        const char =
-          before.nodeType === Node.TEXT_NODE
-            ? (before.textContent ?? "").charAt(range.startOffset - 1)
+        const before =
+          range &&
+          root.contains(range.startContainer) &&
+          range.startContainer.nodeType === Node.TEXT_NODE
+            ? (range.startContainer.textContent ?? "").charAt(range.startOffset - 1)
             : "";
-        if (char !== "" && !/\s/.test(char)) parts.unshift(document.createTextNode(" "));
-        const after = document.createTextNode(" ");
-        parts.push(after);
-        const fragment = document.createDocumentFragment();
-        fragment.append(...parts);
-        range.insertNode(fragment);
-        const caret = document.createRange();
-        caret.setStart(after, 1);
-        caret.collapse(true);
-        selection?.removeAllRanges();
-        selection?.addRange(caret);
-        changed();
+        const pieces: Piece[] = [];
+        if (before !== "" && !/\s/.test(before)) pieces.push({ text: " " });
+        refs.forEach((each, index) => {
+          if (index > 0) pieces.push({ text: " " });
+          pieces.push({ ref: each });
+        });
+        pieces.push({ text: " " });
+        put(pieces);
       },
     }));
 
     const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
       const root = box.current;
-      if (
-        root &&
-        (event.key === "Backspace" || event.key === "Delete") &&
-        !event.nativeEvent.isComposing
-      ) {
+      const composing = event.nativeEvent.isComposing;
+      if (root && (event.key === "Backspace" || event.key === "Delete") && !composing) {
         const chip = chipBeside(root, event.key === "Backspace");
         if (chip) {
+          // Selected and deleted as the browser does it, so that Ctrl+Z brings it back.
           event.preventDefault();
-          chip.remove();
+          const range = document.createRange();
+          range.selectNode(chip);
+          const selection = document.getSelection();
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+          document.execCommand("delete");
           changed();
           return;
         }
+      }
+      // No bold or italic: the box holds words, not formatting.
+      if ((event.ctrlKey || event.metaKey) && /^[biu]$/i.test(event.key)) {
+        event.preventDefault();
+        return;
+      }
+      if (event.key === "Enter" && event.shiftKey && !composing) {
+        event.preventDefault();
+        document.execCommand("insertLineBreak");
+        changed();
+        return;
       }
       props.onKeyDown(event);
     };
@@ -238,9 +272,14 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         props.onFiles(files);
         return;
       }
+      // Blocks copied from the box come back as blocks; anything else as its text.
+      const own = event.clipboardData.getData(CHAT_TYPE);
+      if (own) {
+        put(piecesOf(own));
+        return;
+      }
       const text = event.clipboardData.getData("text/plain");
-      // As text, which the box keeps on its undo.
-      if (text) document.execCommand("insertText", false, text);
+      if (text) put([{ text }]);
     };
 
     const onCopy = (event: ClipboardEvent<HTMLDivElement>, cut: boolean) => {
@@ -250,17 +289,26 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       holder.append(selection.getRangeAt(0).cloneContents());
       event.preventDefault();
       event.clipboardData.setData("text/plain", serialize(holder, true));
+      event.clipboardData.setData(CHAT_TYPE, serialize(holder));
       if (cut) {
-        selection.getRangeAt(0).deleteContents();
+        document.execCommand("delete");
         changed();
       }
     };
 
     const onDrop = (event: DragEvent<HTMLDivElement>) => {
-      const files = [...event.dataTransfer.files].filter((file) => file.type.startsWith("image/"));
-      if (files.length === 0) return;
+      // Pictures go to the chat around the box; text dropped in comes in as text, where it lands.
+      if ([...event.dataTransfer.items].some((item) => item.kind === "file")) return;
+      const text = event.dataTransfer.getData("text/plain");
       event.preventDefault();
-      props.onFiles(files);
+      if (!text) return;
+      const at = document.caretRangeFromPoint?.(event.clientX, event.clientY);
+      if (at) {
+        const selection = document.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(at);
+      }
+      put([{ text }]);
     };
 
     const pointed = (target: EventTarget) =>
@@ -270,7 +318,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       <div
         ref={box}
         className={styles.input}
-        contentEditable="plaintext-only"
+        contentEditable
         suppressContentEditableWarning
         role="textbox"
         aria-multiline="true"
@@ -285,11 +333,6 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         onPaste={onPaste}
         onCopy={(event) => onCopy(event, false)}
         onCut={(event) => onCopy(event, true)}
-        onDragOver={(event) => {
-          if ([...event.dataTransfer.items].some((item) => item.kind === "file")) {
-            event.preventDefault();
-          }
-        }}
         onDrop={onDrop}
         onPointerOver={(event) =>
           props.onPoint(pointed(event.target)?.getAttribute(CHIP) ?? undefined)

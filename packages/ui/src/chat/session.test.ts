@@ -990,6 +990,8 @@ describe("pictures with a message", () => {
     expect(entries[0]).toMatchObject({ role: "user", images: [sent] });
     // A picture whose bytes are not here goes as its line alone.
     await chat.send("还有这张", [lost]);
-    expect(user().content).toEqual([{ type: "text", text: "还有这张\n\n[image 2: lost]" }]);
+    expect(user().content).toBe(
+      "还有这张\n\n[image 2: lost — not attached: the picture is not on this device]",
+    );
   });
 });

@@ -152,6 +152,12 @@
   cursor: grab;
 }
 
+.item[data-pointed] {
+  outline: 1px solid var(--aq-match);
+  outline-offset: -1px;
+  background: var(--aq-bg-hover);
+}
+
 .item:hover {
   background: var(--aq-bg-hover);
 }

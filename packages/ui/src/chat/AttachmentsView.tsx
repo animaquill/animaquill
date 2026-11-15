@@ -76,7 +76,9 @@ function Picture(props: {
       })
     : item.state === "working"
       ? t("chat.pictures.working")
-      : t("chat.pictures.failed");
+      : item.state === "failed" && item.why === "missing"
+        ? t("chat.pictures.missing")
+        : t("chat.pictures.failed");
   return (
     <figure
       className={styles.picture}

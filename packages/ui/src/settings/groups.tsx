@@ -761,7 +761,13 @@ function ChatsRow() {
                   count: usage.all.count,
                   size: formatBytes(t, usage.all.bytes),
                   local: usage.local.count,
-                })}
+                }) +
+                (usage.images.count > 0
+                  ? t("settings.chats.images", {
+                      count: usage.images.count,
+                      size: formatBytes(t, usage.images.bytes),
+                    })
+                  : "")}
         </span>
       }
     >

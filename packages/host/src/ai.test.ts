@@ -127,6 +127,10 @@ describe("pictures of conversations", () => {
         new Uint8Array([1, 2, 3]),
       );
       expect(await images.read("sha256:none")).toBeUndefined();
+      expect(await images.keys()).toEqual([{ image: ref.image, bytes: 3 }]);
+      await images.delete([ref.image]);
+      expect(await images.keys()).toEqual([]);
+      expect(await images.read(ref.image)).toBeUndefined();
     }
   });
 });

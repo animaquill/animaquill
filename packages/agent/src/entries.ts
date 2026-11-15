@@ -235,11 +235,30 @@ export function readImage(value: unknown): AttachedImage | undefined {
   };
 }
 
-/** The text a message goes to the model with: its words, then the line of each of its pictures. */
-export function promptOf(entry: Pick<UserEntry, "text" | "images">): string {
-  const notes = (entry.images ?? []).map((image) => image.note);
+/**
+ * The text a message goes to the model with: its words, then the line of each of its pictures. A
+ * picture that does not go with it says so in its line, and why (`missing`).
+ */
+export function promptOf(
+  entry: Pick<UserEntry, "text" | "images">,
+  missing: (image: AttachedImage, index: number) => string | undefined = () => undefined,
+): string {
+  const notes = (entry.images ?? []).map((image, index) => {
+    const why = missing(image, index);
+    if (why === undefined) return image.note;
+    return image.note.endsWith("]")
+      ? `${image.note.slice(0, -1)} — not attached: ${why}]`
+      : `${image.note} (not attached: ${why})`;
+  });
   return notes.length === 0 ? entry.text : `${entry.text}\n\n${notes.join("\n")}`;
 }
+
+/** Why a picture of a message does not go to the model with it, in English as all words to AI. */
+export const NOT_ATTACHED = {
+  blind: "this model cannot receive pictures",
+  missing: "the picture is not on this device",
+  older: "older picture, only the most recent ones are sent",
+} as const;
 
 /** An entry read back from the browser, or nothing when it is not one. */
 export function readEntry(value: unknown): ChatEntry | undefined {

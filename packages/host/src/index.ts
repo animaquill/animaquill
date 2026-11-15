@@ -1999,6 +1999,10 @@ export interface ChatImageStore {
   ): Promise<ChatImageRef>;
   /** A picture kept here; nothing where it is not. */
   read(image: string): Promise<Blob | undefined>;
+  /** Every picture kept here, and how many bytes it takes. */
+  keys(): Promise<readonly { readonly image: string; readonly bytes: number }[]>;
+  /** Takes pictures away, such as those no conversation and no draft has any more. */
+  delete(images: readonly string[]): Promise<void>;
 }
 
 /** The conversations of a project, as `ChatStore.usage` counts them. */

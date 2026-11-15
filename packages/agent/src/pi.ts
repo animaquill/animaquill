@@ -26,6 +26,7 @@ import {
   type FauxResponseStep,
   type ImageContent,
   type Message,
+  type UserMessage,
   type Model,
   type ProviderStreams,
   type Usage,
@@ -37,6 +38,7 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.lazy";
 import type { CallSettings, TextsUsed } from "@animaquill/tools";
 import {
+  NOT_ATTACHED,
   promptOf,
   type AnswerEnd,
   type AnswerUsage,
@@ -46,6 +48,7 @@ import {
   type ImageRef,
   type PackNote,
   type ToolEntry,
+  type UserEntry,
 } from "./entries.ts";
 import type { ModelValues } from "./ai-settings.ts";
 import type { ListedModel, ThinkingLevelMap } from "./model-discovery.ts";
@@ -249,7 +252,7 @@ export interface RunOptions {
    * then ends with what people wrote or what tools said: to try again after a failure.
    */
   readonly prompt?: string;
-  /** The pictures that go with the prompt. */
+  /** The pictures that go with the prompt, whose lines go after its words. */
   readonly images?: readonly AttachedImage[];
   /** Whether pictures go to the model, see `Pictures`; without it, only their lines. */
   readonly pictures?: Pictures;
@@ -535,6 +538,12 @@ const FAKE = "fake";
 
 const isFake = (endpoint: Endpoint | FakeEndpoint): endpoint is FakeEndpoint => "fake" in endpoint;
 
+/**
+ * How many pictures of a conversation go with a request at most: the most recent. Each is about
+ * 1,600 tokens again with every request; the others go as their lines.
+ */
+export const MOST_PICTURES_SENT = 6;
+
 /** How much of an earlier call of a tool that is no more, and of its result, the model gets. */
 const OLD_CALL_TEXT = 200;
 const OLD_RESULT_TEXT = 300;
@@ -565,7 +574,7 @@ const cut = (text: string, most: number) => (text.length > most ? `${text.slice(
 function messagesOf(
   history: readonly ChatEntry[],
   tools: ReadonlySet<string>,
-  pictures: ReadonlyMap<string, ImageContent> = new Map(),
+  said: (entry: UserEntry, at: number) => UserMessage["content"] = (entry) => promptOf(entry),
 ): Message[] {
   const stops: Record<AnswerEnd, AssistantMessage["stopReason"]> = {
     done: "stop",
@@ -585,25 +594,12 @@ function messagesOf(
     messages.push({ role: "user", content: text, timestamp: at });
     old = new Map();
   };
-  for (const entry of history) {
+  for (const [index, entry] of history.entries()) {
     if (entry.role !== "tool") flush(entry.at);
     switch (entry.role) {
-      case "user": {
-        const images = (entry.images ?? []).flatMap((image) => {
-          const content = pictures.get(image.image);
-          return content ? [content] : [];
-        });
-        messages.push({
-          role: "user",
-          // A picture the model does not get is its line alone, which is in the text anyway.
-          content:
-            images.length === 0
-              ? promptOf(entry)
-              : [{ type: "text", text: promptOf(entry) }, ...images],
-          timestamp: entry.at,
-        });
+      case "user":
+        messages.push({ role: "user", content: said(entry, index), timestamp: entry.at });
         break;
-      }
       case "tool": {
         const call = old.get(entry.call);
         if (call !== undefined) {
@@ -762,20 +758,49 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
   if (pictures?.sees && !model.input.includes("image")) {
     model = { ...model, input: [...model.input, "image"] };
   }
-  /** The pictures of the conversation and of the prompt, read once for this task. */
+  // Each picture of the conversation and of the prompt where it is: only the most recent go again
+  // with every request, the others as their lines, so that a long conversation does not fill up.
+  const places = [
+    ...options.history.flatMap((entry, at) =>
+      entry.role === "user"
+        ? (entry.images ?? []).map((image, index) => ({ at, index, image }))
+        : [],
+    ),
+    ...(options.images ?? []).map((image, index) => ({ at: -1, index, image })),
+  ];
+  const placeOf = (at: number, index: number) => `${at}/${index}`;
+  const recent = new Set(
+    places.slice(-MOST_PICTURES_SENT).map(({ at, index }) => placeOf(at, index)),
+  );
+  /** The pictures read for this task, by their hash. */
   const loaded = new Map<string, ImageContent>();
   if (pictures?.sees) {
-    const wanted = [
-      ...options.history.flatMap((entry) => (entry.role === "user" ? (entry.images ?? []) : [])),
-      ...(options.images ?? []),
-    ];
-    for (const image of wanted) {
-      if (loaded.has(image.image)) continue;
+    for (const { at, index, image } of places) {
+      if (!recent.has(placeOf(at, index)) || loaded.has(image.image)) continue;
       const read = await pictures.read(image).catch(() => undefined);
       if (read)
         loaded.set(image.image, { type: "image", data: read.data, mimeType: read.mimeType });
     }
   }
+  const why = (at: number) => (image: AttachedImage, index: number) =>
+    !pictures?.sees
+      ? pictures
+        ? NOT_ATTACHED.blind
+        : NOT_ATTACHED.missing
+      : !recent.has(placeOf(at, index))
+        ? NOT_ATTACHED.older
+        : !loaded.has(image.image)
+          ? NOT_ATTACHED.missing
+          : undefined;
+  /** What people said in a message, with the pictures that go, and the lines of those that do not. */
+  const said = (entry: Pick<UserEntry, "text" | "images">, at: number): UserMessage["content"] => {
+    const text = promptOf(entry, why(at));
+    const images = (entry.images ?? []).flatMap((image, index) => {
+      const content = why(at)(image, index) === undefined ? loaded.get(image.image) : undefined;
+      return content ? [content] : [];
+    });
+    return images.length === 0 ? text : [{ type: "text", text }, ...images];
+  };
 
   /** A tool of the last answer asked the user: the turn ends after its tools. */
   let asked = false;
@@ -832,7 +857,7 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
       systemPrompt: options.system,
       model,
       tools,
-      messages: messagesOf(options.history, names, loaded) as AgentMessage[],
+      messages: messagesOf(options.history, names, said) as AgentMessage[],
     },
     streamFn: (request, context, streamOptions) => {
       // Through the relay, only where requests go changes, and what goes with them.
@@ -957,11 +982,8 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
     if (signal.aborted) return { end: "stopped" };
     if (options.prompt === undefined) await agent.continue();
     else {
-      const images = (options.images ?? []).flatMap((image) => {
-        const content = loaded.get(image.image);
-        return content ? [content] : [];
-      });
-      await agent.prompt(options.prompt, images.length > 0 ? images : undefined);
+      const content = said({ text: options.prompt, images: options.images ?? [] }, -1);
+      await agent.prompt({ role: "user", content, timestamp: Date.now() } as AgentMessage);
     }
   } catch (error) {
     return { end: "failed", error: clean(error instanceof Error ? error.message : String(error)) };

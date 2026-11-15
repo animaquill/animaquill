@@ -753,7 +753,11 @@ describe("what a model gets, and two packs side by side", () => {
     expect(preview.parts.find(({ part }) => part === "extra")?.text).toBe("Keep batches small.");
     expect(preview.parts.find(({ part }) => part === "guard")?.text).toBe("");
     expect(preview.system).toBe(
-      systemPromptOf({ entry: "browser", texts: usePack(steady, "deepseek-chat").texts }),
+      systemPromptOf({
+        entry: "browser",
+        texts: usePack(steady, "deepseek-chat").texts,
+        pictures: true,
+      }),
     );
     const keys = segmentsOf(preview).map(({ key }) => key);
     expect(keys.slice(0, SYSTEM_PARTS.length)).toEqual(

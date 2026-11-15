@@ -73,14 +73,16 @@ export async function compressShot(
   }
 }
 
-/** In the browser: a picture drawn on a canvas of its own, as JPEG. */
-export function canvasShotEncoder(image: CanvasImageSource): ShotEncoder {
+/**
+ * In the browser: a picture drawn on a canvas of its own, as JPEG, on `background` where it is
+ * transparent: black for a frame, as the export has it; white for a picture people add.
+ */
+export function canvasShotEncoder(image: CanvasImageSource, background = "#000"): ShotEncoder {
   return async (width, height, quality) => {
     const canvas = new OffscreenCanvas(width, height);
     const painter = canvas.getContext("2d");
     if (!painter) throw new Error("No 2D context");
-    // JPEG has no transparency: what is not drawn is black, as in the export.
-    painter.fillStyle = "#000";
+    painter.fillStyle = background;
     painter.fillRect(0, 0, width, height);
     painter.imageSmoothingQuality = "high";
     painter.drawImage(image, 0, 0, width, height);
@@ -88,14 +90,43 @@ export function canvasShotEncoder(image: CanvasImageSource): ShotEncoder {
   };
 }
 
-/** A frame or a picture, ready to keep: as small as `side` and `maxBytes` say. */
+/** Whether any pixel of a picture is not opaque, looked at small. */
+function hasTransparency(image: ImageBitmap): boolean {
+  const size = fitSize(image.width, image.height, 256);
+  const canvas = new OffscreenCanvas(size.width, size.height);
+  const painter = canvas.getContext("2d");
+  if (!painter) return false;
+  painter.drawImage(image, 0, 0, size.width, size.height);
+  const data = painter.getImageData(0, 0, size.width, size.height).data;
+  for (let at = 3; at < data.length; at += 4) if ((data[at] as number) < 255) return true;
+  return false;
+}
+
+/**
+ * A frame or a picture, ready to keep: as small as `side` and `maxBytes` say. A picture people add
+ * (`added`) that has transparency stays PNG where that fits, so that a logo keeps its edges; else
+ * it goes as JPEG on white rather than on black.
+ */
 export async function shotOf(
   image: ImageBitmap,
   side: number | undefined,
   maxBytes: number,
+  added = false,
 ): Promise<{ readonly blob: Blob; readonly width: number; readonly height: number }> {
   const size = fitSize(image.width, image.height, side);
-  return compressShot(canvasShotEncoder(image), size.width, size.height, maxBytes);
+  const clear = added && hasTransparency(image);
+  if (clear) {
+    const canvas = new OffscreenCanvas(size.width, size.height);
+    canvas.getContext("2d")?.drawImage(image, 0, 0, size.width, size.height);
+    const png = await canvas.convertToBlob({ type: "image/png" });
+    if (png.size <= maxBytes) return { blob: png, ...size };
+  }
+  return compressShot(
+    canvasShotEncoder(image, clear ? "#fff" : "#000"),
+    size.width,
+    size.height,
+    maxBytes,
+  );
 }
 
 /** What a frame is of, for the line that goes with it to AI and for people. */

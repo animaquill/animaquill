@@ -76,6 +76,7 @@ export class CodeDocuments {
   #request = 0;
   #moving = false;
   #lines: SelectedLines | undefined;
+  #pointed: SelectedLines | undefined;
   readonly #linesEmitter = new Emitter();
 
   constructor(session: ProjectSession, messages: CodeMessages, questions: CodeQuestions) {
@@ -95,6 +96,22 @@ export class CodeDocuments {
   }
 
   subscribeLines = this.#linesEmitter.subscribe;
+
+  /** Lines something else points at now, such as a block of the chat, which the editor lights up. */
+  get pointedLines(): SelectedLines | undefined {
+    return this.#pointed;
+  }
+
+  pointLines(lines: SelectedLines | undefined): void {
+    if (
+      this.#pointed?.path === lines?.path &&
+      this.#pointed?.from === lines?.from &&
+      this.#pointed?.to === lines?.to
+    )
+      return;
+    this.#pointed = lines;
+    this.#linesEmitter.emit();
+  }
 
   /** The editor says which lines are selected: none where the selection is only a caret. */
   selectLines(lines: SelectedLines | undefined): void {

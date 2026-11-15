@@ -975,7 +975,7 @@ export class ChatSession {
       endpoint: target.endpoint,
       key: target.key,
       maxToolCalls,
-      system: browserSystemPrompt(use.texts),
+      system: browserSystemPrompt(use.texts, sees),
       tools: (task) => this.#toolsOf(task, caller, use),
       // How hard the model reasons: as people set it for the model, else as its pack says.
       call: reasoning === undefined ? use.call : { ...use.call, reasoning },

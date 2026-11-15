@@ -2,12 +2,12 @@ import { EDIT_TEXTS } from "./edit.ts";
 import { OPERATION_TEXTS } from "./operations.ts";
 import { PARAM_TEXTS } from "./params.ts";
 import { TYPE_TEXTS } from "./shared.ts";
-import { SYSTEM_PARTS, SYSTEM_TEXTS } from "./system.ts";
+import { PICTURE_FACTS, SYSTEM_PARTS, SYSTEM_TEXTS } from "./system.ts";
 import { textIn, type TextTable } from "./table.ts";
 import { TOOL_TEXTS } from "./tools.ts";
 
 export * from "./table.ts";
-export { SYSTEM_PARTS };
+export { PICTURE_FACTS, SYSTEM_PARTS };
 
 /** The words of the tools as AnimaQuill writes them, for every model: the default model pack. */
 export const DEFAULT_TEXTS: TextTable = {
@@ -36,11 +36,21 @@ const isListItem = (line: string | undefined) => line?.startsWith("- ") === true
 export function systemPromptOf(options: {
   readonly entry: Entry;
   readonly texts?: TextTable;
+  /**
+   * Whether the model gets the pictures people attach, said after `host` (`PICTURE_FACTS`): only
+   * where the place has pictures, as the browser does.
+   */
+  readonly pictures?: boolean;
 }): string {
   const texts = options.texts ?? DEFAULT_TEXTS;
   let prompt = "";
   for (const part of PARTS_OF[options.entry]) {
-    const text = textIn(texts, `system.${part}`)?.trim() ?? "";
+    const own = textIn(texts, `system.${part}`)?.trim() ?? "";
+    const facts =
+      part === "host" && options.pictures !== undefined
+        ? PICTURE_FACTS[options.pictures ? "sees" : "blind"]
+        : "";
+    const text = [own, facts].filter((line) => line !== "").join("\n");
     if (text === "") continue;
     if (prompt === "") prompt = text;
     else {

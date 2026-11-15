@@ -129,11 +129,11 @@ function UserView(props: {
   };
   return (
     <div className={styles.userWrap}>
-      <SentWith turn={turn} />
       <div className={styles.user} data-testid="chat-user">
         <RefText text={turn.user.text} />
         {turn.user.images && <SentPictures images={turn.user.images} />}
       </div>
+      <SentWith turn={turn} />
       <PicturesNotSent turn={turn} latest={props.latest} />
       <div className={styles.userActions} data-testid="chat-user-actions">
         <button

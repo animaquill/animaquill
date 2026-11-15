@@ -715,7 +715,7 @@ describe("pictures with a message", () => {
     const endpoint: FakeEndpoint = { fake: [{ text: "ok" }], heard: (m) => (heard = m) };
     const { done } = run(endpoint, {
       history: earlier,
-      prompt: "这样呢\n\n[image 2: frame]",
+      prompt: "这样呢",
       images: [image(2, "[image 2: frame]")],
       pictures: { sees: true, read },
     });
@@ -738,7 +738,7 @@ describe("pictures with a message", () => {
     const endpoint: FakeEndpoint = { fake: [{ text: "ok" }], heard: (m) => (heard = m) };
     const { done } = run(endpoint, {
       history: earlier,
-      prompt: "这样呢\n\n[image 2: frame]",
+      prompt: "这样呢",
       images: [image(2, "[image 2: frame]")],
       pictures: { sees: false, read },
     });
@@ -754,8 +754,54 @@ describe("pictures with a message", () => {
             .join(""),
     );
     expect(texts).toEqual([
-      "看 [0:01/00](aq://time?timeline=main&t=1)\n\n[image 1: frame]",
-      "这样呢\n\n[image 2: frame]",
+      "看 [0:01/00](aq://time?timeline=main&t=1)\n\n[image 1: frame — not attached: this model cannot receive pictures]",
+      "这样呢\n\n[image 2: frame — not attached: this model cannot receive pictures]",
+    ]);
+  });
+
+  it("say so where they are not on this device, and only the most recent go again", async () => {
+    let heard: readonly unknown[] = [];
+    const endpoint: FakeEndpoint = { fake: [{ text: "ok" }], heard: (m) => (heard = m) };
+    // Seven turns of a picture each, before this one with its own and one that is not here.
+    const history: ChatEntry[] = Array.from({ length: 7 }, (_, at) => ({
+      role: "user" as const,
+      text: `第 ${at + 1} 张`,
+      images: [image(at + 1, `[image 1: frame ${at + 1}]`)],
+      at,
+      task: `t${at}`,
+    }));
+    const { done } = run(endpoint, {
+      history,
+      prompt: "这两张",
+      images: [image(8, "[image 1: frame 8]"), image(9, "[image 2: frame 9]")],
+      pictures: {
+        sees: true,
+        read: async (ref) =>
+          ref.image.startsWith("sha256:9")
+            ? undefined
+            : { data: ref.image.slice(7, 9), mimeType: "image/jpeg" },
+      },
+    });
+    await done;
+    const users = heard.filter((m) => (m as { role: string }).role === "user") as {
+      content: unknown;
+    }[];
+    const shown = users.map((user) =>
+      typeof user.content === "string"
+        ? user.content
+        : (user.content as { type: string; text?: string; data?: string }[])
+            .map((part) => (part.type === "text" ? part.text : `<${part.data}>`))
+            .join(" "),
+    );
+    expect(shown).toEqual([
+      "第 1 张\n\n[image 1: frame 1 — not attached: older picture, only the most recent ones are sent]",
+      "第 2 张\n\n[image 1: frame 2 — not attached: older picture, only the most recent ones are sent]",
+      "第 3 张\n\n[image 1: frame 3 — not attached: older picture, only the most recent ones are sent]",
+      "第 4 张\n\n[image 1: frame 4] <44>",
+      "第 5 张\n\n[image 1: frame 5] <55>",
+      "第 6 张\n\n[image 1: frame 6] <66>",
+      "第 7 张\n\n[image 1: frame 7] <77>",
+      "这两张\n\n[image 1: frame 8]\n[image 2: frame 9 — not attached: the picture is not on this device] <88>",
     ]);
   });
 });

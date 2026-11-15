@@ -77,6 +77,7 @@ function colorProject(count = 3): string {
 
 interface Sent {
   readonly model: string;
+  readonly system?: unknown;
   readonly messages: readonly { readonly role: string; readonly content: unknown }[];
 }
 
@@ -396,7 +397,14 @@ test("a model that takes no pictures: held, with another model or without them a
   await expect(chat(page).getByTestId("chat-answer")).toHaveCount(2);
   expect(sent[1]?.model).toBe("claude-test");
   expect(JSON.stringify(sent[1]?.messages)).not.toContain('"type":"image"');
-  expect(JSON.stringify(sent[1]?.messages)).toContain("[image 1: the frame of timeline");
+  expect(JSON.stringify(sent[1]?.messages)).toContain(
+    "1568×882 — not attached: this model cannot receive pictures]",
+  );
+  // The system prompt says as much, instead of that the user can attach pictures.
+  const system = JSON.stringify(sent[1]?.system);
+  expect(system).toContain("This model cannot see pictures");
+  expect(system).not.toContain("The user can attach pictures");
+  expect(JSON.stringify(sent[0]?.system)).toContain("The user can attach pictures");
 
   // Without them: what was written goes alone.
   await page.keyboard.press("Alt+s");
@@ -516,6 +524,115 @@ test("↑ brings back what was said, a search lights up what it found, and a con
   expect(Buffer.concat(text).toString("utf8")).toContain("**你**:\n\n第一句话");
 });
 
+test("blocks: Ctrl+Z takes one back, copied ones paste as blocks, a moment shows on the timeline", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  await pretend(page);
+  await setUp(page);
+  await goTo(page, "0:01/00");
+  await tab(page, "chat").click();
+  await box(page).click();
+  await box(page).pressSequentially("看");
+  await page.keyboard.press("Alt+t");
+  const chips = box(page).getByTestId("chat-chip");
+  await expect(chips).toHaveCount(1);
+  await page.keyboard.press("Control+z");
+  await expect(chips).toHaveCount(0);
+  await expect(box(page)).toHaveText("看");
+  await page.keyboard.press("Alt+t");
+  await expect(chips).toHaveCount(1);
+  // Copied out of the box and pasted back in: a block again, and plain words for elsewhere.
+  const copied = await box(page).evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selection = document.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const transfer = new DataTransfer();
+    element.dispatchEvent(
+      new ClipboardEvent("copy", { clipboardData: transfer, bubbles: true, cancelable: true }),
+    );
+    selection?.collapseToEnd();
+    const paste = new DataTransfer();
+    for (const type of transfer.types) paste.setData(type, transfer.getData(type));
+    element.dispatchEvent(
+      new ClipboardEvent("paste", { clipboardData: paste, bubbles: true, cancelable: true }),
+    );
+    return transfer.getData("text/plain");
+  });
+  expect(copied).toBe("看 0:01/00 ");
+  await expect(chips).toHaveCount(2);
+  // A block of a moment marks it on the timeline while the pointer is on it.
+  const stageGroup = stage(page);
+  await chips.first().hover();
+  await expect(stageGroup).toHaveAttribute("data-pointed-at", "1");
+  await box(page).hover({ position: { x: 2, y: 2 } });
+  await expect(stageGroup).not.toHaveAttribute("data-pointed-at");
+});
+
+test("pictures dropped anywhere on the chat; a lost one holds the message; formats it cannot read", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const sent = await pretend(page);
+  await setUp(page);
+  await tab(page, "chat").click();
+  // A 2×1 PNG whose second pixel is transparent: it goes as PNG, keeping that.
+  const clear = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAD0lEQVR4nGP4z8AARAwMAAz8Af9c/RSVAAAAAElFTkSuQmCC",
+    "base64",
+  );
+  const dropOn = (target: Locator, name: string, type: string, data: Buffer) =>
+    target.evaluate(
+      (element, file) => {
+        const bytes = Uint8Array.from(atob(file.data), (c) => c.charCodeAt(0));
+        const transfer = new DataTransfer();
+        transfer.items.add(new File([bytes], file.name, { type: file.type }));
+        for (const kind of ["dragenter", "dragover", "drop"]) {
+          element.dispatchEvent(
+            new DragEvent(kind, { dataTransfer: transfer, bubbles: true, cancelable: true }),
+          );
+        }
+      },
+      { name, type, data: data.toString("base64") },
+    );
+  const picture = chat(page).getByTestId("chat-picture");
+  await dropOn(chat(page).getByTestId("chat-title"), "透明.png", "image/png", clear);
+  await expect(picture).toHaveAttribute("data-state", "ready");
+  await dropOn(chat(page).getByTestId("chat-title"), "照片.heic", "image/heic", Buffer.from("not"));
+  await expect(page.getByText("这种图片格式读不了，可以先转成 PNG 或 JPEG。")).toBeVisible();
+  await expect(picture).toHaveCount(1);
+  await box(page).fill("透明的");
+  await box(page).press("Enter");
+  await expect(chat(page).getByTestId("chat-answer")).toHaveText("好的。");
+  const image = lastUser(sent[0] as Sent).find((part) => part.type === "image") as
+    { source?: { media_type: string } } | undefined;
+  expect(image?.source?.media_type).toBe("image/png");
+
+  // The pictures of the browser are cleared while the window keeps the draft: nothing goes.
+  await dropOn(chat(page).getByTestId("chat-title"), "透明.png", "image/png", clear);
+  await expect(picture).toHaveAttribute("data-state", "ready");
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        const open = indexedDB.open("animaquill-chat-images");
+        open.addEventListener("error", () => reject(open.error));
+        open.addEventListener("success", () => {
+          const transaction = open.result.transaction("images", "readwrite");
+          transaction.objectStore("images").clear();
+          transaction.addEventListener("complete", () => resolve());
+        });
+      }),
+  );
+  await box(page).fill("这张呢");
+  await box(page).press("Enter");
+  await expect(picture).toHaveAttribute("data-state", "failed");
+  await expect(chat(page).getByTestId("chat-picture-info")).toHaveText("图片不在这台设备上");
+  await expect(chat(page).getByTestId("chat-pictures-wait")).toBeVisible();
+  expect(sent).toHaveLength(1);
+});
+
 test("narrower than 320, the buttons of the box are one menu", async ({ page }) => {
   test.setTimeout(60_000);
   await pretend(page);
@@ -560,4 +677,23 @@ test("a 1080p frame of a scene for the chat takes at most two seconds", async ({
   console.log(`a 1080p scene frame for the chat took ${took} ms`);
   await expect(picture).toHaveAttribute("data-state", "ready");
   expect(took).toBeLessThanOrEqual(2000);
+  // It is the scene as the export draws it: its background in a corner, its white words inside.
+  const colors = await picture.locator("img").evaluate(async (image: HTMLImageElement) => {
+    await image.decode();
+    const canvas = new OffscreenCanvas(image.naturalWidth, image.naturalHeight);
+    const painter = canvas.getContext("2d") as OffscreenCanvasRenderingContext2D;
+    painter.drawImage(image, 0, 0);
+    const at = (x: number, y: number) =>
+      Array.from(painter.getImageData(x, y, 1, 1).data.slice(0, 3));
+    let white = 0;
+    const data = painter.getImageData(0, 0, image.naturalWidth, image.naturalHeight).data;
+    for (let i = 0; i < data.length; i += 4) if ((data[i] as number) > 230) white += 1;
+    return { size: [image.naturalWidth, image.naturalHeight], corner: at(5, 5), white };
+  });
+  console.log(`the scene frame: ${JSON.stringify(colors)}`);
+  expect(colors.size).toEqual([1568, 882]);
+  expect(colors.corner.every((value, index) => Math.abs(value - [17, 34, 51][index]!) < 12)).toBe(
+    true,
+  );
+  expect(colors.white).toBeGreaterThan(1000);
 });

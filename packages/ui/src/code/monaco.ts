@@ -167,7 +167,29 @@ export class CodeView {
           : { path, from: selection.startLineNumber, to: selection.endLineNumber },
       );
     });
-    this.#stop = [stopCode, () => markers.dispose(), () => selected.dispose()];
+    // Lines a block of the chat points at light up while the pointer is on it.
+    const pointed = this.#editor.createDecorationsCollection();
+    const point = () => {
+      const lines = code.pointedLines;
+      pointed.set(
+        lines && lines.path === this.#shown
+          ? [
+              {
+                range: new monaco.Range(lines.from, 1, lines.to, 1),
+                options: { isWholeLine: true, className: "aq-pointed-lines" },
+              },
+            ]
+          : [],
+      );
+    };
+    const stopPointed = code.subscribeLines(point);
+    this.#stop = [
+      stopCode,
+      () => markers.dispose(),
+      () => selected.dispose(),
+      stopPointed,
+      () => pointed.clear(),
+    ];
     this.#sync();
   }
 

@@ -20,6 +20,7 @@ export {
   type TaskTarget,
 } from "./conversation.ts";
 export {
+  NOT_ATTACHED,
   promptOf,
   readEntry,
   readImage,
@@ -39,6 +40,7 @@ export {
 export { NO_LIVE, createLiveStore, type LiveAnswer, type LiveStore } from "./live.ts";
 export { AUTO_RETRIES, RETRY_DELAYS_MS, passes, retryDelay } from "./retry.ts";
 export { DEFAULT_STAMP, browserSystemPrompt, toolSpecsOf } from "./assistant.ts";
+export { MOST_PICTURES_SENT } from "./pi.ts";
 export type {
   AnswerStamp,
   CallSettings,

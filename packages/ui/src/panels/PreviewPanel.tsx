@@ -1,4 +1,4 @@
-import { MessageSquarePlus, Pause, Play, SkipBack, SkipForward } from "lucide-react";
+import { Camera, Pause, Play, SkipBack, SkipForward } from "lucide-react";
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { Tip } from "../app/Tip.tsx";
@@ -207,7 +207,7 @@ export function PreviewPanel() {
         <ToolButton
           name={t("chat.action.sendFrameShort")}
           usage={t("chat.action.sendFrameHelp")}
-          icon={MessageSquarePlus}
+          icon={Camera}
           unavailable={!model}
           onClick={() => workbench.sendFrameToChat()}
         />

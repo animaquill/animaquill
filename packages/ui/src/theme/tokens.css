@@ -145,3 +145,8 @@ button {
     scrollbar-color: var(--aq-scrollbar) transparent;
   }
 }
+
+/* Lines of code a block of the chat points at, in the code editor (Monaco names its own classes). */
+.aq-pointed-lines {
+  background: #2aaaff26;
+}

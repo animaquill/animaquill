@@ -458,6 +458,7 @@ export class TimelineEditor implements TouchTarget {
   #preview: Preview | undefined;
   #hovered: Hit = { kind: "empty" };
   #razorAt: number | undefined;
+  #pointedAt: number | undefined;
   #frame = 0;
   /** Where the clock and the playhead were together last. */
   #playback: { readonly frame: number; readonly since: number } | undefined;
@@ -620,6 +621,18 @@ export class TimelineEditor implements TouchTarget {
   }
 
   /** Where the razor would cut, while it is over a clip. */
+  /** A moment something else points at now, in seconds, such as a block of the chat. */
+  get pointedAt(): number | undefined {
+    return this.#pointedAt;
+  }
+
+  /** Marks a moment with a line across the timeline while something points at it; none to stop. */
+  pointAt(seconds: number | undefined): void {
+    if (seconds === this.#pointedAt) return;
+    this.#pointedAt = seconds;
+    this.#viewChanged();
+  }
+
   get razorAt(): number | undefined {
     return this.#razorAt;
   }

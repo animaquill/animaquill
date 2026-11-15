@@ -47,9 +47,12 @@ export function keptData(
     : { ...data, changes: objects.slice(0, 40) };
 }
 
-/** The system prompt of the assistant in the browser, from a table of texts. */
-export const browserSystemPrompt = (texts?: TextTable): string =>
-  systemPromptOf({ entry: "browser", ...(texts && { texts }) });
+/**
+ * The system prompt of the assistant in the browser, from a table of texts, and whether its model
+ * gets the pictures people attach (see `PICTURE_FACTS`).
+ */
+export const browserSystemPrompt = (texts?: TextTable, pictures = true): string =>
+  systemPromptOf({ entry: "browser", ...(texts && { texts }), pictures });
 
 /** What answers with the default words of the tools are recorded as made with. */
 export const DEFAULT_STAMP: AnswerStamp = { toolset: TOOLSET_VERSION, texts: DEFAULT_TEXTS_USED };

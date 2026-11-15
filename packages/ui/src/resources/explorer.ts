@@ -33,6 +33,8 @@ export interface ExplorerSnapshot {
   readonly selected: string | undefined;
   /** Goes up each time something is shown from elsewhere, which the list then scrolls to. */
   readonly revealed: number;
+  /** A resource something else points at now, by its id, which lights up. */
+  readonly pointed?: string | undefined;
 }
 
 /** Where a resource is listed, by its id. */
@@ -65,10 +67,16 @@ export class ExplorerState {
     this.#set({ ...this.#snapshot, selected: id });
   }
 
+  /** Lights a resource up while something else points at it; nothing for none. */
+  point(id: string | undefined): void {
+    if (id === this.#snapshot.pointed) return;
+    this.#set({ ...this.#snapshot, pointed: id });
+  }
+
   /** Shows a resource, in the place where it is listed. Resolves to whether there is one. */
   reveal(id: string, node = nodeOfResource(id)): boolean {
     if (!node) return false;
-    this.#set({ node, selected: id, revealed: this.#snapshot.revealed + 1 });
+    this.#set({ ...this.#snapshot, node, selected: id, revealed: this.#snapshot.revealed + 1 });
     return true;
   }
 

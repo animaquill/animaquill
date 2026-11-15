@@ -143,17 +143,14 @@ export class ChatPointing {
   selectedRefs(): readonly ChatRef[] {
     const all = this.#selected().slice(0, MOST);
     if (all.length <= MANY) return all.map(({ ref }) => ref);
-    const rest = all.slice(FIRST);
+    // The rest by the objects they are of: several keys of one clip are that clip once.
+    const ids = [...new Set(all.slice(FIRST).map(({ id }) => id))];
     const timeline = this.#options.timeline.model?.id;
     return [
       ...all.slice(0, FIRST).map(({ ref }) => ref),
       {
-        label: this.#options.t("chat.refs.more", { count: rest.length }),
-        href: formatAddress({
-          kind: "objects",
-          ids: [...new Set(rest.map(({ id }) => id))],
-          timeline,
-        }),
+        label: this.#options.t("chat.refs.more", { count: ids.length }),
+        href: formatAddress({ kind: "objects", ids, timeline }),
       },
     ];
   }

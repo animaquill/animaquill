@@ -22,6 +22,7 @@ import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import { Tip } from "../app/Tip.tsx";
 import { formatCombo } from "../workbench/keys.ts";
+import type { AttachRefusal } from "./attachments.ts";
 import { Attachments } from "./AttachmentsView.tsx";
 import { ChatInput, type ChatInputHandle } from "./ChatInput.tsx";
 import styles from "./ChatPanel.module.css";
@@ -31,11 +32,11 @@ import { plainOf } from "./refs.ts";
 /** Narrower than this, the buttons of the box go into one "+" menu. */
 const NARROW = 320;
 
-/** The keys of the buttons of the box, while it has the focus. */
-export const COMPOSE_KEYS = {
-  time: "alt+t",
-  selection: "alt+o",
-  shoot: "alt+s",
+/** The commands of the buttons of the box, whose keys people can change (`Workbench`). */
+const COMMANDS = {
+  time: "chat.insertTime",
+  selection: "chat.insertSelection",
+  shoot: "chat.sendFrame",
 } as const;
 
 /**
@@ -61,6 +62,8 @@ export function Composer(props: {
   // Enter, or Ctrl+Enter (⌘ Enter) where people chose that in the settings: the other is a new line.
   const withMod = settings.sendWith === "modEnter";
   const pointed = useSyncExternalStore(pointing.subscribe, pointing.getSnapshot);
+  // The keys of the buttons, as people set them.
+  useSyncExternalStore(keybindings.subscribe, keybindings.getSnapshot);
   // The playhead, for what the button of the time says.
   useSyncExternalStore(workbench.timeline.subscribeView, () => workbench.timeline.frame);
   const conversation = snapshot.conversation;
@@ -116,6 +119,7 @@ export function Composer(props: {
   const ready = pictures.filter((item) => item.state === "ready");
   const blocked = ready.length > 0 && sees === false;
   const working = pictures.some((item) => item.state === "working");
+  const failed = pictures.some((item) => item.state === "failed");
 
   const insertTime = () => {
     const ref = pointing.timeRef();
@@ -125,7 +129,7 @@ export function Composer(props: {
     const refs = pointing.selectedRefs();
     if (refs.length > 0) box.current?.insert(refs);
   };
-  const say = (refused: "full" | "notPicture" | "failed" | undefined) => {
+  const say = (refused: AttachRefusal | undefined) => {
     if (refused) workbench.notifications.push(t(`chat.pictures.${refused}`));
   };
   const shoot = () => {
@@ -154,36 +158,25 @@ export function Composer(props: {
     }),
   );
 
-  const send = (withPictures = true) => {
+  const send = async (withPictures = true) => {
     if (project === undefined || id === undefined) return;
     const images = withPictures ? chat.attachments.ready(project, id) : [];
-    if ((!text.trim() && images.length === 0) || working) return;
+    if ((!text.trim() && images.length === 0) || working || failed) return;
     if (images.length > 0 && sees === false) return;
+    // A picture the browser lost since it was added goes nowhere: it says so, and nothing goes.
+    if (images.length > 0 && !(await chat.attachments.verify(project, id))) {
+      workbench.notifications.push(t("chat.pictures.lost"));
+      return;
+    }
     write("");
     chat.attachments.clear(project, id);
     history.current = undefined;
     props.onSent();
-    workbench.askToNotify();
     if (running) chat.queue(text, images);
     else void chat.send(text, images);
   };
   const said = (talk?.entries ?? []).flatMap((entry) => (entry.role === "user" ? [entry] : []));
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
-      const run =
-        event.code === "KeyT"
-          ? insertTime
-          : event.code === "KeyO"
-            ? insertSelection
-            : event.code === "KeyS"
-              ? shoot
-              : undefined;
-      if (run) {
-        event.preventDefault();
-        run();
-        return;
-      }
-    }
     const at = history.current?.chat === id ? history.current?.back : undefined;
     if (event.key === "ArrowUp" && !event.shiftKey) {
       // What people said before, newest first, while the box has nothing else in it.
@@ -215,7 +208,7 @@ export function Composer(props: {
       (!withMod || (keybindings.platform === "mac" ? event.metaKey : event.ctrlKey))
     ) {
       event.preventDefault();
-      send();
+      void send();
     } else if (
       event.key === "Enter" &&
       withMod &&
@@ -224,7 +217,7 @@ export function Composer(props: {
     ) {
       // Enter is a new line where Ctrl+Enter sends.
       event.preventDefault();
-      document.execCommand("insertText", false, "\n");
+      document.execCommand("insertLineBreak");
     }
   };
   const takeBack = (index: number) => {
@@ -255,7 +248,7 @@ export function Composer(props: {
               interpolation: { escapeValue: false },
             })
           : t("chat.compose.noTimeline"),
-      keys: COMPOSE_KEYS.time,
+      keys: keybindings.keysFor(COMMANDS.time)[0],
       disabled: !model,
     },
     {
@@ -266,7 +259,7 @@ export function Composer(props: {
         pointed.count > 0
           ? t("chat.compose.insertSelectionHelp", { count: pointed.count })
           : t("chat.compose.insertSelectionNone"),
-      keys: COMPOSE_KEYS.selection,
+      keys: keybindings.keysFor(COMMANDS.selection)[0],
       disabled: pointed.count === 0,
       count: pointed.count,
     },
@@ -275,7 +268,7 @@ export function Composer(props: {
       icon: Camera,
       name: t("chat.compose.shoot"),
       usage: t("chat.compose.shootHelp"),
-      keys: COMPOSE_KEYS.shoot,
+      keys: keybindings.keysFor(COMMANDS.shoot)[0],
       disabled: !model,
     },
     {
@@ -360,10 +353,15 @@ export function Composer(props: {
             {t("chat.pictures.pickVision")}
           </button>
           {" · "}
-          <button type="button" className={styles.link} onClick={() => send(false)}>
+          <button type="button" className={styles.link} onClick={() => void send(false)}>
             {t("chat.pictures.sendWithout")}
           </button>
         </div>
+      )}
+      {(working || failed) && (
+        <p className={styles.unsure} data-testid="chat-pictures-wait">
+          {t(failed ? "chat.pictures.removeFailed" : "chat.pictures.wait")}
+        </p>
       )}
       {ready.length > 0 && sees === undefined && (
         <p className={styles.unsure} data-testid="chat-pictures-unsure">
@@ -433,7 +431,7 @@ export function Composer(props: {
         <ReasoningPicker />
         <span className={styles.grow} />
         {running && (text.trim() !== "" || ready.length > 0) && (
-          <button type="button" data-testid="chat-queue" onClick={() => send()}>
+          <button type="button" data-testid="chat-queue" onClick={() => void send()}>
             {t("chat.compose.queue")}
           </button>
         )}
@@ -451,8 +449,8 @@ export function Composer(props: {
             type="button"
             className={styles.send}
             aria-label={t("chat.send")}
-            disabled={(!text.trim() && ready.length === 0) || blocked || working}
-            onClick={() => send()}
+            disabled={(!text.trim() && ready.length === 0) || blocked || working || failed}
+            onClick={() => void send()}
           >
             <SendHorizontal size={12} className={styles.narrowIcon} />
             <span className={styles.buttonText}>{t("chat.send")}</span>

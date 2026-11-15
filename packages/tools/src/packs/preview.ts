@@ -33,13 +33,14 @@ const NO_HOST: ToolHost = {
 
 /**
  * The system prompt of the browser and the list of tools a model gets with a pack, to the byte as
- * the assistant sends them, with how it is called.
+ * the assistant sends them, with how it is called; `pictures` is whether the model takes pictures.
  */
-export function previewOf(pack: ModelPack, model: string): PackPreview {
+export function previewOf(pack: ModelPack, model: string, pictures = true): PackPreview {
   const use = usePack(pack, model);
   const tools = createToolset(NO_HOST, new CallerState(), use.texts, { results: use.results });
   return {
-    system: systemPromptOf({ entry: "browser", texts: use.texts }),
+    // With what the browser says of pictures, for a model that takes them unless said otherwise.
+    system: systemPromptOf({ entry: "browser", texts: use.texts, pictures }),
     parts: SYSTEM_PARTS.map((part) => ({
       part,
       text: textIn(use.texts, `system.${part}`)?.trim() ?? "",

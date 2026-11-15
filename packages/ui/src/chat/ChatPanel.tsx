@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type DragEvent,
   type RefObject,
 } from "react";
 import type { TFunction } from "i18next";
@@ -91,6 +92,35 @@ export function ChatPanel() {
     panelRef.current?.querySelector<HTMLElement>('[data-testid="chat-input"]')?.focus();
   // The list of conversations over this one, or with this one's name to change.
   const [listOpen, setListOpen] = useState<false | "list" | "rename">(false);
+  // Pictures dragged over the chat: all of it takes them, and says so meanwhile.
+  const [dropping, setDropping] = useState(false);
+  const hasFiles = (event: DragEvent) =>
+    [...event.dataTransfer.items].some((item) => item.kind === "file");
+  const drop = {
+    onDragEnter: (event: DragEvent) => {
+      if (hasFiles(event)) setDropping(true);
+    },
+    onDragOver: (event: DragEvent) => {
+      if (!hasFiles(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      setDropping(true);
+    },
+    onDragLeave: (event: DragEvent) => {
+      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropping(false);
+    },
+    onDrop: (event: DragEvent) => {
+      setDropping(false);
+      const files = [...event.dataTransfer.files];
+      if (files.length === 0) return;
+      event.preventDefault();
+      const id = snapshot.id;
+      if (chat.projectKey === undefined || id === undefined) return;
+      void chat.attachments.add(chat.projectKey, id, files).then((refused) => {
+        if (refused) workbench.notifications.push(t(`chat.pictures.${refused}`));
+      });
+    },
+  };
   // A view of model packs over the whole chat: details, all a model gets, or a comparison.
   const [packView, setPackView] = useState<PackViewRequest | undefined>();
   const model = chat.modelNow()?.ref.model;
@@ -181,7 +211,18 @@ export function ChatPanel() {
       : snapshot.title || firstWords(talk.entries, 40) || t("chat.list.newTitle");
   return (
     <OpenPackView.Provider value={setPackView}>
-      <div className={styles.panel} data-testid="chat" ref={panelRef}>
+      <div
+        className={styles.panel}
+        data-testid="chat"
+        ref={panelRef}
+        data-dropping={dropping ? "" : undefined}
+        {...drop}
+      >
+        {dropping && (
+          <div className={styles.dropHint} data-testid="chat-drop-hint">
+            {t("chat.pictures.dropHere")}
+          </div>
+        )}
         <div className={styles.bar}>
           <button
             type="button"

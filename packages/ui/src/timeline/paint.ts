@@ -964,7 +964,7 @@ export class TimelinePainter extends StagePainter {
     const end = this.sharp(editor.xAt(editor.visibleDuration));
     if (end >= 0 && end <= editor.width) context.fillRect(end, RULER_HEIGHT, 1, editor.height);
     context.fillStyle = this.#theme.snap;
-    for (const moment of [editor.preview?.snap, editor.razorAt]) {
+    for (const moment of [editor.preview?.snap, editor.razorAt, editor.pointedAt]) {
       if (moment === undefined) continue;
       context.fillRect(this.sharp(editor.xAt(moment)), 0, 1, editor.height);
     }

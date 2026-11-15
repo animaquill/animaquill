@@ -121,6 +121,7 @@ export function ExplorerPanel() {
                 Icon={ResourcePicture}
                 selected={snapshot.selected}
                 revealed={snapshot.revealed}
+                pointed={snapshot.pointed}
                 onSelect={(resource) => explorer.select(resource.id)}
                 onActivate={(resource) => workbench.openResource(resource.id, resource.name)}
                 menu={menu}

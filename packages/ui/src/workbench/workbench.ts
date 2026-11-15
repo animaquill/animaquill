@@ -5,6 +5,7 @@ import type {
   CoverAccess,
   CoverStore,
   DiagnosticsSink,
+  ChatImageStore,
   ChatStore,
   Host,
   LocalFolder,
@@ -324,7 +325,7 @@ export class Workbench {
   readonly pointing: ChatPointing;
   /** What the box of the chat does with the commands of the palette, while it is there. */
   #compose: ComposeHandlers | undefined;
-  /** People asked for notices of the chat in this page already. */
+  /** The browser was asked in this page whether the chat may tell people. */
   #askedToNotify = false;
   /** The conversations of projects of the platform, going with the account. */
   readonly chatSync: CloudChats | undefined;
@@ -340,6 +341,8 @@ export class Workbench {
   readonly proxyOffer: SwitchSetting;
   /** The conversations this browser keeps, for the settings to say what they take. */
   readonly chatStore: ChatStore | undefined;
+  /** Where the pictures of conversations are kept, for what they take and clearing them. */
+  readonly chatImages: ChatImageStore | undefined;
   #changingProject = false;
 
   constructor(options: WorkbenchOptions) {
@@ -664,6 +667,7 @@ export class Workbench {
           })
         : undefined;
     this.chatStore = host.chats;
+    this.chatImages = host.chatImages;
     this.chat = new ChatSession({
       chats: this.chatSync ?? host.chats,
       ai: this.ai,
@@ -2748,14 +2752,47 @@ export class Workbench {
     void this.chat.attachments.shoot(project, id, this.t("chat.pictures.frame")).then((refused) => {
       if (refused) this.notifications.push(this.t(`chat.pictures.${refused}`));
     });
-    requestAnimationFrame(() => this.#compose?.focus());
+    if (!this.#compose) requestAnimationFrame(() => this.#compose?.focus());
   }
 
-  /** Something in the chat points at what a block points to: it shows on the timeline and preview. */
+  /**
+   * Something in the chat points at what a block points to: clips light up on the timeline and in
+   * the preview, a moment gets a line on the timeline, a resource lights up in the explorer, lines
+   * of code in the code editor. Nothing stops all of it.
+   */
   pointAt(href: string | undefined): void {
+    const address = href === undefined ? undefined : parseAddress(href);
     const clips = href === undefined ? [] : this.pointing.clipsOf(href);
     this.overlay.point(new Set(clips));
     if (clips.length > 0) this.timeline.flash({ clips: new Set(clips) });
+    const model = this.timeline.model;
+    this.timeline.pointAt(
+      address?.kind === "time" && (address.timeline ?? model?.id) === model?.id
+        ? toSeconds(parseTime(address.t))
+        : undefined,
+    );
+    const state = this.session.store?.getState();
+    const key = this.session.getSnapshot().key;
+    const resource =
+      address?.kind === "object" && state && key !== undefined
+        ? (["asset", "scene", "sound"] as const).find((kind) =>
+            kind === "asset"
+              ? entryOf(state.assets, address.id)
+              : kind === "scene"
+                ? entryOf(state.scenes, address.id)
+                : entryOf(state.sounds, address.id),
+          )
+        : undefined;
+    this.explorer.point(
+      resource && address?.kind === "object" && key !== undefined
+        ? projectResourceId(key, resource, address.id)
+        : undefined,
+    );
+    this.code.pointLines(
+      address?.kind === "file" && address.from !== undefined
+        ? { path: address.path, from: address.from, to: address.to ?? address.from }
+        : undefined,
+    );
   }
 
   /** Goes to what a block of the chat points at: a moment, a clip, a key, a resource, lines. */
@@ -2766,13 +2803,16 @@ export class Workbench {
     if (!address || !state) return false;
     switch (address.kind) {
       case "time": {
-        if (!model || (address.timeline !== undefined && address.timeline !== model.id))
-          return false;
+        if (!model) return false;
+        if (address.timeline !== undefined && address.timeline !== model.id)
+          return this.#elsewhere(address.timeline);
         this.timeline.seek(frameAt(toSeconds(parseTime(address.t)), model.rate));
         this.layout.openPanel("timeline");
         return true;
       }
       case "keyframe": {
+        if (address.timeline !== undefined && address.timeline !== model?.id)
+          return this.#elsewhere(address.timeline);
         if (!this.goToUse({ timeline: address.timeline ?? model?.id ?? "", clip: address.id }))
           return false;
         this.layout.openPanel("keyframes");
@@ -2794,6 +2834,7 @@ export class Workbench {
         }
         const timeline = address.timeline ?? model?.id;
         if (timeline === undefined) return false;
+        if (timeline !== model?.id) return this.#elsewhere(timeline);
         const on = state.timelines[timeline];
         if (on?.markers[address.id])
           return this.goToObject({ kind: "marker", id: address.id, timeline });
@@ -2803,7 +2844,8 @@ export class Workbench {
       }
       case "objects": {
         const timeline = address.timeline ?? model?.id;
-        if (timeline === undefined || model?.id !== timeline) return false;
+        if (timeline === undefined || !model) return false;
+        if (model.id !== timeline) return this.#elsewhere(timeline);
         const clips = address.ids.filter((id) => model.boxes.has(id));
         if (clips.length === 0) return false;
         this.goToUse({ timeline, clip: clips[0] as string });
@@ -2819,14 +2861,15 @@ export class Workbench {
   }
 
   /**
-   * Asks the browser once whether the chat may tell people, as AI is done or asks them while the
-   * page is in the background: when they send something, which is what lets a page ask.
+   * A block points at another timeline than the one the editor shows, which is always the first of
+   * the project for now: people hear so, rather than nothing happening.
    */
-  askToNotify(): void {
-    if (this.#askedToNotify || typeof Notification === "undefined") return;
-    this.#askedToNotify = true;
-    if (Notification.permission === "default")
-      void Notification.requestPermission().catch(() => {});
+  #elsewhere(timeline: string): boolean {
+    const name = this.session.store?.getState().timelines[timeline]?.name ?? timeline;
+    this.notifications.push(
+      this.t("chat.refs.otherTimeline", { name, interpolation: { escapeValue: false } }),
+    );
+    return false;
   }
 
   /**
@@ -2850,7 +2893,8 @@ export class Workbench {
         const now = conversation.getSnapshot().last;
         if (now === last) return;
         last = now;
-        if (!now || document.visibilityState !== "hidden") return;
+        // People who stopped it know it is over.
+        if (!now || now.end === "stopped" || document.visibilityState !== "hidden") return;
         const entries = conversation.getSnapshot().entries;
         const asking = askingIn(entries);
         this.#notice(asking ? "asking" : now.end === "failed" ? "failed" : "done");
@@ -2869,7 +2913,21 @@ export class Workbench {
 
   #notice(what: "done" | "asking" | "failed"): void {
     this.attention.set(true);
-    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    if (typeof Notification === "undefined" || Notification.permission === "denied") return;
+    // The browser is asked the first time there is something to tell, not before.
+    if (Notification.permission === "default") {
+      if (this.#askedToNotify) return;
+      this.#askedToNotify = true;
+      void Notification.requestPermission().then(
+        (answer) => answer === "granted" && this.#showNotice(what),
+        () => {},
+      );
+      return;
+    }
+    this.#showNotice(what);
+  }
+
+  #showNotice(what: "done" | "asking" | "failed"): void {
     const name = this.session.store?.getState().manifest.name ?? "AnimaQuill";
     try {
       const notice = new Notification(this.t(`chat.notify.${what}`), {
@@ -3188,26 +3246,40 @@ export class Workbench {
   #registerChatActions(): void {
     const hasProject = () => this.session.store !== undefined && this.timeline.model !== undefined;
     const viaBox = (which: keyof ComposeHandlers) => () => {
+      // The box takes it right away where it is there, else once the chat shows.
+      if (this.#compose) {
+        this.#compose[which]();
+        return;
+      }
       this.layout.openPanel("chat");
-      // The box is there once the chat shows.
       requestAnimationFrame(() => this.#compose?.[which]());
     };
+    // Option and a letter types a character on a Mac: there it is with Control as well.
+    const keys = (letter: string) => [
+      this.keybindings.platform === "mac" ? `ctrl+alt+${letter}` : `alt+${letter}`,
+    ];
     this.actions.register({
       id: "chat.insertTime",
       title: (t) => t("chat.action.insertTime"),
       run: viaBox("time"),
+      keys: keys("t"),
+      scope: "chat",
       enabled: hasProject,
     });
     this.actions.register({
       id: "chat.insertSelection",
       title: (t) => t("chat.action.insertSelection"),
       run: viaBox("selection"),
+      keys: keys("o"),
+      scope: "chat",
       enabled: () => hasProject() && this.pointing.getSnapshot().count > 0,
     });
     this.actions.register({
       id: "chat.sendFrame",
       title: (t) => t("chat.action.sendFrame"),
       run: () => this.sendFrameToChat(),
+      keys: keys("s"),
+      scope: "chat",
       enabled: hasProject,
     });
     this.actions.register({

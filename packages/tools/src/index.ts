@@ -17,6 +17,7 @@ export { aiCode, failureText, failureWords, operationFailureText } from "./failu
 export { textKeys, type TextKey } from "./text-keys.ts";
 export {
   DEFAULT_TEXTS,
+  PICTURE_FACTS,
   type EditExample,
   type OperationExample,
   type TextTable,

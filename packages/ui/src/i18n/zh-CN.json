@@ -1094,10 +1094,11 @@
       "failed": "没读到对话占多大。",
       "clear": "清除本地项目的对话",
       "clearTitle": "清除本地项目的对话？",
-      "clearMessage": "{{projects}} 个本地项目的 {{count}} 个对话会从这个浏览器删掉，找不回来。云端项目的对话不受影响。",
+      "clearMessage": "{{projects}} 个本地项目的 {{count}} 个对话会从这个浏览器删掉，找不回来，只在这些对话里的图片也一起删掉。云端项目的对话不受影响。",
       "cleared": "清除了 {{count}} 个对话。",
       "clearedButRunning": "清除了 {{count}} 个对话。正在回答的那个项目的对话留着。",
-      "clearFailed": "没能清除对话，请再试一次。"
+      "clearFailed": "没能清除对话，请再试一次。",
+      "images": "对话和草稿里的图片 {{count}} 张，占 {{size}}。"
     },
     "usage": {
       "clear": "清除使用记录",
@@ -3932,7 +3933,8 @@
       "more": "还有 {{count}} 个",
       "gone": "它已经不在项目里了",
       "goneMark": "已删除",
-      "elsewhere": "在另一条时间轴上，切过去才能定位"
+      "elsewhere": "在另一条时间轴上，切过去才能定位",
+      "otherTimeline": "它在时间轴「{{name}}」上，编辑器现在只显示主时间轴，定位不过去。"
     },
     "pictures": {
       "frame": "画面",
@@ -3952,7 +3954,12 @@
       "view": "看大图",
       "close": "关闭",
       "missing": "图片不在这台设备上",
-      "count": "{{count}} 张图"
+      "count": "{{count}} 张图",
+      "lost": "有图片不在这台设备上了（浏览器的存储可能被清理过），去掉标红的图片再发。",
+      "removeFailed": "有图片没准备好，去掉标红的再发。",
+      "wait": "等画面渲染完再发。",
+      "unreadable": "这种图片格式读不了，可以先转成 PNG 或 JPEG。",
+      "dropHere": "把图片放到这里"
     },
     "attached": {
       "title": "附带",

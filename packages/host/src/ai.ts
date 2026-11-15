@@ -377,6 +377,29 @@ export function browserChatImages(factory: () => IDBFactory): ChatImageStore {
         ImageRecord | undefined;
       return found?.blob;
     },
+    async keys() {
+      const transaction = (await database()).transaction(IMAGES, "readonly");
+      const found: { image: string; bytes: number }[] = [];
+      const cursor = transaction.objectStore(IMAGES).openCursor();
+      await new Promise<void>((resolve, reject) => {
+        cursor.addEventListener("error", () => reject(cursor.error));
+        cursor.addEventListener("success", () => {
+          const at = cursor.result;
+          if (!at) return resolve();
+          const { image, blob } = at.value as ImageRecord;
+          found.push({ image, bytes: blob.size });
+          at.continue();
+        });
+      });
+      return found;
+    },
+    async delete(images) {
+      if (images.length === 0) return;
+      const transaction = (await database()).transaction(IMAGES, "readwrite");
+      const store = transaction.objectStore(IMAGES);
+      for (const image of images) store.delete(image);
+      await committed(transaction);
+    },
   };
 }
 
@@ -390,5 +413,9 @@ export function memoryChatImages(): ChatImageStore {
       return refOf(image, blob, size);
     },
     read: async (image) => images.get(image),
+    keys: async () => [...images].map(([image, blob]) => ({ image, bytes: blob.size })),
+    delete: async (gone) => {
+      for (const image of gone) images.delete(image);
+    },
   };
 }

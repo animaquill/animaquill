@@ -20,6 +20,8 @@ export interface StageEditor extends TouchTarget {
   readonly width: number;
   readonly height: number;
   readonly isDragging: boolean;
+  /** A moment something else points at, in seconds, see `TimelineEditor.pointAt`. */
+  readonly pointedAt?: number | undefined;
   readonly isSnappedToPlayhead: boolean;
   /** The cursor while dragging, or nothing for the usual one. */
   readonly dragCursor: string;
@@ -128,6 +130,9 @@ export function useStage(
         playheadElement.classList.toggle(styles.snapped as string, editor.isSnappedToPlayhead);
         playheadElement.setAttribute("aria-valuenow", String(editor.frame));
         playheadElement.setAttribute("aria-valuetext", formatTimecode(editor.frame, model.rate));
+        // The moment something points at, for the browser tests: it is drawn on the canvas.
+        if (editor.pointedAt === undefined) delete stageElement.dataset["pointedAt"];
+        else stageElement.dataset["pointedAt"] = String(editor.pointedAt);
       }
       painter.invalidate();
     };

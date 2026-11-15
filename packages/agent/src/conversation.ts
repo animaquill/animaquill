@@ -1,5 +1,4 @@
 import {
-  promptOf,
   type AnswerEnd,
   type AssistantEntry,
   type AttachedImage,
@@ -276,7 +275,7 @@ export class Conversation {
           ...(this.#options.onAnswer && { onAnswer: this.#options.onAnswer }),
           history: first === undefined ? this.#snapshot.entries : history,
           ...(first !== undefined && {
-            prompt: promptOf(first),
+            prompt: first.text,
             ...(first.images && { images: first.images }),
           }),
           ...(target.pictures && { pictures: target.pictures }),

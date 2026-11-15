@@ -28,7 +28,13 @@ export type Attachment =
       readonly cancel: () => void;
     }
   | { readonly id: string; readonly state: "ready"; readonly picture: DraftPicture }
-  | { readonly id: string; readonly state: "failed"; readonly label: string };
+  | {
+      readonly id: string;
+      readonly state: "failed";
+      readonly label: string;
+      /** The frame did not render, or the picture is not here any more. */
+      readonly why: "render" | "missing";
+    };
 
 /** A frame to make a picture of, as the editor renders it. */
 export interface FrameShot {
@@ -86,7 +92,7 @@ let counter = 0;
 const newId = () => `p${Date.now().toString(36)}${(counter += 1)}`;
 
 /** Why a picture could not be added. */
-export type AttachRefusal = "full" | "notPicture" | "failed";
+export type AttachRefusal = "full" | "notPicture" | "unreadable" | "failed";
 
 export class ChatAttachments {
   readonly #options: AttachmentsOptions;
@@ -116,6 +122,15 @@ export class ChatAttachments {
     }));
     this.#lists.set(key, kept);
     return kept;
+  }
+
+  /** The pictures of the drafts this window has read, which a clearing leaves. */
+  draftImages(): ReadonlySet<string> {
+    const found = new Set<string>();
+    for (const list of this.#lists.values()) {
+      for (const item of list) if (item.state === "ready") found.add(item.picture.ref.image);
+    }
+    return found;
   }
 
   /** Whether a draft has pictures, ready or on their way. */
@@ -185,7 +200,7 @@ export class ChatAttachments {
         return undefined;
       }
       console.warn("No frame for the chat", error);
-      this.#change(project, chat, id, { id, state: "failed", label });
+      this.#change(project, chat, id, { id, state: "failed", label, why: "render" });
       return "failed";
     }
   }
@@ -210,7 +225,8 @@ export class ChatAttachments {
       ]);
       try {
         const image = await createImageBitmap(file);
-        const made = await shotOf(image, ADDED_SIDE, this.#options.maxBytes());
+        // A picture with transparency stays PNG where it fits, else goes on white.
+        const made = await shotOf(image, ADDED_SIDE, this.#options.maxBytes(), true);
         image.close();
         const ref = await this.#images.save(made.blob, made);
         this.#change(project, chat, id, {
@@ -221,7 +237,8 @@ export class ChatAttachments {
       } catch (error) {
         console.warn("A picture could not be read", error);
         this.#change(project, chat, id, undefined);
-        refused = "notPicture";
+        // An image the browser cannot read, such as HEIC.
+        refused = "unreadable";
       }
     }
     return refused;
@@ -244,6 +261,27 @@ export class ChatAttachments {
       item.state === "ready" ? [item.picture] : [],
     );
     return ready.map((picture, index) => attachedOf(picture, index + 1));
+  }
+
+  /**
+   * Reads each picture ready once more before it goes: one this browser lost meanwhile (its
+   * storage cleared while the window kept the draft) is marked, and the message waits.
+   */
+  async verify(project: string, chat: string): Promise<boolean> {
+    let all = true;
+    for (const item of this.list(project, chat)) {
+      if (item.state !== "ready") continue;
+      const blob = await this.#images.read(item.picture.ref.image).catch(() => undefined);
+      if (blob) continue;
+      all = false;
+      this.#change(project, chat, item.id, {
+        id: item.id,
+        state: "failed",
+        label: item.picture.label,
+        why: "missing",
+      });
+    }
+    return all;
   }
 
   /** Whether a picture is still being made. */
