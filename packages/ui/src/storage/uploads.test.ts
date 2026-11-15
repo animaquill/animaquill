@@ -374,9 +374,16 @@ describe("files of assets into the large file storage", () => {
     // The page goes away, with what it had on its way: as a reload.
     w.page.alive = false;
     w.browser.writers.sweep();
-    w.lfs.send = send;
+    // What the next window sends, from where.
+    const offsets: number[] = [];
+    w.lfs.send = (id, offset, piece, options) => {
+      offsets.push(offset);
+      return send(id, offset, piece, options);
+    };
     const next = w.another();
     await next.until((s) => phaseOf(s, "asset_1") === "done", "done in the next window");
+    // From where the platform got: never from the start again.
+    expect(Math.min(...offsets)).toBe(5 * 1024);
     // Five pieces before, fifteen after: none twice.
     expect(w.lfs.pieces.reduce((all, size) => all + size, 0)).toBe(20_000);
     expect(next.placeOf("asset_1")).toMatchObject({ storage: "lfs" });

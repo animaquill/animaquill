@@ -122,7 +122,7 @@ test.describe("files of assets into the large file storage", () => {
 
     // Connected: asked once whether the assets go there too.
     await connect(page, "xuanchuanpian");
-    await expect(notice(page, "要把素材放进 GitHub 大文件存储吗？")).toBeVisible();
+    await expect(notice(page, "要把素材也存进 GitHub 仓库吗？")).toBeVisible();
     await shot(page, "connected-prompt");
     await page.getByRole("button", { name: "以后再说" }).click();
 
