@@ -4,6 +4,6 @@
     "lib": ["ES2024", "DOM", "DOM.Iterable"],
     "types": ["node"]
   },
-  "include": ["src", "e2e", "*.config.ts"],
+  "include": ["src", "e2e", "build", "*.config.ts"],
   "exclude": ["src/main.ts"]
 }

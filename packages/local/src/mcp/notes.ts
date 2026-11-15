@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { DiskWriter } from "@animaquill/core/disk-folder";
+import { SCRATCH_FOLDER, type DiskWriter } from "@animaquill/core/disk-folder";
 import type { Written } from "./folder-project.ts";
 
 /**
@@ -116,33 +116,75 @@ export class BatchNotes {
 
   /** Keeps the last `MOST_BATCHES` notes of this folder, of the last `KEEP_BATCHES_MS`. */
   async #tidy(now: number): Promise<void> {
-    const notes = await readBatchNotes(this.#folder);
-    const kept = notes.toSorted((a, b) => b.updatedAt - a.updatedAt);
-    for (const [index, note] of kept.entries()) {
+    // Only notes that are what this writes: named by their batch, with when they were written.
+    // Anything else in the folder is somebody else's, and stays.
+    const ours = (await namedNotes<BatchNote>(this.#folder, BATCHES_FOLDER)).filter(
+      ({ name, note }) =>
+        note.format === 1 && name === `${note.batch}.json` && Number.isFinite(note.updatedAt),
+    );
+    const kept = ours.toSorted((a, b) => b.note.updatedAt - a.note.updatedAt);
+    for (const [index, { name, note }] of kept.entries()) {
       if (index < MOST_BATCHES && now - note.updatedAt <= KEEP_BATCHES_MS) continue;
-      await this.#writer.remove(`${BATCHES_FOLDER}/${note.batch}.json`);
+      await this.#writer.remove(`${BATCHES_FOLDER}/${name}`);
     }
   }
 }
 
 const isNamed = (name: string) => /^[A-Za-z0-9_-]+\.json$/.test(name);
 
-async function readNotes<T>(folder: string, inside: string): Promise<T[]> {
+async function namedNotes<T>(
+  folder: string,
+  inside: string,
+): Promise<{ readonly name: string; readonly note: T }[]> {
   let names: string[];
   try {
     names = await readdir(join(folder, inside));
   } catch {
     return [];
   }
-  const notes: T[] = [];
+  const notes: { name: string; note: T }[] = [];
   for (const name of names.filter(isNamed)) {
     try {
-      notes.push(JSON.parse(await readFile(join(folder, inside, name), "utf8")) as T);
+      const note = JSON.parse(await readFile(join(folder, inside, name), "utf8")) as T;
+      if (typeof note === "object" && note !== null) notes.push({ name, note });
     } catch {
       // Half written, or not ours: it says nothing.
     }
   }
   return notes;
+}
+
+const readNotes = async <T>(folder: string, inside: string): Promise<T[]> =>
+  (await namedNotes<T>(folder, inside)).map(({ note }) => note);
+
+/** How long what a write left in `.animaquill/tmp` and a file of a connection stay at the most. */
+export const LEFT_PART_MS = 24 * 60 * 60 * 1000;
+export const LEFT_CONNECTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Takes away what a server that was stopped left: halves of writes (`.part`) older than a day, and
+ * files of connections that said nothing for a week. Only names this server makes.
+ */
+export async function tidyLeftovers(
+  folder: string,
+  writer: DiskWriter,
+  now: number = Date.now(),
+): Promise<void> {
+  const old = async (inside: string, pattern: RegExp, age: number) => {
+    let names: string[];
+    try {
+      names = await readdir(join(folder, inside));
+    } catch {
+      return;
+    }
+    for (const name of names.filter((each) => pattern.test(each))) {
+      const path = `${inside}/${name}`;
+      const seen = await writer.stat(path).catch(() => undefined);
+      if (seen && now - seen.mtimeMs > age) await writer.remove(path).catch(() => {});
+    }
+  };
+  await old(SCRATCH_FOLDER, /^[0-9a-f]{16}\.part$/, LEFT_PART_MS);
+  await old(CONNECTIONS_FOLDER, /^[0-9a-f]{12}\.json$/, LEFT_CONNECTION_MS);
 }
 
 /** The notes on batches in a project folder. */

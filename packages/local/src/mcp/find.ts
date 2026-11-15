@@ -1,4 +1,5 @@
 import { lstat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import { MANIFEST_FILE } from "@animaquill/schema";
 import type { ProjectPlace } from "./host.ts";
@@ -45,6 +46,14 @@ export async function findProject(
     };
   }
   const found = (await above(start)) ?? (workingIn ? await above(workingIn) : undefined);
+  // A project at the top of the disk or in the home folder itself is far more likely one found by
+  // mistake, from a folder that is no project, than the one meant.
+  if (found && (found === resolve(homedir()) || dirname(found) === found)) {
+    return {
+      kind: "none",
+      reason: `error no-project: the nearest folder with ${MANIFEST_FILE} above where the server started is ${found}, the home folder or the top of the disk, which is not taken as a project without being named. --project ${JSON.stringify(found)} in the server's command works on it.`,
+    };
+  }
   if (found) return { kind: "folder", root: found };
   const looked = [
     resolve(start),

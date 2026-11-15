@@ -1,8 +1,10 @@
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -29,7 +31,10 @@ import {
   CONNECTIONS_FOLDER,
   ConnectionFile,
   GONE_AFTER_MS,
+  KEEP_BATCHES_MS,
+  LEFT_CONNECTION_MS,
   readBatchNotes,
+  tidyLeftovers,
   readConnections,
 } from "./notes.ts";
 import { cleanUp, sampleFolder, tempFolder } from "./test-support.ts";
@@ -236,6 +241,93 @@ describe("a project folder", () => {
     expect(read(root, "timelines/main/timeline.json")).toBe("{ 坏了");
     expect(JSON.parse(read(root, "animaquill.json")).name).toBe("新名字");
     await tools.close();
+  });
+});
+
+describe("what the review found (MCP1)", () => {
+  it("writes nothing more once animaquill.json went away, as before an export", async () => {
+    const root = sampleFolder();
+    const project = await FolderProject.open(root);
+    const text = read(root, "code/animate.js");
+    const changed = project.store.execute({
+      type: "file.write",
+      params: { path: "code/animate.js", text: `// 改过\n${text}` },
+    });
+    expect(changed.ok).toBe(true);
+    rmSync(join(root, "animaquill.json"));
+    expect(await project.save()).toEqual([]);
+    expect(project.trouble).toBe("manifest-gone");
+    expect(read(root, "code/animate.js")).toBe(text);
+    project.destroy();
+  });
+
+  it("keeps a file that became a link, and neither writes it nor takes it away", async () => {
+    const root = sampleFolder();
+    const outside = tempFolder();
+    writeFileSync(join(outside, "x.html"), "外面");
+    const tools = toolsOn(root);
+    await tools.call("aq_project_status", {});
+    rmSync(join(root, "code/animate.js"));
+    symlinkSync(join(outside, "x.html"), join(root, "code/animate.js"));
+    await tools.call("aq_file_read", { path: "code/animate.js" });
+    const edited = await tools.call("aq_file_edit", {
+      path: "code/animate.js",
+      edits: [{ old_text: "export", new_text: "// 改过\nexport" }],
+    });
+    expect(edited.text).not.toMatch(/not found|no such file/i);
+    expect(read(outside, "x.html")).toBe("外面");
+    expect(lstatSync(join(root, "code/animate.js")).isSymbolicLink()).toBe(true);
+    await tools.close();
+  });
+
+  it("says which folder it works on", async () => {
+    const root = sampleFolder();
+    const tools = toolsOn(root);
+    expect((await tools.call("aq_project_status", {})).text).toContain(`project folder: ${root}`);
+    await tools.close();
+  });
+
+  it("takes no project from the home folder unless it is named", async () => {
+    const home = sampleFolder();
+    const before = process.env["HOME"];
+    process.env["HOME"] = home;
+    try {
+      const found = await findProject(undefined, join(home, "scenes"), "");
+      expect(found.kind === "none" && found.reason).toMatch(/home folder.*--project/s);
+      expect(await findProject(home, tempFolder(), "")).toEqual({ kind: "folder", root: home });
+    } finally {
+      process.env["HOME"] = before;
+    }
+  });
+
+  it("clears what a stopped server left, and only that", async () => {
+    const root = tempFolder();
+    const writer = await diskWriter(root);
+    await writer.write(".animaquill/tmp/0123456789abcdef.part", "half");
+    await writer.write(".animaquill/tmp/mine.txt", "somebody's");
+    await writer.write(".animaquill/mcp/0123456789ab.json", "{}");
+    const later = Date.now() + LEFT_CONNECTION_MS + 60_000;
+    await tidyLeftovers(root, writer, Date.now() + 60_000);
+    expect(existsSync(join(root, ".animaquill/tmp/0123456789abcdef.part"))).toBe(true);
+    await tidyLeftovers(root, writer, later);
+    expect(readdirSync(join(root, ".animaquill/tmp"))).toEqual(["mine.txt"]);
+    expect(readdirSync(join(root, ".animaquill/mcp"))).toEqual([]);
+  });
+
+  it("tidies only notes on batches that it wrote", async () => {
+    const root = tempFolder();
+    const writer = await diskWriter(root);
+    await writer.write(".animaquill/batches/other.json", '{"format":1,"batch":"x"}');
+    await writer.write(".animaquill/batches/odd.json", '{"format":1,"batch":"odd"}');
+    let now = 1_000_000;
+    const notes = new BatchNotes(writer, root, "s1", () => now);
+    const first = await notes.note([{ path: "a.js", hash: "1" }], undefined);
+    now += KEEP_BATCHES_MS + BATCH_GAP_MS + 1;
+    await notes.note([{ path: "a.js", hash: "2" }], undefined);
+    const names = readdirSync(join(root, ".animaquill/batches"));
+    expect(names).toContain("other.json");
+    expect(names).toContain("odd.json");
+    expect(names).not.toContain(`${first.batch}.json`);
   });
 });
 

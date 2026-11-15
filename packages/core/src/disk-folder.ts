@@ -101,6 +101,11 @@ export interface DiskWriter {
   write(path: string, content: string | Uint8Array): Promise<DiskStat>;
   /** Takes it away. A file that is not there is fine. */
   remove(path: string): Promise<void>;
+  /**
+   * Reads a file, with how it looked while it was read: undefined when there is none. A file that
+   * changed while it was read rejects with NotReadableError, as in browsers.
+   */
+  read(path: string): Promise<{ readonly bytes: Uint8Array; readonly stat: DiskStat } | undefined>;
 }
 
 /** Where a write waits before it is renamed into its place, which nothing reads. */
@@ -195,13 +200,43 @@ export async function diskWriter(folder: string): Promise<DiskWriter> {
         } finally {
           await handle.close();
         }
-        // A link that turned up meanwhile is replaced, not followed.
+        // Each step on the way is looked at again right before, so that a folder that became a
+        // link meanwhile is found; a link where the file goes is replaced, not followed. What is
+        // left between this look and the rename has no lock, as anything else a disk has.
+        if ((await placeOfFile(path, false)) !== place) {
+          throw failure("NotFoundError", `${path} is no file of the folder any more`);
+        }
+        await fileAt(place, path);
         await rename(waiting, place);
       } catch (error) {
         await rm(waiting, { force: true });
         throw error;
       }
       return statOf(await lstat(place));
+    },
+    async read(path) {
+      const place = await placeOfFile(path, false);
+      if (!place || !(await fileAt(place, path))) return undefined;
+      let handle;
+      try {
+        handle = await open(place, READ);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+        throw error;
+      }
+      try {
+        const before = await handle.stat();
+        const bytes = await handle.readFile();
+        const after = await handle.stat();
+        const isSame =
+          before.size === after.size &&
+          before.mtimeMs === after.mtimeMs &&
+          bytes.byteLength === after.size;
+        if (!isSame) throw changed(path);
+        return { bytes, stat: statOf(after) };
+      } finally {
+        await handle.close();
+      }
     },
     async remove(path) {
       const place = await placeOfFile(path, false);

@@ -134,6 +134,18 @@ export class FolderProject {
       const seen = await this.#writer.stat(path).catch(() => undefined);
       if (seen) stats.set(path, seen);
     }
+    // A file of the project that became a link, or a folder, is no file that went away: it stays
+    // in the project as it was, and is neither written over nor taken away.
+    for (const [path, known] of this.#known) {
+      if (stats.has(path)) continue;
+      const kind = await this.#writer.stat(path).then(
+        () => "file",
+        (error: unknown) => ((error as Error).name === "TypeMismatchError" ? "other" : "gone"),
+      );
+      if (kind !== "other") continue;
+      this.#blocked.add(path);
+      stats.set(path, known.stat);
+    }
     return { stats };
   }
 
@@ -155,7 +167,7 @@ export class FolderProject {
       const known = this.#known.get(path);
       const now = stats.get(path);
       if (sameStat(known?.stat, now)) continue;
-      const read = now ? await readKnown(this.#folder, this.#writer, path) : undefined;
+      const read = now ? await readKnown(this.#writer, path) : undefined;
       seen.set(path, read);
       if (read && read.text === undefined) {
         // No text: it stays as it is, and is not written over.
@@ -212,8 +224,11 @@ export class FolderProject {
    */
   async save(): Promise<readonly Written[]> {
     const written: Written[] = [];
-    if (this.#trouble) return written;
     for (let round = 0; round < WRITE_ROUNDS; round++) {
+      // An export can start, or animaquill.json go, after the folder was last looked at: nothing
+      // more is written into what is no project now.
+      this.#trouble = await this.#troubleNow();
+      if (this.#trouble) return written;
       const { files, problems } = this.store.exportFiles();
       // A document that does not fit the format is not written, and not taken away either.
       const unfit = new Set(problems.map(({ file }) => file));
@@ -272,7 +287,14 @@ export class FolderProject {
     return this.#unwritten;
   }
 
-  /** Why the folder is no project right now, as the last `refresh` found. */
+  /** Why the folder is no project right now, from a look at the two files that say so. */
+  async #troubleNow(): Promise<FolderTrouble | undefined> {
+    const look = (path: string) => this.#writer.stat(path).catch(() => undefined);
+    if (!(await look(MANIFEST_FILE))) return "manifest-gone";
+    return (await look(INCOMPLETE_FILE)) ? "incomplete" : undefined;
+  }
+
+  /** Why the folder is no project right now, as the last `refresh` or `save` found. */
   get trouble(): FolderTrouble | undefined {
     return this.#trouble;
   }
@@ -290,18 +312,15 @@ export class FolderProject {
 /** Files that belong to the project as the format has them, and what says an export is unfinished. */
 const isTracked = (path: string) => isProjectFile(path) || path === INCOMPLETE_FILE;
 
-async function readKnown(
-  folder: ReadOnlyFolder,
-  writer: DiskWriter,
-  path: string,
-): Promise<Known | undefined> {
+async function readKnown(writer: DiskWriter, path: string): Promise<Known | undefined> {
   for (let attempt = 0; attempt < READ_ATTEMPTS; attempt++) {
     try {
-      const file = await folder.file(path);
-      const text = textOf(await file.arrayBuffer());
-      const stat = await writer.stat(path);
-      if (!stat) return undefined;
-      if (stat.size === file.size) return { text, stat };
+      // How it looked before and after it was read, on the same handle: the text and the look
+      // are of one moment, so that a write in between is not taken for what was read.
+      const read = await writer.read(path);
+      if (!read) return undefined;
+      const bytes = read.bytes.slice().buffer;
+      return { text: textOf(bytes), stat: read.stat };
     } catch (error) {
       if ((error as Error).name === "NotFoundError") return undefined;
       if ((error as Error).name !== "NotReadableError") throw error;
@@ -321,7 +340,7 @@ async function readAll(
   const texts = new Map<string, string | undefined>();
   for await (const path of folder.list()) {
     if (path.includes("/") && !isTracked(path)) continue;
-    const read = isTracked(path) ? await readKnown(folder, writer, path) : undefined;
+    const read = isTracked(path) ? await readKnown(writer, path) : undefined;
     if (isTracked(path) && !read) continue;
     texts.set(path, read?.text);
     if (read) known.set(path, read);

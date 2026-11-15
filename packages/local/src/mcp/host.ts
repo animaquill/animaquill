@@ -8,7 +8,14 @@ import {
   type ToolResult,
 } from "@animaquill/tools";
 import { FolderProject } from "./folder-project.ts";
-import { BatchNotes, ConnectionFile, newId, type BatchNote, type ClientName } from "./notes.ts";
+import {
+  BatchNotes,
+  ConnectionFile,
+  newId,
+  tidyLeftovers,
+  type BatchNote,
+  type ClientName,
+} from "./notes.ts";
 
 /**
  * The tools on a project folder, as the local MCP and a command line use them: the same tools as in
@@ -105,6 +112,7 @@ export class FolderTools {
       if (this.#options.notes) {
         const now = this.#options.now ?? Date.now;
         this.#notes = new BatchNotes(project.writer, place.root, this.session, now);
+        await tidyLeftovers(place.root, project.writer, now()).catch(() => {});
         this.#connection = new ConnectionFile(project.writer, this.session, now);
         if (this.#client) await this.#connection.named(this.#client);
         await this.#connection.start().catch((error: unknown) => {
@@ -174,7 +182,12 @@ export class FolderTools {
     }
     this.#answer = answer;
     if (this.#unsaved) await this.#save(project).catch(() => {});
-    const result = await tool.run(args);
+    const ran = await tool.run(args);
+    // Which folder it is, for people to see in their AI tool what is being changed.
+    const result =
+      name === "aq_project_status" && !ran.isError
+        ? { ...ran, text: `${ran.text}\nproject folder: ${project.root}` }
+        : ran;
     if (!WRITE_TOOLS.has(name) || result.isError) return result;
     try {
       await this.#save(project);
