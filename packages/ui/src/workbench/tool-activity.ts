@@ -21,6 +21,8 @@ import type { Notifications } from "./notifications.ts";
 /** How often the editor looks who is connected, and how often at the notes on batches besides. */
 export const LOOK_EVERY_MS = 5_000;
 const BATCHES_EVERY = 6;
+/** At the first look at a folder, batches written within this long count as written since opening. */
+const FIRST_LOOK_RECENT_MS = 30_000;
 
 /** What one batch of an AI tool on this computer changed in the open project, as far as it came. */
 export interface ToolBatch {
@@ -238,11 +240,13 @@ export class ToolActivity {
   #lookAtNew(notes: readonly ToolBatchNote[]): void {
     const seen = this.#seen;
     this.#seen = new Map(notes.map((note) => [note.batch, note.updatedAt]));
-    // The first look at a folder: what is there came in as the folder was compared on opening.
-    if (!seen) return;
+    // The first look at a folder: what was there when it opened came in as the folder was compared.
+    // But a look can come up to `LOOK_EVERY_MS` after the folder opened, a tool may have written in
+    // between, and the watch may not have told: what was written lately counts as new.
+    const lately = Date.now() - FIRST_LOOK_RECENT_MS;
     const paths = new Set<string>();
     for (const note of notes) {
-      if ((seen.get(note.batch) ?? -1) >= note.updatedAt) continue;
+      if (seen ? (seen.get(note.batch) ?? -1) >= note.updatedAt : note.updatedAt < lately) continue;
       for (const path of note.files.keys()) paths.add(path);
     }
     if (paths.size > 0) this.#options.lookAt([...paths]);
