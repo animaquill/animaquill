@@ -14,7 +14,7 @@ import { useTranslation } from "react-i18next";
 import type { MenuItem } from "../app/Menu.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import { as, usedOf, useResourceCatalog, type ExplorerItem } from "../resources/catalog.ts";
-import { ProjectIcon, lengthOf } from "../resources/ProjectIcon.tsx";
+import { ProjectIcon, autoDownloads, lengthOf } from "../resources/ProjectIcon.tsx";
 import type { ResourceIconProps } from "../resources/ResourceBrowser.tsx";
 import { parseTags, type ProjectItem } from "../resources/project-resources.ts";
 import type { Resource } from "../resources/resources.ts";
@@ -417,11 +417,8 @@ function ResourceDetails({
         t("explorer.from.asset", { path: asset.path, interpolation: { escapeValue: false } }),
       ]);
       const file = missing.get(item.id);
-      const isComing = coming.items.some(
-        (each) => each.asset === item.id && each.phase !== "failed" && each.phase !== "done",
-      );
-      // On its way here, which "存放位置" says: nothing to put right.
-      if (file?.elsewhere && !isComing) {
+      // In a project of the platform it comes by itself, and "存放位置" says how that goes.
+      if (file?.elsewhere && !autoDownloads(workbench.downloads.available, coming)) {
         const url = state && placedAsset(state, item.id, workbench.here())?.url;
         const download = downloadFrom(t, file.elsewhere, url);
         problems.push(t("explorer.elsewhere", { path: file.path, download }));

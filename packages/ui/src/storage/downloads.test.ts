@@ -15,6 +15,8 @@ import { Emitter } from "../workbench/emitter.ts";
 import {
   assembled,
   AssetDownloads,
+  distancesOf,
+  usedAssets,
   downloadTotals,
   PIECE_MOST,
   type DownloadsSnapshot,
@@ -332,6 +334,38 @@ describe("downloads out of the large file storage", () => {
     expect(w.written.get("asset_1")).toEqual(p.files[0]!.bytes);
   });
 
+  test("pieces that went after the file was checked come again, and are checked again", async () => {
+    const p = await project([{ size: 1500, at: 0 }]);
+    const oid = lfsOidOf(p.files[0]!.hash) as string;
+    let allowed = false;
+    const w = windowOf(p, { answer: () => (allowed ? "written" : "access") });
+    await w.until(({ items }) => items[0]?.phase === "access");
+    // Checked and waiting for the folder; then what was kept goes, as by another window, and
+    // the storage gives other bytes of the same size.
+    await p.browser.window().dropPieces(oid);
+    p.lfs.stored.set(oid, bytesOf(1500, 77));
+    allowed = true;
+    w.queue.retryAll(["access"]);
+    await w.until(({ items }) => items[0]?.phase === "failed");
+    expect(w.phaseOf("asset_1")).toMatchObject({ problem: "changed" });
+    expect(w.written.size).toBe(0);
+  });
+
+  test("what another project of this browser is downloading too stays for it", async () => {
+    const p = await project([{ size: 1000, at: 0 }]);
+    const oid = lfsOidOf(p.files[0]!.hash) as string;
+    // Another window holds the same file, for a project of its own.
+    const other = p.browser.window();
+    const release = other.hold(oid);
+    await other.putPiece(oid, 0, new Blob([p.files[0]!.bytes.slice(0, 400)]));
+    const w = windowOf(p);
+    await w.until(({ items }) => items[0]?.phase === "done");
+    expect(p.browser.keptOf(oid).length).toBeGreaterThan(0);
+    release();
+    expect(await other.dropUnused(oid)).toBe(true);
+    expect(p.browser.keptOf(oid)).toEqual([]);
+  });
+
   test("another file where it goes is not written over", async () => {
     const p = await project([{ size: 1000, at: 0 }]);
     const w = windowOf(p, { answer: () => "occupied" });
@@ -456,6 +490,65 @@ describe("downloads out of the large file storage", () => {
     expect(two.written.get("asset_1")).toEqual(p.files[0]!.bytes);
     expect(one.written.size).toBe(0);
   }, 20_000);
+
+  test("what a scene on the timeline uses comes too, by where the scene's clip is", async () => {
+    const p = await project([
+      // A clip of its own, far on.
+      { size: 300, at: 40 },
+      // Only the scene names it, and the scene's clip is under the playhead.
+      { size: 200 },
+      // A parameter of the scene's clip gives it.
+      { size: 100 },
+      // Nothing uses it.
+      { size: 50 },
+    ]);
+    const { store } = p;
+    const scene = store.execute({
+      type: "scene.add",
+      params: {
+        id: "title",
+        manifest: { name: "标题", entry: "index.html", runtime: 1 },
+        files: {
+          "index.html": '<!doctype html><script src="main.js"></script>',
+          "main.js": 'document.body.style.background = `url(${aq.asset("asset_2")})`;',
+        },
+      },
+    });
+    if (!scene.ok) throw new Error(JSON.stringify(scene.error));
+    const track = orderedTracks(store.getState().timelines["main"] as never).find(
+      ({ kind }) => kind === "video",
+    )?.id;
+    const clip = store.execute({
+      type: "clip.add",
+      params: {
+        timeline: "main",
+        track,
+        id: "clip_scene",
+        start: "0",
+        duration: "5",
+        source: { kind: "scene", scene: "title" },
+        properties: { "param.picture": { asset: "asset_3" } },
+      },
+    });
+    if (!clip.ok) throw new Error(JSON.stringify(clip.error));
+    expect([...usedAssets(store.getState())].toSorted()).toEqual(["asset_1", "asset_2", "asset_3"]);
+    expect([
+      ...distancesOf(store, ["asset_1", "asset_2", "asset_3"], {
+        timeline: "main",
+        seconds: 1,
+        playing: false,
+      }),
+    ]).toEqual([
+      ["asset_1", 39],
+      ["asset_2", 0],
+      ["asset_3", 0],
+    ]);
+    const w = windowOf(p);
+    await w.until(({ items }) => items.filter(({ phase }) => phase === "done").length === 3);
+    // Under the playhead first: what the scene uses, before the clip 40 seconds on.
+    expect(w.writes.mock.calls.map(([asset]) => asset)).toEqual(["asset_3", "asset_2", "asset_1"]);
+    expect(w.queue.getSnapshot().unused).toEqual({ count: 1, bytes: 50 });
+  });
 
   test("pieces of other sizes put together without a gap", async () => {
     const all = bytesOf(100);

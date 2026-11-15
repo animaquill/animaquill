@@ -570,6 +570,9 @@ function DropStatus({ editor }: { editor: TimelineEditor }) {
 
 function ClipList({ editor }: { editor: TimelineEditor }) {
   const { t } = useTranslation();
+  const workbench = useWorkbench();
+  // What comes here says so on the clips that show it.
+  useSyncExternalStore(workbench.downloads.subscribe, workbench.downloads.getSnapshot);
   /** What the band of a clip with effects says, as the canvas shows it. */
   const effectsMark = (box: ClipBox) => {
     const count = effectsOf(box.clip).length;
@@ -634,6 +637,7 @@ function ClipList({ editor }: { editor: TimelineEditor }) {
             end: timecode(box.end),
           })}
           {...effectsMark(box)}
+          data-download={downloadMark(workbench.downloadOfClip(box.clip))}
           data-flash={editor.flashesOn(box.id) || undefined}
           style={{ left, top, width, height }}
         />
@@ -641,6 +645,10 @@ function ClipList({ editor }: { editor: TimelineEditor }) {
     </div>
   );
 }
+
+/** What a clip says of the files it shows that are on their way here, for tests and tools. */
+const downloadMark = (coming: number | "failed" | undefined) =>
+  coming === undefined ? undefined : coming === "failed" ? "failed" : "going";
 
 function Surface({
   editor,
@@ -690,14 +698,17 @@ function Surface({
             paintMarquee(context, lanes, theme);
             paintSnapLine(context, lanes, theme, sharp);
           },
+          (clip) => workbench.downloadOfClip(clip),
         );
       },
       repaintOn: (listener) => {
         const stopMedia = media.subscribe(listener);
         const stopSounds = sounds.subscribe(listener);
+        const stopDownloads = workbench.downloads.subscribe(listener);
         return () => {
           stopMedia();
           stopSounds();
+          stopDownloads();
         };
       },
       // The wheel works over the track headers too.

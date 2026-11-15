@@ -32,8 +32,11 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
     const element = picture.current;
     if (!element || !store) return;
     const warned = new Set<string>();
+    const isElsewhereFile = (file: string) => workbench.isElsewhereFile(file);
     const onProblem = (file: string) => {
-      if (!warned.has(file)) notifications.push(t("notice.previewCannotDecode"));
+      // A file that is not here but on its way, which the downloads say: no problem of the preview.
+      if (!warned.has(file) && !isElsewhereFile(file))
+        notifications.push(t("notice.previewCannotDecode"));
       warned.add(file);
     };
     const compositor = new URL(compositorUrl, location.href).origin;
@@ -103,6 +106,7 @@ function Compositor({ onLink }: { onLink: (link: PreviewLink | undefined) => voi
     store,
     t,
     timeline,
+    workbench,
   ]);
 
   return (

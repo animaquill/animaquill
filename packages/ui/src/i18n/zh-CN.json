@@ -4802,8 +4802,9 @@
         "unused": "下载没用到的 {{count}} 个（{{size}}）"
       },
       "badge": {
-        "downloading": "正在下载：{{percent}}%",
-        "failed": "没下载下来：{{reason}}"
+        "going": "下载中 {{percent}}%",
+        "failedShort": "没下载下来",
+        "notDownloaded": "未下载"
       },
       "panel": {
         "downloading": "正在下载 {{count}} 个，共 {{total}}，已下 {{percent}}%",

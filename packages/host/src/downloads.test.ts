@@ -47,4 +47,15 @@ describe.each([
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(heard).toEqual(["p", "p"]);
   });
+
+  it("leaves the pieces of an object that a window holds", async () => {
+    const store = make();
+    await store.putPiece("a", 0, new Blob(["hello"]));
+    const release = store.hold("a");
+    expect(await store.dropUnused("a")).toBe(false);
+    expect((await store.pieces("a")).length).toBe(1);
+    release();
+    expect(await store.dropUnused("a")).toBe(true);
+    expect(await store.pieces("a")).toEqual([]);
+  });
 });

@@ -7,24 +7,28 @@ import { projectKeyOf } from "../workbench/session.ts";
 
 /** Plays the sound and keeps time by it, whichever panels are open. */
 export function PlaybackClock() {
-  const { timeline, projects, notifications, diagnostics, properties } = useWorkbench();
+  const workbench = useWorkbench();
+  const { timeline, projects, notifications, diagnostics, properties } = workbench;
   const { t } = useTranslation();
   const { store } = useSession();
   const { playing } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
 
   const audio = useMemo(() => {
     const warned = new Set<string>();
+    const isElsewhereFile = (file: string) => workbench.isElsewhereFile(file);
     return new PlaybackAudio({
       fileOf: async (file) => {
         return store ? projects.media(projectKeyOf(store)).get(file) : undefined;
       },
       onProblem(file) {
-        if (!warned.has(file)) notifications.push(t("notice.previewCannotDecode"));
+        // A file that is not here but on its way, which the downloads say: no problem of the preview.
+        if (!warned.has(file) && !isElsewhereFile(file))
+          notifications.push(t("notice.previewCannotDecode"));
         warned.add(file);
       },
       onNote: (kind, data) => diagnostics.note(kind, data),
     });
-  }, [diagnostics, notifications, projects, store, t]);
+  }, [diagnostics, notifications, projects, store, t, workbench]);
 
   useEffect(() => () => audio.dispose(), [audio]);
 

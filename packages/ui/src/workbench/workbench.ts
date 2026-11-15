@@ -28,6 +28,7 @@ import {
   withId,
   type OperationCall,
   type UndoResult,
+  type ClipState,
   sceneSourceOf,
   elsewhereOf,
   type ObjectRef,
@@ -138,6 +139,7 @@ import {
 import { GITHUB_BILLING } from "../storage/links.ts";
 import {
   AssetDownloads,
+  assetsOfClip,
   downloadWhole,
   type DownloadProblem,
   type DownloadTarget,
@@ -1950,7 +1952,8 @@ export class Workbench {
       );
     });
     // What came for the copy alone goes: the copy has it. The open project may want it still.
-    if (!isOpen) for (const oid of came) await this.#downloadStore?.dropPieces(oid).catch(() => {});
+    if (!isOpen)
+      for (const oid of came) await this.#downloadStore?.dropUnused(oid).catch(() => false);
   }
 
   /**
@@ -2721,6 +2724,41 @@ export class Workbench {
       default:
         return;
     }
+  }
+
+  /**
+   * How far the files a clip shows have come, where this computer lacks one and it is on its way
+   * here: the least of them, in percent, or "failed" where one did not come. Undefined for a clip
+   * whose files are all here, or that nothing downloads.
+   */
+  downloadOfClip(clip: ClipState): number | "failed" | undefined {
+    const { items } = this.downloads.getSnapshot();
+    const state = this.session.store?.getState();
+    if (items.length === 0 || !state) return undefined;
+    let least: number | "failed" | undefined;
+    for (const asset of assetsOfClip(state, clip)) {
+      const item = items.find((each) => each.asset === asset);
+      if (!item || item.phase === "done") continue;
+      if (item.phase === "failed") return "failed";
+      const percent = item.size === 0 ? 100 : Math.floor((item.received / item.size) * 100);
+      least = least === undefined ? percent : Math.min(least as number, percent);
+    }
+    return least;
+  }
+
+  /**
+   * Whether the file of this hash is one this computer lacks and can get from where it is kept, as
+   * a download does by itself: the preview says nothing of it, the downloads do.
+   */
+  isElsewhereFile(hash: string): boolean {
+    const state = this.session.store?.getState();
+    if (!state) return false;
+    for (const [id, file] of this.missingFiles.getSnapshot())
+      if (file.elsewhere !== undefined) {
+        const own = state.assets?.[id]?.hash;
+        if (own !== undefined && isSameHash(own, hash)) return true;
+      }
+    return false;
   }
 
   /** Does what a file that did not come asks of people, see `DownloadProblem`. */

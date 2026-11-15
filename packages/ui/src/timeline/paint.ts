@@ -131,6 +131,11 @@ export class TimelinePainter extends StagePainter {
   readonly #newTrackName: (kind: "video" | "audio", number: number) => string;
   /** Draws what is under the clips of a track, over the rest. */
   readonly #below: BelowPainter | undefined;
+  /**
+   * How far the files a clip shows have come where this computer lacks them, in percent, or that
+   * one did not come: a bar along its bottom, as the mark of the picture of the asset.
+   */
+  readonly #downloadOf: ((clip: ClipState) => number | "failed" | undefined) | undefined;
   /** Read at the first paint: a canvas that is not in the page yet has no styles to read. */
   #theme!: Theme;
 
@@ -145,6 +150,7 @@ export class TimelinePainter extends StagePainter {
     effectNamesOf: (types: readonly string[]) => string,
     newTrackName: (kind: "video" | "audio", number: number) => string,
     below?: BelowPainter,
+    downloadOf?: (clip: ClipState) => number | "failed" | undefined,
   ) {
     super(canvas);
     this.#editor = editor;
@@ -156,6 +162,7 @@ export class TimelinePainter extends StagePainter {
     this.#hasFailed = hasFailed;
     this.#newTrackName = newTrackName;
     this.#below = below;
+    this.#downloadOf = downloadOf;
   }
 
   protected paint(): void {
@@ -383,9 +390,15 @@ export class TimelinePainter extends StagePainter {
     if (expander !== undefined) this.#paintExpander(box, expander, top + height, fill);
     this.#paintFlash(box, { left, top, height, width });
     // Too narrow for words it should still show, and on any clip it stays out of the way.
-    if (this.#hasFailed(box.clip)) {
+    const coming = this.#downloadOf?.(box.clip);
+    if (this.#hasFailed(box.clip) || coming === "failed") {
       context.fillStyle = this.#theme.failed;
       context.fillRect(left, top + height - FAILED_BAR, width, FAILED_BAR);
+    } else if (coming !== undefined) {
+      context.fillStyle = "#00000080";
+      context.fillRect(left, top + height - FAILED_BAR, width, FAILED_BAR);
+      context.fillStyle = this.#theme.selected;
+      context.fillRect(left, top + height - FAILED_BAR, (width * coming) / 100, FAILED_BAR);
     }
 
     // What AI just changed: a corner, out of the way of the name and the transitions.

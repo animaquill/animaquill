@@ -16,6 +16,8 @@ const PIECES = "pieces";
 const PAUSED = "paused";
 const CHANNEL = "animaquill.downloads";
 const LOCKS = "animaquill.downloads.";
+/** Which windows use the pieces of an object, shared, and who may drop them, alone. */
+const OBJECT_LOCKS = "animaquill.downloads.object.";
 
 const resultOf = <T>(request: IDBRequest<T>) =>
   new Promise<T>((resolve, reject) => {
@@ -77,6 +79,8 @@ export function browserDownloads(
   channel: () => Changes | undefined = broadcastChanges,
   now: () => number = Date.now,
 ): DownloadStore {
+  /** Holds of this window, by oid, where the browser has no locks: this window alone counts. */
+  const held = new Map<string, number>();
   let opening: Promise<IDBDatabase> | undefined;
   const database = () => {
     opening ??= open(factory()).then((opened) => {
@@ -127,6 +131,39 @@ export function browserDownloads(
       const transaction = (await database()).transaction([PIECES], "readwrite");
       transaction.objectStore(PIECES).put({ oid, start, bytes, at: now() });
       await committed(transaction);
+    },
+    hold(oid) {
+      const manager = locks();
+      if (!manager) {
+        held.set(oid, (held.get(oid) ?? 0) + 1);
+        let left = false;
+        return () => {
+          if (left) return;
+          left = true;
+          const still = (held.get(oid) ?? 1) - 1;
+          if (still > 0) held.set(oid, still);
+          else held.delete(oid);
+        };
+      }
+      let release = () => {};
+      const kept = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      void manager.request(`${OBJECT_LOCKS}${oid}`, { mode: "shared" }, () => kept).catch(() => {});
+      return () => release();
+    },
+    async dropUnused(oid) {
+      const manager = locks();
+      if (!manager) {
+        if ((held.get(oid) ?? 0) > 0) return false;
+        await this.dropPieces(oid);
+        return true;
+      }
+      return manager.request(`${OBJECT_LOCKS}${oid}`, { ifAvailable: true }, async (lock) => {
+        if (!lock) return false;
+        await this.dropPieces(oid);
+        return true;
+      });
     },
     async dropPieces(oid) {
       const transaction = (await database()).transaction([PIECES], "readwrite");
@@ -181,6 +218,8 @@ export function browserDownloads(
 export class MemoryDownloads {
   readonly #pieces = new Map<string, Map<number, DownloadedPiece & { readonly at: number }>>();
   readonly #paused = new Set<string>();
+  /** Holds of all windows, by oid. */
+  readonly #held = new Map<string, number>();
   readonly #listeners = new Set<(key: string) => void>();
   readonly writers = new MemoryWriters();
   readonly #lines = new MemoryLines();
@@ -204,6 +243,22 @@ export class MemoryDownloads {
       },
       dropPieces: async (oid) => {
         this.#pieces.delete(oid);
+      },
+      hold: (oid) => {
+        this.#held.set(oid, (this.#held.get(oid) ?? 0) + 1);
+        let left = false;
+        return () => {
+          if (left) return;
+          left = true;
+          const still = (this.#held.get(oid) ?? 1) - 1;
+          if (still > 0) this.#held.set(oid, still);
+          else this.#held.delete(oid);
+        };
+      },
+      dropUnused: async (oid) => {
+        if ((this.#held.get(oid) ?? 0) > 0) return false;
+        this.#pieces.delete(oid);
+        return true;
       },
       objects: async () =>
         [...this.#pieces].map(([oid, of]) => ({

@@ -1,4 +1,13 @@
-import { clipEnd, clipStart, sourceResourceOf, usesOf, type ProjectStore } from "@animaquill/core";
+import {
+  clipEnd,
+  clipStart,
+  sceneSourceOf,
+  sourceResourceOf,
+  usesOf,
+  type ClipState,
+  type ProjectState,
+  type ProjectStore,
+} from "@animaquill/core";
 import {
   CloudSignedOut,
   LFS_LOOKUP_MOST,
@@ -271,13 +280,14 @@ export function distancesOf(
   const distance = new Map<string, number>();
   const timelines = Object.keys(state.timelines);
   const OTHER = 1e9;
+  const sceneAssets = new Map<string, readonly string[]>();
   timelines.forEach((id, index) => {
     const timeline = state.timelines[id];
     if (!timeline) return;
     const shown = id === playhead?.timeline;
     for (const clip of Object.values(timeline.clips)) {
-      const used = sourceResourceOf(clip.source);
-      if (used?.kind !== "asset" || !wanted.has(used.id)) continue;
+      const ids = assetsOfClip(state, clip, sceneAssets).filter((asset) => wanted.has(asset));
+      if (ids.length === 0) continue;
       let far: number;
       if (shown && playhead) {
         const start = toSeconds(clipStart(clip));
@@ -289,7 +299,7 @@ export function distancesOf(
               ? playhead.seconds - end
               : 0;
       } else far = OTHER + index;
-      distance.set(used.id, Math.min(distance.get(used.id) ?? Infinity, far));
+      for (const asset of ids) distance.set(asset, Math.min(distance.get(asset) ?? Infinity, far));
     }
   });
   for (const asset of assets)
@@ -299,6 +309,46 @@ export function distancesOf(
         usesOf(state, { kind: "asset", id: asset }).length > 0 ? OTHER * 2 : OTHER * 3,
       );
   return distance;
+}
+
+/** The asset a value of a property is, as a parameter of the type `asset` has it. */
+const assetOfValue = (value: unknown): string | undefined => {
+  const asset = (value as { asset?: unknown } | null | undefined)?.asset;
+  return typeof value === "object" && typeof asset === "string" ? asset : undefined;
+};
+
+/**
+ * The assets a clip shows: its own media, or for a scene what its code names with `aq.asset(id)`
+ * and its parameters start out with (`sceneSourceOf`), and the assets the clip gives its
+ * parameters. `known` keeps those of each scene, for the clips of the same scene.
+ */
+export function assetsOfClip(
+  state: ProjectState,
+  clip: ClipState,
+  known = new Map<string, readonly string[]>(),
+): readonly string[] {
+  const used = sourceResourceOf(clip.source);
+  if (used?.kind === "asset") return [used.id];
+  if (used?.kind !== "scene") return [];
+  let ofScene = known.get(used.id);
+  if (!ofScene) {
+    ofScene = sceneSourceOf(state, used.id)?.assets.map(({ id }) => id) ?? [];
+    known.set(used.id, ofScene);
+  }
+  const given = Object.entries(clip.properties ?? {}).flatMap(([path, value]) =>
+    path.startsWith("param.") ? (assetOfValue(value) ?? []) : [],
+  );
+  return given.length === 0 ? ofScene : [...new Set([...ofScene, ...given])];
+}
+
+/** The assets that clips of the project show, also through the scenes they show. */
+export function usedAssets(state: ProjectState): ReadonlySet<string> {
+  const used = new Set<string>();
+  const known = new Map<string, readonly string[]>();
+  for (const timeline of Object.values(state.timelines))
+    for (const clip of Object.values(timeline.clips))
+      for (const asset of assetsOfClip(state, clip, known)) used.add(asset);
+  return used;
 }
 
 export class AssetDownloads {
@@ -329,6 +379,8 @@ export class AssetDownloads {
   /** What the platform said of each, by asset, until it is asked again. */
   readonly #looked = new Map<string, { readonly state: LfsObjectState; readonly at: number }>();
   #looking: Promise<void> | undefined;
+  /** That this window uses the pieces of an object, by asset, see `DownloadStore.hold`. */
+  readonly #holds = new Map<string, () => void>();
   /** Files being worked on now, with what stops them. */
   readonly #active = new Map<string, AbortController>();
   /** What came while the project is open, for the panel. */
@@ -421,6 +473,8 @@ export class AssetDownloads {
     this.#follow = undefined;
     for (const stop of this.#active.values()) stop.abort(new Stopped());
     this.#active.clear();
+    for (const release of this.#holds.values()) release();
+    this.#holds.clear();
     const claim = this.#claim;
     this.#claim = undefined;
     this.#waiting = false;
@@ -487,7 +541,7 @@ export class AssetDownloads {
       const wanted = new Set([...this.#wanted.values(), ...this.#unused].map(({ oid }) => oid));
       const now = Date.now();
       for (const { oid, at } of await store.objects())
-        if (!wanted.has(oid) && now - at > KEEP_PIECES_MS) await store.dropPieces(oid);
+        if (!wanted.has(oid) && now - at > KEEP_PIECES_MS) await store.dropUnused(oid);
     } catch (error) {
       console.warn("What was downloaded before could not be looked through", error);
     }
@@ -544,6 +598,8 @@ export class AssetDownloads {
       if (asset !== undefined && id !== asset) continue;
       if (going.phase !== "failed" && going.phase !== "access" && going.phase !== "uploading")
         continue;
+      // Only waiting for the folder, it stays checked: the pieces are looked at again anyway.
+      if (going.phase !== "access") going.checked = false;
       going.phase = "queued";
       going.retryAt = 0;
       going.backoff = RETRY_FIRST_MS;
@@ -589,13 +645,14 @@ export class AssetDownloads {
     // A project of this computer alone, or a platform that gives no files: nothing comes.
     const none =
       !this.available || project.blocked === "notCloud" || project.blocked === "unsupported";
+    const usedHere = none ? new Set<string>() : usedAssets(state);
     for (const [id, file] of none ? [] : this.#options.missing()) {
       if (file.elsewhere !== "lfs") continue;
       const asset = state.assets?.[id];
       if (asset?.hash === undefined || asset.size === undefined) continue;
       const oid = lfsOidOf(asset.hash);
       if (oid === undefined) continue;
-      const used = usesOf(state, { kind: "asset", id }).length > 0;
+      const used = usedHere.has(id) || usesOf(state, { kind: "asset", id }).length > 0;
       const each: Wanted = {
         asset: id,
         name: asset.name ?? asset.path.split("/").at(-1) ?? asset.path,
@@ -619,6 +676,7 @@ export class AssetDownloads {
       if (!now || !isSameHash(going.hash, now.hash)) {
         this.#going.delete(id);
         this.#looked.delete(id);
+        this.#letGo(id);
       }
     }
     for (const each of wanted.values())
@@ -740,6 +798,12 @@ export class AssetDownloads {
     this.#pump();
   }
 
+  /** This window does not use the pieces of the file of an asset any more. */
+  #letGo(asset: string): void {
+    this.#holds.get(asset)?.();
+    this.#holds.delete(asset);
+  }
+
   #fail(going: Going, problem: DownloadProblem, need?: number): void {
     going.phase = "failed";
     going.problem = problem;
@@ -842,9 +906,12 @@ export class AssetDownloads {
       return;
     }
     delete going.uploading;
+    if (!this.#holds.has(wanted.asset)) this.#holds.set(wanted.asset, store.hold(wanted.oid));
     const pieces = await store.pieces(wanted.oid);
     const { bytes } = assembled(pieces, wanted.size);
     going.received = bytes;
+    // What comes again has to be read through again, whatever was found before.
+    if (bytes < wanted.size) going.checked = false;
     if (bytes >= wanted.size) return this.#finish(wanted, going, pieces, signal);
     if (going.phase !== "downloading") {
       // Room for what is still to come, before any of it does.
@@ -944,7 +1011,9 @@ export class AssetDownloads {
       return;
     }
     if (written === "occupied") return this.#fail(going, "occupied");
-    await store.dropPieces(wanted.oid).catch(() => {});
+    // What another project of this browser is downloading too stays for it.
+    this.#letGo(wanted.asset);
+    await store.dropUnused(wanted.oid).catch(() => false);
     going.phase = "done";
     this.#done.set(wanted.asset, {
       asset: wanted.asset,

@@ -221,8 +221,18 @@ export interface DownloadStore {
   pieces(oid: string): Promise<readonly DownloadedPiece[]>;
   /** Keeps a piece. Rejects with QuotaExceededError where the browser has no room for it. */
   putPiece(oid: string, start: number, bytes: Blob): Promise<void>;
-  /** What is kept of an object goes, once it is where it goes, or turned out to be wrong. */
+  /** What is kept of an object goes, as it turned out to be wrong. */
   dropPieces(oid: string): Promise<void>;
+  /**
+   * That this window uses the pieces of an object, as long as it downloads it: another window, of
+   * another project with the same file, then leaves them, see `dropUnused`. Lets go when called.
+   */
+  hold(oid: string): () => void;
+  /**
+   * What is kept of an object goes, once it is where it goes, unless a window holds it: resolves to
+   * whether it went.
+   */
+  dropUnused(oid: string): Promise<boolean>;
   /** The objects pieces are kept of, and when a piece of each came last, in ms since 1970. */
   objects(): Promise<readonly { readonly oid: string; readonly at: number }[]>;
   /** Whether people paused the downloads of a project. */

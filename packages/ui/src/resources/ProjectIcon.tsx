@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import type { DownloadsSnapshot } from "../storage/downloads.ts";
+import { percentOf } from "../storage/upload-text.ts";
 import { useWorkbench } from "../app/context.ts";
 import type { FilmStrip } from "../media/library.ts";
 import { NO_PROXIES, type ProxySnapshot, type ProxyState } from "../proxy/proxies.ts";
@@ -200,6 +202,13 @@ function AssetPicture({ id, asset, playing }: { id: string; asset: Asset; playin
  * its file is missing, or not here but somewhere it can be downloaded from. Under the pointer a
  * video goes through its frames and a sound shows where it would be.
  */
+/**
+ * Whether files that are not here come by themselves in the open project: one of the platform,
+ * where downloads go. Elsewhere it only says where they could come from.
+ */
+export const autoDownloads = (available: boolean, coming: DownloadsSnapshot): boolean =>
+  available && coming.key !== undefined && coming.blocked !== "notCloud";
+
 export function ProjectIcon({ resource, playing }: ResourceIconProps<ProjectItem>) {
   const { t } = useTranslation();
   const workbench = useWorkbench();
@@ -219,10 +228,9 @@ export function ProjectIcon({ resource, playing }: ResourceIconProps<ProjectItem
   const proxy = asset.hash === undefined ? undefined : proxySnapshot.states.get(asset.hash);
   const length = lengthOf(asset);
   const file = missing.get(id);
-  // On its way here: the mark of the picture says how far, see `UploadMark`.
-  const isComing = coming.items.some(
-    (each) => each.asset === id && each.phase !== "failed" && each.phase !== "done",
-  );
+  // In a project of the platform the file comes by itself: the corner says how that goes.
+  const automatic = autoDownloads(downloads.available, coming);
+  const download = coming.items.find((each) => each.asset === id && each.phase !== "done");
   return (
     <>
       <AssetPicture key={restored} id={id} asset={asset} playing={playing} />
@@ -230,8 +238,19 @@ export function ProjectIcon({ resource, playing }: ResourceIconProps<ProjectItem
         <ProxyBadge state={proxy} snapshot={proxySnapshot} />
       )}
       {file &&
-        !isComing &&
-        (file.elsewhere ? (
+        (file.elsewhere && automatic ? (
+          download?.phase === "failed" ? (
+            <span className={styles.missing} data-download-badge="failed">
+              {t("storage.downloads.badge.failedShort")}
+            </span>
+          ) : (
+            <span className={styles.elsewhere} data-download-badge={download ? "going" : "not"}>
+              {download
+                ? t("storage.downloads.badge.going", { percent: percentOf(download) })
+                : t("storage.downloads.badge.notDownloaded")}
+            </span>
+          )
+        ) : file.elsewhere ? (
           <span className={styles.elsewhere}>{t("assetPanel.elsewhere")}</span>
         ) : (
           <span className={styles.missing}>{t("assetPanel.missing")}</span>
