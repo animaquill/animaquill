@@ -7,6 +7,7 @@ import {
   type MergeConflict,
   type MergeResult,
   type Origin,
+  type ProjectState,
   type ProjectStore,
   type CommandFailure,
 } from "@animaquill/core";
@@ -36,6 +37,7 @@ import {
   textOf,
 } from "./project-files.ts";
 import { failureMessage } from "../i18n/failures.ts";
+import { ToolNotes, batchOfChanges, type ToolBatchNote } from "./tool-notes.ts";
 
 /**
  * Keeps a project folder and the open project in step, see docs/design/local-projects.md section 2.
@@ -199,6 +201,20 @@ export interface FolderMerge {
   readonly files: readonly string[];
   readonly conflicts: readonly MergeConflict[];
   readonly problems: readonly Problem[];
+  /**
+   * The batch of an AI tool on this computer that this is, as its note says (`ToolNotes`): every
+   * file in it is as that batch left it. All merges of one batch have the same origin, so that it
+   * goes back as a whole. Nothing for what is nobody's in particular.
+   */
+  readonly tool: ToolBatchNote | undefined;
+  /**
+   * It came in as the folder was compared with the project as a whole, as on opening it: what
+   * changed while the editor was not there.
+   */
+  readonly atStart: boolean;
+  /** The project before it came in, and the paths it changed, to say what changed. */
+  readonly before: ProjectState;
+  readonly paths: readonly (readonly string[])[];
 }
 
 /** What came of finding the folder again, see `FolderSession.reconnect`. */
@@ -470,6 +486,8 @@ interface TurnContext {
   /** What the session shows changed. */
   readonly changed: () => void;
   readonly merged: (merge: FolderMerge) => void;
+  /** The batch of an AI tool that changes are, see `batchOfChanges`. */
+  readonly toolBatchOf: (changes: readonly FileChange[]) => Promise<ToolBatchNote | undefined>;
 }
 
 /**
@@ -607,6 +625,16 @@ class Turn {
     this.endReason = reason;
     this.stop();
     this.#context.changed();
+  }
+
+  /**
+   * Looks at these files now, as something says they changed: the watch may not have told, as a
+   * folder that just appeared can keep Chrome from telling what changes next to it for a while.
+   */
+  lookAt(paths: readonly string[]): void {
+    if (this.#dead) return;
+    for (const path of paths) if (isProjectFile(path)) this.#external.add(path);
+    void this.#enqueue(() => this.#takeIn()).catch(() => {});
   }
 
   /** The project changed: here, in another window, or by a merge. */
@@ -1144,9 +1172,21 @@ class Turn {
     }
     if (!hasTurn) return;
     const { store } = this.#context;
-    const origin = folderBatch(nextBatch());
-    const mergeOf = (files: readonly FileChange[]) =>
-      store.mergeFiles(files, { origin, baseOf: this.#baseOf });
+    // What an AI tool on this computer wrote, as its note says, is that batch, whose merges are
+    // one origin: it goes back as a whole. Anything else is a batch of its own.
+    const tool = await this.#context.toolBatchOf(changes);
+    if (this.#dead) {
+      for (const { path } of changes) this.#external.add(path);
+      return;
+    }
+    const origin = folderBatch(tool ? `tool-${tool.batch}` : nextBatch());
+    const atStart = !this.#compared;
+    let before = store.getState();
+    const mergeOf = (files: readonly FileChange[]) => {
+      before = store.getState();
+      return store.mergeFiles(files, { origin, baseOf: this.#baseOf });
+    };
+    const told = { tool, atStart };
     let batch = changes;
     let result = mergeOf(batch);
     // What would break the project, and says about which files, keeps out only those.
@@ -1172,7 +1212,7 @@ class Turn {
         for (const path of rank) {
           const one = batch.filter((change) => change.path === path);
           const alone = mergeOf(one);
-          if (alone.ok) this.#took(alone, one, disk, origin);
+          if (alone.ok) this.#took(alone, one, disk, origin, { ...told, before });
           else this.#refused(alone.error, one, disk);
         }
       }
@@ -1183,7 +1223,7 @@ class Turn {
       this.#refused(result.error, batch, disk);
       return;
     }
-    this.#took(result, batch, disk, origin);
+    this.#took(result, batch, disk, origin, { ...told, before });
     await this.#keepPartly();
   }
 
@@ -1253,6 +1293,7 @@ class Turn {
     batch: readonly FileChange[],
     disk: ReadonlyMap<string, Disk | undefined>,
     origin: Origin,
+    told: Pick<FolderMerge, "tool" | "atStart" | "before">,
   ): void {
     const after = this.#context.store.exportFiles().files;
     const bases = new Map(batch.map(({ path, base }) => [path, base]));
@@ -1309,6 +1350,8 @@ class Turn {
         files: came,
         conflicts: result.conflicts,
         problems: result.problems,
+        ...told,
+        paths: result.patches.map(({ path }) => path),
       });
     }
     if (result.files.some(({ rewrite }) => rewrite)) this.#arm(0);
@@ -1855,6 +1898,8 @@ export class FolderSession {
   #compared: Turn | undefined;
   readonly #emitter = new Emitter();
   readonly #mergeListeners = new Set<(merge: FolderMerge) => void>();
+  /** What AI tools on this computer note down next to the project, see `ToolNotes`. */
+  readonly #toolNotes = new ToolNotes();
   #snapshot: FolderSnapshot = {
     role: "starting",
     status: "saving",
@@ -1894,6 +1939,14 @@ export class FolderSession {
   onMerge(listener: (merge: FolderMerge) => void): () => void {
     this.#mergeListeners.add(listener);
     return () => this.#mergeListeners.delete(listener);
+  }
+
+  /**
+   * Looks at files of the folder now, as what an AI tool on this computer noted down says they
+   * changed (`ToolActivity`): what is as the editor knows it stays as it is.
+   */
+  lookAt(paths: readonly string[]): void {
+    this.#turn?.lookAt(paths);
   }
 
   /**
@@ -2076,6 +2129,8 @@ export class FolderSession {
         merged: (merge) => {
           for (const listener of this.#mergeListeners) listener(merge);
         },
+        toolBatchOf: async (changes) =>
+          batchOfChanges(changes, await this.#toolNotes.batches(this.#folder)),
       });
       this.#turn = turn;
       this.#setRole("writing");

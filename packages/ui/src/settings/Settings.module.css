@@ -29,6 +29,12 @@
   box-shadow: var(--aq-shadow);
 }
 
+/* The guide to the AI tools on this computer: one page, as tall as it needs. */
+.dialog[data-kind="guide"] {
+  width: min(860px, 92vw);
+  height: min(760px, 92dvh);
+}
+
 /* The project properties: the same shell, a little smaller (5.1). */
 .dialog[data-kind="properties"] {
   width: min(820px, 92vw);

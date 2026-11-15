@@ -31,6 +31,8 @@ import {
   type ClipState,
   sceneSourceOf,
   startingFiles,
+  INSTRUCTIONS_FILE,
+  INSTRUCTIONS_START,
   elsewhereOf,
   type ObjectRef,
   type ProjectState,
@@ -71,6 +73,7 @@ import { AiSync } from "../chat/ai-sync.ts";
 import { CloudChats } from "../chat/cloud-chats.ts";
 import { SETTINGS_GROUPS, SettingsNav, type SettingsPlace } from "./settings-nav.ts";
 import { SwitchSetting } from "./switch-setting.ts";
+import { ToolActivity } from "./tool-activity.ts";
 import { CodeDocuments, type CodePlace } from "../code/documents.ts";
 import { CodeDrafts } from "../code/drafts.ts";
 import { FileActions } from "../code/files.ts";
@@ -331,6 +334,8 @@ export class Workbench {
    * opens it there.
    */
   readonly cloudPanel = new Flag();
+  /** The guide to the AI tools on this computer is open, see `openLocalAiGuide`. */
+  readonly localAiGuide = new Flag();
   /**
    * Whether it is known how the open project stands with the platform: `CloudProjects` looked at
    * it, and at its folder where it is one. Until then nothing says "仅本机", and nothing connects
@@ -392,6 +397,10 @@ export class Workbench {
   readonly packs: ModelPacks;
   /** The chat with AI in the browser, about the open project. */
   readonly chat: ChatSession;
+  /** What AI tools on this computer do through the folder of the open project. */
+  readonly tools: ToolActivity;
+  /** Whether new projects start with AGENTS.md, the instructions for AI. */
+  readonly agentsFile: SwitchSetting;
   /** What the chat points at: the playhead, what is selected, and where its blocks go. */
   readonly pointing: ChatPointing;
   /** What the box of the chat does with the commands of the palette, while it is there. */
@@ -556,6 +565,7 @@ export class Workbench {
     this.settingsNav = new SettingsNav(host.windowMemory);
     this.projectNav = new ProjectNav(host.windowMemory);
     this.proxyOffer = new SwitchSetting(host.settings, "proxyOffer", true);
+    this.agentsFile = new SwitchSetting(host.settings, "agentsFile", true);
     this.palette = new CommandPalette(host.settings, this.actions);
     this.resourceHabits = new ResourceHabits(host.settings);
     this.startHabits = new StartHabits(host.settings);
@@ -584,6 +594,7 @@ export class Workbench {
       },
       {
         window: this.windowId,
+        startingFiles: () => this.startingFiles(),
         // What the platform does not have yet stays as it is in the log: it goes from there.
         ...(cloud && {
           compactThrough: async (key: string) => {
@@ -774,8 +785,25 @@ export class Workbench {
       shoot: (signal) => this.#shootFrame(signal),
       shotSize: () => this.ai.getSnapshot().shotSize ?? 1568,
     });
-    // What the last turn of AI changed shows on the timeline until the next one.
-    this.chat.subscribe(() => this.timeline.setMarked(this.chat.getSnapshot().marked));
+    this.tools = new ToolActivity({
+      t,
+      notifications: this.notifications,
+      dialogs: this.dialogs,
+      showProblems: () => this.layout.openPanel("problems"),
+      folder: () => this.projectFolders?.folderOpen,
+      held: () => this.projectFolders?.isHeld === true,
+      undo: (origin) => void this.projectFolders?.undoBatch(origin),
+      lookAt: (paths) => this.projectFolders?.lookAt(paths),
+    });
+    // What the last turn of AI changed shows on the timeline until the next one, and what the
+    // latest batch of an AI tool on this computer changed.
+    const mark = () => {
+      const chat = this.chat.getSnapshot().marked;
+      const tools = this.tools.getSnapshot().marked;
+      this.timeline.setMarked(tools.size === 0 ? chat : new Set([...chat, ...tools]));
+    };
+    this.chat.subscribe(mark);
+    this.tools.subscribe(mark);
     this.frameRate = new PreviewFrameRate(this.timeline);
     this.previewQuality = new PreviewQuality(host.settings, this.frameRate);
     const differences = new OutputDifferences({
@@ -828,6 +856,8 @@ export class Workbench {
         notifications: this.notifications,
         problems: this.problems,
         t,
+        tools: this.tools,
+        startingFiles: () => this.startingFiles(),
         changeProject: (next) => this.#changeProject(next),
         warnAboutCode: (report) => this.transfer.warnAboutCode(report),
         noteArrival: (report) => this.#noteImport(report),
@@ -853,6 +883,7 @@ export class Workbench {
         ...(host.organizer && { organizer: host.organizer }),
       });
     this.session.subscribe(() => this.projectFolders?.followSession());
+    this.session.subscribe(() => this.tools.follow(this.session.getSnapshot().store));
     this.cloud =
       cloud &&
       new CloudProjects({
@@ -1388,7 +1419,47 @@ export class Workbench {
   openSettings(place?: SettingsPlace): void {
     this.palette.close();
     this.projectNav.close();
+    this.localAiGuide.set(false);
     this.settingsNav.open(place);
+  }
+
+  /**
+   * Opens the guide to the AI tools on this computer (docs/design/mcp.md, 6.16a), over whatever
+   * the window shows: from the settings, the chat, the palette and the help menu.
+   */
+  openLocalAiGuide(): void {
+    this.palette.close();
+    this.projectNav.close();
+    this.settingsNav.close();
+    this.localAiGuide.set(true);
+  }
+
+  /** Gives the open project a folder: links a cloud project to one, or moves it into one. */
+  linkFolder(): void {
+    if (this.cloud) this.runCloudAction("linkFolder");
+    else void this.moveToFolder();
+  }
+
+  /** Adds AGENTS.md to the open project, as a new project has it. */
+  addInstructions(): boolean {
+    return (
+      this.projectEdits.run({
+        type: "file.write",
+        params: { path: INSTRUCTIONS_FILE, text: INSTRUCTIONS_START },
+      })?.ok === true
+    );
+  }
+
+  /** Opens AGENTS.md of the open project in the code tab. */
+  openInstructions(): void {
+    this.localAiGuide.set(false);
+    this.projectNav.close();
+    this.showCode(INSTRUCTIONS_FILE);
+  }
+
+  /** The files a new project starts with: AGENTS.md too, unless people turned that off. */
+  startingFiles(): Readonly<Record<string, string>> {
+    return this.agentsFile.getSnapshot() ? startingFiles() : {};
   }
 
   /** Shows a resource in the explorer, from a tab that finds and uses resources. */
@@ -1670,10 +1741,12 @@ export class Workbench {
       this.input.load(),
       this.previewQuality.load(),
       this.proxyOffer.load(),
+      this.agentsFile.load(),
       this.trials.load(),
       this.ai.load(),
       this.packs.load(),
     ]);
+    this.tools.start();
     // An address of a project folder opens as one once the page is there, see `resume`.
     if (!(await this.projectFolders?.restore())) await this.session.restore();
     // Who is signed in comes when it comes: the editor does not wait for it.
@@ -2257,7 +2330,10 @@ export class Workbench {
       const project = imported
         ? { ...imported.project, manifest: { ...imported.project.manifest, name } }
         : createProject({ name, format });
-      const store = ProjectStore.create(project, imported ? imported.sources : startingFiles());
+      const store = ProjectStore.create(
+        project,
+        imported ? imported.sources : this.startingFiles(),
+      );
       const made = { state: store.encodeWhole(), projectId: store.getState().manifest.id };
       store.destroy();
       return made;
@@ -3948,6 +4024,12 @@ export class Workbench {
   }
 
   #registerHelpActions(): void {
+    this.actions.register({
+      id: "help.localAi",
+      title: (t) => t("localAi.action"),
+      run: () => this.openLocalAiGuide(),
+      menu: { name: "help", group: "localAi" },
+    });
     this.actions.register({
       id: "help.about",
       title: (t) => t("about.title"),

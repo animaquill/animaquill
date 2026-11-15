@@ -63,7 +63,7 @@ export function Tip({ name, usage, shortcut, children }: TipProps) {
               <strong>{name}</strong>
               {shortcut && <kbd>{shortcut}</kbd>}
             </div>
-            <div>{usage}</div>
+            <div className={styles.usage}>{usage}</div>
           </div>,
           document.body,
         )}

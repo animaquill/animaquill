@@ -8,6 +8,7 @@ import {
   Info,
   Keyboard,
   Library,
+  Laptop,
   MessageSquareText,
   Pencil,
   Play,
@@ -39,6 +40,7 @@ import {
   StorageGroup,
 } from "./groups.tsx";
 import { KeybindingsPage } from "./KeybindingsPage.tsx";
+import { LocalAiGroup } from "../local-ai/LocalAiSettings.tsx";
 import { GroupWhere, useGroups } from "./parts.tsx";
 import { searchSettings } from "./registry.ts";
 import { DialogFrame, useLevelsInHistory, useNarrow, useNoStepsWhenClosed } from "./shell.tsx";
@@ -53,6 +55,7 @@ const ICONS: Readonly<Record<SettingsGroup, ComponentType<{ size?: number }>>> =
   models: Diamond,
   packs: Library,
   chat: MessageSquareText,
+  localAi: Laptop,
   account: UserRound,
   cloud: Cloud,
   storage: HardDrive,
@@ -359,6 +362,8 @@ function GroupPage({ group }: { readonly group: SettingsGroup }) {
       return <ExportGroup />;
     case "chat":
       return <ChatGroup />;
+    case "localAi":
+      return <LocalAiGroup />;
     case "account":
       return <AccountGroup />;
     case "storage":

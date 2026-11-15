@@ -4,8 +4,7 @@ import { Flag } from "./flag.ts";
 
 /**
  * The groups of the project properties, in the order of their list (docs/design/
- * settings-and-properties.md of AnimaQuill Cloud, 5.2). "给 AI 的说明" comes with AGENTS.md (6.16a),
- * not before.
+ * settings-and-properties.md of AnimaQuill Cloud, 5.2).
  */
 export const PROJECT_GROUPS = [
   "general",
@@ -16,6 +15,7 @@ export const PROJECT_GROUPS = [
   "cover",
   "fonts",
   "libraries",
+  "agents",
   "storage",
 ] as const;
 

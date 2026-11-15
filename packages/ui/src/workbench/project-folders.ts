@@ -91,6 +91,7 @@ import type {
 } from "./dialogs.ts";
 import { Emitter } from "./emitter.ts";
 import type { Notifications } from "./notifications.ts";
+import type { ToolActivity } from "./tool-activity.ts";
 import { projectKeyOf, type ProjectSession } from "./session.ts";
 import { failureMessage, translateWith } from "../i18n/failures.ts";
 
@@ -135,6 +136,10 @@ export interface ProjectFoldersOptions {
   readonly notifications: Notifications;
   readonly problems: ProblemList;
   readonly t: TFunction;
+  /** What AI tools on this computer do through the folder, which tells of their batches. */
+  readonly tools?: ToolActivity;
+  /** The files a new project starts with, as people set it up. */
+  readonly startingFiles?: () => Readonly<Record<string, string>>;
   /** Leaves the open project, then does the next thing, see `Workbench`. */
   readonly changeProject: (next: () => Promise<unknown>) => Promise<void>;
   /** For a project that comes into this browser for the first time, before it opens. */
@@ -336,6 +341,7 @@ export class ProjectFolders {
       folders: options.folders,
       projects: options.projects,
       t: options.t,
+      ...(options.startingFiles && { startingFiles: options.startingFiles }),
     });
     this.#mover = new FolderMove({
       folders: options.folders,
@@ -1008,6 +1014,11 @@ export class ProjectFolders {
   hold(held: boolean): void {
     this.#held = held;
     this.#current?.session.hold(held);
+  }
+
+  /** The folder is left as it is for now, see `hold`. */
+  get isHeld(): boolean {
+    return this.#held;
   }
 
   /** Lets the editor at the open folder again, after the browser took that back. */
@@ -2356,16 +2367,31 @@ export class ProjectFolders {
   undoBatch(origin: string): boolean {
     const known = this.#batches.get(origin);
     if (!known) return false;
-    void this.#undo(known.store, known.merge);
+    void this.#undo(known.store, origin);
     return true;
   }
 
+  /** The folder of the project open in this window, if any. */
+  get folderOpen(): LocalFolder | undefined {
+    return this.#current?.session.folder;
+  }
+
+  /** Looks at files of the folder of the open project now, see `FolderSession.lookAt`. */
+  lookAt(paths: readonly string[]): void {
+    this.#current?.session.lookAt(paths);
+  }
+
   #merged(store: ProjectStore, merge: FolderMerge): void {
-    const { notifications, t } = this.#options;
+    const { t, tools } = this.#options;
     const { files, conflicts, problems } = merge;
     if (files.length > 0) {
+      // The merges of a batch of an AI tool are one origin: taking it back keeps all their files.
+      const before = this.#batches.get(merge.origin)?.merge.files ?? [];
       this.#batches.delete(merge.origin);
-      this.#batches.set(merge.origin, { store, merge });
+      this.#batches.set(merge.origin, {
+        store,
+        merge: { ...merge, files: [...new Set([...before, ...files])] },
+      });
       // The store forgets all but the last few batches, and so does this.
       for (const old of this.#batches.keys()) {
         if (this.#batches.size <= MAX_KNOWN_BATCHES) break;
@@ -2374,22 +2400,9 @@ export class ProjectFolders {
     }
     if (files.length === 0 && conflicts.length === 0 && problems.length === 0) return;
     const partly = conflicts.length > 0 || problems.length > 0;
-    const message =
-      files.length === 0
-        ? t("folder.notMerged")
-        : partly
-          ? t("folder.mergedPartly", { count: files.length })
-          : t("folder.merged", { count: files.length });
-    notifications.push(message, {
-      actions: [
-        ...(partly
-          ? [{ label: t("folder.showMerged"), run: () => this.#options.showProblems() }]
-          : []),
-        ...(files.length > 0
-          ? [{ label: t("folder.undoMerge"), run: () => void this.#undo(store, merge) }]
-          : []),
-      ],
-    });
+    // What an AI tool wrote is told by its batch, which says who and what, see `ToolActivity`.
+    if (merge.tool && tools && files.length > 0) tools.merged(store, merge);
+    else this.#tellMerged(store, merge, partly);
     if (!partly) return;
     const kept = t("folder.keptIn", { folder: RECOVERED_FOLDER });
     const listed: Listed[] = [
@@ -2420,14 +2433,38 @@ export class ProjectFolders {
     this.#changed();
   }
 
+  /** Tells people that a batch from the folder came in, with a way to take it back. */
+  #tellMerged(store: ProjectStore, merge: FolderMerge, partly: boolean): void {
+    const { notifications, t } = this.#options;
+    const { files } = merge;
+    const message =
+      files.length === 0
+        ? t("folder.notMerged")
+        : partly
+          ? t("folder.mergedPartly", { count: files.length })
+          : t("folder.merged", { count: files.length });
+    notifications.push(message, {
+      actions: [
+        ...(partly
+          ? [{ label: t("folder.showMerged"), run: () => this.#options.showProblems() }]
+          : []),
+        ...(files.length > 0
+          ? [{ label: t("folder.undoMerge"), run: () => void this.#undo(store, merge.origin) }]
+          : []),
+      ],
+    });
+  }
+
   /**
    * Takes back what came in, as a whole. The folder gets the editor's side then, so what it has now
    * is kept first, and it can come back.
    */
-  async #undo(store: ProjectStore, merge: FolderMerge): Promise<void> {
+  async #undo(store: ProjectStore, origin: string): Promise<void> {
     const { notifications, t } = this.#options;
     const current = this.#current;
-    if (current?.store !== store) return;
+    // All of what came in of the batch so far, as several merges of an AI tool's batch can be.
+    const merge = this.#batches.get(origin)?.merge;
+    if (current?.store !== store || !merge) return;
     // What the folder has now goes, so it is kept first, or nothing is taken back.
     let kept: readonly string[] | undefined;
     try {
@@ -2442,6 +2479,7 @@ export class ProjectFolders {
       return;
     }
     const result = store.undoOrigin(merge.origin);
+    if (result.ok) this.#options.tools?.undone(merge.origin);
     if (!result.ok) {
       notifications.push(
         t("folder.undoFailed", { message: failureMessage(result.error, translateWith(t)) }),

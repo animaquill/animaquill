@@ -11,6 +11,14 @@ export interface Notification {
   readonly message: string;
   /** Doing one of them is the end of the notification. */
   readonly actions?: readonly NotificationAction[];
+  /** A line under it that needs looking at, such as what of people's own changes stayed. */
+  readonly warning?: { readonly text: string; readonly action?: NotificationAction };
+}
+
+export interface NotificationOptions {
+  readonly stays?: boolean;
+  readonly actions?: readonly NotificationAction[];
+  readonly warning?: Notification["warning"];
 }
 
 const LIFETIME_MS = 10_000;
@@ -28,18 +36,41 @@ export class Notifications {
   getSnapshot = (): readonly Notification[] => this.#items;
 
   /** Goes away by itself, unless it has to stay until whoever asked for it dismisses it. */
-  push(
-    message: string,
-    { stays = false, actions }: { stays?: boolean; actions?: readonly NotificationAction[] } = {},
-  ): number {
+  push(message: string, { stays = false, actions, warning }: NotificationOptions = {}): number {
     const id = this.#nextId++;
-    this.#items = [...this.#items, { id, message, ...(actions && { actions }) }];
+    this.#items = [
+      ...this.#items,
+      { id, message, ...(actions && { actions }), ...(warning && { warning }) },
+    ];
     this.#emitter.emit();
     if (!stays)
       this.#timers.set(
         id,
         setTimeout(() => this.dismiss(id), LIFETIME_MS),
       );
+    return id;
+  }
+
+  /**
+   * Says something new in place of a notification that is still there, which starts its time
+   * again unless someone is reading it; where it went already, it comes again as a new one.
+   * Resolves to its id.
+   */
+  update(id: number | undefined, message: string, options: NotificationOptions = {}): number {
+    const at = this.#items.findIndex((item) => item.id === id);
+    if (id === undefined || at < 0) return this.push(message, options);
+    const { actions, warning } = options;
+    const items = [...this.#items];
+    items[at] = { id, message, ...(actions && { actions }), ...(warning && { warning }) };
+    this.#items = items;
+    this.#emitter.emit();
+    if (this.#timers.get(id) !== undefined) {
+      clearTimeout(this.#timers.get(id));
+      this.#timers.set(
+        id,
+        setTimeout(() => this.dismiss(id), LIFETIME_MS),
+      );
+    }
     return id;
   }
 

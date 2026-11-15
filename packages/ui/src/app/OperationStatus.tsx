@@ -5,10 +5,12 @@ import type { Operation } from "../workbench/operations.ts";
 import { useWorkbench } from "./context.ts";
 import { Bubble } from "./Bubble.tsx";
 import { operationText } from "./operation-text.ts";
+import { toolName } from "../workbench/tool-activity.ts";
 import styles from "./OperationStatus.module.css";
 import { Tip } from "./Tip.tsx";
 
 const when = new Intl.DateTimeFormat("zh-CN", { timeStyle: "medium" });
+const clock = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" });
 
 /** What can be done with one operation from the list, or why nothing can. */
 interface Choice {
@@ -31,8 +33,16 @@ export function OperationStatus() {
   const [anchor, setAnchor] = useState<DOMRect>();
   const [message, setMessage] = useState<string>();
   const listElement = useRef<HTMLOListElement>(null);
+  // Re-rendered as batches of AI tools on this computer come in, which name their operations.
+  useSyncExternalStore(workbench.tools.subscribe, workbench.tools.getSnapshot);
+  const toolOf = (operation: Operation) => {
+    const batch =
+      operation.source === "folder" ? workbench.tools.batchOf(operation.origin) : undefined;
+    return batch && { batch, name: toolName(t, batch.client), count: batch.changes.length };
+  };
+  const nameOf = (operation: Operation) => operationText(t, operation, toolOf(operation));
   const [last] = list;
-  const text = last ? operationText(t, last) : t("operations.none");
+  const text = last ? nameOf(last) : t("operations.none");
   const redoable = operations.redoable;
 
   const choiceOf = (operation: Operation): Choice => {
@@ -92,7 +102,8 @@ export function OperationStatus() {
             >
               {list.map((operation) => {
                 const choice = choiceOf(operation);
-                const name = operationText(t, operation);
+                const name = nameOf(operation);
+                const tool = toolOf(operation);
                 return (
                   <li
                     key={operation.id}
@@ -103,11 +114,17 @@ export function OperationStatus() {
                     <span className={styles.name}>{name}</span>
                     <span className={styles.about}>
                       <span className={styles.source} data-source={operation.source}>
-                        {t(`operations.source.${operation.source}`)}
+                        {tool ? t("localAi.source") : t(`operations.source.${operation.source}`)}
                       </span>
-                      <time dateTime={new Date(operation.time).toISOString()}>
-                        {when.format(operation.time)}
-                      </time>
+                      {tool ? (
+                        <time dateTime={new Date(tool.batch.startedAt).toISOString()}>
+                          {`${clock.format(tool.batch.startedAt)}–${clock.format(tool.batch.updatedAt)}`}
+                        </time>
+                      ) : (
+                        <time dateTime={new Date(operation.time).toISOString()}>
+                          {when.format(operation.time)}
+                        </time>
+                      )}
                       {operation.undone && <span>{t("operations.undone")}</span>}
                     </span>
                     {choice.run ? (

@@ -222,9 +222,8 @@ test.describe("the editor on this computer", () => {
         arguments: { operations: [{ op: "project.rename", name: "AI 改的名字" }] },
       });
       expect(renamed.isError, JSON.stringify(renamed.content)).toBeFalsy();
-      await expect(page.getByText(/外面改了 \d+ 个文件，已并入。/)).toBeVisible({
-        timeout: 15_000,
-      });
+      // As its batch, named after the tool, as the note it left next to the project says.
+      await expect(page.getByText(/^Claude Code 改了 1 处 · /)).toBeVisible({ timeout: 15_000 });
       await expect(footer(page).getByText("AI 改的名字")).toBeVisible();
       // And the other way round: what people change reaches the AI tool, as somebody else's.
       await page.getByRole("button", { name: "撤销这次" }).click();
@@ -348,6 +347,7 @@ test.describe("the editor on this computer", () => {
         "AI 模型",
         "模型适配包",
         "AI 聊天",
+        "电脑上的 AI 工具",
         "存储和数据",
         "关于",
       ]);

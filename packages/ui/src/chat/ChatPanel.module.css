@@ -1709,3 +1709,9 @@ span.sentPicture {
   border-radius: 6px;
   pointer-events: none;
 }
+
+.localAiIcon {
+  flex: none;
+  width: 28px;
+  color: var(--aq-text-muted);
+}

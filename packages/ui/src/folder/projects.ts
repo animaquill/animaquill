@@ -90,6 +90,8 @@ export interface FolderProjectsOptions {
   readonly folders: LocalFolders;
   readonly projects: ProjectLibrary;
   readonly t: TFunction;
+  /** The files a new project starts with, see `startingFiles`, as people set it up. */
+  readonly startingFiles?: () => Readonly<Record<string, string>>;
   /** A new number for a folder, see `FolderRecord.id`. */
   readonly newKey?: () => string;
   readonly now?: () => number;
@@ -140,6 +142,7 @@ export class FolderProjects {
   readonly #t: TFunction;
   readonly #newKey: () => string;
   readonly #now: () => number;
+  readonly #startingFiles: () => Readonly<Record<string, string>>;
 
   constructor({
     folders,
@@ -147,7 +150,9 @@ export class FolderProjects {
     t,
     newKey = () => crypto.randomUUID(),
     now = Date.now,
+    startingFiles: starting = startingFiles,
   }: FolderProjectsOptions) {
+    this.#startingFiles = starting;
     this.#folders = folders;
     this.#projects = projects;
     this.#t = t;
@@ -248,7 +253,7 @@ export class FolderProjects {
     }
     const store = ProjectStore.create(
       createProject({ name, ...(format && { format }) }),
-      startingFiles(),
+      this.#startingFiles(),
     );
     const { id: project } = store.getState().manifest;
     const state = store.encodeState();

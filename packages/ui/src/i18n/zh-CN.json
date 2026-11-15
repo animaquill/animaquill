@@ -757,7 +757,8 @@
       "account": "账号",
       "cloud": "云同步",
       "storage": "存储和数据",
-      "about": "关于"
+      "about": "关于",
+      "localAi": "电脑上的 AI 工具"
     },
     "items": {
       "general": {
@@ -931,6 +932,20 @@
         "performance": {
           "name": "运行情况",
           "keywords": "performance diagnostics 性能 运行情况 卡顿 报告 诊断"
+        }
+      },
+      "localAi": {
+        "connect": {
+          "name": "连接",
+          "keywords": "mcp claude code codex cursor vscode 向导 连接 订阅 命令行"
+        },
+        "recent": {
+          "name": "最近连过的",
+          "keywords": "mcp 工具 连接 记录"
+        },
+        "agentsFile": {
+          "name": "新建项目时放一份 AI 说明（AGENTS.md）",
+          "keywords": "agents.md 说明 指令 claude codex 新建"
         }
       }
     },
@@ -5003,7 +5018,8 @@
       "cover": "封面",
       "fonts": "字体",
       "libraries": "关联的库",
-      "storage": "存放和同步"
+      "storage": "存放和同步",
+      "agents": "给 AI 的说明"
     },
     "locked": {
       "tag": "这个项目被锁定标签锁住了，你和 AI 都改不了。在下面的“标签”里去掉锁定就能改。",
@@ -5279,6 +5295,112 @@
       "notSaid": "平台没有给出",
       "noSync": "没有云同步",
       "noSyncHelp": "这个项目只在这台电脑上。连接到云端以后自动同步、存进你的 GitHub 仓库，换一台电脑也能接着做。"
+    }
+  },
+  "localAi": {
+    "tools": {
+      "claudeCode": "Claude Code",
+      "codex": "Codex",
+      "cursor": "Cursor",
+      "vscode": "VS Code",
+      "claudeDesktop": "Claude 桌面版",
+      "other": "其他",
+      "unknown": "AI 工具"
+    },
+    "action": "连接电脑上的 AI 工具",
+    "keywords": "mcp claude code codex cursor vscode 订阅 本机 命令行 终端 agents",
+    "notice": {
+      "changed": "{{tool}} 改了 {{count}} 处 · {{first}}",
+      "changedMore": "{{tool}} 改了 {{count}} 处 · {{first}} 等",
+      "changedNone": "{{tool}} 改了项目",
+      "whileAway": "你不在时，{{tool}} 改了 {{count}} 个文件，已并入",
+      "yoursKept": "其中 {{count}} 处你也改了，保留了你的",
+      "show": "查看",
+      "undo": "撤销这次",
+      "showTitle": "{{tool}} 改了 {{count}} 处",
+      "changes": "改了什么",
+      "held": "项目现在只读，{{tool}} 的改动先留在文件夹里，能编辑以后再并入"
+    },
+    "operation": "{{tool}}（电脑上的）· 改了 {{count}} 处",
+    "source": "电脑上的 AI",
+    "connected": "{{tool}} 连着（{{since}} 起）",
+    "connectedHere": "{{tool}} 连着这个项目（{{since}} 起）",
+    "noneConnected": "还没有工具连着这个项目",
+    "entry": {
+      "card": "用电脑上的 Claude Code、Codex",
+      "cardAbout": "有 Claude 或 ChatGPT 订阅时",
+      "picker": "用电脑上的 Claude Code、Codex…"
+    },
+    "guide": {
+      "title": "让电脑上的 AI 工具改这个项目",
+      "inFolder": "这个项目在文件夹「{{folder}}」里",
+      "browserOnly": "这个项目只在浏览器里，要先关联一个文件夹",
+      "linkFolder": "关联文件夹…",
+      "prepare": "准备",
+      "node": "需要 Node.js 22 或更新",
+      "nodeDownload": "下载 Node.js",
+      "nodeCheck": "检查装没装：",
+      "pick": "选你的工具",
+      "recommended": "推荐",
+      "toolsLabel": "工具",
+      "system": "系统",
+      "systems": {
+        "windows": "Windows",
+        "mac": "macOS",
+        "linux": "Linux"
+      },
+      "once": "装一次",
+      "each": "每次用",
+      "onlyServer": "只装工具，不装插件",
+      "codexSlow": "启动超时的话",
+      "openWindows": "在资源管理器里打开{{folder}}，在地址栏输入 cmd 回车，再输入：",
+      "openMac": "在访达里右键{{folder}} › 服务 › 新建位于文件夹位置的终端窗口，再输入：",
+      "openLinux": "在{{folder}}里打开终端，再输入：",
+      "theFolder": "「{{folder}}」文件夹",
+      "projectFolder": "项目文件夹",
+      "addCursor": "添加到 Cursor",
+      "addVscode": "添加到 VS Code",
+      "byHand": "手动添加",
+      "cursorFile": "写进 ~/.cursor/mcp.json：",
+      "openWith": "用 {{tool}} 打开{{folder}}",
+      "pathLabel": "项目文件夹的路径",
+      "pathWindows": "在资源管理器里右键项目文件夹 › 复制为路径，粘贴到这里",
+      "pathMac": "在访达里选中项目文件夹，按 ⌥⌘C 拷贝路径，粘贴到这里",
+      "pathLinux": "项目文件夹的完整路径，粘贴到这里",
+      "desktopFile": "写进 {{file}}，再重启 Claude：",
+      "otherRun": "在项目文件夹里运行：",
+      "otherProject": "或者在别处运行：",
+      "try": "试一句",
+      "trySay": "看一下这个 AnimaQuill 项目，告诉我时间轴上有什么。",
+      "allow": "工具问要不要允许时，可以选“以后不再问”：改动都能在编辑器里整批撤销。",
+      "cli": "命令行",
+      "cliCheck": "检查项目",
+      "cliDescribe": "项目概要",
+      "cliGuide": "手册",
+      "agents": "给 AI 的说明（AGENTS.md）",
+      "agentsHas": "这个项目有一份",
+      "open": "打开",
+      "addAgents": "给这个项目加一份",
+      "copy": "复制",
+      "copied": "已复制",
+      "copyFailed": "复制不了，请手动选中",
+      "done": "好了",
+      "close": "关闭",
+      "topicHolder": "<主题>",
+      "pathHolder": "<项目文件夹的路径>"
+    },
+    "settings": {
+      "wizard": "连接向导…",
+      "recent": "最近连过「{{project}}」的",
+      "recentNone": "还没有",
+      "use": "{{tool}} · {{when}} · {{count}} 次任务",
+      "now": "连着"
+    },
+    "agents": {
+      "has": "有",
+      "none": "没有",
+      "open": "打开",
+      "add": "加一份"
     }
   }
 }

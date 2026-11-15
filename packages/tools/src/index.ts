@@ -11,7 +11,7 @@ export {
   type Address,
 } from "./address.ts";
 export { CallerState } from "./caller.ts";
-export type { ObjectChange } from "./changes.ts";
+export { describeChanges, type ObjectChange } from "./changes.ts";
 export type { OtherChange, OtherWho } from "./context.ts";
 export { aiCode, failureText, failureWords, operationFailureText } from "./failures-en.ts";
 export { textKeys, type TextKey } from "./text-keys.ts";

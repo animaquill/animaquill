@@ -423,6 +423,7 @@ test.describe("pictures of every group", () => {
       "AI 模型",
       "模型适配包",
       "AI 聊天",
+      "电脑上的 AI 工具",
       "账号",
       "存储和数据",
       "关于",

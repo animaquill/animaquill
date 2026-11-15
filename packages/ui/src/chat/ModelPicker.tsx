@@ -547,6 +547,19 @@ function Bubble({
               {t("chat.picker.packs")}
             </button>
           </div>
+          <div className={styles.bubbleFoot}>
+            <button
+              type="button"
+              className={styles.link}
+              data-testid="chat-picker-local-ai"
+              onClick={() => {
+                onClose();
+                workbench.openLocalAiGuide();
+              }}
+            >
+              {t("localAi.entry.picker")}
+            </button>
+          </div>
           {side !== "over" && packMenu}
         </>
       )}

@@ -47,6 +47,8 @@ import { OperationStatus } from "./OperationStatus.tsx";
 import { PlaceIcon, type Place } from "./PlaceIcon.tsx";
 import styles from "./StatusBar.module.css";
 import { Tip } from "./Tip.tsx";
+import { toolName } from "../workbench/tool-activity.ts";
+import { whenText } from "../local-ai/LocalAiSettings.tsx";
 
 const CHOICES = ["auto", "mouse", "trackpad", "touch"] as const;
 
@@ -331,15 +333,27 @@ function troubleText(trouble: FolderTrouble, t: TFunction): string {
  * what keeps changes from it, and the one thing that helps, right there.
  */
 function FolderSaveStatus({ open }: { open: OpenFolder }) {
-  const { projectFolders, layout } = useWorkbench();
+  const { projectFolders, layout, tools } = useWorkbench();
   const { t } = useTranslation();
+  const { connections } = useSyncExternalStore(tools.subscribe, tools.getSnapshot);
   const { record, snapshot } = open;
   const { role, status, trouble, blocked, writtenAt, unrecorded } = snapshot;
   if (!projectFolders) return null;
-  const about =
+  const where =
     writtenAt === undefined
       ? t("folder.folderName", { folder: record.folder.name })
       : t("folder.writtenAt", { folder: record.folder.name, time: writtenWhen.format(writtenAt) });
+  // Who is connected through the local MCP, see `ToolActivity`.
+  const about = [
+    where,
+    ...connections.map((connection) =>
+      t("localAi.connected", {
+        tool: toolName(t, connection.client),
+        since: whenText(connection.startedAt),
+        interpolation: { escapeValue: false },
+      }),
+    ),
+  ].join("\n");
   const text =
     role === "starting"
       ? t("folder.status.starting")

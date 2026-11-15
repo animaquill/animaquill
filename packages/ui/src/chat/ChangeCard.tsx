@@ -228,7 +228,7 @@ function ChangesView({
 }
 
 /** One change in a line: what it is, and how up to three of its fields changed. */
-function changeText(say: Say, change: TurnChange, named: string | undefined): string {
+export function changeText(say: Say, change: TurnChange, named: string | undefined): string {
   const t = say;
   const kind = t(`chat.kinds.${change.kind}`);
   const name = named ? `「${named}」` : "";

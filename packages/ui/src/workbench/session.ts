@@ -107,6 +107,8 @@ export interface SessionOptions {
   readonly compactThrough?: (key: string) => Promise<number | undefined>;
   /** For tests: how long a log gets before it is made shorter when the project opens. */
   readonly compactAfter?: number;
+  /** The files a new project starts with, see `startingFiles`, as people set it up. */
+  readonly startingFiles?: () => Readonly<Record<string, string>>;
 }
 
 export interface SessionMessages {
@@ -283,7 +285,7 @@ export class ProjectSession {
   async create(name: string, format?: NewProject["format"]): Promise<boolean> {
     const store = ProjectStore.create(
       createProject({ name, ...(format && { format }) }),
-      startingFiles(),
+      (this.#options.startingFiles ?? startingFiles)(),
     );
     const { id } = store.getState().manifest;
     const state = store.encodeState();

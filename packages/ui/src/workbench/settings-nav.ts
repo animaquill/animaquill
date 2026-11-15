@@ -4,7 +4,7 @@ import { Flag } from "./flag.ts";
 
 /**
  * The groups of the settings, in the order of their list (docs/design/settings-and-properties.md of
- * AnimaQuill Cloud, 4.3). "电脑上的 AI 工具" comes with the local MCP (6.16a), not before. "cloud" only where people are signed in to a platform, "account" only
+ * AnimaQuill Cloud, 4.3). "cloud" only where people are signed in to a platform, "account" only
  * where there is a platform, see `visibleGroups`.
  */
 export type SettingsGroup =
@@ -16,6 +16,7 @@ export type SettingsGroup =
   | "models"
   | "packs"
   | "chat"
+  | "localAi"
   | "account"
   | "cloud"
   | "storage"
@@ -27,7 +28,7 @@ export const SETTINGS_SECTIONS: readonly (readonly [
   groups: readonly SettingsGroup[],
 ])[] = [
   ["editor", ["general", "editing", "playback", "export", "keys"]],
-  ["ai", ["models", "packs", "chat"]],
+  ["ai", ["models", "packs", "chat", "localAi"]],
   ["account", ["account", "cloud"]],
   ["other", ["storage", "about"]],
 ];

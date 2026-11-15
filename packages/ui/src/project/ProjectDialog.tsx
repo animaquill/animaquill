@@ -1,6 +1,7 @@
 import type { ProjectStore } from "@animaquill/core";
 import {
   BookImage,
+  Bot,
   ChevronLeft,
   ChevronRight,
   Clapperboard,
@@ -44,6 +45,7 @@ import {
   TimelinesGroup,
 } from "./ProjectGroups.tsx";
 import { StorageGroup } from "./StorageGroup.tsx";
+import { AgentsGroup } from "../local-ai/AgentsGroup.tsx";
 import styles from "./Project.module.css";
 
 const ICONS: Readonly<Record<ProjectGroup, ComponentType<{ size?: number }>>> = {
@@ -55,6 +57,7 @@ const ICONS: Readonly<Record<ProjectGroup, ComponentType<{ size?: number }>>> = 
   cover: BookImage,
   fonts: Type,
   libraries: Library,
+  agents: Bot,
   storage: HardDrive,
 };
 
@@ -293,6 +296,8 @@ function GroupPage(props: {
       return <FontsGroup store={props.store} />;
     case "libraries":
       return <LibrariesGroup store={props.store} />;
+    case "agents":
+      return <AgentsGroup store={props.store} locked={props.locked} />;
     case "storage":
       return <StorageGroup store={props.store} />;
   }

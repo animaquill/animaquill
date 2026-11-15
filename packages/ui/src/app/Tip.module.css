@@ -30,3 +30,7 @@
   color: var(--aq-text-muted);
   font: inherit;
 }
+
+.usage {
+  white-space: pre-line;
+}

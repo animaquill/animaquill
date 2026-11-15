@@ -28,6 +28,14 @@ export function hashText(text: string): string {
   return formatHash(sha256(new TextEncoder().encode(text)));
 }
 
+/** SHA-256 of a text as UTF-8, in lowercase hex: how the notes of the local MCP write it down. */
+export function hashTextHex(text: string): string {
+  let hex = "";
+  for (const byte of sha256(new TextEncoder().encode(text)))
+    hex += byte.toString(16).padStart(2, "0");
+  return hex;
+}
+
 /**
  * The hash of a file of any size. The browser has a faster way, but only for what fits in memory
  * as a whole, and WebAssembly is not an option because of the Content-Security-Policy.

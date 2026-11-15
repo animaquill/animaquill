@@ -4,6 +4,7 @@ export {
   formatHash,
   hashFile,
   hashText,
+  hashTextHex,
   hashingCopy,
   isSameHash,
   type HashOptions,

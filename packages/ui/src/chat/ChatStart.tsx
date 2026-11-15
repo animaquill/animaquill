@@ -1,5 +1,5 @@
 import { kindOf } from "@animaquill/agent";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Laptop } from "lucide-react";
 import { useEffect, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
@@ -55,6 +55,19 @@ export function Onboarding() {
           </button>
         );
       })}
+      <button
+        type="button"
+        className={styles.serviceButton}
+        data-testid="chat-onboard-local-ai"
+        onClick={() => workbench.openLocalAiGuide()}
+      >
+        <Laptop size={20} aria-hidden className={styles.localAiIcon} />
+        <span className={styles.serviceButtonText}>
+          <strong>{t("localAi.entry.card")}</strong>
+          <span className={styles.muted}>{t("localAi.entry.cardAbout")}</span>
+        </span>
+        <ChevronRight size={14} aria-hidden />
+      </button>
       <button type="button" className={styles.link} onClick={() => add(true)}>
         {t("chat.onboard.more")}
       </button>

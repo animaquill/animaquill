@@ -24,7 +24,26 @@ export function NotificationList() {
             onFocus={() => notifications.hold(item.id)}
             onBlur={() => notifications.release(item.id)}
           >
-            <span>{item.message}</span>
+            <span>
+              {item.message}
+              {item.warning && (
+                <span className={styles.warning} data-testid="notification-warning">
+                  {item.warning.text}
+                  {item.warning.action && (
+                    <button
+                      type="button"
+                      className={styles.action}
+                      onClick={() => {
+                        notifications.dismiss(item.id);
+                        item.warning?.action?.run();
+                      }}
+                    >
+                      {item.warning.action.label}
+                    </button>
+                  )}
+                </span>
+              )}
+            </span>
             {item.actions?.map(({ label, run }) => (
               <button
                 key={label}

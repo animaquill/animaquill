@@ -208,9 +208,9 @@ export class FolderTools {
 
   async #save(project: FolderProject): Promise<void> {
     this.#unsaved = true;
-    const written = await project.save();
+    // The note of the batch goes before the files, see `FolderProject.save`.
+    await project.save((planned) => this.#notes?.note(planned, this.#client) ?? Promise.resolve());
     this.#unsaved = project.unwritten;
-    if (written.length > 0) await this.#notes?.note(written, this.#client);
   }
 
   /** Takes away what says the connection is on. */

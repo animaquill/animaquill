@@ -220,9 +220,13 @@ export class FolderProject {
   /**
    * Writes what the project changed since it was last written or read: files whose text changed,
    * and takes away the files the project no longer has. A file that changed in the folder since it
-   * was looked at comes in first. Resolves to what was written.
+   * was looked at comes in first. Resolves to what was written. `beforeWrite` hears what is about
+   * to be written, before any of it is: the note of the batch goes first, so that the editor never
+   * sees a file of the batch before the note that says whose it is.
    */
-  async save(): Promise<readonly Written[]> {
+  async save(
+    beforeWrite?: (planned: readonly Written[]) => Promise<unknown>,
+  ): Promise<readonly Written[]> {
     const written: Written[] = [];
     for (let round = 0; round < WRITE_ROUNDS; round++) {
       // An export can start, or animaquill.json go, after the folder was last looked at: nothing
@@ -259,6 +263,10 @@ export class FolderProject {
         continue;
       }
       const texts = new Map(writes);
+      await beforeWrite?.([
+        ...writes.map(([path, text]) => ({ path, hash: hashOf(text) })),
+        ...removals.map((path) => ({ path, hash: undefined })),
+      ]);
       for (const rank of inRanks(texts.keys())) {
         for (const path of rank) {
           const text = texts.get(path) as string;

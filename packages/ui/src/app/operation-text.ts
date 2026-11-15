@@ -17,8 +17,13 @@ const propertyName = (t: TFunction, path: string) =>
  * An operation in a few words: what people did here by its main command, or by the property it
  * changed; an AI task and a batch of files by how much they changed.
  */
-export function operationText(t: TFunction, operation: Operation): string {
+export function operationText(
+  t: TFunction,
+  operation: Operation,
+  tool?: { readonly name: string; readonly count: number },
+): string {
   const { source, commands, properties, count } = operation;
+  if (tool) return t("localAi.operation", { tool: tool.name, count: tool.count });
   if (source === "ai") return t("operations.ai", { count });
   if (source === "folder") return t("operations.folder", { count });
   if (source === "other") return t("operations.other");

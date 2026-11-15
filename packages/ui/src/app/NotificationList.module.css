@@ -61,3 +61,15 @@
   color: var(--aq-accent);
   white-space: nowrap;
 }
+
+.warning {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  margin-top: 4px;
+  color: var(--aq-warning);
+}
+
+.item .warning button.action {
+  padding: 0 4px;
+}
