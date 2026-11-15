@@ -135,14 +135,16 @@ function SettingsDialog() {
       : undefined;
   // The page of a model pack: its name, as its label has it.
   const pack =
-    group === "packs" && place.depth >= 2 && place.pack !== undefined
-      ? (() => {
-          const shown = workbench.packs.packOf(place.pack);
-          return shown
-            ? labelParts(t, shown, originIn(shown, workbench.packs.getSnapshot())).name
-            : place.pack;
-        })()
-      : undefined;
+    group === "packs" && place.depth >= 2 && place.adding !== undefined
+      ? t("ai.packs.install")
+      : group === "packs" && place.depth >= 2 && place.pack !== undefined
+        ? (() => {
+            const shown = workbench.packs.packOf(place.pack);
+            return shown
+              ? labelParts(t, shown, originIn(shown, workbench.packs.getSnapshot())).name
+              : place.pack;
+          })()
+        : undefined;
   const opened = service ?? pack;
   const showList = !narrow || (depth === 0 && found === undefined);
   const showPage = found === undefined && (!narrow || depth > 0);
@@ -335,10 +337,8 @@ function GroupPage({ group }: { readonly group: SettingsGroup }) {
       );
     case "packs":
       return (
-        <div className={styles.whole}>
-          <div className={styles.scroll}>
-            <ModelPacksSettings />
-          </div>
+        <div className={styles.whole} data-group="packs">
+          <ModelPacksSettings />
         </div>
       );
     case "cloud":

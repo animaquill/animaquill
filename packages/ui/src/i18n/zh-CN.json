@@ -827,20 +827,14 @@
         }
       },
       "packs": {
-        "choice": {
-          "name": "每个模型用哪个适配包",
-          "help": "给每个启用的模型选适配包，不选时自动选最匹配的。",
-          "keywords": "pack 适配包 提示词 prompt 模型"
-        },
         "installed": {
           "name": "已装的适配包",
-          "help": "安装、查更新和卸载适配包。",
-          "keywords": "pack 适配包 安装 卸载 更新 github"
+          "help": "安装、查更新和删除适配包。",
+          "keywords": "pack 适配包 安装 卸载 删除 更新 github"
         },
         "hidden": {
-          "name": "显示对照用的旧写法",
-          "help": "列出对照用的旧写法，供为某个模型选它做比较。",
-          "keywords": "pack 对照 旧写法 比较"
+          "name": "在选模型的气泡里显示对照用的包",
+          "keywords": "pack 对照 旧写法 比较 隐藏"
         }
       },
       "chat": {
@@ -2797,17 +2791,13 @@
     "removeAllKeysConfirm": "删除这个浏览器里保存的全部 AI 服务 key？服务的设置会留着。",
     "packs": {
       "title": "模型适配包",
-      "intro": "适配包是给某类模型的提示词和调用设置，每个包是一个 git 仓库，README 就是它的介绍。没选时用“自动”：最匹配这个模型的包，没有就用通用的。在这里换的从下一次新对话起用；在聊天的模型气泡里换的，从那个对话的下一轮起用。",
-      "noModels": "启用了模型以后，这里显示每个模型用哪个适配包。",
-      "choose": "{{model}} 用的适配包",
       "defaultName": "通用",
       "comparisonName": "对照用的 2026.1 旧写法",
       "authorNone": "没写作者",
       "version": "版本 {{version}}",
       "license": "许可 {{license}}",
-      "models": "适用：{{models}}",
-      "modelsNone": "不按模型匹配：没有专门适配包的模型用它，也可以为某个模型选它",
-      "modelsHidden": "对照用的旧写法：不会自动用在任何模型上，只在为某个模型选它时才用",
+      "modelsNone": "没有专门包的模型",
+      "modelsHidden": "不自动用",
       "sourceBuiltin": "随 AnimaQuill 提供",
       "sourceFolder": "本机文件夹 {{name}}",
       "sourceFile": "本机文件 {{name}}",
@@ -2815,18 +2805,13 @@
       "checkUpdate": "查更新",
       "checking": "正在查…",
       "upToDate": "“{{name}}”已是最新。",
-      "remove": "卸载",
-      "removeConfirm": "卸载适配包“{{name}}”？为它选过的模型回到自动选的包，正在进行的对话下一轮也重新选。",
+      "remove": "删除",
       "dropped": "有 {{count}} 处在这一版里不再适用，已按通用写法：",
       "disabled": "这个包在这一版里用不了，已改用通用写法。{{reason}}",
-      "installFolder": "从本机文件夹装…",
-      "installFile": "从 pack.json 文件装…",
-      "installGitHub": "从 GitHub 地址装…",
       "githubPlaceholder": "https://github.com/作者/仓库",
-      "showHidden": "显示对照用的包",
       "fetching": "正在取…",
       "saveFailed": "适配包没能保存。",
-      "otherPack": "那里现在是另一个包（{{id}}），不是“{{name}}”的更新，没有装。要装它，请用“从 GitHub 地址装…”或“从本机文件夹装…”。",
+      "otherPack": "那里现在是另一个包（{{id}}），不是“{{name}}”的更新，没有装。要装它，请用“＋ 安装”。",
       "unexpected": "读这个包时出了没预料到的错，这个包装不了。",
       "github": {
         "address": "这个地址认不出是 GitHub 上的仓库。格式：https://github.com/作者/仓库，也可以带 /tree/分支、标签或提交。",
@@ -3036,19 +3021,11 @@
           "onlyLeft": "只有 A",
           "onlyRight": "只有 B"
         },
-        "readme": "介绍（README）",
+        "readme": "介绍",
         "changes": "改了什么",
-        "full": "发给模型的全文",
-        "against": "和这个比",
-        "claimed": "作者自称“{{author}}”",
-        "changeCount": "改了 {{words}} 段提示词、调用设置 {{call}} 项"
+        "full": "全文",
+        "against": "和这个比"
       },
-      "perModel": "每个模型用哪个包",
-      "byChosen": "你选的",
-      "details": "详情",
-      "reset": "恢复自动",
-      "hiddenTag": "对照用",
-      "showHiddenHelp": "开发和评测用：勾上以后“对照用的 2026.1 旧写法”出现在上面的列表和聊天的模型气泡里，能为某个模型选它。它不会被自动选中。",
       "choice": {
         "fits": "适用于 {{model}}",
         "others": "其他已装的",
@@ -3080,23 +3057,11 @@
         "github": "GitHub",
         "gone": "已卸载"
       },
-      "installGitHubTitle": "从 GitHub 地址安装适配包",
-      "installGitHubHelp": "填包的 GitHub 仓库地址，比如 https://github.com/作者/仓库。仓库有 v1.2.0 这样的版本标签时装最新的标签，没有就装默认分支的最新提交；要装某个分支、标签或提交，写成 …/tree/名字。只能装公开仓库。读到以后先把它改了什么逐段列出来，你确认了才装。",
-      "githubAddress": "GitHub 地址",
-      "githubRead": "读取",
-      "installedCount": "已装的包（{{count}}）",
-      "builtinLine": "随 AnimaQuill 更新，不能卸载",
-      "usedBy": "用在 {{models}}",
-      "usedByNone": "没有用在你的模型上",
       "updateTo": "有更新 v{{version}}",
       "updateCommit": "有更新（提交 {{commit}}）",
-      "seeUpdate": "看更新",
+      "seeUpdate": "更新…",
       "reread": "重新读取…",
-      "useFor": "用在…",
-      "useForHelp": "勾上的模型改用这个包，从下一次新对话起：",
-      "openGitHub": "在 GitHub 打开",
       "toGitHub": "改为从 GitHub 安装（以后能查更新）",
-      "updateHelp": "“看更新”先列出新版本改了什么，你确认了才装。",
       "sourceGitHubTag": "{{where}}（提交 {{commit}}，标签 {{ref}}）",
       "sourceGitHubBranch": "{{where}}（提交 {{commit}}，分支 {{ref}}）",
       "sourceDiscover": "“发现”（提交 {{commit}}）",
@@ -3106,7 +3071,6 @@
         "cut": "介绍太长，只显示前 64 KB。",
         "whole": "在 GitHub 上看全文",
         "none": "这个包没有介绍。",
-        "note": "README 只按 Markdown 显示：不跑脚本、不嵌网页、HTML 按文字显示；仓库里的图片直接显示，别处的图片不显示，可以在新标签页打开（那个网站会看到你的网络地址）；链接在新标签页打开，文字和地址不一样时后面写出地址。",
         "elsewhere": "别处的图片 {{host}}/…（编辑器不显示别处的图片）",
         "openImage": "在新标签页打开",
         "noImage": "图片（不显示）",
@@ -3115,11 +3079,31 @@
         "builtin": "随 AnimaQuill 提供，随 AnimaQuill 更新，不能卸载。",
         "openImageTitle": "打开后，图片所在的网站会看到你的网络地址"
       },
-      "installSection": "装新的适配包",
-      "installSectionHelp": "适配包是一个 GitHub 仓库，贴上仓库地址就能装；自己写的包可以先从本机文件夹装上试。装之前会把它改了什么、它的介绍都给你看，你确认了才装。",
-      "noneInstalled": "还没装过别人写的包。适配包是一个 GitHub 仓库，贴上地址就能装。",
-      "formatLink": "怎么写一个适配包",
-      "formatUrl": "https://github.com/animaquill/animaquill/blob/main/docs/model-packs.md"
+      "install": "安装",
+      "installGo": "安装…",
+      "from": "从哪里装",
+      "fromWay": {
+        "github": "GitHub 地址",
+        "folder": "本机文件夹",
+        "file": "单个文件"
+      },
+      "address": "地址",
+      "pickFolder": "选择文件夹…",
+      "pickFile": "选择 pack.json…",
+      "meta": {
+        "source": "来源",
+        "models": "适用",
+        "usedBy": "正在用它",
+        "author": "作者",
+        "license": "许可",
+        "homepage": "主页",
+        "changes": "改动",
+        "shown": "在选模型的气泡里显示"
+      },
+      "changeCount": "{{words}} 段提示词、{{call}} 项调用设置",
+      "removeTitle": "删除“{{name}}”",
+      "removeUsed": "正在用它的模型会改回自动：{{models}}",
+      "removeUnused": "没有模型在用它。"
     },
     "autoTitle": "第一轮之后让模型给对话起一个短标题（一次很小的请求）",
     "baseUrlSecret": "地址里不能带密钥，请填在 key 里。",
@@ -3516,7 +3500,7 @@
     },
     "packLine": "适配包：{{name}}",
     "packDropped": "这个包有 {{count}} 处在这一版的工具里不再适用，那几处按通用写法。",
-    "packNone": "{{model}} 用 {{label}}。可以在设置的“模型适配包”里选一个已装的包。",
+    "packNone": "{{model}} 用 {{label}}。可以在选模型的气泡里换。",
     "packSwitched": "换成 {{model}}，改用适配包 {{name}}",
     "packSwitchedNone": "换成 {{model}}，用 {{label}}",
     "packChanged": "原来的适配包不在了，改用 {{name}}",

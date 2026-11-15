@@ -1,10 +1,9 @@
+import { enabledModelsOf, type AiSettings } from "@animaquill/agent";
 import { checkPack } from "@animaquill/tools";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
-import dialogStyles from "../app/DialogHost.module.css";
-import settingsStyles from "./AiSettings.module.css";
-import styles from "./ModelPacks.module.css";
+import type { Workbench } from "../workbench/workbench.ts";
 import { PackDialog, type PackDialogChoice, type PackDialogProps } from "./PackDialog.tsx";
 import {
   readFolder,
@@ -47,13 +46,18 @@ export interface PackInstall {
   readonly element: ReactNode;
 }
 
+export interface PackInstallOptions {
+  /** A pack was installed or updated, as people said yes to it. */
+  readonly onInstalled?: (id: string) => void;
+}
+
 /**
  * What installing a pack takes: reading it (from GitHub, a folder or a pack.json), checking it, and
  * showing what it changes, its README a tab away (`PackDialog`); nothing is kept before people say
  * so. Looking at an update of one pack only takes that pack: another id there is said, not shown.
  */
-export function usePackInstall(): PackInstall {
-  const { ai, packs, dialogs, notifications } = useWorkbench();
+export function usePackInstall(options: PackInstallOptions = {}): PackInstall {
+  const { ai, packs, chat, dialogs, notifications } = useWorkbench();
   const { t } = useTranslation();
   const [pending, setPending] = useState<Pending | undefined>();
   const [busy, setBusy] = useState<string | undefined>();
@@ -115,6 +119,7 @@ export function usePackInstall(): PackInstall {
     if (!input || !source || !pack) return;
     const check = packs.install(textFiles(input), source, readme);
     if (!check.pack) return;
+    options.onInstalled?.(check.pack.id);
     if (switchTo.length > 0) ai.choosePack(switchTo, pack.id);
     for (const id of new Set(keep.map((each) => each.pack))) {
       ai.choosePack(
@@ -151,9 +156,14 @@ export function usePackInstall(): PackInstall {
     });
 
   const remove = async (installed: InstalledPack) => {
+    const name = installed.pack ? packName(t, installed.pack) : installed.id;
+    const users = packUsers(ai, chat, ai.getSnapshot(), installed.id);
     const sure = await dialogs.confirm({
-      title: t("ai.packs.remove"),
-      message: t("ai.packs.removeConfirm", { name: installed.pack?.name ?? installed.id }),
+      title: t("ai.packs.removeTitle", { name }),
+      message:
+        users.length > 0
+          ? t("ai.packs.removeUsed", { models: users.join("、") })
+          : t("ai.packs.removeUnused"),
       confirm: t("ai.packs.remove"),
       danger: true,
     });
@@ -235,79 +245,17 @@ export function usePackInstall(): PackInstall {
   };
 }
 
-/**
- * Installing from GitHub: the address of a repository, as packs are now, or of a folder of one.
- * What is read then shows in the install dialog; nothing is kept before people say so.
- */
-export function GitHubInstall(props: {
-  readonly install: PackInstall;
-  readonly onClose: () => void;
-}) {
-  const { install } = props;
-  const { t } = useTranslation();
-  const [address, setAddress] = useState("");
-  const dialog = useRef<HTMLDialogElement>(null);
-  useLayoutEffect(() => {
-    const element = dialog.current;
-    element?.showModal();
-    return () => element?.close();
-  }, []);
-  const go = async () => {
-    if (await install.fromGitHub(address)) props.onClose();
-  };
-  return (
-    <dialog
-      ref={dialog}
-      className={dialogStyles.wide}
-      aria-label={t("ai.packs.installGitHubTitle")}
-      data-testid="pack-install"
-      onCancel={(event) => {
-        event.preventDefault();
-        props.onClose();
-      }}
-    >
-      <form
-        className={dialogStyles.content}
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (address.trim() !== "" && install.busy === undefined) void go();
-        }}
-      >
-        <h2>{t("ai.packs.installGitHubTitle")}</h2>
-        <p>{t("ai.packs.installGitHubHelp")}</p>
-        <div className={styles.install}>
-          <input
-            type="url"
-            value={address}
-            autoFocus
-            spellCheck={false}
-            aria-label={t("ai.packs.githubAddress")}
-            placeholder={t("ai.packs.githubPlaceholder")}
-            onChange={(event) => {
-              setAddress(event.target.value);
-              install.clearFailure();
-            }}
-          />
-          <button
-            type="submit"
-            className={`${settingsStyles.button} ${styles.primary}`}
-            disabled={address.trim() === "" || install.busy !== undefined}
-            data-testid="pack-github-read"
-          >
-            {install.busy === address ? t("ai.packs.fetching") : t("ai.packs.githubRead")}
-          </button>
-        </div>
-        {install.failure && (
-          <p className={settingsStyles.warning} role="alert" data-testid="pack-install-failure">
-            {install.failure}
-          </p>
-        )}
-        <div className={dialogStyles.buttons}>
-          <button type="button" onClick={props.onClose}>
-            {t("ai.packs.dialog.close")}
-          </button>
-        </div>
-      </form>
-    </dialog>
-  );
+/** The names of the models on that use a pack now, chosen for them or by themselves. */
+export function packUsers(
+  ai: Workbench["ai"],
+  chat: Workbench["chat"],
+  settings: Pick<AiSettings, "services">,
+  id: string,
+): string[] {
+  return enabledModelsOf(settings)
+    .filter((model) => chat.packOptions(model).current.id === id)
+    .map((model) => {
+      const service = settings.services.find(({ enabled }) => enabled.includes(model));
+      return (service && ai.modelOf(service.id, model)?.name) ?? model;
+    });
 }

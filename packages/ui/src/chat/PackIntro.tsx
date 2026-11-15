@@ -80,7 +80,6 @@ export function PackIntro(props: {
           </p>
         </>
       )}
-      <p className={styles.readmeNote}>{t("ai.packs.readme.note")}</p>
     </div>
   );
 }

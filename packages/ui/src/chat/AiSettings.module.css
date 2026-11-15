@@ -306,7 +306,8 @@
   cursor: pointer;
 }
 
-.treeAdd:hover {
+.treeAdd:hover,
+.treeAdd[aria-current="true"] {
   color: var(--aq-text);
   background: var(--aq-bg-hover);
 }

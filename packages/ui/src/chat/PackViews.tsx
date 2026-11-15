@@ -14,7 +14,6 @@ import type { TFunction } from "i18next";
 import { ChevronLeft, ExternalLink } from "lucide-react";
 import {
   createContext,
-  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -25,9 +24,10 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
+import aiStyles from "./AiSettings.module.css";
 import styles from "./ModelPacks.module.css";
 import { Sides, sizeText, visible } from "./PackDialog.tsx";
-import { usePackInstall } from "./PackInstall.tsx";
+import { packUsers, usePackInstall, type PackInstall } from "./PackInstall.tsx";
 import { PackIntro } from "./PackIntro.tsx";
 import { PackLabel } from "./PackLabel.tsx";
 import { detailsOf, gitHubPlace, type PackDetails, type PackReadme } from "./packs.ts";
@@ -45,7 +45,7 @@ import { wordDiff, type DiffRun } from "./wordDiff.ts";
 /** Which page of a pack's details is open. */
 export type PackView = "readme" | "changes" | "compare" | "full";
 
-export interface PackViewerProps {
+export interface PackPageProps {
   /** The page open first: the README, unless asked otherwise. */
   readonly view?: PackView;
   /** The pack to look at. */
@@ -54,13 +54,18 @@ export interface PackViewerProps {
   readonly other?: string;
   /** The model the words are merged for; the first model on when none. */
   readonly model?: string;
-  /** Where going back leads, as the button says it: "模型适配包" in the settings. */
-  readonly back?: string;
+  /** The pack is no more, as people removed it here. */
+  readonly onGone?: () => void;
+  /** Installing as the page around it does, with its dialog there: else the page's own. */
+  readonly install?: PackInstall;
+}
+
+export interface PackViewerProps extends PackPageProps {
   readonly onClose: () => void;
 }
 
 /** What opening a pack's details takes, where it is opened from. */
-export type PackViewRequest = Omit<PackViewerProps, "onClose" | "back">;
+export type PackViewRequest = Omit<PackViewerProps, "onClose" | "onGone">;
 
 /**
  * Opens a pack's details over the chat, from anywhere in it (the bubble of models, the menu of the
@@ -70,56 +75,68 @@ export const OpenPackView = createContext<((request: PackViewRequest) => void) |
   undefined,
 );
 
-/** A small box with a word: a version, an update. */
-function Badge(props: {
-  readonly children: ReactNode;
-  readonly kind?: "update";
-  readonly testId?: string;
-}) {
+/**
+ * A pack's page over the chat (docs/design/settings-and-properties.md of AnimaQuill Cloud, 8.4):
+ * `PackPage` under a bar with the way back (also Esc).
+ */
+export function PackViewer(props: PackViewerProps) {
+  const { t } = useTranslation();
+  const back = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    back.current?.focus();
+  }, []);
   return (
-    <span className={styles.badge} data-kind={props.kind} data-testid={props.testId}>
-      {props.children}
-    </span>
+    <section
+      className={styles.layer}
+      aria-label={t("ai.packs.viewer.title")}
+      data-testid="pack-viewer"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape" || event.defaultPrevented) return;
+        if ((event.target as Element).closest("dialog")) return;
+        event.preventDefault();
+        event.stopPropagation();
+        props.onClose();
+      }}
+    >
+      <div className={styles.layerBar}>
+        <button
+          type="button"
+          ref={back}
+          className={styles.layerBack}
+          data-testid="pack-viewer-back"
+          onClick={props.onClose}
+        >
+          <ChevronLeft size={14} aria-hidden /> {t("ai.packs.viewer.back")}
+        </button>
+      </div>
+      <div className={styles.layerBody}>
+        <PackPage {...props} onGone={props.onGone ?? props.onClose} />
+      </div>
+    </section>
   );
 }
 
 /**
- * The page of one model pack (docs/design/settings-and-properties.md of AnimaQuill Cloud, 8.4): on
- * top its label, version and update, what can be done with it (look at the update, use it for some
- * models, open it on GitHub, remove it) and a line of what it is (where from, who says they wrote
- * it, licence, models it is for, models that use it, how much it changes); then four pages: its
- * README, what it changes, a comparison with another pack, and all a model gets with it. It fills
- * the place it is put in, one level in from where it was opened, with a way back (also Esc): over
- * the chat, or the content of the settings. What packs say is text, never markup; the README is
- * Markdown shown as `Readme` shows what someone else wrote.
+ * The page of one model pack, as pi-web shows a plugin (docs/design/settings-and-properties.md of
+ * AnimaQuill Cloud, 8.4): on top its label and version, an update with the way to look at it, and
+ * what can be done with it (GitHub, reading it again, removing it; nothing for AnimaQuill's own);
+ * under that a few rows of what it is (where from, the models it is for, those that use it,
+ * licence); then four pages: its README, what it changes, a comparison with another pack, and all a
+ * model gets with it. Which model uses which pack is chosen in the bubble of models, not here. What
+ * packs say is text, never markup; the README is Markdown shown as `Readme` shows what someone else
+ * wrote.
  */
-export function PackViewer(props: PackViewerProps) {
+export function PackPage(props: PackPageProps) {
   const { ai, packs, chat } = useWorkbench();
   const { t } = useTranslation();
   const settings = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
   const snapshot = useSyncExternalStore(packs.subscribe, packs.getSnapshot);
-  const install = usePackInstall();
-  const back = useRef<HTMLButtonElement>(null);
+  const own = usePackInstall();
+  const install = props.install ?? own;
   const models = enabledModelsOf(settings);
   const [view, setView] = useState<PackView>(props.view ?? "readme");
   const id = props.pack;
   const [model, setModel] = useState(props.model ?? models[0] ?? "");
-  const [using, setUsing] = useState(false);
-  const usingBox = useRef<HTMLSpanElement>(null);
-
-  // The list of models closes as people press elsewhere.
-  useEffect(() => {
-    if (!using) return;
-    const close = (event: PointerEvent) => {
-      if (!usingBox.current?.contains(event.target as Node)) setUsing(false);
-    };
-    document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
-  }, [using]);
-
-  useLayoutEffect(() => {
-    back.current?.focus();
-  }, []);
 
   // Every pack there is, hidden ones and those installed that do not pass included.
   const all = snapshot.packs;
@@ -142,22 +159,13 @@ export function PackViewer(props: PackViewerProps) {
   const update = packs.updateOf(id);
   const looking = snapshot.looking.has(id);
   const repository = repositoryOf(source);
-  // Its homepage, or where it was not written, its repository.
-  const homepage = pack?.homepage ?? repository;
+  // A homepage of its own, besides its repository.
+  const homepage = pack?.homepage !== repository ? pack?.homepage : undefined;
+  const local = source?.kind === "folder" || source?.kind === "file";
   // A pack from this computer whose homepage is on GitHub can come from there instead.
   const homeOnGitHub =
-    source && (source.kind === "folder" || source.kind === "file") && pack?.homepage
-      ? gitHubPlace(pack.homepage)
-        ? pack.homepage
-        : undefined
-      : undefined;
-  /** A model as people know it: its name where it has one. */
-  const nameOf = (modelId: string) => {
-    const service = settings.services.find(({ enabled }) => enabled.includes(modelId));
-    return (service && ai.modelOf(service.id, modelId)?.name) ?? modelId;
-  };
-  const usedBy = models.filter((each) => chat.packOptions(each).current.id === id).map(nameOf);
-  const chosenFor = new Set(models.filter((each) => settings.packFor?.[each] === id));
+    local && pack?.homepage && gitHubPlace(pack.homepage) ? pack.homepage : undefined;
+  const usedBy = packUsers(ai, chat, settings, id);
   const wordsCount = details?.words.reduce((sum, { changes }) => sum + changes.length, 0) ?? 0;
   const label = (each: ModelPack) => packLabel(t, each, snapshot);
   const choose = (value: string, set: (id: string) => void, name: string) => (
@@ -186,258 +194,253 @@ export function PackViewer(props: PackViewerProps) {
       </datalist>
     </label>
   );
-  const facts = [
-    source ? sourceText(t, source) : pack?.builtin ? t("ai.packs.sourceBuiltin") : undefined,
-    pack?.author && t("ai.packs.viewer.claimed", { author: authorText(t, pack) }),
-    pack?.license && t("ai.packs.license", { license: pack.license }),
-    pack &&
-      (pack.models.length > 0
-        ? t("ai.packs.models", { models: pack.models.join(", ") })
+  const updateText =
+    update &&
+    (update.version
+      ? t("ai.packs.updateTo", { version: update.version })
+      : t("ai.packs.updateCommit", { commit: update.commit.slice(0, 7) }));
+  // What it is, a row each, as pi-web lists a plugin.
+  const rows: { key: string; name: string; value: ReactNode; mono?: boolean }[] = [];
+  const row = (key: string, name: string, value: ReactNode, mono = false) =>
+    rows.push({ key, name, value, mono });
+  if (source) row("source", t("ai.packs.meta.source"), sourceText(t, source), true);
+  else if (pack?.builtin) row("source", t("ai.packs.meta.source"), t("ai.packs.sourceBuiltin"));
+  if (pack)
+    row(
+      "models",
+      t("ai.packs.meta.models"),
+      pack.models.length > 0
+        ? pack.models.join(", ")
         : pack.hidden
           ? t("ai.packs.modelsHidden")
-          : t("ai.packs.modelsNone")),
-    usedBy.length > 0
-      ? t("ai.packs.usedBy", { models: usedBy.join("、") })
-      : t("ai.packs.usedByNone"),
-    details && t("ai.packs.viewer.changeCount", { words: wordsCount, call: details.call.length }),
-  ].filter((each): each is string => typeof each === "string" && each !== "");
+          : t("ai.packs.modelsNone"),
+      pack.models.length > 0,
+    );
+  row("usedBy", t("ai.packs.meta.usedBy"), usedBy.length > 0 ? usedBy.join("、") : "—");
+  if (pack?.author && !pack.builtin) row("author", t("ai.packs.meta.author"), authorText(t, pack));
+  if (pack?.license) row("license", t("ai.packs.meta.license"), pack.license);
+  if (homepage)
+    row(
+      "homepage",
+      t("ai.packs.meta.homepage"),
+      <a
+        href={homepage}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={homepage}
+        data-testid="pack-viewer-homepage"
+      >
+        {homepage}
+      </a>,
+    );
+  if (details && !pack?.builtin)
+    row(
+      "changes",
+      t("ai.packs.meta.changes"),
+      t("ai.packs.changeCount", { words: wordsCount, call: details.call.length }),
+    );
 
   return (
-    <section
-      className={styles.layer}
-      aria-label={t("ai.packs.viewer.title")}
-      data-testid="pack-viewer"
-      onKeyDown={(event) => {
-        if (event.key !== "Escape" || event.defaultPrevented) return;
-        if ((event.target as Element).closest("dialog")) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (using) setUsing(false);
-        else props.onClose();
-      }}
-    >
-      <div className={styles.layerBar}>
-        <button
-          type="button"
-          ref={back}
-          className={styles.layerBack}
-          data-testid="pack-viewer-back"
-          onClick={props.onClose}
-        >
-          <ChevronLeft size={14} aria-hidden /> {props.back ?? t("ai.packs.viewer.back")}
-        </button>
-      </div>
-      <div className={styles.layerBody}>
-        <div className={styles.head}>
-          <h2 className={styles.headName} data-testid="pack-viewer-name">
-            {pack ? (
-              <PackLabel pack={pack} />
-            ) : installed ? (
-              <PackLabel pack={{ id, name: id, builtin: false }} />
-            ) : (
-              id
-            )}
-          </h2>
-          {pack && <Badge>v{pack.version}</Badge>}
-          {update && (
-            <Badge kind="update" testId="pack-viewer-update">
-              {update.version
-                ? t("ai.packs.updateTo", { version: update.version })
-                : t("ai.packs.updateCommit", { commit: update.commit.slice(0, 7) })}
-            </Badge>
+    <div data-testid="pack-page" data-pack={id}>
+      <div className={styles.head}>
+        <h2 className={styles.headName} data-testid="pack-viewer-name">
+          {pack ? (
+            <PackLabel pack={pack} />
+          ) : installed ? (
+            <PackLabel pack={{ id, name: id, builtin: false }} />
+          ) : (
+            id
           )}
-          <span className={styles.grow} />
-          <div className={styles.actions}>
-            {update && installed && source?.kind === "github" && (
-              <button
-                type="button"
-                className={styles.primary}
-                data-testid="pack-viewer-see-update"
-                disabled={install.busy !== undefined}
-                onClick={() => void install.fromGitHub(source.url, installed)}
-              >
-                {t("ai.packs.seeUpdate")}
+        </h2>
+        {pack && <span className={styles.headVersion}>{pack.version}</span>}
+        <span className={styles.grow} />
+        <div className={styles.actions}>
+          {updateText && (
+            <span className={styles.badge} data-kind="update" data-testid="pack-viewer-update">
+              {updateText}
+            </span>
+          )}
+          {update && installed && source?.kind === "github" && (
+            <button
+              type="button"
+              className={styles.primary}
+              data-testid="pack-viewer-see-update"
+              disabled={install.busy !== undefined}
+              onClick={() => void install.fromGitHub(source.url, installed)}
+            >
+              {t("ai.packs.seeUpdate")}
+            </button>
+          )}
+          {installed && source?.kind === "github" && !update && (
+            <button
+              type="button"
+              data-testid="pack-viewer-check"
+              disabled={looking}
+              onClick={() => void packs.lookForUpdates({ force: true, only: id })}
+            >
+              {looking ? t("ai.packs.checking") : t("ai.packs.checkUpdate")}
+            </button>
+          )}
+          {installed && local && (
+            <button
+              type="button"
+              data-testid="pack-viewer-reread"
+              onClick={() =>
+                source.kind === "folder"
+                  ? install.pickFolder(installed)
+                  : install.pickFile(installed)
+              }
+            >
+              {t("ai.packs.reread")}
+            </button>
+          )}
+          {repository && (
+            <a
+              className={styles.buttonLink}
+              href={repository}
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="pack-viewer-github"
+            >
+              GitHub <ExternalLink size={12} aria-hidden />
+            </a>
+          )}
+          {installed && (
+            <button
+              type="button"
+              className={styles.danger}
+              data-testid="pack-viewer-remove"
+              onClick={async () => {
+                await install.remove(installed);
+                if (!packs.installedOf(id)) props.onGone?.();
+              }}
+            >
+              {t("ai.packs.remove")}
+            </button>
+          )}
+        </div>
+      </div>
+      <dl className={styles.meta2} data-testid="pack-viewer-facts">
+        {rows.map(({ key, name, value, mono }) => (
+          <div key={key} data-row={key}>
+            <dt>{name}</dt>
+            <dd className={mono ? styles.mono : undefined}>{value}</dd>
+          </div>
+        ))}
+        {pack?.hidden && (
+          <div data-row="shown">
+            <dt>{t("ai.packs.meta.shown")}</dt>
+            <dd>
+              {/* `data-setting`: what searching the settings goes to, see settings/registry.ts. */}
+              <input
+                type="checkbox"
+                role="switch"
+                className={aiStyles.switch}
+                aria-label={t("ai.packs.meta.shown")}
+                data-setting="packs.hidden"
+                data-testid="pack-show-hidden"
+                checked={settings.showHiddenPacks === true}
+                onChange={(event) => ai.setShowHiddenPacks(event.target.checked)}
+              />
+            </dd>
+          </div>
+        )}
+      </dl>
+      {homeOnGitHub && installed && (
+        <p className={styles.note}>
+          <button
+            type="button"
+            className={styles.linkButton}
+            data-testid="pack-viewer-to-github"
+            disabled={install.busy !== undefined}
+            onClick={() => void install.fromGitHub(homeOnGitHub, installed)}
+          >
+            {t("ai.packs.toGitHub")}
+          </button>
+        </p>
+      )}
+      {pack && !pack.builtin && nameIssues(pack.name).length > 0 && (
+        <p className={styles.warning} data-testid="pack-name-issue">
+          {t("ai.packs.nameNotAllowedHelp")}
+        </p>
+      )}
+      {installed && installed.dropped.length > 0 && (
+        <p className={styles.warning} data-testid="pack-dropped">
+          {t("ai.packs.dropped", { count: installed.dropped.length })}
+          {installed.dropped.map((problem, index) => (
+            <span key={index} className={styles.droppedLine}>
+              {problemText(t, problem)}
+            </span>
+          ))}
+        </p>
+      )}
+      {installed && !pack && (
+        <p className={styles.warning} data-testid="pack-disabled">
+          {t("ai.packs.disabled", {
+            reason: installed.problems.map((problem) => problemText(t, problem)).join(" "),
+          })}
+        </p>
+      )}
+      {install.failure && (
+        <p className={styles.warning} role="alert">
+          {install.failure}
+        </p>
+      )}
+      <div className={styles.pageTabs} role="tablist">
+        {(["readme", "changes", "compare", "full"] as const).map((each) => (
+          <button
+            key={each}
+            type="button"
+            role="tab"
+            aria-selected={view === each}
+            data-testid={`pack-tab-${each}`}
+            onClick={() => setView(each)}
+          >
+            {t(`ai.packs.viewer.${each}`)}
+          </button>
+        ))}
+      </div>
+      {view === "readme" && (
+        <PackIntro
+          pack={pack}
+          source={source ?? (pack?.builtin ? "builtin" : undefined)}
+          readme={installed?.kept.readme ?? (pack?.builtin ? builtinReadme(t, pack) : undefined)}
+        />
+      )}
+      {view === "changes" && details && <PackDetailsView details={details} />}
+      {view === "compare" && (
+        <>
+          <div className={styles.pickers}>
+            <label>
+              {t("ai.packs.viewer.against")} {choose(other, setOther, t("ai.packs.viewer.against"))}
+            </label>
+            {modelPicker}
+            {recommended && recommended.id !== id && recommended.id !== other && (
+              <button type="button" onClick={() => setOther(recommended.id)}>
+                {t("ai.packs.viewer.againstRecommended", { name: label(recommended) })}
               </button>
             )}
-            {installed && source?.kind === "github" && !update && (
-              <button
-                type="button"
-                data-testid="pack-viewer-check"
-                disabled={looking}
-                onClick={() => void packs.lookForUpdates({ force: true, only: id })}
-              >
-                {looking ? t("ai.packs.checking") : t("ai.packs.checkUpdate")}
-              </button>
-            )}
-            {pack && !pack.hidden && models.length > 0 && (
-              <span className={styles.forModels} ref={usingBox}>
-                <button
-                  type="button"
-                  aria-expanded={using}
-                  data-testid="pack-viewer-use"
-                  onClick={() => setUsing(!using)}
-                >
-                  {t("ai.packs.useFor")}
-                </button>
-                {using && (
-                  <div className={styles.forModelsList} data-testid="pack-viewer-use-list">
-                    <p>{t("ai.packs.useForHelp")}</p>
-                    {models.map((each) => (
-                      <label key={each} className={styles.agree}>
-                        <input
-                          type="checkbox"
-                          checked={chosenFor.has(each)}
-                          onChange={(event) =>
-                            chat.choosePack(each, event.target.checked ? id : undefined, "next")
-                          }
-                        />
-                        {nameOf(each)}
-                      </label>
-                    ))}
-                  </div>
-                )}
-              </span>
-            )}
-            {repository && (
-              <a
-                className={styles.buttonLink}
-                href={repository}
-                target="_blank"
-                rel="noopener noreferrer"
-                data-testid="pack-viewer-github"
-              >
-                {t("ai.packs.openGitHub")} <ExternalLink size={12} aria-hidden />
-              </a>
-            )}
-            {installed && source && (source.kind === "folder" || source.kind === "file") && (
-              <button
-                type="button"
-                data-testid="pack-viewer-reread"
-                onClick={() =>
-                  source.kind === "folder"
-                    ? install.pickFolder(installed)
-                    : install.pickFile(installed)
-                }
-              >
-                {t("ai.packs.reread")}
-              </button>
-            )}
-            {installed && (
-              <button
-                type="button"
-                className={styles.danger}
-                data-testid="pack-viewer-remove"
-                onClick={async () => {
-                  await install.remove(installed);
-                  if (!packs.installedOf(id)) props.onClose();
-                }}
-              >
-                {t("ai.packs.remove")}
+            {id !== DEFAULT_PACK.id && other !== DEFAULT_PACK.id && (
+              <button type="button" onClick={() => setOther(DEFAULT_PACK.id)}>
+                {t("ai.packs.viewer.againstDefault")}
               </button>
             )}
           </div>
-        </div>
-        <p className={styles.facts1} data-testid="pack-viewer-facts">
-          {facts.join(" · ")}
-          {homepage && (
-            <>
-              {" · "}
-              {t("ai.packs.viewer.homepage")}{" "}
-              <a
-                href={homepage}
-                target="_blank"
-                rel="noopener noreferrer"
-                title={homepage}
-                data-testid="pack-viewer-homepage"
-              >
-                {homepage}
-              </a>
-            </>
+          {pack && second ? (
+            <Compared left={second} right={pack} model={model} />
+          ) : (
+            <p>{t("ai.packs.viewer.unusable")}</p>
           )}
-        </p>
-        {homeOnGitHub && installed && (
-          <p className={styles.note}>
-            <button
-              type="button"
-              className={styles.linkButton}
-              data-testid="pack-viewer-to-github"
-              disabled={install.busy !== undefined}
-              onClick={() => void install.fromGitHub(homeOnGitHub, installed)}
-            >
-              {t("ai.packs.toGitHub")}
-            </button>
-          </p>
-        )}
-        {pack && !pack.builtin && nameIssues(pack.name).length > 0 && (
-          <p className={styles.warning} data-testid="pack-viewer-name-issue">
-            {t("ai.packs.nameNotAllowedHelp")}
-          </p>
-        )}
-        {install.failure && (
-          <p className={styles.warning} role="alert">
-            {install.failure}
-          </p>
-        )}
-        {update && source?.kind === "github" && (
-          <p className={styles.note}>{t("ai.packs.updateHelp")}</p>
-        )}
-        <div className={styles.pageTabs} role="tablist">
-          {(["readme", "changes", "compare", "full"] as const).map((each) => (
-            <button
-              key={each}
-              type="button"
-              role="tab"
-              aria-selected={view === each}
-              data-testid={`pack-tab-${each}`}
-              onClick={() => setView(each)}
-            >
-              {t(`ai.packs.viewer.${each}`)}
-            </button>
-          ))}
-        </div>
-        {view === "readme" && (
-          <PackIntro
-            pack={pack}
-            source={source ?? (pack?.builtin ? "builtin" : undefined)}
-            readme={installed?.kept.readme ?? (pack?.builtin ? builtinReadme(t, pack) : undefined)}
-          />
-        )}
-        {view === "changes" && details && <PackDetailsView details={details} />}
-        {view === "compare" && (
-          <>
-            <div className={styles.pickers}>
-              <label>
-                {t("ai.packs.viewer.against")}{" "}
-                {choose(other, setOther, t("ai.packs.viewer.against"))}
-              </label>
-              {modelPicker}
-              {recommended && recommended.id !== id && recommended.id !== other && (
-                <button type="button" onClick={() => setOther(recommended.id)}>
-                  {t("ai.packs.viewer.againstRecommended", { name: label(recommended) })}
-                </button>
-              )}
-              {id !== DEFAULT_PACK.id && other !== DEFAULT_PACK.id && (
-                <button type="button" onClick={() => setOther(DEFAULT_PACK.id)}>
-                  {t("ai.packs.viewer.againstDefault")}
-                </button>
-              )}
-            </div>
-            {pack && second ? (
-              <Compared left={second} right={pack} model={model} />
-            ) : (
-              <p>{t("ai.packs.viewer.unusable")}</p>
-            )}
-          </>
-        )}
-        {view === "full" && (
-          <>
-            <div className={styles.pickers}>{modelPicker}</div>
-            {pack ? <FullText pack={pack} model={model} /> : <p>{t("ai.packs.viewer.unusable")}</p>}
-          </>
-        )}
-      </div>
-      {install.element}
-    </section>
+        </>
+      )}
+      {view === "full" && (
+        <>
+          <div className={styles.pickers}>{modelPicker}</div>
+          {pack ? <FullText pack={pack} model={model} /> : <p>{t("ai.packs.viewer.unusable")}</p>}
+        </>
+      )}
+      {!props.install && own.element}
+    </div>
   );
 }
 
@@ -694,7 +697,7 @@ export function PackFullTextView(props: { readonly preview: PackPreview }) {
 }
 
 /** Narrower than this, the two sides of a comparison go one under the other, piece by piece. */
-export const NARROW_COMPARE = 560;
+export const NARROW_COMPARE = 640;
 
 /** The width of an element, as it changes. */
 function useWidth(element: RefObject<HTMLElement | null>): number | undefined {

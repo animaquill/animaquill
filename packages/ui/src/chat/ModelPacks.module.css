@@ -116,30 +116,6 @@
   color: var(--aq-danger-text);
 }
 
-/* The settings: one line a service, and the packs installed. */
-.packs {
-  margin-top: 16px;
-}
-
-.heading {
-  margin: 14px 0 6px;
-  color: var(--aq-text-strong);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.headingRow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  margin: 14px 0 6px;
-}
-
-.headingRow .heading {
-  margin: 0;
-}
-
 .grow {
   flex: 1;
 }
@@ -147,161 +123,6 @@
 .primary {
   color: var(--aq-on-accent);
   background: var(--aq-accent);
-}
-
-/*
- * Which pack each model uses: one grid for all models, so that their columns line up; a row a
- * model, two columns where the page is narrow.
- */
-.table {
-  display: grid;
-  grid-template-columns: minmax(110px, 1fr) minmax(180px, 1.4fr) max-content max-content;
-  column-gap: 10px;
-  align-items: center;
-}
-
-.modelRow {
-  display: contents;
-}
-
-.modelRow > * {
-  align-self: stretch;
-  padding: 6px 0;
-  border-top: 1px solid var(--aq-border);
-}
-
-.modelName {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.modelName strong {
-  overflow: hidden;
-  color: var(--aq-text-strong);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.modelName small,
-.modelPack small {
-  overflow: hidden;
-  color: var(--aq-text-muted);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.modelPack {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 4px;
-  align-items: center;
-  align-content: center;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.modelPack small {
-  flex-basis: 100%;
-}
-
-.modelChoose {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-}
-
-.modelChoose select {
-  width: 100%;
-  min-width: 0;
-}
-
-.modelLinks {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 6px;
-  align-items: center;
-}
-
-@container (max-width: 620px) {
-  .table {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  }
-
-  .modelChoose,
-  .modelLinks {
-    padding-top: 0;
-    border-top: 0;
-  }
-}
-
-.tag {
-  padding: 0 4px;
-  color: var(--aq-text-muted);
-  font-size: 11px;
-  white-space: nowrap;
-  border: 1px solid var(--aq-border);
-  border-radius: 3px;
-}
-
-.tag[data-kind="mine"] {
-  color: var(--aq-accent);
-  border-color: var(--aq-accent);
-}
-
-.showHidden {
-  display: flex;
-  gap: 6px;
-  align-items: flex-start;
-  margin: 10px 0 6px;
-  color: var(--aq-text-strong);
-}
-
-.showHidden input {
-  width: auto;
-  margin: 2px 0 0;
-}
-
-.showHidden small {
-  display: block;
-  color: var(--aq-text-muted);
-}
-
-.list {
-  margin: 8px 0;
-  padding: 0;
-  list-style: none;
-}
-
-.item {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  align-items: baseline;
-  padding: 6px 0;
-  border-top: 1px solid var(--aq-border);
-}
-
-.item strong {
-  color: var(--aq-text-strong);
-}
-
-.item small {
-  flex-basis: 100%;
-  color: var(--aq-text-muted);
-}
-
-.install {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  margin: 6px 0;
-}
-
-.install input[type="url"] {
-  flex: 1;
-  min-width: 200px;
 }
 
 .agree input {
@@ -342,40 +163,8 @@
   color: var(--aq-danger-text);
 }
 
-/* The full text a model gets: long, read only. */
-.full pre {
-  max-height: 360px;
-  margin: 0 0 8px;
-  padding: 6px 8px;
-  overflow: auto;
-  color: var(--aq-text);
-  font-size: 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  background: var(--aq-bg-input);
-  border-radius: 3px;
-}
-
-.full summary {
-  cursor: pointer;
-  font-family: var(--aq-mono, monospace);
-  font-size: 12px;
-}
-
 .droppedLine {
   display: block;
-}
-
-.tabs {
-  display: flex;
-  gap: 4px;
-  margin: 0 0 8px;
-}
-
-.tabOn {
-  color: var(--aq-text-strong);
-  border-color: var(--aq-accent, var(--aq-border));
-  font-weight: 600;
 }
 
 .pickers {
@@ -384,6 +173,31 @@
   gap: 6px 12px;
   align-items: center;
   margin: 0 0 12px;
+}
+
+.pickers select,
+.pickers input,
+.pickers button {
+  padding: 4px 8px;
+  color: var(--aq-text);
+  font: inherit;
+  background: var(--aq-bg-input);
+  border: 1px solid transparent;
+  border-radius: 4px;
+}
+
+.pickers select:focus,
+.pickers input:focus {
+  border-color: var(--aq-accent);
+  outline: none;
+}
+
+.pickers button {
+  cursor: pointer;
+}
+
+.pickers button:hover {
+  background: var(--aq-bg-hover);
 }
 
 .facts {
@@ -629,8 +443,7 @@
 }
 
 .actions > button,
-.actions .buttonLink,
-.forModels > button {
+.actions .buttonLink {
   display: inline-flex;
   gap: 4px;
   align-items: center;
@@ -646,8 +459,7 @@
 }
 
 .actions > button:hover,
-.actions .buttonLink:hover,
-.forModels > button:hover {
+.actions .buttonLink:hover {
   background: var(--aq-bg-hover);
 }
 
@@ -666,37 +478,6 @@
   background: var(--aq-danger);
 }
 
-.forModels {
-  position: relative;
-}
-
-.forModelsList {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 5;
-  min-width: 220px;
-  padding: 8px 10px;
-  background: var(--aq-bg-menu, var(--aq-bg-raised));
-  border: 1px solid var(--aq-border);
-  border-radius: 6px;
-  box-shadow: var(--aq-shadow);
-}
-
-.forModelsList p {
-  margin: 0 0 4px;
-  color: var(--aq-text-muted);
-  font-size: 11px;
-}
-
-.facts1 {
-  margin: 0 0 8px;
-  color: var(--aq-text-muted);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.facts1 a,
 .linkButton {
   padding: 0;
   color: var(--aq-match);
@@ -749,99 +530,125 @@
   border-radius: 6px;
 }
 
-.readmeNote {
-  margin: 12px 0 0;
+/* The repository belongs to another account than when it was installed. */
+.movedOwner {
+  margin: 0 0 6px;
+  color: var(--aq-danger-text);
+  font-weight: 600;
+}
+
+/* A pack's page: its name and version on top, then a few rows of what it is, as pi-web's plugins. */
+.headVersion {
   color: var(--aq-text-muted);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+}
+
+.meta2 {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 8px 32px;
+  align-items: center;
+  margin: 10px 0 14px;
+}
+
+.meta2 > div {
+  display: contents;
+}
+
+.meta2 dt {
+  color: var(--aq-text-muted);
+}
+
+.meta2 dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mono {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+/* The list of packs in the settings: "名字(来源)" and the version, a dot where there is news. */
+.listName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+[aria-current="true"] > .listName {
+  font-weight: 600;
+}
+
+.listVersion {
+  flex: none;
+  color: var(--aq-text-muted);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 11px;
 }
 
-/* The page of packs: the title with the ways to install one beside it. */
-.titleRow {
+.listDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: var(--aq-accent);
+  border-radius: 50%;
+}
+
+.listDot[data-state="rate"] {
+  background: var(--aq-text-muted);
+}
+
+/* Installing: where from, then the address or the picker, then the way on. */
+.installPane {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.installHead {
+  display: flex;
   align-items: center;
-  margin: 0 0 4px;
+  min-height: 30px;
 }
 
-.titleRow h2 {
+.installHead h2 {
   margin: 0;
+  color: var(--aq-text-strong);
+  font-size: 16px;
+  font-weight: 600;
 }
 
-/* The packs installed: one a row, AnimaQuill's own last in one. */
-.installedList {
-  margin: 6px 0 8px;
-  padding: 0;
-  list-style: none;
+.segments {
+  display: inline-flex;
+  align-self: flex-start;
+  overflow: hidden;
   border: 1px solid var(--aq-border);
   border-radius: 4px;
 }
 
-.installedItem {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  align-items: center;
-  padding: 8px 10px;
-}
-
-.installedItem + .installedItem {
-  border-top: 1px solid var(--aq-border);
-}
-
-.installedMain {
-  display: flex;
-  flex: 1 1 260px;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.installedMain small {
-  color: var(--aq-text-muted);
-  overflow-wrap: anywhere;
-}
-
-.installedHead {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  align-items: center;
-  min-width: 0;
-}
-
-.installedName {
-  color: var(--aq-text-strong);
-  font-size: 13px;
-}
-
-.installedActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 8px;
-  align-items: center;
-}
-
-.builtinNames {
-  color: var(--aq-text-strong);
-}
-
-.nameLink {
-  padding: 0;
-  color: inherit;
+.segments > button {
+  padding: 5px 14px;
+  color: var(--aq-text);
   font: inherit;
   background: none;
   border: 0;
   cursor: pointer;
 }
 
-.nameLink:hover {
-  text-decoration: underline;
+.segments > button + button {
+  border-left: 1px solid var(--aq-border);
 }
 
-/* The repository belongs to another account than when it was installed. */
-.movedOwner {
-  margin: 0 0 6px;
-  color: var(--aq-danger-text);
-  font-weight: 600;
+.segments > button:hover {
+  background: var(--aq-bg-hover);
+}
+
+.segments > button[aria-checked="true"] {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}
+
+.installGo {
+  align-self: flex-end;
 }

@@ -434,19 +434,46 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
     return answer(route, [{ text: "好的。" }]);
   });
   await setUpService(page);
+  const option = chat(page).locator('[data-testid="chat-model-option"][data-model="claude-test"]');
+  const menu = page.getByTestId("chat-pack-menu");
+  const others = page.getByTestId("chat-pack-others");
+  const hiddenItem = others
+    .getByTestId("chat-pack-item")
+    .filter({ hasText: "对照用的 2026.1 旧写法" });
+  /** The packs of claude-test, from the bubble: those for it, then the others. */
+  const openOthers = async () => {
+    await chat(page).getByTestId("chat-model").click();
+    await option.getByTestId("chat-model-more").click();
+    await menu.getByTestId("chat-pack-others-open").click();
+    await expect(others).toBeVisible();
+  };
+  // Hidden until people ask to see it: not in the bubble, and no model gets it on its own.
+  await openOthers();
+  await expect(hiddenItem).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
   await openSettingsPage(page, "模型适配包");
   const settings = settingsOf(page);
-  const packs = settings.getByTestId("model-packs");
-  const choice = packs.getByRole("combobox", { name: "claude-test 用的适配包" });
-  // Hidden until people ask to see it: not in the list, and no model gets it on its own.
-  await expect(choice.locator("option", { hasText: "2026.1 旧写法" })).toHaveCount(0);
   await expect(settings.getByText("开发者选项")).toHaveCount(0);
-  await packs.getByTestId("pack-show-hidden").check();
-  await expect(choice.locator("option:checked")).toHaveText("自动：通用(内置)");
-  await choice.selectOption({ label: "对照用的 2026.1 旧写法(内置)" });
+  const packs = settings.getByTestId("model-packs");
+  await packs
+    .locator('[data-testid="pack-builtin"][data-pack="animaquill/eval-directive"]')
+    .click();
+  const shown = packs.getByTestId("pack-show-hidden");
+  await expect(shown).not.toBeChecked();
+  await shown.check();
+  await closeSettings(page);
+  await tab(page, "chat").click();
+  await openOthers();
+  await hiddenItem.getByRole("menuitemradio").click();
+  await page.keyboard.press("Escape");
   // Hidden again, the choice stays and is still shown.
-  await packs.getByTestId("pack-show-hidden").uncheck();
-  await expect(choice.locator("option:checked")).toHaveText("对照用的 2026.1 旧写法(内置)");
+  await openSettingsPage(page, "模型适配包");
+  await packs
+    .locator('[data-testid="pack-builtin"][data-pack="animaquill/eval-directive"]')
+    .click();
+  await shown.uncheck();
+  await expect(packs.getByTestId("pack-viewer-facts")).toContainText("claude-test");
   await closeSettings(page);
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-pack")).toHaveText(
@@ -461,9 +488,12 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
   expect(sent.tools.map(({ description }) => description).join("\n")).toContain(
     "Call it at the start of a task",
   );
-  // Back to the one recommended: the conversation keeps its words, also after a reload.
-  await openSettingsPage(page, "模型适配包");
-  await choice.selectOption({ label: "自动：通用(内置)" });
+  // Back to the one recommended: the conversation keeps the words it began with, also after a
+  // reload.
+  await chat(page).getByTestId("chat-model").click();
+  await option.getByTestId("chat-model-more").click();
+  await menu.getByRole("menuitemradio").first().click();
+  await page.keyboard.press("Escape");
   await page.reload();
   await tab(page, "chat").click();
   await expect(chat(page).getByTestId("chat-pack")).toHaveText(

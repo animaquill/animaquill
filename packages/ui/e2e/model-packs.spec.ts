@@ -12,10 +12,10 @@ import {
 import { content, expect, tab, test } from "./support.ts";
 
 /**
- * Model packs: the page of them in the settings (which pack each model uses, installing one from
- * GitHub, a folder or a file with what it changes and its README shown first, updates, reading one
- * again, removing it), a pack's page, the menu of packs beside a model in the bubble of models, and
- * what the chat says of the pack of a conversation.
+ * Model packs: the page of them in the settings, as pi-web's Plugins (the packs on the left, the one
+ * picked on the right, installing one from GitHub, a folder or a file with what it changes and its
+ * README shown first, updates, reading one again, removing it), a pack's page, the menu of packs
+ * beside a model in the bubble of models, and what the chat says of the pack of a conversation.
  */
 
 const KEY = "sk-ant-test-0123456789abcdefSECRET";
@@ -23,6 +23,21 @@ const PACKS = fileURLToPath(new URL("fixtures/packs/", import.meta.url));
 const shot = (name: string) => ({ path: test.info().outputPath(name) });
 /** Where the pictures of this step go, besides the test's own output. */
 const SP1 = (name: string) => ({ path: test.info().outputPath(`sp1-${name}.png`) });
+const SP3 = (name: string) => ({ path: test.info().outputPath(`sp3-${name}.png`) });
+
+/** The pack open on the right of the page of packs. */
+const pagePack = (page: Page) => settings(page).getByTestId("pack-page");
+/** A row of what the pack open is: its value. */
+const fact = (page: Page, row: string) =>
+  pagePack(page).locator(`[data-testid="pack-viewer-facts"] [data-row="${row}"] dd`);
+
+/** Removes the pack open, saying yes to the question, which names the models that use it. */
+async function removeOpen(page: Page, name: string, users: string) {
+  await pagePack(page).getByTestId("pack-viewer-remove").click();
+  const ask = page.getByRole("dialog", { name: `删除“${name}”` });
+  await expect(ask).toContainText(users);
+  await ask.getByRole("button", { name: "删除" }).click();
+}
 
 const chat = (page: Page) => content(page, "chat");
 const settings = settingsOf;
@@ -87,37 +102,28 @@ async function send(page: Page, text: string) {
   await box.press("Enter");
 }
 
-test("packs are installed after people saw what they change, chosen for a model, updated and removed", async ({
+test("packs are installed after people saw what they change, updated and removed", async ({
   page,
 }) => {
   test.setTimeout(60_000);
   await setUpService(page, "deepseek-chat");
   const packs = settings(page).getByTestId("model-packs");
-  const row = packs.getByTestId("pack-service");
-  const choice = row.getByRole("combobox", { name: "deepseek-chat 用的适配包" });
   const items = packs.getByTestId("pack-item");
 
-  // No pack is for this model: the default one, said here, without asking.
-  await expect(choice.locator("option:checked")).toHaveText("自动：通用(内置)");
+  // Nothing installed yet: AnimaQuill's own, the first open; no choosing of packs for models here.
   await expect(items).toHaveCount(0);
-  // Nothing installed yet: what a pack is, and the ways to install one, three, in a part of their own.
-  await expect(packs.getByTestId("pack-none-installed")).toContainText(
-    "适配包是一个 GitHub 仓库，贴上地址就能装。",
-  );
-  await expect(packs.getByTestId("pack-none-installed").getByRole("link")).toHaveAttribute(
-    "href",
-    /docs\/model-packs\.md$/,
-  );
-  await expect(packs.getByTestId("pack-install-ways").getByRole("button")).toHaveText([
-    "从 GitHub 地址装…",
-    "从本机文件夹装…",
-    "从 pack.json 文件装…",
+  await expect(packs.getByTestId("pack-builtin")).toHaveCount(3);
+  await expect(packs.getByTestId("pack-builtin").first()).toHaveAttribute("aria-current", "true");
+  await expect(packs.getByRole("combobox")).toHaveCount(0);
+  await expect(packs).not.toContainText("用在…");
+  // The ways to install one, three, behind "＋ 安装".
+  await packs.getByTestId("pack-add").click();
+  await expect(packs.getByTestId("pack-install").getByRole("radio")).toHaveText([
+    "GitHub 地址",
+    "本机文件夹",
+    "单个文件",
   ]);
-  await expect(packs.getByTestId("pack-builtins")).toContainText(
-    "通用(内置) · Claude 5(内置)随 AnimaQuill 更新，不能卸载",
-  );
   await packs.screenshot(shot("settings-packs.png"));
-  await settings(page).screenshot(SP1("K1-empty"));
 
   // A folder: what it changes, next to the default words, before anything is kept.
   await packs.getByTestId("pack-folder-input").setInputFiles(`${PACKS}steady`);
@@ -172,21 +178,14 @@ test("packs are installed after people saw what they change, chosen for a model,
   await expect(dialog.getByTestId("pack-trust")).toBeVisible();
   await dialog.getByTestId("pack-confirm").click();
   await expect(dialog).toHaveCount(0);
+  // In the list and open: where it is from, what it is for, which model uses it.
   await expect(items).toHaveCount(1);
   await expect(items.first().getByTestId("pack-item-label")).toHaveText("DeepSeek steady(本机)");
-  await expect(items.first().getByTestId("pack-item-facts")).toHaveText(
-    "本机文件夹 steady · 用在 DeepSeek V3/Deepseek Chat · 适用：deepseek-chat*, deepseek-reasoner*",
-  );
-  await expect(choice.locator("option:checked")).toHaveText("自动：DeepSeek steady(本机)");
-  await expect(row.getByTestId("pack-reset")).toHaveCount(0);
-
-  // People choose another for the model, and back.
-  await choice.selectOption({ label: "通用(内置)" });
-  await expect(choice.locator("option:checked")).toHaveText("通用(内置)");
-  await expect(row.getByTestId("pack-using")).toHaveText("你选的");
-  await row.getByTestId("pack-reset").click();
-  await expect(choice.locator("option:checked")).toHaveText("自动：DeepSeek steady(本机)");
-  await expect(row.getByTestId("pack-reset")).toHaveCount(0);
+  await expect(items.first().getByTestId("pack-item-version")).toHaveText("1.2.0");
+  await expect(items.first()).toHaveAttribute("aria-current", "true");
+  await expect(fact(page, "source")).toHaveText("本机文件夹 steady");
+  await expect(fact(page, "models")).toHaveText("deepseek-chat*, deepseek-reasoner*");
+  await expect(fact(page, "usedBy")).toHaveText("DeepSeek V3/Deepseek Chat");
 
   // The same pack again, newer: only what differs from the version installed.
   await packs.getByTestId("pack-folder-input").setInputFiles(`${PACKS}steady-1.3`);
@@ -207,7 +206,7 @@ test("packs are installed after people saw what they change, chosen for a model,
   );
   await dialog.screenshot(shot("update-dialog.png"));
   await dialog.getByTestId("pack-confirm").click();
-  await expect(items.first()).toContainText("v1.3.0");
+  await expect(items.first().getByTestId("pack-item-version")).toHaveText("1.3.0");
 
   // One that changes the guard: first, plain to see, and it takes its own yes.
   await packs.getByTestId("pack-file-input").setInputFiles(`${PACKS}guard.json`);
@@ -243,11 +242,11 @@ test("packs are installed after people saw what they change, chosen for a model,
   await expect(dialog.getByTestId("pack-problems")).toContainText("名字里不能有括号或冒号");
   await dialog.getByRole("button", { name: "关闭" }).click();
 
-  // Removed, the model goes back to the default.
-  await items.first().getByTestId("pack-remove").click();
-  await page.getByRole("dialog", { name: "卸载" }).getByRole("button", { name: "卸载" }).click();
+  // Removed, saying which model used it: that model goes back to the default.
+  await removeOpen(page, "DeepSeek steady", "正在用它的模型会改回自动：DeepSeek V3/Deepseek Chat");
   await expect(items).toHaveCount(0);
-  await expect(choice.locator("option:checked")).toHaveText("自动：通用(内置)");
+  await packs.locator('[data-testid="pack-builtin"][data-pack="animaquill/default"]').click();
+  await expect(fact(page, "usedBy")).toHaveText("DeepSeek V3/Deepseek Chat");
 });
 
 test("the chat says which pack a conversation has, and a new one when the model changes", async ({
@@ -265,7 +264,7 @@ test("the chat says which pack a conversation has, and a new one when the model 
 
   // No pack for this model: the top of the conversation says so.
   await expect(chat(page).getByTestId("chat-pack")).toHaveText(
-    "claude-test 用 自动：通用(内置)。可以在设置的“模型适配包”里选一个已装的包。",
+    "claude-test 用 自动：通用(内置)。可以在选模型的气泡里换。",
   );
   await chat(page).screenshot(shot("chat-no-pack.png"));
 
@@ -322,16 +321,18 @@ test("a pack that names a built-in's model says what it takes over, can be kept 
   test.setTimeout(60_000);
   await setUpService(page, "claude-opus-5-5");
   const packs = settings(page).getByTestId("model-packs");
-  const row = packs.getByTestId("pack-service");
-  const choice = row.getByRole("combobox", { name: "claude-opus-5-5 用的适配包" });
-  await expect(choice.locator("option:checked")).toHaveText("自动：Claude 5(内置)");
+  const claude = packs.locator('[data-testid="pack-builtin"][data-pack="animaquill/claude-5"]');
 
-  // All a model gets, read only: the system prompt and the tools, merged; one level in.
-  await row.getByTestId("pack-details").click();
-  const viewer = page.getByTestId("pack-viewer");
+  // All a model gets, read only: the system prompt and the tools, merged.
+  await claude.click();
+  const viewer = pagePack(page);
   await expect(viewer.getByTestId("pack-viewer-name")).toHaveText("Claude 5(内置)");
   await expect(settings(page).getByTestId("settings-crumb")).toHaveText("› 模型适配包 › Claude 5");
-  await viewer.getByRole("tab", { name: "发给模型的全文" }).click();
+  await expect(fact(page, "usedBy")).toHaveText("Claude Opus 5.5");
+  // AnimaQuill's own: nothing to remove, nothing on GitHub.
+  await expect(viewer.getByTestId("pack-viewer-remove")).toHaveCount(0);
+  await expect(viewer.getByTestId("pack-viewer-github")).toHaveCount(0);
+  await viewer.getByRole("tab", { name: "全文" }).click();
   const full = viewer.getByTestId("pack-full");
   await expect(full.getByTestId("pack-preview-call")).toContainText("推理强度：中");
   await expect(full.getByTestId("pack-preview-call")).toContainText("工具结果给多少：标准");
@@ -344,10 +345,6 @@ test("a pack that names a built-in's model says what it takes over, can be kept 
     .locator("summary")
     .click();
   await viewer.screenshot(shot("preview.png"));
-  await expect(packs.getByTestId("pack-service")).toHaveCount(0);
-  await viewer.getByTestId("pack-viewer-back").click();
-  await expect(viewer).toHaveCount(0);
-  await expect(row).toBeVisible();
 
   // Named and written as the built-in one: it says where it is from, and what it replaces.
   await packs.getByTestId("pack-file-input").setInputFiles(`${PACKS}fake-claude.json`);
@@ -375,11 +372,12 @@ test("a pack that names a built-in's model says what it takes over, can be kept 
   await dialog.getByTestId("pack-keep").check();
   await dialog.getByTestId("pack-confirm").click();
   await expect(dialog).toHaveCount(0);
-  await expect(choice.locator("option:checked")).toHaveText("Claude 5(内置)");
-  await expect(choice.locator("option", { hasText: /^Claude 5\(本机\)$/ })).toHaveCount(1);
-  // Left to itself the model would get the new one, which says so: what it is, plainly.
-  await expect(choice.locator("option").first()).toHaveText("自动：Claude 5(本机)");
-  await expect(row.getByTestId("pack-using")).toHaveText("你选的");
+  await expect(packs.getByTestId("pack-item").getByTestId("pack-item-label")).toHaveText(
+    "Claude 5(本机)",
+  );
+  await expect(fact(page, "usedBy")).toHaveText("—");
+  await claude.click();
+  await expect(fact(page, "usedBy")).toHaveText("Claude Opus 5.5");
   await packs.screenshot(shot("settings-third-party.png"));
 });
 
@@ -391,22 +389,16 @@ test("a pack's details, all a model gets with it, and two packs side by side", a
   await page.getByTestId("pack-dialog").getByTestId("pack-confirm").click();
   await expect(packs.getByTestId("pack-item")).toHaveCount(1);
 
-  // Its page: the README first, then what it changes by group, how it calls models.
-  await packs.getByTestId("pack-item").first().getByTestId("pack-item-details").click();
-  const viewer = page.getByTestId("pack-viewer");
-  await expect(viewer.getByRole("tab", { name: "介绍（README）" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  // Its page, open as it is installed: the README first, then what it changes by group, how it
+  // calls models.
+  const viewer = pagePack(page);
+  await expect(viewer.getByRole("tab", { name: "介绍" })).toHaveAttribute("aria-selected", "true");
   await expect(viewer.getByTestId("pack-readme")).toContainText("Smaller batches");
-  await expect(viewer.getByTestId("pack-viewer-facts")).toContainText(
-    "本机文件夹 steady · 作者自称“Lin <https://github.com/lin>” · 许可 MIT",
-  );
-  await expect(viewer.getByTestId("pack-viewer-facts")).toContainText(" · 用在 ");
-  await expect(viewer.getByTestId("pack-viewer-facts")).not.toContainText("没有用在你的模型上");
-  await expect(viewer.getByTestId("pack-viewer-facts")).toContainText(
-    "改了 6 段提示词、调用设置 4 项",
-  );
+  await expect(fact(page, "source")).toHaveText("本机文件夹 steady");
+  await expect(fact(page, "author")).toHaveText("Lin <https://github.com/lin>");
+  await expect(fact(page, "license")).toHaveText("MIT");
+  await expect(fact(page, "usedBy")).not.toHaveText("—");
+  await expect(fact(page, "changes")).toHaveText("6 段提示词、4 项调用设置");
   await viewer.getByRole("tab", { name: "改了什么" }).click();
   const details = viewer.getByTestId("pack-details");
   await expect(details).toContainText("DeepSeek steady(本机)");
@@ -419,7 +411,7 @@ test("a pack's details, all a model gets with it, and two packs side by side", a
   await viewer.screenshot(shot("viewer-details.png"));
 
   // All of it for one model, the variant for it merged in.
-  await viewer.getByRole("tab", { name: "发给模型的全文" }).click();
+  await viewer.getByRole("tab", { name: "全文" }).click();
   const full = viewer.getByTestId("pack-full");
   await expect(viewer.getByRole("combobox", { name: "模型", exact: true })).toHaveValue(
     "deepseek-reasoner",
@@ -429,7 +421,7 @@ test("a pack's details, all a model gets with it, and two packs side by side", a
   await expect(full).toContainText("stop and tell the user what went wrong.");
   await viewer.screenshot(shot("viewer-full.png"));
 
-  // Against the default words: what differs is marked and open, the same is folded.
+  // Against the default words, a piece at a time beside the list: only what differs, marked.
   await viewer.getByRole("tab", { name: "对比" }).click();
   const compare = viewer.getByTestId("pack-compare");
   await expect(
@@ -439,18 +431,10 @@ test("a pack's details, all a model gets with it, and two packs side by side", a
   await expect(compare.getByTestId("pack-compare-call")).toContainText(
     "工具结果给多少：标准 → 简略",
   );
-  const rules = compare
-    .getByTestId("pack-compare-segment")
-    .filter({ has: page.locator("summary", { hasText: /^system\.rules/ }) });
-  await expect(rules).toHaveAttribute("data-state", "changed");
-  await expect(rules).toHaveAttribute("open", "");
-  const project = compare
-    .getByTestId("pack-compare-segment")
-    .filter({ has: page.locator("summary", { hasText: /^system\.project$/ }) });
-  await expect(project).toHaveAttribute("data-state", "same");
-  await expect(project).not.toHaveAttribute("open", "");
-  await expect(compare.getByTestId("pack-compare-words")).toContainText("system.rules");
-  await rules.scrollIntoViewIfNeeded();
+  // Wide or narrow as the room beside the list allows, the rules differ, and say how.
+  await expect(
+    compare.getByTestId("pack-diff-in").filter({ hasText: "If a call fails twice" }).first(),
+  ).toBeVisible();
   await viewer.screenshot(shot("viewer-compare.png"));
 });
 
@@ -676,7 +660,7 @@ test("in the bubble only models; a model's packs are a menu beside it, chosen fo
   await page.keyboard.press("Escape");
 });
 
-test("the page of packs: which pack each model uses, installing one, those installed, the hidden one to choose, and two packs compared", async ({
+test("the page of packs: the list, installing from the three ways, the switch of the hidden one, and two packs compared", async ({
   page,
 }) => {
   test.setTimeout(60_000);
@@ -687,69 +671,77 @@ test("the page of packs: which pack each model uses, installing one, those insta
   await openSettingsPage(page, "模型适配包");
   const packs = settings(page).getByTestId("model-packs");
 
-  // Installing: from GitHub or a folder, by the title; a lone pack.json under the list.
-  await expect(packs.getByTestId("pack-install-github")).toHaveText("从 GitHub 地址装…");
-  await expect(packs.getByTestId("pack-install-folder")).toHaveText("从本机文件夹装…");
-  await expect(packs.getByTestId("pack-install-file")).toHaveText("从 pack.json 文件装…");
-  await packs.getByTestId("pack-install-github").click();
-  const install = page.getByTestId("pack-install");
-  await expect(install.getByRole("textbox", { name: "GitHub 地址" })).toBeVisible();
-  await install.screenshot(CM4("install-chooser"));
-  await install.getByRole("button", { name: "关闭" }).click();
-  await packs.getByTestId("pack-folder-input").setInputFiles(`${PACKS}steady`);
+  // Installing: the three ways side by side; from GitHub an address, else a picker.
+  await packs.getByTestId("pack-add").click();
+  const install = packs.getByTestId("pack-install");
+  await expect(install.getByRole("radio", { name: "GitHub 地址" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  await expect(install.getByRole("textbox", { name: "地址" })).toBeVisible();
+  await expect(install.getByTestId("pack-github-read")).toBeDisabled();
+  await expect(packs.getByTestId("pack-add")).toHaveAttribute("aria-current", "true");
+  await settings(page).screenshot(SP3("K3-install"));
+  await install.getByRole("radio", { name: "本机文件夹" }).click();
+  await expect(install.getByRole("textbox")).toHaveCount(0);
+  let chooser = page.waitForEvent("filechooser");
+  await install.getByTestId("pack-pick").click();
+  await (await chooser).setFiles(`${PACKS}steady`);
   await page.getByTestId("pack-dialog").getByTestId("pack-confirm").click();
+  await expect(pagePack(page).getByTestId("pack-viewer-name")).toHaveText("DeepSeek steady(本机)");
+  // A lone pack.json, the same way.
+  await packs.getByTestId("pack-add").click();
+  await install.getByRole("radio", { name: "单个文件" }).click();
+  await expect(install.getByTestId("pack-pick")).toHaveText("选择 pack.json…");
+  chooser = page.waitForEvent("filechooser");
+  await install.getByTestId("pack-pick").click();
+  await (await chooser).setFiles(OPUS);
+  await page.getByTestId("pack-dialog").getByTestId("pack-confirm").click();
+  await expect(pagePack(page).getByTestId("pack-viewer-name")).toHaveText("Opus 稳重版(本机)");
 
-  const row = (model: string) =>
-    packs.locator(`[data-testid="pack-service"][data-model="${model}"]`);
-  const choice = (model: string) =>
-    row(model).getByRole("combobox", { name: `${model} 用的适配包` });
-  await expect(choice("claude-opus-5-5").locator("option:checked")).toHaveText(
-    "自动：Claude 5(内置)",
-  );
-  await expect(choice("deepseek-chat").locator("option:checked")).toHaveText(
-    "自动：DeepSeek steady(本机)",
-  );
-  await expect(choice("claude-test").locator("option:checked")).toHaveText("自动：通用(内置)");
-  // Chosen here: the one chosen, with the way back.
-  await choice("claude-test").selectOption({ label: "DeepSeek steady(本机)" });
-  await expect(row("claude-test").getByTestId("pack-using")).toHaveText("你选的");
-  await expect(row("claude-test").getByTestId("pack-reset")).toHaveText("恢复自动");
-  // The packs installed say which models use them.
-  await expect(packs.getByTestId("pack-item").getByTestId("pack-item-facts")).toContainText(
-    "用在 DeepSeek V3/Deepseek Chat、claude-test",
-  );
+  // Installed above, AnimaQuill's own under a line; no model is chosen a pack here.
+  await expect(packs.getByTestId("pack-item").getByTestId("pack-item-label")).toHaveText([
+    "DeepSeek steady(本机)",
+    "Opus 稳重版(本机)",
+  ]);
+  await expect(packs.locator("hr")).toHaveCount(1);
+  await expect(packs.getByRole("combobox")).toHaveCount(0);
 
-  // The hidden pack to compare with: there once asked for, in the list of each model too.
+  // The hidden pack to compare with: in the list, its switch for the bubble on its page.
   const hidden = packs.locator(
     '[data-testid="pack-builtin"][data-pack="animaquill/eval-directive"]',
   );
-  await expect(hidden).toHaveCount(0);
-  await packs.getByTestId("pack-show-hidden").check();
-  await expect(hidden).toHaveText("对照用的 2026.1 旧写法(内置)");
-  await choice("claude-opus-5-5").selectOption({ label: "对照用的 2026.1 旧写法(内置)" });
-  await expect(row("claude-opus-5-5").getByTestId("pack-using")).toHaveText("你选的");
-  await settings(page).screenshot(CM4("packs-page"));
-  await settings(page).screenshot(SP1("K1-local"));
+  await expect(hidden).toHaveText(/对照用的 2026\.1 旧写法\(内置\)/);
+  await hidden.click();
+  await expect(fact(page, "models")).toHaveText("不自动用");
+  await pagePack(page).getByTestId("pack-show-hidden").check();
+  await expect(pagePack(page).getByTestId("pack-show-hidden")).toBeChecked();
 
-  // A pack's page, one level in, and back.
-  await row("deepseek-chat").getByTestId("pack-details").click();
-  const viewer = packs.getByTestId("pack-viewer");
-  await viewer.getByRole("tab", { name: "发给模型的全文" }).click();
+  // A pack's page, and two packs side by side, wide.
+  await packs.getByTestId("pack-item").first().click();
+  const viewer = pagePack(page);
+  await settings(page).screenshot(SP3("K1-pack"));
+  await viewer.getByRole("tab", { name: "全文" }).click();
   await expect(viewer.getByTestId("pack-full")).toContainText(
     "stop and tell the user what went wrong.",
   );
-  // Two packs side by side, wide.
   await viewer.getByRole("tab", { name: "对比" }).click();
   const compare = viewer.getByTestId("pack-compare");
-  await expect(compare).not.toHaveAttribute("data-narrow", "");
-  const rules = compare
-    .getByTestId("pack-compare-segment")
-    .filter({ has: page.locator("summary", { hasText: /^system\.rules/ }) });
-  await expect(rules.getByTestId("pack-diff-in")).toContainText("If a call fails twice");
-  await rules.scrollIntoViewIfNeeded();
-  await settings(page).screenshot(CM4("compare-wide"));
-  await viewer.getByTestId("pack-viewer-back").click();
-  await expect(viewer).toHaveCount(0);
+  await expect(
+    compare.getByTestId("pack-diff-in").filter({ hasText: "If a call fails twice" }).first(),
+  ).toBeVisible();
+  await settings(page).screenshot(SP3("K2-compare"));
+
+  // Narrow: the list, then the pack, with the way back.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(settings(page)).toHaveAttribute("data-narrow", "");
+  await expect(viewer.getByTestId("pack-viewer-name")).toBeVisible();
+  await viewer.getByRole("tab", { name: "介绍" }).click();
+  await settings(page).screenshot(SP3("390-pack"));
+  await settings(page).getByTestId("settings-back").click();
+  await expect(packs.getByTestId("pack-list")).toBeVisible();
+  await expect(viewer).toBeHidden();
+  await settings(page).screenshot(SP3("390-list"));
 });
 
 const OWNER = "pipi";
@@ -829,13 +821,10 @@ test("a pack from a repository on GitHub: its README, where it is from, an updat
   const packs = settings(page).getByTestId("model-packs");
 
   // The address of the repository: the newest tag of a version, its README a tab away.
-  await packs.getByTestId("pack-install-github").click();
-  const install = page.getByTestId("pack-install");
-  await install
-    .getByRole("textbox", { name: "GitHub 地址" })
-    .fill(`https://github.com/${OWNER}/${REPO}`);
+  await packs.getByTestId("pack-add").click();
+  const install = packs.getByTestId("pack-install");
+  await install.getByRole("textbox", { name: "地址" }).fill(`https://github.com/${OWNER}/${REPO}`);
   await install.getByTestId("pack-github-read").click();
-  await expect(install).toHaveCount(0);
   const dialog = page.getByTestId("pack-dialog");
   await expect(dialog).toContainText(`DeepSeek steady(${OWNER})`);
   await expect(dialog).toContainText(`github.com/${OWNER}/${REPO}（提交 4f2a9c1，标签 v1.2.0）`);
@@ -863,21 +852,23 @@ test("a pack from a repository on GitHub: its README, where it is from, an updat
   await dialog.getByTestId("pack-confirm").click();
   const item = packs.getByTestId("pack-item");
   await expect(item.getByTestId("pack-item-label")).toHaveText(`DeepSeek steady(${OWNER})`);
-  await expect(item.getByTestId("pack-item-facts")).toContainText(
-    `github.com/${OWNER}/${REPO}（提交 4f2a9c1，标签 v1.2.0） · 用在 DeepSeek V3/Deepseek Chat`,
+  await expect(item).toHaveAttribute("aria-current", "true");
+  await expect(fact(page, "source")).toHaveText(
+    `github.com/${OWNER}/${REPO}（提交 4f2a9c1，标签 v1.2.0）`,
   );
+  await expect(fact(page, "usedBy")).toHaveText("DeepSeek V3/Deepseek Chat");
   await expect(item.getByTestId("pack-update")).toHaveCount(0);
-  await expect(item.getByTestId("pack-reread")).toHaveCount(0);
+  const viewer = pagePack(page);
+  await expect(viewer.getByTestId("pack-viewer-reread")).toHaveCount(0);
 
   // Its page: the README, read from GitHub at the commit installed; a picture from elsewhere on
-  // asking; open on GitHub.
-  await item.getByTestId("pack-item-details").click();
-  const viewer = page.getByTestId("pack-viewer");
+  // asking; open on GitHub, its homepage being its repository.
   await expect(viewer.getByTestId("pack-viewer-name")).toHaveText(`DeepSeek steady(${OWNER})`);
   await expect(viewer.getByTestId("pack-viewer-github")).toHaveAttribute(
     "href",
     `https://github.com/${OWNER}/${REPO}`,
   );
+  await expect(viewer.getByTestId("pack-viewer-homepage")).toHaveCount(0);
   await expect(viewer.getByTestId("pack-readme").getByTestId("readme-image")).toBeVisible();
   // A picture from elsewhere only opens in a tab of its own, saying what that tells its site.
   await expect(viewer.getByTestId("readme-image-open")).toHaveAttribute(
@@ -888,32 +879,26 @@ test("a pack from a repository on GitHub: its README, where it is from, an updat
     "title",
     "打开后，图片所在的网站会看到你的网络地址",
   );
-  await expect(viewer.getByTestId("pack-viewer-homepage")).toHaveText(
-    `https://github.com/${OWNER}/${REPO}`,
-  );
-  await settings(page).screenshot(SP1("K2"));
 
   // A newer tag: looking for it finds it, and the page and the list say so.
   tags.push({ name: "v1.3.0", sha: SECOND });
   await viewer.getByTestId("pack-viewer-check").click();
   await expect(viewer.getByTestId("pack-viewer-update")).toHaveText("有更新 v1.3.0");
-  await viewer.getByTestId("pack-viewer-back").click();
-  await expect(item.getByTestId("pack-update")).toHaveText("有更新 v1.3.0");
-  await settings(page).screenshot(SP1("K1"));
+  await expect(item.getByTestId("pack-update")).toHaveAttribute("title", "有更新 v1.3.0");
+  await settings(page).screenshot(SP3("K1-update"));
 
   // Looked at before it is taken: what the new version changes.
-  await item.getByTestId("pack-see-update").click();
+  await viewer.getByTestId("pack-viewer-see-update").click();
   await expect(dialog.getByRole("heading", { level: 2 })).toHaveText("更新适配包“DeepSeek steady”");
   await expect(dialog.getByTestId("pack-origin")).toHaveAttribute("data-differs", "no");
   await expect(dialog).toContainText("已装的是版本 1.2.0");
   await dialog.getByTestId("pack-confirm").click();
-  await expect(item).toContainText("v1.3.0");
-  await expect(item.getByTestId("pack-item-facts")).toContainText("（提交 7b3e5d2，标签 v1.3.0）");
+  await expect(item.getByTestId("pack-item-version")).toHaveText("1.3.0");
+  await expect(fact(page, "source")).toContainText("（提交 7b3e5d2，标签 v1.3.0）");
   await expect(item.getByTestId("pack-update")).toHaveCount(0);
 
   // Removed.
-  await item.getByTestId("pack-remove").click();
-  await page.getByRole("dialog", { name: "卸载" }).getByRole("button", { name: "卸载" }).click();
+  await removeOpen(page, "DeepSeek steady", "正在用它的模型会改回自动：DeepSeek V3/Deepseek Chat");
   await expect(item).toHaveCount(0);
 });
 
@@ -947,20 +932,20 @@ test("a pack from this computer is read again, and one installed before the rule
   const packs = settings(page).getByTestId("model-packs");
   const old = packs.locator('[data-testid="pack-item"][data-pack="old/named"]');
   await expect(old.getByTestId("pack-item-label")).toHaveText("〔名字有不允许的字符〕(本机)");
-  await expect(old.getByTestId("pack-name-issue")).toContainText("不符合现在的规则");
+  await expect(pagePack(page).getByTestId("pack-name-issue")).toContainText("不符合现在的规则");
 
   await packs.getByTestId("pack-folder-input").setInputFiles(`${PACKS}steady`);
   await page.getByTestId("pack-dialog").getByTestId("pack-confirm").click();
   const steady = packs.locator('[data-testid="pack-item"][data-pack="lin/deepseek-steady"]');
-  await expect(steady).toContainText("v1.2.0");
+  await expect(steady.getByTestId("pack-item-version")).toHaveText("1.2.0");
   // Its author changed the files: read again, it shows as an update would.
   const chooser = page.waitForEvent("filechooser");
-  await steady.getByTestId("pack-reread").click();
+  await pagePack(page).getByTestId("pack-viewer-reread").click();
   await (await chooser).setFiles(`${PACKS}steady-1.3`);
   const dialog = page.getByTestId("pack-dialog");
   await expect(dialog.getByRole("heading", { level: 2 })).toHaveText("更新适配包“DeepSeek steady”");
   await dialog.getByTestId("pack-confirm").click();
-  await expect(steady).toContainText("v1.3.0");
+  await expect(steady.getByTestId("pack-item-version")).toHaveText("1.3.0");
 });
 
 test("a pack from this computer whose homepage is its repository on GitHub moves there, to get its updates", async ({
@@ -988,8 +973,10 @@ test("a pack from this computer whose homepage is its repository on GitHub moves
   await page.getByTestId("pack-dialog").getByTestId("pack-confirm").click();
   const item = packs.getByTestId("pack-item");
   await expect(item.getByTestId("pack-item-label")).toHaveText("DeepSeek steady(本机)");
-  await item.getByTestId("pack-item-details").click();
-  const viewer = page.getByTestId("pack-viewer");
+  const viewer = pagePack(page);
+  await expect(viewer.getByTestId("pack-viewer-homepage")).toHaveText(
+    `https://github.com/${OWNER}/${REPO}`,
+  );
   await expect(viewer.getByTestId("pack-viewer-check")).toHaveCount(0);
   await viewer.getByTestId("pack-viewer-to-github").click();
   // From another place than the one installed: said plainly, and only then taken.
@@ -1043,10 +1030,11 @@ test("settings that had the words to compare with on keep them for their model, 
   await page.reload();
   await openSettingsPage(page, "模型适配包");
   const packs = settings(page).getByTestId("model-packs");
+  await packs
+    .locator('[data-testid="pack-builtin"][data-pack="animaquill/eval-directive"]')
+    .click();
   await expect(packs.getByTestId("pack-show-hidden")).toBeChecked();
-  await expect(
-    packs.getByRole("combobox", { name: "claude-test 用的适配包" }).locator("option:checked"),
-  ).toHaveText("对照用的 2026.1 旧写法(内置)");
+  await expect(fact(page, "usedBy")).toHaveText("claude-test");
   await leaveSettings(page);
   await tab(page, "chat").click();
   await send(page, "你好");

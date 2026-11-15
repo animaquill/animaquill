@@ -46,7 +46,6 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
   { id: "models.headers", group: "models", where: "ai" },
   { id: "models.list", group: "models", where: "ai" },
   { id: "models.details", group: "models", where: "ai" },
-  { id: "packs.choice", group: "packs", where: "ai" },
   { id: "packs.installed", group: "packs", where: "ai" },
   { id: "packs.hidden", group: "packs", where: "ai" },
   { id: "chat.maxToolCalls", group: "chat", where: "ai" },
