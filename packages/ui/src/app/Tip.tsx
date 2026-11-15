@@ -9,7 +9,7 @@ const MARGIN = 4;
 
 interface TipProps {
   readonly name: string;
-  /** One short sentence about what it is for. */
+  /** One short sentence about what it is for. Empty where the name says all of it. */
   readonly usage: string;
   readonly shortcut?: string | undefined;
   readonly children: ReactNode;
@@ -63,7 +63,7 @@ export function Tip({ name, usage, shortcut, children }: TipProps) {
               <strong>{name}</strong>
               {shortcut && <kbd>{shortcut}</kbd>}
             </div>
-            <div className={styles.usage}>{usage}</div>
+            {usage !== "" && <div className={styles.usage}>{usage}</div>}
           </div>,
           document.body,
         )}

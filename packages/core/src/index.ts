@@ -408,6 +408,7 @@ export {
   aiTask,
   folderBatch,
   repoBatch,
+  isFileBatch,
   mergeUpdates,
   type ChangeRecord,
   type CheckedChange,
@@ -425,10 +426,12 @@ export {
   type MergeOptions,
   type MergeResult,
   type UndoObstacle,
+  type UndoOutlook,
   type WrittenKey,
   type UndoResult,
   type Origin,
 } from "./store.ts";
+export { UNDO_FORMAT, isUndoRecord, type UndoRecord } from "./undo-record.ts";
 export type { Path } from "./structure.ts";
 export {
   missingIn,

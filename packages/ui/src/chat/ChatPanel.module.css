@@ -2002,3 +2002,9 @@ span.sentPicture {
   background: var(--aq-bg-raised);
   border-radius: 4px;
 }
+
+/* What cannot be taken back here says why when the pointer rests on it. */
+.cardHead button[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.5;
+}

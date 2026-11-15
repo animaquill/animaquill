@@ -467,7 +467,19 @@
     "keysGone": "拖动中这个关键帧被撤销或在别处改掉了，这次拖动没有生效。",
     "overlayGone": "拖动中要改的片段或关键帧被撤销或在别处改掉了，这次拖动没有生效。",
     "keysLocked": "轨道已锁定，这些关键帧不能改。",
-    "keysNotShown": "选中的关键帧不在时间轴上。展开它们的片段，或者到关键帧选项卡里操作。"
+    "keysNotShown": "选中的关键帧不在时间轴上。展开它们的片段，或者到关键帧选项卡里操作。",
+    "takenBack": {
+      "undone": "撤销了 {{count}} 处",
+      "kept": {
+        "changed": "{{count}} 处你后来又改过，保留了你的。",
+        "inUse": "{{count}} 处还被别的内容用着，没有撤。"
+      },
+      "showKept": "查看是哪 {{count}} 处",
+      "keptTitle": "保留了 {{count}} 处",
+      "keptList": "保留的地方",
+      "redo": "重做",
+      "redonePartly": "重做了 {{count}} 处；{{kept}} 处后来又改过，没有重做。"
+    }
   },
   "failures": {
     "kinds": {
@@ -929,6 +941,10 @@
           "name": "AI 对话",
           "keywords": "chat 对话 聊天 记录 清除 空间 占用"
         },
+        "undo": {
+          "name": "撤销记录",
+          "keywords": "undo 撤销 记录 刷新 清除 空间 占用"
+        },
         "usage": {
           "name": "使用记录",
           "keywords": "history recent 最近 使用记录 清除 命令面板"
@@ -1008,6 +1024,15 @@
       "cleared": "清除了 {{count}} 个对话。",
       "clearedButRunning": "清除了 {{count}} 个对话。正在回答的那个项目的对话留着。",
       "clearFailed": "没能清除对话，请再试一次。"
+    },
+    "undo": {
+      "line": "撤销记录：{{projects}} 个项目，{{size}}",
+      "failed": "撤销记录：没读到占多大",
+      "clear": "清除",
+      "clearTitle": "清除撤销记录？",
+      "clearMessage": "刷新页面以后，以前的 AI 任务和外部改动就不能再整批撤销了。项目本身不受影响。",
+      "cleared": "已清除撤销记录。",
+      "clearFailed": "没能清除撤销记录，请再试一次。"
     },
     "usage": {
       "clear": "清除使用记录",
@@ -1315,6 +1340,7 @@
       "other": "其他窗口"
     },
     "ai": "AI：改了 {{count}} 处",
+    "aiLabel": "AI：“{{label}}”改了 {{count}} 处",
     "folder": "外部文件：并入 {{count}} 个文件",
     "other": "其他窗口的改动",
     "property": "改了{{name}}",
@@ -1329,7 +1355,12 @@
       "other": "其他窗口的改动要在那个窗口撤销",
       "gone": "这一步已经不能撤销了",
       "originGone": "这次的改动已经不能撤销了",
-      "redoFirst": "先重做后撤销的那几步"
+      "redoFirst": "先重做后撤销的那几步",
+      "changed": "这次改的地方后来都被改过了",
+      "inUse": "这次改的地方还被别的内容用着",
+      "count": "撤销记录只留最近 50 次",
+      "age": "撤销记录只留 30 天",
+      "elsewhere": "在做这次改动的那台电脑上能撤销"
     },
     "command": {
       "project": {
@@ -3389,6 +3420,13 @@
     "card": {
       "noChanges": "没有改项目",
       "undoTitle": "只撤 AI 这次的改动，你自己的改动不动",
+      "whyNot": {
+        "changed": "这次任务改的地方后来都被改过了",
+        "inUse": "这次任务改的地方还被别的内容用着",
+        "count": "撤销记录只留最近 50 次",
+        "age": "撤销记录只留 30 天",
+        "elsewhere": "在做这次改动的那台电脑上能撤销"
+      },
       "mine": "这期间你改了 {{count}} 处，AI 保留了你的：{{list}}",
       "mineOverwritten": "这期间你改了 {{count}} 处，其中 {{over}} 处 AI 之后又改了：{{list}}",
       "elsewhere": "这期间别处改了 {{count}} 处：{{list}}",

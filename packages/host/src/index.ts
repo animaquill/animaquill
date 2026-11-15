@@ -94,6 +94,15 @@ export {
 } from "./sync-protocol.ts";
 export { chromeRefuses, isRefusedByChrome } from "./chrome-names.ts";
 export {
+  MemoryUndoPlace,
+  UNDO_DATABASE,
+  UNDO_DAYS,
+  UNDO_KEPT,
+  browserUndo,
+  memoryUndo,
+  undoDropped,
+} from "./undo.ts";
+export {
   MAX_NAME_LENGTH,
   MAX_PATH_LENGTH,
   isSafeName,
@@ -121,6 +130,11 @@ export interface Host {
   readonly trials: TrialStore;
   /** Where code that people typed and did not save waits, so that a crash does not take it. */
   readonly drafts: DraftStore;
+  /**
+   * What it takes to take back AI tasks and batches of files after a reload, on this device only,
+   * see `UndoStore`. Without it that lasts as long as the page.
+   */
+  readonly undo?: UndoStore;
   /** Where an export keeps what it has done, so that a reload or a crash costs only a little. */
   readonly exports: ExportStore;
   /** What the editor worked out and can work out again, kept to save time. Optional: see `WorkCache`. */
@@ -2320,6 +2334,66 @@ export interface WindowPlace {
   save(kept: unknown): Promise<void>;
   /** Lets go of the place. What is kept stays, for the next window. */
   close(): void;
+}
+
+/**
+ * One undo log of a project, by its origin: an AI task or a batch of files. The host keeps what it
+ * gets as it is.
+ */
+export interface SavedUndo {
+  readonly project: string;
+  readonly origin: string;
+  /** What the editor keeps to take it back, see `UndoRecord` of the core. */
+  readonly record: unknown;
+  /** What the editor shows of it in lists. */
+  readonly about: unknown;
+  /** Which window saved it last, see `UndoStore.window`. */
+  readonly window: string;
+  /** When it was saved last, in milliseconds since 1970. */
+  readonly savedAt: number;
+  /** When it was saved first: what is kept goes by this. */
+  readonly madeAt: number;
+}
+
+/** Why the log of an origin is no longer kept: there were newer ones, or it got too old. */
+export type UndoGone = "count" | "age";
+
+/** How much the undo logs of all projects take on this device. */
+export interface UndoUsage {
+  readonly projects: number;
+  readonly bytes: number;
+}
+
+/**
+ * Undo logs of AI tasks and batches of files, on this device, which every window of a project
+ * shares. Each project keeps the newest 50, for 30 days (`UNDO_KEPT`, `UNDO_DAYS`).
+ */
+export interface UndoStore {
+  /** Different for every window, see `SavedUndo.window`. */
+  readonly window: string;
+  /** Every log of a project, the one saved first first. */
+  list(project: string): Promise<readonly SavedUndo[]>;
+  get(project: string, origin: string): Promise<SavedUndo | undefined>;
+  /**
+   * Keeps a log in place of the one before, written before anything is read, and resolves to the
+   * origins whose logs went for it. `madeAt` is when the changes began, which the caller knows;
+   * without it, now.
+   */
+  save(
+    saved: Omit<SavedUndo, "window" | "savedAt" | "madeAt"> & { readonly madeAt?: number },
+  ): Promise<{ readonly dropped: readonly string[] }>;
+  remove(project: string, origin: string): Promise<void>;
+  /** The origins of a project whose logs went, and why. */
+  gone(project: string): Promise<ReadonlyMap<string, UndoGone>>;
+  usage(): Promise<UndoUsage>;
+  /** Takes away the logs of every project. */
+  clear(): Promise<void>;
+  /** Takes away the logs of a project that is gone. */
+  forget(project: string): Promise<void>;
+  /** Hears what other windows save or take away. Returns how to stop. */
+  listen(listener: (project: string, origin: string) => void): () => void;
+  /** Runs `run` while no other window does the same for this origin, as a Web Lock. */
+  exclusive<T>(project: string, origin: string, run: () => Promise<T> | T): Promise<T>;
 }
 
 export type TrialStore = WindowPlaces;

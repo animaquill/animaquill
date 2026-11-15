@@ -26,6 +26,10 @@ import {
   clipStart,
   ProjectStore,
   withId,
+  aiTask,
+  objectKey,
+  objectOfPath,
+  type Origin,
   type OperationCall,
   type UndoResult,
   type ClipState,
@@ -79,7 +83,8 @@ import { AiSync } from "../chat/ai-sync.ts";
 import { CloudChats } from "../chat/cloud-chats.ts";
 import { SETTINGS_GROUPS, SettingsNav, type SettingsPlace } from "./settings-nav.ts";
 import { SwitchSetting } from "./switch-setting.ts";
-import { ToolActivity } from "./tool-activity.ts";
+import { ToolActivity, toolName } from "./tool-activity.ts";
+import { placeText } from "./undo-text.ts";
 import { CodeDocuments, type CodePlace } from "../code/documents.ts";
 import { CodeDrafts } from "../code/drafts.ts";
 import { FileActions } from "../code/files.ts";
@@ -132,6 +137,7 @@ import type { Platform } from "./keys.ts";
 import { LayoutController, type LayoutChoice, type LayoutPreset } from "./layout.ts";
 import { Notifications } from "./notifications.ts";
 import { OperationLog, type Operation } from "./operations.ts";
+import { UndoKeeper, type UndoAbout } from "./undo-keeper.ts";
 import { CommandPalette } from "./palette.ts";
 import { ResourceHabits } from "../resources/habits.ts";
 import { ExplorerState, nodeOfResource } from "../resources/explorer.ts";
@@ -283,6 +289,8 @@ export class Workbench {
   readonly trials: TrialSession;
   /** What changed the project lately, for the status bar, and taking it back from there. */
   readonly operations: OperationLog;
+  /** Undo logs of AI tasks and batches of files, which last across reloads on this device. */
+  readonly undo: UndoKeeper;
   readonly properties: PropertyWriter;
   readonly keyframes: KeyframeEditor;
   /** What scenes say about where the objects of their code are, for the handles on the picture. */
@@ -790,6 +798,7 @@ export class Workbench {
         registered: (revision) => this.registrations.problemsOf(revision),
       }),
       undone: (result) => this.tellUndo(result),
+      takeBack: (task, direction) => this.takeBackOrigin(aiTask(task), direction),
       memory: host.windowMemory,
       // Pictures of the account's conversations come here as they are read.
       images:
@@ -875,6 +884,7 @@ export class Workbench {
         problems: this.problems,
         t,
         tools: this.tools,
+        takeBack: (origin, direction) => this.undo.takeBack(origin, direction),
         startingFiles: () => this.startingFiles(),
         changeProject: (next) => this.#changeProject(next),
         warnAboutCode: (report) => this.transfer.warnAboutCode(report),
@@ -1087,7 +1097,13 @@ export class Workbench {
       keepFailed: () => this.notifications.push(t("notice.trialKeepFailed")),
       keepRecovered: () => this.notifications.push(t("notice.trialKeepRecovered")),
     });
-    this.operations = new OperationLog(this.session);
+    this.undo = new UndoKeeper({
+      host: host.undo,
+      session: this.session,
+      isCloud: () => this.cloud?.getSnapshot().kind === "linked",
+      describe: (origin) => this.#describeUndo(origin),
+    });
+    this.operations = new OperationLog(this.session, this.undo);
     this.properties = new PropertyWriter(this.session, this.timeline, this.trials, {
       commandFailed: (failure) => this.notifications.push(commandFailedText(t, failure)),
       comparing: () => this.notifications.push(t("notice.comparing")),
@@ -4210,18 +4226,110 @@ export class Workbench {
   }
 
   /** Takes back an AI task or a batch of files as a whole, or does it again. */
-  undoOperation(operation: Operation, direction: "undo" | "redo"): string | undefined {
+  async undoOperation(operation: Operation, direction: "undo" | "redo"): Promise<void> {
+    if (operation.origin === undefined) return;
+    await this.takeBackOrigin(operation.origin, direction);
+  }
+
+  /**
+   * Takes back all of an AI task or a batch of files, or does it again, one window at a time, and
+   * says what came of it. What came from the folder goes back the way its notice takes it, which
+   * keeps the folder's version first.
+   */
+  async takeBackOrigin(
+    origin: Origin,
+    direction: "undo" | "redo",
+  ): Promise<UndoResult | undefined> {
     const { store } = this.session;
-    if (!store || operation.origin === undefined) return undefined;
-    // What came from the folder goes back the way its notice takes it, which keeps the folder's.
-    if (operation.source === "folder" && direction === "undo") {
-      if (this.projectFolders?.undoBatch(operation.origin)) return undefined;
+    if (!store) return undefined;
+    // What came from the folder goes back the way its notice takes it, which says itself how it went.
+    if (direction === "undo") {
+      const folder = this.projectFolders?.undoBatch(origin, this.undo.aboutOf(origin)?.files);
+      if (folder) return folder;
     }
-    const result =
-      direction === "undo"
-        ? store.undoOrigin(operation.origin)
-        : store.redoOrigin(operation.origin);
-    return this.#undoMessage(result);
+    const result = await this.undo.takeBack(origin, direction);
+    if (!result) return undefined;
+    this.#tellTakenBack(origin, direction, store, result);
+    return result;
+  }
+
+  /**
+   * What taking back all of an origin came to: how many places went back, and how many stayed
+   * because they were changed since, with the way to see which, and to do it again.
+   */
+  #tellTakenBack(
+    origin: Origin,
+    direction: "undo" | "redo",
+    store: ProjectStore,
+    result: UndoResult,
+  ): void {
+    const { t } = this;
+    if (!result.ok) {
+      this.tellUndo(result);
+      return;
+    }
+    const objects = (paths: readonly (readonly string[])[]) =>
+      new Set(paths.map((path) => objectKey(objectOfPath(path))));
+    const kept = objects(result.kept);
+    const back = [...objects(result.patches.map(({ path }) => path))].filter(
+      (key) => !kept.has(key),
+    );
+    const count = back.length;
+    if (direction === "redo") {
+      if (kept.size > 0)
+        this.notifications.push(t("notice.takenBack.redonePartly", { count, kept: kept.size }));
+      return;
+    }
+    const again = {
+      label: t("notice.takenBack.redo"),
+      run: () => void this.takeBackOrigin(origin, "redo"),
+    };
+    if (kept.size === 0) {
+      this.notifications.push(t("notice.takenBack.undone", { count }), { actions: [again] });
+      return;
+    }
+    const why = result.obstacle === "inUse" ? "inUse" : "changed";
+    const state = store.getState();
+    const places = result.kept.map((path) => placeText(t, state, path));
+    this.notifications.push(t("notice.takenBack.undone", { count }), {
+      stays: true,
+      warning: {
+        text: t(`notice.takenBack.kept.${why}`, { count: kept.size }),
+        action: {
+          label: t("notice.takenBack.showKept", { count: kept.size }),
+          run: () =>
+            void this.dialogs.confirm({
+              title: t("notice.takenBack.keptTitle", { count: kept.size }),
+              message: t(`notice.takenBack.kept.${why}`, { count: kept.size }),
+              confirm: t("dialog.close"),
+              noticeOnly: true,
+              details: [{ title: t("notice.takenBack.keptList"), items: [...new Set(places)] }],
+            }),
+        },
+      },
+      actions: [again],
+    });
+  }
+
+  /** What lists show of an AI task or a batch, as far as this window knows it now. */
+  #describeUndo(origin: Origin): Partial<UndoAbout> {
+    const operation = this.operations?.getSnapshot().find((each) => each.origin === origin);
+    const about: { -readonly [K in keyof UndoAbout]?: UndoAbout[K] } = {};
+    if (operation) about.count = operation.count;
+    if (origin.startsWith("ai:")) {
+      const label = this.chat.labelOf(origin.slice("ai:".length));
+      if (label !== undefined) about.label = label;
+    } else {
+      const files = this.projectFolders?.filesOf(origin);
+      if (files) about.files = files;
+      const batch = this.tools.batchOf(origin);
+      if (batch) {
+        about.tool = toolName(this.t, batch.client);
+        about.count = batch.changes.length;
+        about.from = batch.startedAt;
+      }
+    }
+    return about;
   }
 
   #registerEditActions(): void {

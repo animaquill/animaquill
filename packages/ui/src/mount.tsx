@@ -151,6 +151,8 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     // What is in the log is safe, and the folder should have it too, should the page not come back.
     void workbench.projectFolders?.flush();
     void workbench.chat.flush();
+    // AI tasks and batches can still be taken back after a reload.
+    void workbench.undo.flush();
   };
   document.addEventListener("visibilitychange", save);
   // A reload or a closing tab does not always say it hid first.

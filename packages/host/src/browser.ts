@@ -1,6 +1,7 @@
 import { browserDownloads } from "./downloads.ts";
 import { browserUploads } from "./uploads.ts";
 import { browserAccountKeys, browserChatImages, browserChats, browserKeys } from "./ai.ts";
+import { browserUndo } from "./undo.ts";
 import { createWorkCache } from "./caches.ts";
 import { createExportStore } from "./exports.ts";
 import { browserFolders } from "./folders.ts";
@@ -1173,6 +1174,7 @@ export function createBrowserHost(
   const covers = browserCoverStore(database);
   const uploads = browserUploads(database, locks);
   const downloads = browserDownloads(database, locks);
+  const undo = browserUndo(database, locks);
   // What an export kept of a project that is gone would only take room on the disk.
   const forget = async (project: string) => {
     await Promise.all([
@@ -1181,6 +1183,7 @@ export function createBrowserHost(
       chats.forget(project).catch(() => {}),
       covers.forget(project).catch(() => {}),
       uploads.forget(project).catch(() => {}),
+      undo.forget(project).catch(() => {}),
     ]);
     for (const saved of await exports.list(project).catch(() => [])) {
       // One that a window is at is that window's to finish or give up.
@@ -1227,5 +1230,6 @@ export function createBrowserHost(
     covers,
     uploads,
     downloads,
+    undo,
   };
 }

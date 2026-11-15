@@ -41,13 +41,13 @@ const secretOf = (found: unknown): ServiceSecret | undefined => {
   return readServiceSecret(rest);
 };
 
-const resultOf = <T>(request: IDBRequest<T>) =>
+export const resultOf = <T>(request: IDBRequest<T>) =>
   new Promise<T>((resolve, reject) => {
     request.addEventListener("success", () => resolve(request.result));
     request.addEventListener("error", () => reject(request.error));
   });
 
-const committed = (transaction: IDBTransaction) =>
+export const committed = (transaction: IDBTransaction) =>
   new Promise<void>((resolve, reject) => {
     transaction.addEventListener("complete", () => resolve());
     transaction.addEventListener("abort", () => {
@@ -56,7 +56,7 @@ const committed = (transaction: IDBTransaction) =>
   });
 
 /** Opens a database once, and again after another page upgraded it. */
-function connector(open: () => Promise<IDBDatabase>): () => Promise<IDBDatabase> {
+export function connector(open: () => Promise<IDBDatabase>): () => Promise<IDBDatabase> {
   let opening: Promise<IDBDatabase> | undefined;
   return () => {
     opening ??= open().then(

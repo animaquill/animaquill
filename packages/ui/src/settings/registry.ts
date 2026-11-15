@@ -69,6 +69,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
   { id: "storage.persist", group: "storage", where: "device" },
   { id: "storage.keys", group: "storage", where: "device" },
   { id: "storage.chats", group: "storage", where: "device" },
+  { id: "storage.undo", group: "storage", where: "device" },
   { id: "storage.usage", group: "storage", where: "device" },
   { id: "about.version", group: "about" },
   { id: "about.license", group: "about" },

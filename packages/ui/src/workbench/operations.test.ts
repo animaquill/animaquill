@@ -11,7 +11,8 @@ import { describe, expect, it } from "vitest";
 import { operationText } from "../app/operation-text.ts";
 import { createI18n } from "../i18n/i18n.ts";
 import { Emitter } from "./emitter.ts";
-import { OperationLog, type StoreSource } from "./operations.ts";
+import { OperationLog, type Operation, type StoreSource } from "./operations.ts";
+import type { RestoredUndo } from "./undo-keeper.ts";
 
 const red = { kind: "color", color: "#ff0000" };
 
@@ -178,5 +179,41 @@ describe("the list of what changed the project", () => {
     open(ProjectStore.create(createProject({ name: "另一个" })));
     await settled();
     expect(log.getSnapshot()).toEqual([]);
+  });
+
+  it("has AI tasks and batches whose undo logs came back, where they happened", async () => {
+    const store = ProjectStore.create(createProject({ name: "操作" }));
+    const { source } = sourceOf(store);
+    const emitter = new Emitter();
+    let restored: readonly RestoredUndo[] = [];
+    const log = new OperationLog(source, {
+      subscribe: emitter.subscribe,
+      getSnapshot: () => ({ restored }),
+    });
+    restored = [
+      {
+        origin: folderBatch("tool-1"),
+        about: { kind: "folder", count: 3, from: 1000, to: 5000, tool: "Claude Code" },
+      },
+      {
+        origin: aiTask("t1"),
+        about: { kind: "ai", count: 2, from: 2000, to: 2000, label: "挪标题" },
+      },
+    ];
+    emitter.emit();
+    await settled();
+    // Newest first, by when they changed the project last.
+    expect(log.getSnapshot()).toMatchObject([
+      {
+        source: "folder",
+        origin: folderBatch("tool-1"),
+        count: 3,
+        tool: "Claude Code",
+        from: 1000,
+      },
+      { source: "ai", origin: aiTask("t1"), count: 2, label: "挪标题", time: 2000 },
+    ]);
+    const t = await words();
+    expect(operationText(t, log.getSnapshot()[1] as Operation)).toBe("AI：“挪标题”改了 2 处");
   });
 });

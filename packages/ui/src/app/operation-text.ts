@@ -24,6 +24,13 @@ export function operationText(
 ): string {
   const { source, commands, properties, count } = operation;
   if (tool) return t("localAi.operation", { tool: tool.name, count: tool.count });
+  if (source === "ai" && operation.label !== undefined) {
+    return t("operations.aiLabel", {
+      label: operation.label,
+      count,
+      interpolation: { escapeValue: false },
+    });
+  }
   if (source === "ai") return t("operations.ai", { count });
   if (source === "folder") return t("operations.folder", { count });
   if (source === "other") return t("operations.other");

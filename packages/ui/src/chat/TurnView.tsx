@@ -191,8 +191,7 @@ function UserView(props: {
               type="button"
               onClick={() => {
                 setAsking(false);
-                chat.undoTask(turn.task);
-                void chat.resend();
+                void chat.undoTask(turn.task).then(() => chat.resend());
               }}
             >
               {t("chat.user.undoThenResend")}
@@ -596,8 +595,7 @@ function OutcomeView({
                   type="button"
                   onClick={() => {
                     setAsking(false);
-                    chat.undoTask(task);
-                    void chat.retry();
+                    void chat.undoTask(task).then(() => chat.retry());
                   }}
                 >
                   {t("chat.failure.undoThenRetry")}

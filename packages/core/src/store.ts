@@ -55,17 +55,28 @@ import {
   writePathOf,
   type Path,
 } from "./structure.ts";
-import { UNWRITTEN, WriteTree, type Written } from "./write-tree.ts";
+import { UNWRITTEN, WriteTree, type WriteId, type Written } from "./write-tree.ts";
+import { documentMark, marksAround, type Marks } from "./undo-marks.ts";
+import {
+  UNDO_FORMAT,
+  isUndoRecord,
+  type SavedEntry,
+  type SavedWritten,
+  type UndoRecord,
+} from "./undo-record.ts";
 
-export { STORAGE, USER, aiTask, folderBatch, repoBatch, type Origin };
+export { STORAGE, USER, aiTask, folderBatch, isFileBatch, repoBatch, type Origin };
 
 const LOAD = "load";
 const REMOTE = "remote";
 const ROOT = "project";
 const MAX_HISTORY = 1000;
 const MAX_UNDO = 500;
-/** How many batches of files from the folder can still be taken back, see mergeFiles(). */
-export const MAX_BATCHES = 20;
+/**
+ * How many batches of files from the folder or the repository can still be taken back, see
+ * mergeFiles(): as many as are kept of every kind after a reload, see `UNDO_KEPT`.
+ */
+export const MAX_BATCHES = 50;
 
 /** Something an update wrote, at its place in the project, as Yjs has it, see `checkWritten`. */
 export interface WrittenKey {
@@ -296,6 +307,15 @@ interface UndoEntry {
    */
   readonly danglingBefore: readonly string[];
   readonly danglingAfter: readonly string[];
+}
+
+/**
+ * Whether undoOrigin() or redoOrigin() can do something for an origin now, see `undoOutlook`.
+ * `blocked` says why nothing of it would go back, where that is so.
+ */
+export interface UndoOutlook {
+  readonly direction: "undo" | "redo" | undefined;
+  readonly blocked?: UndoObstacle;
 }
 
 /** What was done and what was taken back, for the person or for one AI task. */
@@ -561,6 +581,13 @@ export class ProjectStore {
   #readOnly = false;
   /** See `refuse`. */
   #refusal: ((commands: readonly string[]) => CommandFailure | undefined) | undefined;
+  /** The names of writes in saved undo logs, both ways, see `saveUndo`. */
+  readonly #names = new Map<WriteId, string>();
+  readonly #named = new Map<string, WriteId>();
+  /** Different for every store, so that names of writes from two of them never meet. */
+  readonly #namePrefix = newId("writes");
+  /** See `undoOutlook`. */
+  readonly #outlooks = new Map<Origin, { readonly at: string; readonly outlook: UndoOutlook }>();
 
   /** Opens a document that already has content, such as one that came from the platform. */
   constructor(doc: Y.Doc) {
@@ -1088,6 +1115,180 @@ export class ProjectStore {
   }
 
   /**
+   * Whether an AI task or a batch can be taken back now, or done again, and whether all of it would
+   * stay where it is, because everything it wrote was changed since or is in use. It works that out
+   * as undoOrigin() would, so it is only for one that people look at.
+   */
+  undoOutlook(origin: Origin): UndoOutlook {
+    const log = origin === USER ? undefined : this.#undo.get(origin);
+    const direction: UndoOutlook["direction"] =
+      (log?.done.length ?? 0) > 0 ? "undo" : (log?.undone.length ?? 0) > 0 ? "redo" : undefined;
+    if (!log || !direction) return { direction };
+    const entries = direction === "undo" ? log.done : log.undone.slice(-1);
+    const at = `${this.#revision}:${entries.map(({ serial }) => serial).join(",")}`;
+    const known = this.#outlooks.get(origin);
+    if (known?.at === at) return known.outlook;
+    const { back, obstacle } = this.#planBack(entries, origin);
+    const outlook: UndoOutlook = back.size === 0 ? { direction, blocked: obstacle } : { direction };
+    this.#outlooks.set(origin, { at, outlook });
+    return outlook;
+  }
+
+  /** The AI tasks and batches whose changes can be taken back or done again as a whole. */
+  get undoOrigins(): readonly Origin[] {
+    return [...this.#undo.keys()].filter((origin) => origin !== USER);
+  }
+
+  /** Forgets what it takes to take back the changes of an origin, as if it never had any. */
+  forgetUndo(origin: Origin): void {
+    if (origin === USER) return;
+    this.#undo.delete(origin);
+    this.#outlooks.delete(origin);
+    const known = this.#batches.indexOf(origin);
+    if (known >= 0) this.#batches.splice(known, 1);
+  }
+
+  /**
+   * What it takes to take back the changes of an origin, or do them again, after this project was
+   * closed and opened again, see `UndoRecord`. Undefined where there is nothing of it to keep.
+   */
+  saveUndo(origin: Origin): UndoRecord | undefined {
+    const log = origin === USER ? undefined : this.#undo.get(origin);
+    if (!log || log.done.length + log.undone.length === 0) return undefined;
+    const writes = new WriteTree(this.#written);
+    const marks: Marks = new Map();
+    const saveEntry = (entry: UndoEntry): SavedEntry => ({
+      steps: entry.steps.map((step) => {
+        const where = writePathOf(step.patch.path);
+        marksAround(this.#root, where, marks);
+        return {
+          patch: step.patch,
+          inverse: step.inverse,
+          replaced: this.#saveWritten(step.replaced),
+          left: this.#saveWritten(step.left),
+          now: this.#saveWritten(writes.at(where)),
+        };
+      }),
+      facts: entry.facts ?? null,
+      danglingBefore: entry.danglingBefore,
+      danglingAfter: entry.danglingAfter,
+    });
+    return {
+      format: UNDO_FORMAT,
+      origin,
+      done: log.done.map(saveEntry),
+      undone: log.undone.map(saveEntry),
+      marks: [...marks.values()].map(({ path, mark }) => [path, mark] as const),
+      doc: { manifest: documentMark(this.#root) },
+    };
+  }
+
+  /**
+   * Takes up what `saveUndo` saved, in the order it was saved, so that those changes can be taken
+   * back or done again here as in the store that saved them: where the document still has what it
+   * had then, the steps can go back; what was written since, here or anywhere else, stays, as it
+   * would there. A record of an origin that this store has a log of already counts only with
+   * `replace`, for one that another window saved after it took back or did again some of it.
+   * Records that are not of this document, or that this editor cannot read, are left out. Resolves
+   * to the origins that it took up.
+   */
+  restoreUndo(
+    records: readonly unknown[],
+    { replace = false }: { readonly replace?: boolean } = {},
+  ): readonly Origin[] {
+    const writes = new WriteTree(this.#written);
+    const restored: Origin[] = [];
+    for (const record of records) {
+      if (!isUndoRecord(record) || !this.#isOfThisDocument(record)) continue;
+      const { origin } = record;
+      if (origin === USER || origin === STORAGE) continue;
+      if (this.#undo.has(origin) && !replace) continue;
+      const toEntry = (saved: SavedEntry): UndoEntry => {
+        this.#serial += 1;
+        return {
+          serial: this.#serial,
+          steps: saved.steps.map((step) => ({
+            patch: step.patch,
+            inverse: step.inverse,
+            replaced: this.#readWritten(step.replaced),
+            left: this.#readWritten(step.left),
+          })),
+          facts: saved.facts ?? undefined,
+          danglingBefore: saved.danglingBefore,
+          danglingAfter: saved.danglingAfter,
+        };
+      };
+      const log: UndoLog = { done: record.done.map(toEntry), undone: record.undone.map(toEntry) };
+      // What was written where when it was saved, as far as the steps go, the outer places first.
+      const steps = [...record.done, ...record.undone].flatMap(({ steps: each }) => each);
+      const places = new Map<string, { readonly where: Path; readonly now: SavedWritten }>();
+      for (const step of steps) {
+        const where = writePathOf(step.patch.path);
+        places.set(keyOf(where), { where, now: step.now });
+      }
+      for (const { where, now } of [...places.values()].toSorted(byDepth((place) => place.where))) {
+        writes.put(where, this.#readWritten(now));
+      }
+      // Whatever has another mark now was written since, by somebody else.
+      const marks: Marks = new Map();
+      for (const { where } of places.values()) marksAround(this.#root, where, marks);
+      const saved = new Map(record.marks.map(([path, mark]) => [keyOf(path), mark]));
+      const changed: Path[] = [];
+      for (const [key, { path, mark }] of marks) if (saved.get(key) !== mark) changed.push(path);
+      for (const [path] of record.marks) if (!marks.has(keyOf(path))) changed.push(path);
+      for (const path of changed.toSorted(byDepth((each) => each))) {
+        writes.put(path, { by: Symbol("write") });
+      }
+      this.#undo.set(origin, log);
+      if (isFileBatch(origin)) this.#rememberBatch(origin);
+      restored.push(origin);
+    }
+    this.#written = writes.root;
+    // What was written where is different now, for every origin.
+    this.#outlooks.clear();
+    return restored;
+  }
+
+  /**
+   * Whether a record is of this document, and not of one made again from the same files: that has a
+   * manifest of its own. A document that has less than the record knew of, as one whose last changes
+   * were not saved, is still the same: the marks of the places it lacks are different.
+   */
+  #isOfThisDocument(record: UndoRecord): boolean {
+    return record.doc.manifest === documentMark(this.#root);
+  }
+
+  #saveWritten(written: Written): SavedWritten {
+    const { by, below } = written;
+    let name: string | null = null;
+    if (by !== undefined) {
+      name = this.#names.get(by) ?? `${this.#namePrefix}.${this.#names.size}`;
+      this.#names.set(by, name);
+      this.#named.set(name, by);
+    }
+    if (!below || below.size === 0) return { by: name };
+    return {
+      by: name,
+      below: [...below].map(([key, inner]) => [key, this.#saveWritten(inner)] as const),
+    };
+  }
+
+  #readWritten(saved: SavedWritten): Written {
+    let by: WriteId | undefined;
+    if (saved.by !== null) {
+      by = this.#named.get(saved.by);
+      if (by === undefined) {
+        by = Symbol("write");
+        this.#named.set(saved.by, by);
+        this.#names.set(by, saved.by);
+      }
+    }
+    if (!saved.below || saved.below.length === 0) return { by };
+    const below = new Map(saved.below.map(([key, inner]) => [key, this.#readWritten(inner)]));
+    return { by, below };
+  }
+
+  /**
    * The project as files. Documents that became invalid stay out and are reported. Where the files
    * of assets are kept goes by what counts `here`, see `Here`: everything that is written down,
    * where that is not said.
@@ -1562,6 +1763,12 @@ export class ProjectStore {
     this.#show();
   };
 }
+
+/** Shorter paths first, for writing what is above before what is below. */
+const byDepth =
+  <T>(pathOf: (item: T) => Path) =>
+  (a: T, b: T): number =>
+    pathOf(a).length - pathOf(b).length;
 
 /** One path of each object that paths are of, for a record of a change of very many. */
 function onePathEach(paths: readonly Path[]): readonly Path[] {

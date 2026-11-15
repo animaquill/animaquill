@@ -127,6 +127,15 @@ if (root)
     onWorkbench: (workbench) => {
       Object.assign(window, {
         aqExecute: (call: never) => workbench.session.store?.execute(call),
+        // What the open project holds now, for tests that look at more than the screen shows.
+        aqState: () => workbench.session.store?.getState(),
+        // Resolves once the undo logs are kept, for tests that reload right after.
+        aqUndoSaved: () => workbench.undo.flush(),
+        // What a device sees that did not make the changes: no undo logs of its own.
+        aqUndoElsewhere: async () => {
+          await workbench.undo.clear();
+          await workbench.undo.readAgain();
+        },
         // Resolves once what changed is kept, as Ctrl+S does, for tests that reload right after.
         aqSave: () => workbench.save(),
         // For measuring the mix on its own, without an editor around it.

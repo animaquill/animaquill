@@ -11,6 +11,7 @@ import {
   isProjectFile,
   placedAsset,
   type ProjectStore,
+  type UndoResult,
 } from "@animaquill/core";
 import {
   FolderError,
@@ -138,6 +139,14 @@ export interface ProjectFoldersOptions {
   readonly t: TFunction;
   /** What AI tools on this computer do through the folder, which tells of their batches. */
   readonly tools?: ToolActivity;
+  /**
+   * Takes back a batch as a whole or does it again, one window at a time, see
+   * `UndoKeeper.takeBack`. Without it the store does it right away.
+   */
+  readonly takeBack?: (
+    origin: string,
+    direction: "undo" | "redo",
+  ) => Promise<UndoResult | undefined>;
   /** The files a new project starts with, as people set it up. */
   readonly startingFiles?: () => Readonly<Record<string, string>>;
   /** Leaves the open project, then does the next thing, see `Workbench`. */
@@ -2362,13 +2371,24 @@ export class ProjectFolders {
 
   /**
    * Takes back a batch of files that came in, from elsewhere than its notice, as the notice does:
-   * what the folder has now is kept first. False when this window does not know the batch.
+   * what the folder has now is kept first. A batch from before the page was loaded comes with its
+   * files. Undefined when this window does not know the batch, nor its files; else resolves to
+   * what came of it, undefined where nothing was taken back.
    */
-  undoBatch(origin: string): boolean {
+  undoBatch(
+    origin: string,
+    files?: readonly string[],
+  ): Promise<UndoResult | undefined> | undefined {
     const known = this.#batches.get(origin);
-    if (!known) return false;
-    void this.#undo(known.store, origin);
-    return true;
+    const store = known?.store ?? this.#current?.store;
+    const merge = known?.merge ?? (files && { origin, files });
+    if (!store || !merge) return undefined;
+    return this.#undo(store, merge);
+  }
+
+  /** The files that a batch this window knows brought in, see `undoBatch`. */
+  filesOf(origin: string): readonly string[] | undefined {
+    return this.#batches.get(origin)?.merge.files;
   }
 
   /** The folder of the project open in this window, if any. */
@@ -2449,7 +2469,7 @@ export class ProjectFolders {
           ? [{ label: t("folder.showMerged"), run: () => this.#options.showProblems() }]
           : []),
         ...(files.length > 0
-          ? [{ label: t("folder.undoMerge"), run: () => void this.#undo(store, merge.origin) }]
+          ? [{ label: t("folder.undoMerge"), run: () => void this.undoBatch(merge.origin) }]
           : []),
       ],
     });
@@ -2459,12 +2479,13 @@ export class ProjectFolders {
    * Takes back what came in, as a whole. The folder gets the editor's side then, so what it has now
    * is kept first, and it can come back.
    */
-  async #undo(store: ProjectStore, origin: string): Promise<void> {
+  async #undo(
+    store: ProjectStore,
+    merge: { readonly origin: string; readonly files: readonly string[] },
+  ): Promise<UndoResult | undefined> {
     const { notifications, t } = this.#options;
     const current = this.#current;
-    // All of what came in of the batch so far, as several merges of an AI tool's batch can be.
-    const merge = this.#batches.get(origin)?.merge;
-    if (current?.store !== store || !merge) return;
+    if (current?.store !== store) return undefined;
     // What the folder has now goes, so it is kept first, or nothing is taken back.
     let kept: readonly string[] | undefined;
     try {
@@ -2472,19 +2493,20 @@ export class ProjectFolders {
     } catch (error) {
       console.warn("What the folder had could not be kept before taking it back", error);
       notifications.push(t("folder.undoNotKept", { reason: this.#reasonOf(error) }));
-      return;
+      return undefined;
     }
     if (kept === undefined) {
       notifications.push(t("folder.undoElsewhere"));
-      return;
+      return undefined;
     }
-    const result = store.undoOrigin(merge.origin);
+    const result = await this.#takeBack(store, merge.origin, "undo");
+    if (!result) return undefined;
     if (result.ok) this.#options.tools?.undone(merge.origin);
     if (!result.ok) {
       notifications.push(
         t("folder.undoFailed", { message: failureMessage(result.error, translateWith(t)) }),
       );
-      return;
+      return result;
     }
     // Where it went, as it was written: the folder of this time in RECOVERED_FOLDER.
     const [first] = kept;
@@ -2495,18 +2517,31 @@ export class ProjectFolders {
         actions: [
           {
             label: t("folder.redoMerge"),
-            run: () => {
-              const again = store.redoOrigin(merge.origin);
-              if (!again.ok)
-                notifications.push(
-                  t("folder.undoFailed", {
-                    message: failureMessage(again.error, translateWith(t)),
-                  }),
-                );
-            },
+            run: () =>
+              void this.#takeBack(store, merge.origin, "redo").then((again) => {
+                if (again && !again.ok)
+                  notifications.push(
+                    t("folder.undoFailed", {
+                      message: failureMessage(again.error, translateWith(t)),
+                    }),
+                  );
+              }),
           },
         ],
       },
+    );
+    return result;
+  }
+
+  #takeBack(
+    store: ProjectStore,
+    origin: string,
+    direction: "undo" | "redo",
+  ): Promise<UndoResult | undefined> {
+    const { takeBack } = this.#options;
+    if (takeBack) return takeBack(origin, direction);
+    return Promise.resolve(
+      direction === "undo" ? store.undoOrigin(origin) : store.redoOrigin(origin),
     );
   }
 

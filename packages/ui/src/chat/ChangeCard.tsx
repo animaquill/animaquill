@@ -1,10 +1,11 @@
 import type { ChatEntry, ToolEntry } from "@animaquill/agent";
-import { pathOfObject, type ObjectRef, type ProjectState } from "@animaquill/core";
+import { aiTask, pathOfObject, type ObjectRef, type ProjectState } from "@animaquill/core";
 import { TriangleAlert } from "lucide-react";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
+import { Tip } from "../app/Tip.tsx";
 import styles from "./ChatPanel.module.css";
 import {
   othersOfTurn,
@@ -66,27 +67,40 @@ export function ChangeCard({
     : results.filter(
         (result) => result.ok && !result.name.startsWith("aq_") && !OLD_READ_TOOLS.has(result.name),
       ).length;
-  const undo = running ? undefined : chat.undoState(task);
+  // What can be taken back changes with the project, and with what other windows did.
+  useSyncExternalStore(workbench.undo.subscribe, workbench.undo.getSnapshot);
+  const state = running ? undefined : workbench.undo.stateOf(aiTask(task));
+  const undo = state?.direction;
+  const whyNot = state?.whyNot;
   const others = othersOfTurn(entries);
   const problems = problemsOfTurn(entries);
   const problemsChanged = problems.added > 0 || problems.resolved > 0;
   const hasOthers = others.mine.length > 0 || others.elsewhere.length > 0;
   if (running || (count === 0 && !undo && !hasOthers && !problemsChanged)) return null;
+  const shown = undo !== undefined || (whyNot !== undefined && count > 0);
   return (
     <div className={styles.card} data-testid="chat-card">
       <div className={styles.cardHead}>
         <span className={styles.cardTitle}>
           {count > 0 ? t("chat.changes", { count }) : t("chat.card.noChanges")}
         </span>
-        {undo && (
-          <button
-            type="button"
-            title={t("chat.card.undoTitle")}
-            onClick={() => (undo === "undo" ? chat.undoTask(task) : chat.redoTask(task))}
-          >
-            {undo === "undo" ? t("chat.undoTask") : t("chat.redoTask")}
-          </button>
-        )}
+        {shown &&
+          (whyNot ? (
+            // What cannot go back here stays in its place, grey, and says why.
+            <Tip name={t(`chat.card.whyNot.${whyNot}`)} usage="">
+              <button type="button" aria-disabled="true">
+                {undo === "redo" ? t("chat.redoTask") : t("chat.undoTask")}
+              </button>
+            </Tip>
+          ) : (
+            <button
+              type="button"
+              title={t("chat.card.undoTitle")}
+              onClick={() => void (undo === "redo" ? chat.redoTask(task) : chat.undoTask(task))}
+            >
+              {undo === "redo" ? t("chat.redoTask") : t("chat.undoTask")}
+            </button>
+          ))}
       </div>
       {summary.told && summary.changes.length + summary.said.length > 0 && (
         <ChangesView said={summary.said} changes={summary.changes} />

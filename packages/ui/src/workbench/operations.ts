@@ -1,5 +1,6 @@
 import { USER, folderBatch, type Origin, type ProjectStore } from "@animaquill/core";
 import { Emitter } from "./emitter.ts";
+import type { RestoredUndo } from "./undo-keeper.ts";
 
 /** Who an operation comes from, as this window sees it. */
 export type OperationSource = "you" | "ai" | "folder" | "other";
@@ -26,6 +27,18 @@ export interface Operation {
    * `ProjectStore.lastStep`. Undo and redo give it a new one.
    */
   readonly step: number;
+  /** What people asked AI for, for a task from before the page was loaded. */
+  readonly label?: string;
+  /** The AI tool on this computer that wrote a batch from before the page was loaded. */
+  readonly tool?: string;
+  /** When a batch from before the page was loaded began, where it took a while. */
+  readonly from?: number;
+}
+
+/** Undo logs that came back from before the page was loaded, see `UndoKeeper`. */
+export interface RestoredSource {
+  subscribe(listener: () => void): () => void;
+  getSnapshot(): { readonly restored: readonly RestoredUndo[] };
 }
 
 /** How many operations the list keeps. */
@@ -64,7 +77,8 @@ const sourceOf = (origin: Origin): OperationSource =>
  * one at a time; each AI task and each batch of files from the folder as one; and what other
  * windows did. It follows undo and redo, which take back what people did here one step at a time,
  * so that the list says what can still be taken back and done again. It goes by what the store
- * tells its listeners, and starts afresh with every project. Nothing of it is saved.
+ * tells its listeners, and starts afresh with every project. Nothing of it is saved itself: AI
+ * tasks and batches whose undo logs were kept come back with them, see `UndoKeeper`.
  */
 export class OperationLog {
   readonly #emitter = new Emitter();
@@ -77,10 +91,45 @@ export class OperationLog {
   #snapshot: readonly Operation[] = [];
   #pending = false;
 
-  constructor(source: StoreSource) {
+  readonly #restored: RestoredSource | undefined;
+
+  constructor(source: StoreSource, restored?: RestoredSource) {
+    this.#restored = restored;
     const follow = () => this.#attach(source.getSnapshot().store);
     source.subscribe(follow);
+    restored?.subscribe(() => this.#takeRestored());
     follow();
+  }
+
+  /**
+   * AI tasks and batches whose undo logs came back after a reload, or from another window: in the
+   * list where they happened, each as one, as long as the store can still take them back.
+   */
+  #takeRestored(): void {
+    const store = this.#store;
+    if (!store || !this.#restored) return;
+    let added = false;
+    for (const { origin, about } of this.#restored.getSnapshot().restored) {
+      if (this.#operations.some((known) => known.origin === origin)) continue;
+      this.#operations.push({
+        id: this.#next++,
+        source: about.kind === "folder" ? "folder" : "ai",
+        origin,
+        commands: [],
+        properties: [],
+        count: about.count,
+        time: about.to,
+        undone: !store.canUndoOrigin(origin) && store.canRedoOrigin(origin),
+        step: 0,
+        ...(about.label !== undefined && { label: about.label }),
+        ...(about.tool !== undefined && { tool: about.tool }),
+        ...(about.from !== about.to && { from: about.from }),
+      });
+      added = true;
+    }
+    if (!added) return;
+    this.#operations.sort((a, b) => a.time - b.time);
+    this.#show();
   }
 
   subscribe = this.#emitter.subscribe;
@@ -95,6 +144,7 @@ export class OperationLog {
     this.#operations = [];
     this.#revision = store?.revision ?? 0;
     this.#unsubscribe = store?.subscribe(() => this.#heard(store));
+    this.#takeRestored();
     this.#show();
   }
 

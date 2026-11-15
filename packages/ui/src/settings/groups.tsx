@@ -1,4 +1,4 @@
-import type { AccountSpace } from "@animaquill/host";
+import type { AccountSpace, UndoUsage } from "@animaquill/host";
 import { TOOL_CALL_LIMITS } from "@animaquill/agent";
 import type { VideoCodecName } from "@animaquill/media";
 import type { TFunction } from "i18next";
@@ -403,6 +403,7 @@ export function StorageGroup() {
       {workbench.persistence && <PersistRow />}
       <KeysRow />
       {workbench.chatStore?.usage && <ChatsRow />}
+      <UndoRow />
       <UsageRow />
     </GroupPage>
   );
@@ -550,6 +551,65 @@ function ChatsRow() {
         onClick={() => void clear()}
       >
         {t("settings.chats.clear")}
+      </Button>
+    </SettingRow>
+  );
+}
+
+/** The undo logs of AI tasks and batches that last across reloads, see `UndoKeeper`. */
+function UndoRow() {
+  const workbench = useWorkbench();
+  const { dialogs, notifications } = workbench;
+  const { t } = useTranslation();
+  const [usage, setUsage] = useState<UndoUsage | "failed">();
+  const [busy, setBusy] = useState(false);
+  const read = useCallback(() => {
+    workbench.undo.usage().then(setUsage, (error: unknown) => {
+      console.warn("How much the undo logs take could not be read", error);
+      setUsage("failed");
+    });
+  }, [workbench]);
+  useEffect(read, [read]);
+
+  const clear = async () => {
+    const sure = await dialogs.confirm({
+      title: t("settings.undo.clearTitle"),
+      message: t("settings.undo.clearMessage"),
+      confirm: t("settings.undo.clear"),
+      danger: true,
+    });
+    if (!sure) return;
+    setBusy(true);
+    try {
+      await workbench.undo.clear();
+      notifications.push(t("settings.undo.cleared"));
+    } catch (error) {
+      console.warn("The undo logs could not be cleared", error);
+      notifications.push(t("settings.undo.clearFailed"));
+    } finally {
+      setBusy(false);
+      read();
+    }
+  };
+
+  // None kept, or not read yet: nothing to say.
+  if (usage === undefined || (usage !== "failed" && usage.projects === 0)) return null;
+  return (
+    <SettingRow
+      id="storage.undo"
+      name={
+        <span data-testid="settings-undo">
+          {usage === "failed"
+            ? t("settings.undo.failed")
+            : t("settings.undo.line", {
+                projects: usage.projects,
+                size: formatBytes(t, usage.bytes),
+              })}
+        </span>
+      }
+    >
+      <Button danger disabled={busy || usage === "failed"} onClick={() => void clear()}>
+        {t("settings.undo.clear")}
       </Button>
     </SettingRow>
   );

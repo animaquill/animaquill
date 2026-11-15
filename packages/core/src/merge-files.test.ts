@@ -5,6 +5,7 @@ import { orderedSections, orderedTracks } from "./model.ts";
 import {
   ProjectStore,
   USER,
+  MAX_BATCHES,
   folderBatch,
   type CommandCall,
   type CommandResult,
@@ -1701,15 +1702,16 @@ describe("when the merge itself goes wrong", () => {
 });
 
 describe("taking batches back", () => {
-  it("goes for the last 20 of them", () => {
+  it("goes for the last MAX_BATCHES of them", () => {
     const store = open();
     let folder = written(store);
-    for (let index = 0; index < 25; index++) {
+    const count = MAX_BATCHES + 5;
+    for (let index = 0; index < count; index++) {
       const batch = changesOf(folder, (files) => files.set(CODE, `// ${index}\n`));
       merged(mergeFiles(store, batch, { origin: folderBatch(`b${index}`) }));
       folder = written(store);
     }
-    const codes = Array.from({ length: 25 }, (_, index) => {
+    const codes = Array.from({ length: count }, (_, index) => {
       const result = store.undoOrigin(folderBatch(`b${index}`));
       return result.ok ? "ok" : result.error.code;
     });

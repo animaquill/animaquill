@@ -189,6 +189,11 @@ export interface ChatSessionOptions {
   readonly ranNow?: ToolHost["ranNow"];
   /** What taking back or doing again came to, for people. */
   readonly undone: (result: UndoResult) => void;
+  /**
+   * Takes back all of a task or does it again, one window at a time, and says what came of it, see
+   * `UndoKeeper`. Without it the store does it right away, and `undone` says what came of it.
+   */
+  readonly takeBack?: (task: string, direction: "undo" | "redo") => Promise<unknown>;
   /** For tests: a service that answers from a script, instead of the one people chose. */
   readonly fake?: () => FakeEndpoint | undefined;
   /** The memory of this window, where drafts and the conversation open are kept. */
@@ -1118,27 +1123,42 @@ export class ChatSession {
     return undefined;
   }
 
+  /** What people asked for in a task of the open conversation, on one line. */
+  labelOf(task: string): string | undefined {
+    const entries = this.#snapshot.conversation?.getSnapshot().entries ?? [];
+    const asked = entries.find((entry) => entry.role === "user" && entry.task === task);
+    if (asked?.role !== "user") return undefined;
+    const line = asked.text.replace(/\s+/g, " ").trim();
+    return line.length > 40 ? `${line.slice(0, 39)}…` : line;
+  }
+
   /** Takes back everything a task changed, in one step. What people changed since then stays. */
-  undoTask(task: string): void {
-    const store = this.#project?.store;
-    if (!store) return;
-    this.#options.undone(store.undoOrigin(aiTask(task)));
-    this.#set({ undoTick: this.#snapshot.undoTick + 1 });
+  async undoTask(task: string): Promise<void> {
+    await this.#takeBack(task, "undo");
     if (task === this.#lastTask()) {
       this.#unmarked = task;
       this.#mark(this.#snapshot.conversation?.getSnapshot().entries ?? []);
     }
   }
 
-  redoTask(task: string): void {
-    const store = this.#project?.store;
-    if (!store) return;
-    this.#options.undone(store.redoOrigin(aiTask(task)));
-    this.#set({ undoTick: this.#snapshot.undoTick + 1 });
+  async redoTask(task: string): Promise<void> {
+    await this.#takeBack(task, "redo");
     if (task === this.#unmarked) {
       this.#unmarked = undefined;
       this.#mark(this.#snapshot.conversation?.getSnapshot().entries ?? []);
     }
+  }
+
+  async #takeBack(task: string, direction: "undo" | "redo"): Promise<void> {
+    const store = this.#project?.store;
+    if (!store) return;
+    const { takeBack, undone } = this.#options;
+    if (takeBack) await takeBack(task, direction);
+    else
+      undone(
+        direction === "undo" ? store.undoOrigin(aiTask(task)) : store.redoOrigin(aiTask(task)),
+      );
+    this.#set({ undoTick: this.#snapshot.undoTick + 1 });
   }
 }
 

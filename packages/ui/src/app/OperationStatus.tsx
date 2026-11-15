@@ -15,8 +15,11 @@ const clock = new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-dig
 /** What can be done with one operation from the list, or why nothing can. */
 interface Choice {
   readonly label?: string;
-  readonly run?: () => string | undefined;
+  /** What it says comes in the list, or as a notification where it takes a moment. */
+  readonly run?: () => string | undefined | Promise<unknown>;
   readonly why?: string;
+  /** It can be done elsewhere, or could before: the button is there, grey, and says why. */
+  readonly off?: boolean;
 }
 
 /**
@@ -35,10 +38,18 @@ export function OperationStatus() {
   const listElement = useRef<HTMLOListElement>(null);
   // Re-rendered as batches of AI tools on this computer come in, which name their operations.
   useSyncExternalStore(workbench.tools.subscribe, workbench.tools.getSnapshot);
+  // And as what can be taken back changes, also in other windows.
+  useSyncExternalStore(workbench.undo.subscribe, workbench.undo.getSnapshot);
   const toolOf = (operation: Operation) => {
     const batch =
       operation.source === "folder" ? workbench.tools.batchOf(operation.origin) : undefined;
-    return batch && { batch, name: toolName(t, batch.client), count: batch.changes.length };
+    if (batch) {
+      const { startedAt: from, updatedAt: to } = batch;
+      return { from, to, name: toolName(t, batch.client), count: batch.changes.length };
+    }
+    // A batch from before the page was loaded, as it was kept.
+    const { tool, from = operation.time, time: to, count } = operation;
+    return tool === undefined ? undefined : { from, to, name: tool, count };
   };
   const nameOf = (operation: Operation) => operationText(t, operation, toolOf(operation));
   const [last] = list;
@@ -50,16 +61,14 @@ export function OperationStatus() {
       case "other":
         return { why: t("operations.why.other") };
       case "ai":
-      case "folder":
-        if (operations.canUndoOrigin(operation)) {
-          const run = () => workbench.undoOperation(operation, "undo");
-          return { label: t("operations.undoThis"), run };
-        }
-        if (operations.canRedoOrigin(operation)) {
-          const run = () => workbench.undoOperation(operation, "redo");
-          return { label: t("operations.redoThis"), run };
-        }
+      case "folder": {
+        if (operation.origin === undefined) return { why: t("operations.why.originGone") };
+        const { direction, whyNot } = workbench.undo.stateOf(operation.origin);
+        const label = direction === "redo" ? t("operations.redoThis") : t("operations.undoThis");
+        if (whyNot) return { label, off: true, why: t(`operations.why.${whyNot}`) };
+        if (direction) return { label, run: () => workbench.undoOperation(operation, direction) };
         return { why: t("operations.why.originGone") };
+      }
       case "you":
         if (operation.undone) {
           return operation === redoable
@@ -117,10 +126,10 @@ export function OperationStatus() {
                         {tool ? t("localAi.source") : t(`operations.source.${operation.source}`)}
                       </span>
                       {tool ? (
-                        <time dateTime={new Date(tool.batch.startedAt).toISOString()}>
-                          {clock.format(tool.batch.startedAt) === clock.format(tool.batch.updatedAt)
-                            ? clock.format(tool.batch.startedAt)
-                            : `${clock.format(tool.batch.startedAt)}–${clock.format(tool.batch.updatedAt)}`}
+                        <time dateTime={new Date(tool.from).toISOString()}>
+                          {clock.format(tool.from) === clock.format(tool.to)
+                            ? clock.format(tool.from)
+                            : `${clock.format(tool.from)}–${clock.format(tool.to)}`}
                         </time>
                       ) : (
                         <time dateTime={new Date(operation.time).toISOString()}>
@@ -129,12 +138,20 @@ export function OperationStatus() {
                       )}
                       {operation.undone && <span>{t("operations.undone")}</span>}
                     </span>
-                    {choice.run ? (
+                    {choice.off ? (
+                      <Tip name={choice.why ?? ""} usage="">
+                        <button type="button" className={styles.action} aria-disabled="true">
+                          {choice.label}
+                        </button>
+                      </Tip>
+                    ) : choice.run ? (
                       <button
                         type="button"
                         className={styles.action}
                         onClick={() => {
-                          setMessage(choice.run?.());
+                          if (!choice.run) return;
+                          const said = choice.run();
+                          setMessage(typeof said === "string" ? said : undefined);
                           // Its button goes with what it did: the keys stay in the list, for Escape.
                           requestAnimationFrame(() => {
                             if (!listElement.current?.contains(document.activeElement)) {
