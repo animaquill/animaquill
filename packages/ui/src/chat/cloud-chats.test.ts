@@ -328,4 +328,22 @@ describe("conversations of projects of the platform", () => {
     const titles = (await one.local.list("local-1")).map(({ title }) => title);
     expect(titles).toContain("《a》在这台设备上的副本");
   });
+
+  test("a save writes here before it reads anything, so that a page that goes right after keeps the answer", async () => {
+    const platform = platformChats();
+    const one = await deviceOf(platform);
+    await one.chats.save(chat("c1", ["第一句"], 1));
+    const calls: string[] = [];
+    const { save, load } = one.local;
+    one.local.save = (value) => {
+      calls.push("save");
+      return save.call(one.local, value);
+    };
+    one.local.load = (project, id) => {
+      calls.push("load");
+      return load.call(one.local, project, id);
+    };
+    await one.chats.save(chat("c1", ["第一句", "最后一句"], 2));
+    expect(calls[0]).toBe("save");
+  });
 });

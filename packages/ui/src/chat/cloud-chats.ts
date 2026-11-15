@@ -135,6 +135,12 @@ export class CloudChats implements ChatStore {
   #stored = { account: "", images: new Set<string>() };
   /** Pictures that stayed in this browser as their conversation went, why, and when last tried. */
   readonly #held = new Map<string, { readonly why: ChatImageHeld; readonly at: number }>();
+  /**
+   * What the account has of each conversation here, as it was last seen: a save does not wait for
+   * a read of it, so that a page that goes right after an answer takes the answer along.
+   */
+  readonly #sync = new Map<string, { synced?: number; syncedAt?: number }>();
+
   /** Pictures of the account on their way here, by their hash. */
   readonly #fetching = new Map<string, Promise<Blob | undefined>>();
 
@@ -219,6 +225,7 @@ export class CloudChats implements ChatStore {
   async load(project: string, id: string): Promise<SavedChat | undefined> {
     const { local, remote } = this.#options;
     const here = await local.load(project, id).catch(() => undefined);
+    if (here) this.#seen(here);
     const cloud = await this.#cloudOf(project);
     if (cloud === undefined) return here;
     try {
@@ -239,16 +246,25 @@ export class CloudChats implements ChatStore {
 
   async save(chat: SavedChat): Promise<void> {
     const { local } = this.#options;
-    const before = await local.load(chat.project, chat.id).catch(() => undefined);
+    const key = `${chat.project}\n${chat.id}`;
+    const before = this.#sync.get(key) ?? (await local.load(chat.project, chat.id).catch(() => undefined));
     const saved: SavedChat = {
       ...chat,
       ...(before?.synced !== undefined && { synced: before.synced }),
       ...(before?.syncedAt !== undefined && { syncedAt: before.syncedAt }),
     };
+    this.#seen(saved);
     await local.save(saved);
     const cloud = await this.#cloudOf(chat.project);
     if (cloud === undefined) return;
     await this.#give(cloud, saved);
+  }
+
+  #seen(chat: SavedChat): void {
+    this.#sync.set(`${chat.project}\n${chat.id}`, {
+      ...(chat.synced !== undefined && { synced: chat.synced }),
+      ...(chat.syncedAt !== undefined && { syncedAt: chat.syncedAt }),
+    });
   }
 
   /** Writes a conversation to the account, after the writes of it before. */
@@ -277,7 +293,9 @@ export class CloudChats implements ChatStore {
           this.#went();
           if (revision === undefined) return;
           const latest = await local.load(chat.project, chat.id).catch(() => undefined);
-          await local.save({ ...(latest ?? chat), synced: revision, syncedAt: chat.updatedAt });
+          const synced = { ...(latest ?? chat), synced: revision, syncedAt: chat.updatedAt };
+          this.#seen(synced);
+          await local.save(synced);
         } catch (error) {
           if (error instanceof ChatOutdated) {
             // It stays here, and goes once the page is reloaded with a newer editor.
@@ -464,6 +482,7 @@ export class CloudChats implements ChatStore {
       synced: there.revision,
       syncedAt: there.chat.updatedAt,
     };
+    this.#seen(chat);
     await local.save(chat);
     return chat;
   }
