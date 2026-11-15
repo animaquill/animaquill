@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { build, type Rolldown } from "vite";
 import { describe, expect, it } from "vitest";
-import { LICENSES_FILE } from "../build/licenses.ts";
+import { LICENSES_FILE } from "../vite-plugins/licenses.ts";
 
 /** The server and the command line as the package has them, built without writing anything. */
 async function built(): Promise<Rolldown.RolldownOutput> {

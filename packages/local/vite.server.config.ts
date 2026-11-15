@@ -1,6 +1,6 @@
 import { scenePageTemplate } from "@animaquill/web/vite";
 import { defineConfig } from "vite";
-import { thirdPartyLicenses } from "./build/licenses.ts";
+import { thirdPartyLicenses } from "./vite-plugins/licenses.ts";
 
 /**
  * The server, with what it takes from the other packages, as one file that Node runs as it is: the
