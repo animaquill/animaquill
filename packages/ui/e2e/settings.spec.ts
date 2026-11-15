@@ -284,12 +284,17 @@ test("each group has only what is a setting, and words only where they are neede
     "资源管理器里右键视频照样能生成",
   );
   expect(await rows("导出", "settings-export")).toEqual(["export.hardware"]);
-  await expect(settingsOf(page).getByTestId("settings-export")).toContainText("显卡驱动更新后");
+  // How it stands, in one line; trying again only where it failed.
+  await expect(settingsOf(page).getByTestId("settings-hardware")).toHaveText(
+    "显卡编码没有失败过，导出时优先用显卡。",
+  );
+  await expect(settingsOf(page).getByRole("button", { name: "重试显卡" })).toHaveCount(0);
   // What is kept here, in a line each; nothing that needs reading to be understood.
   await goToSettingsGroup(page, "存储和数据");
   const storage = settingsOf(page).getByTestId("settings-storage");
-  await expect(storage.getByTestId("ai-keys-where")).toHaveText("AI 服务的 key：0 个");
-  await expect(storage.getByTestId("settings-chats")).toHaveText(/^AI 对话：占 .+$/);
+  // None of either here: no line for them.
+  await expect(storage.getByTestId("ai-keys-where")).toHaveCount(0);
+  await expect(storage.getByTestId("settings-chats")).toHaveCount(0);
   await expect(storage).not.toContainText(/长期保存|不会清除|空间紧张|只存在这个浏览器里/);
   // The timeline keeps its own switches, as ever.
   await closeSettings(page);

@@ -26,6 +26,7 @@ import {
   AI_SYNC_BATCH,
   AI_SYNC_KEYS,
   isEntryName,
+  readSecretTimes,
   readServiceSecret,
   type AiEntry,
   type AiSyncKey,
@@ -73,7 +74,17 @@ const keyOf = (value: unknown, clock: Clock): AiSyncKey | undefined => {
       : text(value.key) !== undefined
         ? readServiceSecret({ key: value.key })
         : undefined;
-  return secret === undefined ? undefined : { at: clock(at), secret };
+  if (secret === undefined) return undefined;
+  const times = readSecretTimes(value.fieldsAt);
+  return {
+    at: clock(at),
+    secret,
+    ...(times && {
+      fieldsAt: Object.fromEntries(
+        Object.entries(times).map(([field, each]) => [field, clock(each)]),
+      ),
+    }),
+  };
 };
 
 const stateOf = (value: unknown, clock: Clock): AccountAiSettings | undefined => {

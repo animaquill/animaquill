@@ -43,6 +43,34 @@ describe("keys of AI services", () => {
     expect(await keys.list()).toEqual([]);
   });
 
+  it("change one part at once in two windows, and both parts stay", async () => {
+    const factory = new IDBFactory();
+    const one = browserKeys(() => factory);
+    const two = browserKeys(() => factory);
+    await one.write("a", { key: "sk-old", baseUrl: "https://old.example" });
+    await Promise.all([
+      one.update("a", (before) => ({ ...before, key: "sk-new" })),
+      two.update("a", (before) => ({ ...before, baseUrl: "https://new.example" })),
+    ]);
+    expect(await one.read("a")).toEqual({ key: "sk-new", baseUrl: "https://new.example" });
+    // Nothing left takes it away.
+    expect(await one.update("a", () => ({}))).toBeUndefined();
+    expect(await one.list()).toEqual([]);
+  });
+
+  it("write nothing over what cannot be read", async () => {
+    const factory = new IDBFactory();
+    const opened = factory.open(KEYS_DATABASE, 1);
+    opened.onupgradeneeded = () => opened.result.createObjectStore("keys", { keyPath: "service" });
+    await new Promise((resolve) => (opened.onsuccess = resolve));
+    const bad = opened.result.transaction("keys", "readwrite");
+    bad.objectStore("keys").put({ service: "a", key: 42 });
+    await new Promise((resolve) => (bad.oncomplete = resolve));
+    opened.result.close();
+    const keys = browserKeys(() => factory);
+    await expect(keys.update("a", () => ({ baseUrl: "https://x.example" }))).rejects.toThrow();
+  });
+
   it("read a key as pages of before 0.3.72 kept it, and keep it where they read it", async () => {
     const factory = new IDBFactory();
     // As those pages wrote it: the key alone.

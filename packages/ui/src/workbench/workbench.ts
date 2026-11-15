@@ -892,6 +892,7 @@ export class Workbench {
       // And what making a project of the platform left there, should the page have gone halfway.
       if (cloud && host.making) void tidyCreated(cloud, host.making);
     }
+    this.#keepStoredOnceSaved();
     this.missingFiles = new MissingFileWatch(this.session, this.media, this.projectFolders, () =>
       this.here(),
     );
@@ -1628,6 +1629,29 @@ export class Workbench {
     await account.refresh();
     const outcome = account.takeOutcome();
     if (outcome) await this.#tellSignIn(outcome, account.getSnapshot());
+  }
+
+  /**
+   * Asks the browser to keep what the editor stores until people clear it (`persistence`), once,
+   * the first time something of a project was saved here: what people made is worth keeping by
+   * then, and the browser asks people right after they did something (Firefox shows a question).
+   * Where it said no, the settings say so ("存储和数据"), where people can ask again.
+   */
+  #keepStoredOnceSaved(): void {
+    const persistence = this.persistence;
+    if (!persistence || persistence.wasAsked()) return;
+    let was = this.session.getSnapshot().save;
+    const stop = this.session.subscribe(() => {
+      const now = this.session.getSnapshot().save;
+      const saved = was === "saving" && now === "saved";
+      was = now;
+      if (!saved) return;
+      stop();
+      void persistence
+        .persisted()
+        .then((kept) => kept || persistence.wasAsked() || persistence.persist())
+        .catch(() => {});
+    });
   }
 
   /** Whether the welcome was answered for whoever is signed in, or there is none. */

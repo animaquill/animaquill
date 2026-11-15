@@ -24,10 +24,16 @@ export {
   checkAiEntry,
   isLaterEntry,
   jsonBytes,
+  mergeSecret,
+  readSecretTimes,
   readServiceSecret,
+  SECRET_FIELDS,
   urlHasSecret,
   type AiEntry,
   type AiSyncKey,
+  type SecretField,
+  type SecretTimes,
+  type TimedSecret,
   type SecretHeaders,
   type ServiceSecret,
 } from "./ai-sync-rules.ts";
@@ -2013,6 +2019,16 @@ export interface KeyStore {
   /** The services that have anything secret kept, a key or not. */
   list(): Promise<readonly string[]>;
   write(service: string, secret: ServiceSecret): Promise<void>;
+  /**
+   * Changes what is secret of a service from what is kept now, at once, so that another window
+   * changing another part of it meanwhile keeps its change: `change` gets what is kept (undefined
+   * where nothing is) and says what is to be kept instead; nothing, or nothing in it, takes it
+   * away. Resolves to what is kept then. Where what is kept cannot be read, nothing is written.
+   */
+  update(
+    service: string,
+    change: (before: ServiceSecret | undefined) => ServiceSecret | undefined,
+  ): Promise<ServiceSecret | undefined>;
   remove(service: string): Promise<void>;
   clear(): Promise<void>;
 }

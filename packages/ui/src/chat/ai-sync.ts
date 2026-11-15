@@ -1,6 +1,7 @@
 import {
   EMPTY_AI_SETTINGS,
   canonical,
+  keyIntoHeader,
   readAiSettings,
   withSecrets,
   entriesOfPacks,
@@ -21,14 +22,18 @@ import {
   AiSyncTooLarge,
   CloudOtherAccount,
   CloudSignedOut,
+  SECRET_FIELDS,
   isLaterEntry,
   memoryAccountKeys,
+  mergeSecret,
   type AccountAccess,
   type AccountAiSettings,
   type AccountKeys,
   type AiEntry,
   type AiSyncAccess,
   type KeyStore,
+  type SecretField,
+  type SecretTimes,
   type ServiceSecret,
   type SettingsStore,
 } from "@animaquill/host";
@@ -108,7 +113,7 @@ interface SyncState {
   /** Every entry, as far as this browser knows, with when it changed. */
   entries: Record<string, AiEntry>;
   /** When each key last changed, and whether it was taken away: the keys are in `AccountKeys`. */
-  keys: Record<string, { at: number; deleted?: true }>;
+  keys: Record<string, { at: number; deleted?: true; fields?: SecretTimes }>;
   /** Entries, and keys by service, changed here that the platform does not have yet. */
   pending: string[];
   pendingKeys: string[];
@@ -693,13 +698,36 @@ export class AiSync {
       if (secret) secrets.set(service, secret);
     }
     const reading = readAiSettings(saved);
-    const settings =
+    // As the settings store would take them (settings.ts #taken): a key that goes into a header is no key.
+    const held = (id: string) => {
+      const secret = secrets.get(id);
+      return secret?.baseUrl !== undefined || secret?.headers || secret?.models
+        ? secret
+        : undefined;
+    };
+    const services =
       reading.kind === "ok"
-        ? withSecrets(reading.settings, (id) => secrets.get(id)).services.map(
-            ({ secretAt: _at, ...service }) => service,
-          )
+        ? withSecrets(reading.settings, held).services.map(({ secretAt: _at, ...service }) => {
+            const header = reading.keyHeaders?.[service.id];
+            const key = secrets.get(service.id)?.key;
+            return header !== undefined && key !== undefined
+              ? { ...service, headers: keyIntoHeader(service.headers, header, key) }
+              : service;
+          })
         : (saved ?? null);
-    const keys = [...secrets].map(([service, { key }]) => [service, key ?? null]);
+    // The rest of what goes into the account too: the default model, how hard each reasons, the
+    // packs chosen and the preferences of the chat.
+    const {
+      services: _services,
+      kept: _kept,
+      ...rest
+    } = reading.kind === "ok" ? reading.settings : { services: undefined, kept: undefined };
+    const settings = { services, ...rest };
+    const keys = [...secrets].flatMap(([service, { key }]) =>
+      key === undefined || (reading.kind === "ok" && reading.keyHeaders?.[service] !== undefined)
+        ? []
+        : [[service, key]],
+    );
     return sumOf(canonical({ settings, packs: packs ?? null, keys }));
   }
 
@@ -866,13 +894,26 @@ export class AiSync {
   }
 
   /** A key of the account's changed here. */
-  async keyChanged(account: string, service: string, deleted: boolean): Promise<void> {
+  /**
+   * What is secret of a service of the account's changed here: taken away, or these parts of it
+   * (all where it is not said), each of which goes as changed on its own, see `mergeSecret`.
+   */
+  async keyChanged(
+    account: string,
+    service: string,
+    deleted: boolean,
+    changed: readonly SecretField[] = SECRET_FIELDS,
+  ): Promise<void> {
     await this.#lock(account, async () => {
       const state = await this.#readState(account);
       if (!state) return;
       const before = state.keys[service];
       const at = Math.max(this.#now(), (before?.at ?? 0) + 1);
-      state.keys[service] = deleted ? { at, deleted: true } : { at };
+      const fields: Partial<Record<SecretField, number>> = {
+        ...(before && !before.deleted && before.fields),
+      };
+      for (const field of changed) fields[field] = at;
+      state.keys[service] = deleted ? { at, deleted: true } : { at, fields };
       if (!state.pendingKeys.includes(service)) state.pendingKeys.push(service);
       await this.#writeState(account, state);
     });
@@ -880,15 +921,19 @@ export class AiSync {
   }
 
   /** Writes the settings of the account as the entries have them, and has this page take them. */
-  async #writeDocs(account: string, state: SyncState): Promise<void> {
+  async #writeDocs(account: string, state: SyncState, secretsChanged = false): Promise<void> {
     for (const key of [SETTINGS, PACKS]) {
       const saved = await this.#base.load(scopedKey(key, account)).catch(() => undefined);
       const merged = materialize(state, key);
       if (
         saved !== undefined &&
         sameEntries(entriesOf(key, saved) ?? new Map(), entriesOf(key, merged)!)
-      )
+      ) {
+        // What is secret of a service changed, and nothing else: this page reads it again.
+        if (secretsChanged && key === SETTINGS && account === this.#scope)
+          this.settings.deliver(key, saved);
         continue;
+      }
       await this.#base.save(scopedKey(key, account), merged);
       if (account === this.#scope) this.settings.deliver(key, merged);
     }
@@ -918,16 +963,45 @@ export class AiSync {
 
     const keys = this.#accountKeys.of(account);
     const pendingKeys = new Set(state.pendingKeys);
+    let secretsChanged = false;
     for (const [service, entry] of Object.entries(remote.keys)) {
       const mine = state.keys[service];
+      // Changed here and there, each something of it: both, part by part.
+      const local =
+        mine && !mine.deleted && !entry.deleted && pendingKeys.has(service)
+          ? await keys.read(service)
+          : undefined;
+      if (local && mine && !entry.deleted) {
+        const merged = mergeSecret(
+          { at: mine.at, secret: local, fieldsAt: mine.fields },
+          { at: entry.at, secret: entry.secret, fieldsAt: entry.fieldsAt },
+        );
+        if (canonical(merged.secret) !== canonical(local)) {
+          await keys.write(service, merged.secret);
+          secretsChanged = true;
+        }
+        state.keys[service] = { at: merged.at, fields: merged.fieldsAt };
+        const theirs = (field: SecretField) =>
+          entry.fieldsAt ? (entry.fieldsAt[field] ?? 0) : entry.at;
+        // Nothing of it newer here than there: the platform has it all.
+        if (SECRET_FIELDS.every((field) => (merged.fieldsAt[field] ?? 0) <= theirs(field)))
+          pendingKeys.delete(service);
+        continue;
+      }
       if (mine && pendingKeys.has(service) && isLaterEntry(entry, mine)) continue;
       if (entry.deleted) {
         await keys.remove(service);
         state.keys[service] = { at: entry.at, deleted: true };
+        secretsChanged = true;
       } else {
-        if (canonical((await keys.read(service)) ?? null) !== canonical(entry.secret))
+        if (canonical((await keys.read(service)) ?? null) !== canonical(entry.secret)) {
           await keys.write(service, entry.secret);
-        state.keys[service] = { at: entry.at };
+          secretsChanged = true;
+        }
+        state.keys[service] = {
+          at: entry.at,
+          ...(entry.fieldsAt && { fields: entry.fieldsAt }),
+        };
       }
       pendingKeys.delete(service);
     }
@@ -939,7 +1013,7 @@ export class AiSync {
     }
     state.pendingKeys = [...pendingKeys];
     state.revision = remote.revision;
-    await this.#writeDocs(account, state);
+    await this.#writeDocs(account, state, secretsChanged);
   }
 
   #schedulePush(): void {
@@ -1013,8 +1087,8 @@ export class AiSync {
 
   /** Every entry and key that is there goes as changed. */
   #giveAll(state: SyncState): void {
-    state.pending = Object.keys(state.entries).filter((name) => !state.entries[name]!.deleted);
-    state.pendingKeys = Object.keys(state.keys).filter((service) => !state.keys[service]!.deleted);
+    state.pending = Object.keys(state.entries);
+    state.pendingKeys = Object.keys(state.keys);
   }
 
   /** Gives the platform what changed here, in batches. */
@@ -1039,7 +1113,7 @@ export class AiSync {
             const secret = await keys.read(service);
             return secret === undefined
               ? { service, at: entry.at, deleted: true as const }
-              : { service, at: entry.at, secret };
+              : { service, at: entry.at, secret, ...(entry.fields && { fieldsAt: entry.fields }) };
           }),
         )
       ).filter((each) => each !== undefined);
@@ -1278,11 +1352,27 @@ export class ScopedKeys implements KeyStore {
   }
 
   async write(service: string, secret: ServiceSecret): Promise<void> {
+    await this.update(service, () => secret);
+  }
+
+  async update(
+    service: string,
+    change: (before: ServiceSecret | undefined) => ServiceSecret | undefined,
+  ): Promise<ServiceSecret | undefined> {
     const account = this.#sync.scope;
     if (account !== undefined && !(await this.#sync.holds(account)))
       throw new Error("The account was signed out of in another window");
-    await this.#now.write(service, secret);
-    if (account !== undefined) await this.#sync.keyChanged(account, service, false);
+    let changed: SecretField[] = [];
+    const after = await this.#now.update(service, (before) => {
+      const next = change(before);
+      changed = SECRET_FIELDS.filter(
+        (field) => canonical(before?.[field] ?? null) !== canonical(next?.[field] ?? null),
+      );
+      return next;
+    });
+    if (account !== undefined && changed.length > 0)
+      await this.#sync.keyChanged(account, service, after === undefined, changed);
+    return after;
   }
 
   async remove(service: string): Promise<void> {

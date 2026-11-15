@@ -813,3 +813,109 @@ describe("what is secret of a service: its key, address and headers", () => {
     expect(await keys.read(id)).toBeUndefined();
   });
 });
+
+describe("moving what is secret where it cannot be kept (review of S-A2)", () => {
+  const gateway = {
+    id: "g",
+    kind: "openai-compatible",
+    name: "网关",
+    baseUrl: "https://gw.example/v1",
+    route: "direct",
+    headers: { "x-team": "video" },
+    keyHeader: "api-key",
+    enabled: ["m"],
+    models: [{ id: "m", added: "hand", baseUrl: "https://gw.example/claude" }],
+  };
+
+  it("leaves the settings with their addresses, and the key, until it can", async () => {
+    const { values, keys, open } = browser({ version: 3, services: [gateway], default: null });
+    await keys.write("g", { key: "sk-gw-0123456789" });
+    const failing: KeyStore = {
+      ...keys,
+      update: async () => {
+        throw new Error("quota");
+      },
+    };
+    const ai = await open(failing);
+    await settle();
+    // Used as meant here, kept as it was there.
+    expect(ai.serviceOf("g")).toMatchObject({
+      baseUrl: "https://gw.example/v1",
+      headers: { "x-team": "video", "api-key": "sk-gw-0123456789" },
+    });
+    expect(values.get("ai")).toMatchObject({ version: 3 });
+    expect(JSON.stringify(values.get("ai"))).toContain("gw.example");
+    expect(await keys.read("g")).toEqual({ key: "sk-gw-0123456789" });
+    // The next time it can: moved, and the key with it.
+    await open();
+    await settle();
+    expect(values.get("ai")).toMatchObject({ version: 4 });
+    expect(await keys.read("g")).toMatchObject({ headers: { "api-key": "sk-gw-0123456789" } });
+  });
+
+  it("writes no settings without what is secret of them where that cannot be kept", async () => {
+    const { values, keys, open } = browser();
+    const ai = await open();
+    const id = ai.add("openai-compatible", "网关", { baseUrl: "https://gw.example/v1" }) as string;
+    await settle();
+    const before = structuredClone(values.get("ai"));
+    const failing: KeyStore = {
+      ...keys,
+      update: async () => {
+        throw new Error("quota");
+      },
+    };
+    const other = await open(failing);
+    other.update(id, { baseUrl: "https://other.example/v1" });
+    await settle();
+    expect(values.get("ai")).toEqual(before);
+    expect((await keys.read(id))?.baseUrl).toBe("https://gw.example/v1");
+  });
+
+  it("two windows moving the same settings at once both end with all of it", async () => {
+    const { keys, open } = browser({ version: 3, services: [gateway], default: null });
+    await keys.write("g", { key: "sk-gw-0123456789" });
+    await Promise.all([open(), open()]);
+    await settle();
+    expect(await keys.read("g")).toMatchObject({
+      baseUrl: "https://gw.example/v1",
+      headers: { "api-key": "sk-gw-0123456789", "x-team": "video" },
+    });
+  });
+
+  it("a key changed in one window and an address in another: both stay", async () => {
+    const { keys, open } = browser();
+    const one = await open();
+    const id = one.add("openai-compatible", "网关", { baseUrl: "https://gw.example/v1" }) as string;
+    await settle();
+    const two = await open();
+    await Promise.all([
+      one.setKey(id, "sk-new-0123456789"),
+      Promise.resolve(two.update(id, { baseUrl: "https://new.example/v1" })),
+    ]);
+    await settle();
+    expect(await keys.read(id)).toEqual({
+      key: "sk-new-0123456789",
+      baseUrl: "https://new.example/v1",
+    });
+  });
+});
+
+describe("what reports leave out", () => {
+  it("is every key, and where each service is and the values of its headers", async () => {
+    const { open } = browser();
+    const ai = await open();
+    const id = ai.add("openai-compatible", "网关", {
+      baseUrl: "https://secret-gateway.example/v1",
+      headers: { "api-key": "THE-HEADER-SECRET" },
+    }) as string;
+    await ai.setKey(id, "sk-the-key-0123456789");
+    await settle();
+    for (const value of [
+      "sk-the-key-0123456789",
+      "https://secret-gateway.example/v1",
+      "THE-HEADER-SECRET",
+    ])
+      expect(ai.knownKeys.has(value), value).toBe(true);
+  });
+});

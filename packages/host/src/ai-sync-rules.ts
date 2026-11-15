@@ -67,10 +67,66 @@ export interface ServiceSecret {
   >;
 }
 
-/** What is secret of a service as it goes with the account, see `ServiceSecret`. */
+/** The parts of what is secret of a service, each of which changes on its own. */
+export const SECRET_FIELDS = ["key", "baseUrl", "headers", "models"] as const;
+export type SecretField = (typeof SECRET_FIELDS)[number];
+/** When each part last changed, where that is not when the whole did. */
+export type SecretTimes = Readonly<Partial<Record<SecretField, number>>>;
+
+/**
+ * What is secret of a service as it goes with the account, see `ServiceSecret`, with when each of
+ * its parts last changed (`fieldsAt`; a part not in it long ago; without it, all at `at`), so
+ * that two devices that each change another part keep both, see `mergeSecret`.
+ */
 export type AiSyncKey =
-  | { readonly at: number; readonly secret: ServiceSecret; readonly deleted?: undefined }
+  | {
+      readonly at: number;
+      readonly secret: ServiceSecret;
+      readonly fieldsAt?: SecretTimes;
+      readonly deleted?: undefined;
+    }
   | { readonly at: number; readonly deleted: true; readonly secret?: undefined };
+
+/** What is secret of a service, with when its parts changed, as `mergeSecret` takes it. */
+export interface TimedSecret {
+  readonly at: number;
+  readonly secret: ServiceSecret;
+  readonly fieldsAt?: SecretTimes | undefined;
+}
+
+/**
+ * Two of what is secret of the same service merged part by part: of each, the later (`incoming` on a
+ * tie). The same, whichever way round, but for ties; and again the same once merged.
+ */
+export function mergeSecret(
+  kept: TimedSecret,
+  incoming: TimedSecret,
+): { readonly at: number; readonly secret: ServiceSecret; readonly fieldsAt: SecretTimes } {
+  // A part without a time where others have theirs did not change since long ago; without any
+  // times, all changed as the whole did.
+  const timeOf = (each: TimedSecret, field: SecretField) =>
+    each.fieldsAt ? (each.fieldsAt[field] ?? 0) : each.at;
+  const secret: Record<string, unknown> = {};
+  const fieldsAt: Partial<Record<SecretField, number>> = {};
+  for (const field of SECRET_FIELDS) {
+    const from = timeOf(incoming, field) >= timeOf(kept, field) ? incoming : kept;
+    if (from.secret[field] !== undefined) secret[field] = from.secret[field];
+    const at = timeOf(from, field);
+    if (at > 0) fieldsAt[field] = at;
+  }
+  return { at: Math.max(kept.at, incoming.at), secret: secret as ServiceSecret, fieldsAt };
+}
+
+/** When each part of what is secret changed, as given: only times, of known parts. */
+export function readSecretTimes(value: unknown): SecretTimes | undefined {
+  if (!isRecord(value)) return undefined;
+  const times: Partial<Record<SecretField, number>> = {};
+  for (const field of SECRET_FIELDS) {
+    const at = value[field];
+    if (typeof at === "number" && Number.isFinite(at) && at >= 0) times[field] = at;
+  }
+  return Object.keys(times).length > 0 ? times : undefined;
+}
 
 /**
  * The name of an entry: a kind, and after a colon what it is of, such as `service:<id>` or
@@ -128,11 +184,6 @@ const isText = (value: unknown, max = 2000): value is string =>
 /** The size of a value as JSON, in bytes as UTF-8. */
 export const jsonBytes = (value: unknown): number =>
   new TextEncoder().encode(JSON.stringify(value) ?? "").length;
-
-/** Nothing, or names with texts, such as the headers people send to a service. */
-const textsOrNothing = (value: unknown): boolean =>
-  value === undefined ||
-  (isRecord(value) && Object.values(value).every((each) => isText(each, 4000)));
 
 /** Headers as a secret has them: up to 64, names of up to 200 characters, values of up to 8000. */
 function readSecretHeaders(value: unknown): SecretHeaders | undefined | false {
@@ -194,13 +245,16 @@ export const isEntryName = (name: unknown): name is string =>
  */
 export function checkAiEntry(name: string, value: unknown): boolean {
   if (!isEntryName(name) || value === undefined) return false;
-  // The headers an editor of format 2 sent with a service or a model are theirs to name; anything
-  // else under the name of a secret is not taken. Format 3 has them in the `ServiceSecret`.
-  const named =
-    isRecord(value) && isRecord(value.headers) && /^(?:service|model):/.test(name)
-      ? { ...value, headers: undefined }
-      : value;
-  if (hasSecret(named) || jsonBytes(value) > AI_ENTRY_BYTES) return false;
+  // Where a service or a model is and the headers that go with it are secret (`ServiceSecret`):
+  // never in an entry, which is kept as it is. An editor of format 2 put them there; what it gives
+  // is not taken.
+  if (
+    /^(?:service|model):/.test(name) &&
+    isRecord(value) &&
+    (value.baseUrl !== undefined || value.headers !== undefined)
+  )
+    return false;
+  if (hasSecret(value) || jsonBytes(value) > AI_ENTRY_BYTES) return false;
   const colon = name.indexOf(":");
   const kind = colon < 0 ? name : name.slice(0, colon);
   const of = colon < 0 ? undefined : name.slice(colon + 1);
@@ -213,11 +267,9 @@ export function checkAiEntry(name: string, value: unknown): boolean {
         value.id === of &&
         isText(value.kind, 100) &&
         isText(value.name) &&
-        (value.baseUrl === undefined || (isText(value.baseUrl) && !urlHasSecret(value.baseUrl))) &&
         (value.route === "direct" || value.route === "relay") &&
         Array.isArray(value.enabled) &&
-        value.enabled.every((model) => isText(model, 300)) &&
-        textsOrNothing(value.headers)
+        value.enabled.every((model) => isText(model, 300))
       );
     case "model": {
       // `model:<service>/<model>`: one model of a service, as people set it up.
@@ -229,9 +281,7 @@ export function checkAiEntry(name: string, value: unknown): boolean {
         SERVICE_ID.test(service ?? "") &&
         isRecord(value) &&
         isText(value.id, 300) &&
-        value.id === of.slice(slash + 1) &&
-        (value.baseUrl === undefined || (isText(value.baseUrl) && !urlHasSecret(value.baseUrl))) &&
-        textsOrNothing(value.headers)
+        value.id === of.slice(slash + 1)
       );
     }
     case "order":

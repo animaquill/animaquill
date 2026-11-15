@@ -389,16 +389,33 @@ export class AiSettingsStore {
       if (header === undefined || key === undefined) return service;
       return { ...service, headers: keyIntoHeader(service.headers, header, key) };
     });
-    // The key that went into a header is no key any more.
-    for (const [id] of Object.entries(reading.keyHeaders ?? {})) {
-      const secret = this.#secrets.get(id);
-      if (secret?.key === undefined) continue;
-      const { key: _key, ...rest } = secret;
-      this.#secrets.set(id, rest);
-      this.#writeSecret(id, rest);
-    }
+    const moved: AiSettings = { ...settings, services };
     if (reading.headersLeftOut) this.#messages.headersLeftOut?.();
-    this.#adopt({ ...settings, services }, undefined);
+    // What is secret goes first, and is read back; only then the settings without it, and only
+    // then the key that went into a header goes. Anything of that failing: the settings stay as
+    // they are, to move another time, and this page uses them as they are meant.
+    const parts = secretsOf(moved);
+    try {
+      await this.#writing;
+      for (const service of services) {
+        const own = parts.get(service.id) ?? {};
+        const intoHeader = reading.keyHeaders?.[service.id] !== undefined;
+        await this.#keys.update(service.id, (before) => {
+          const key = intoHeader ? undefined : before?.key;
+          return { ...(key !== undefined && { key }), ...own };
+        });
+        const { key: _key, ...back } = (await this.#keys.read(service.id)) ?? {};
+        if (canonical(back) !== canonical(own))
+          throw new Error("What is secret of an AI service did not read back as it was written");
+      }
+    } catch (error) {
+      console.warn("The addresses and headers of the AI services could not move yet", error);
+      this.#messages.keyFailed();
+      this.#adopt(moved, undefined);
+      return;
+    }
+    await this.#readSecrets();
+    this.#adopt(moved, undefined);
     this.#save(this.#settingsNow());
     await this.#writing;
   }
@@ -424,35 +441,44 @@ export class AiSettingsStore {
     }
   }
 
-  /** Runs a write after those before it, which writes of the settings wait for. */
-  #after(work: () => Promise<unknown>): Promise<void> {
+  /**
+   * Runs a write after those before it, which writes of the settings wait for. One that fails does
+   * not stop those after it; whoever waits for it hears of it.
+   */
+  #after<T>(work: () => Promise<T>): Promise<T> {
     this.#pending += 1;
     const write = this.#writing.then(work).finally(() => {
       this.#pending -= 1;
     });
     this.#writing = write.catch(() => {});
-    return write.then(() => {});
+    return write;
   }
 
   /**
    * Keeps the address and headers of a service with its key as it is kept now, which another window
-   * may have changed since this page read it.
+   * may have changed since this page read it, in one go. Where what is kept cannot be read, nothing
+   * is written, and this rejects.
    */
   #writeParts(id: string, parts: Omit<ServiceSecret, "key">): Promise<void> {
     return this.#after(async () => {
-      const key = (await this.#keys.read(id).catch(() => undefined))?.key;
-      const secret: ServiceSecret = { ...(key !== undefined && { key }), ...parts };
-      this.#secrets.set(id, secret);
-      if (Object.keys(secret).length === 0) await this.#keys.remove(id);
-      else await this.#keys.write(id, secret);
+      const after = await this.#keys.update(id, (before) => ({
+        ...(before?.key !== undefined && { key: before.key }),
+        ...parts,
+      }));
+      if (after) this.#secrets.set(id, after);
+      else this.#secrets.delete(id);
     });
   }
 
-  /** Keeps what is secret of a service, after what was kept before it; nothing left takes it away. */
-  #writeSecret(id: string, secret: ServiceSecret): Promise<void> {
+  /** Changes the key of a service, leaving what else is secret of it as it is kept now. */
+  #writeKey(id: string, key: string | undefined): Promise<void> {
     return this.#after(async () => {
-      if (Object.keys(secret).length === 0) await this.#keys.remove(id);
-      else await this.#keys.write(id, secret);
+      const after = await this.#keys.update(id, (before) => {
+        const { key: _was, ...rest } = before ?? {};
+        return { ...rest, ...(key !== undefined && { key }) };
+      });
+      if (after) this.#secrets.set(id, after);
+      else this.#secrets.delete(id);
     });
   }
 
@@ -461,7 +487,10 @@ export class AiSettingsStore {
     this.#emitter.emit();
   }
 
-  /** Keys this page read, for whatever must not show them. */
+  /**
+   * Keys this page read, and the rest of what is secret of the services (addresses, the values of
+   * headers), for whatever must not show them, such as a report.
+   */
   get knownKeys(): ReadonlySet<string> {
     return this.#knownSet;
   }
@@ -550,7 +579,9 @@ export class AiSettingsStore {
     await this.#readSecrets();
     const hints = new Map<string, string>();
     const keyed = new Set<string>();
-    for (const [id, { key }] of this.#secrets) {
+    for (const [id, secret] of this.#secrets) {
+      this.#knowSecret(secret);
+      const { key } = secret;
       if (key === undefined) continue;
       this.#know(id, key);
       keyed.add(id);
@@ -598,16 +629,12 @@ export class AiSettingsStore {
     if (this.#snapshot.held) return false;
     const secrets = secretsOf(changed);
     const at = Date.now();
+    const writes: Promise<void>[] = [];
     const services = changed.services.map((service) => {
-      const before = this.#secrets.get(service.id);
-      const { key, ...was } = before ?? {};
+      const { key: _key, ...was } = this.#secrets.get(service.id) ?? {};
       const now = secrets.get(service.id) ?? {};
       if (canonical(was) === canonical(now)) return service;
-      this.#secrets.set(service.id, { ...(key !== undefined && { key }), ...now });
-      this.#writeParts(service.id, now).catch((error: unknown) => {
-        console.warn("What is secret of an AI service could not be kept", error);
-        this.#messages.keyFailed();
-      });
+      writes.push(this.#writeParts(service.id, now));
       return { ...service, secretAt: Math.max(at, (service.secretAt ?? 0) + 1) };
     });
     const settings = {
@@ -622,10 +649,25 @@ export class AiSettingsStore {
         this.#settings.save(LATEST_KEY, written),
         this.#settings.save(SETTINGS_KEY, written),
       ]);
-    // After what is secret of it, where any is on its way; at once otherwise.
-    (this.#pending > 0 ? this.#after(write) : write()).catch((error: unknown) => {
+    // After what is secret of it, where any is on its way; at once otherwise. Where what is secret
+    // could not be kept, the settings without it are not written either: what is saved stays, and
+    // the next save tries again (this page still has it all).
+    const saving =
+      writes.length > 0
+        ? Promise.allSettled(writes).then((results) => {
+            if (results.some((result) => result.status === "rejected")) {
+              this.#messages.keyFailed();
+              throw new Error("What is secret of an AI service could not be kept");
+            }
+            return this.#after(write);
+          })
+        : this.#pending > 0
+          ? this.#after(write)
+          : write();
+    saving.catch((error: unknown) => {
       console.warn("The AI services could not be saved", error);
-      this.#messages.saveFailed();
+      if (!(error instanceof Error && error.message.startsWith("What is secret")))
+        this.#messages.saveFailed();
     });
     return true;
   }
@@ -807,11 +849,12 @@ export class AiSettingsStore {
     }
     this.#forgetTests(id);
     this.#forgetListing(id);
-    this.#secrets.delete(id);
-    await this.#writeSecret(id, {}).catch((error: unknown) => {
-      console.warn("What is secret of an AI service could not be taken away", error);
-      this.#messages.keyFailed();
-    });
+    await this.#after(() => this.#keys.remove(id))
+      .then(() => this.#secrets.delete(id))
+      .catch((error: unknown) => {
+        console.warn("What is secret of an AI service could not be taken away", error);
+        this.#messages.keyFailed();
+      });
     await this.#refreshKeyed();
   }
 
@@ -1249,11 +1292,7 @@ export class AiSettingsStore {
   /** A key of a service, or none, beside what else is secret of it. */
   async #changeKey(id: string, key: string | undefined): Promise<void> {
     try {
-      await this.#writing;
-      const { key: _was, ...rest } = (await this.#keys.read(id)) ?? {};
-      const secret: ServiceSecret = { ...rest, ...(key !== undefined && { key }) };
-      this.#secrets.set(id, secret);
-      await this.#writeSecret(id, secret);
+      await this.#writeKey(id, key);
       this.#secretChanged(id);
     } catch (error) {
       console.warn("A key could not be kept", error);
@@ -1277,10 +1316,9 @@ export class AiSettingsStore {
       await this.#writing;
       const ids = new Set(this.#snapshot.services.map((service) => service.id));
       for (const id of await this.#keys.list()) {
-        const { key, ...rest } = (await this.#keys.read(id)) ?? {};
         if (!ids.has(id)) await this.#keys.remove(id);
-        else if (key !== undefined) {
-          await this.#keys.write(id, rest);
+        else if ((await this.#keys.read(id))?.key !== undefined) {
+          await this.#writeKey(id, undefined);
           this.#secretChanged(id);
         }
       }
@@ -1556,6 +1594,23 @@ export class AiSettingsStore {
     const tests = new Map(this.#snapshot.tests).set(where, test);
     this.#snapshot = { ...this.#snapshot, tests };
     this.#emitter.emit();
+  }
+
+  /**
+   * The rest of what is secret of a service, for reports to leave out too: the values of its
+   * headers (a key can be one) and where it is, also of each of its models.
+   */
+  #knowSecret(secret: ServiceSecret): void {
+    const values = [
+      secret.baseUrl,
+      ...Object.values(secret.headers ?? {}),
+      ...Object.values(secret.models ?? {}).flatMap((model) => [
+        model.baseUrl,
+        ...Object.values(model.headers ?? {}),
+      ]),
+    ].filter((value): value is string => value !== undefined && value.trim().length >= 8);
+    const fresh = values.filter((value) => !this.#knownSet.has(value));
+    if (fresh.length > 0) this.#knownSet = new Set([...this.#knownSet, ...fresh]);
   }
 
   #know(id: string, key: string | undefined): void {

@@ -77,6 +77,31 @@ function connector(open: () => Promise<IDBDatabase>): () => Promise<IDBDatabase>
   };
 }
 
+/**
+ * What is secret of one service changed in one transaction, from what is kept: a write of another
+ * window waits for it, or it for that one. What cannot be read is not written over.
+ */
+async function changeOne(
+  database: () => Promise<IDBDatabase>,
+  key: IDBValidKey,
+  next: (before: ServiceSecret | undefined) => ServiceSecret | undefined,
+  recordOf: (secret: ServiceSecret) => unknown,
+): Promise<ServiceSecret | undefined> {
+  const transaction = (await database()).transaction(KEYS, "readwrite");
+  const store = transaction.objectStore(KEYS);
+  const found: unknown = await resultOf(store.get(key));
+  const before = secretOf(found);
+  if (found !== undefined && before === undefined) {
+    transaction.abort();
+    throw new Error("What is secret of a service could not be read: nothing was written");
+  }
+  const after = next(before);
+  if (after === undefined || Object.keys(after).length === 0) store.delete(key);
+  else store.put(recordOf(after));
+  await committed(transaction);
+  return after && Object.keys(after).length > 0 ? after : undefined;
+}
+
 /** Keys in this browser only. Failing to read one is no key, which people can type again. */
 export function browserKeys(factory: () => IDBFactory): KeyStore {
   const database = connector(() => {
@@ -104,6 +129,8 @@ export function browserKeys(factory: () => IDBFactory): KeyStore {
     },
     write: (service, secret) =>
       change((store) => store.put({ ...secret, service } satisfies KeyRecord)),
+    update: (service, next) =>
+      changeOne(database, service, next, (secret) => ({ ...secret, service }) satisfies KeyRecord),
     remove: (service) => change((store) => store.delete(service)),
     clear: () => change((store) => store.clear()),
   };
@@ -157,6 +184,13 @@ export function browserAccountKeys(factory: () => IDBFactory): AccountKeys {
       },
       write: (service, secret) =>
         change((store) => store.put({ ...secret, account, service } satisfies AccountKeyRecord)),
+      update: (service, next) =>
+        changeOne(
+          database,
+          [account, service],
+          next,
+          (secret) => ({ ...secret, account, service }) satisfies AccountKeyRecord,
+        ),
       remove: (service) => change((store) => store.delete([account, service])),
       clear: () => forget(account),
     }),
@@ -293,6 +327,12 @@ export function memoryKeys(): KeyStore {
     },
     list: async () => [...keys.keys()],
     write: async (service, secret) => void keys.set(service, structuredClone(secret)),
+    update: async (service, next) => {
+      const after = next(keys.has(service) ? structuredClone(keys.get(service)) : undefined);
+      if (after === undefined || Object.keys(after).length === 0) keys.delete(service);
+      else keys.set(service, structuredClone(after));
+      return after && Object.keys(after).length > 0 ? structuredClone(after) : undefined;
+    },
     remove: async (service) => void keys.delete(service),
     clear: async () => keys.clear(),
   };

@@ -8,6 +8,7 @@ import {
   AiSyncNewer,
   isLaterEntry,
   memoryAccountKeys,
+  mergeSecret,
   memoryKeys,
   type AccountAccess,
   type AccountAiChanges,
@@ -17,6 +18,7 @@ import {
   type AiSyncAccess,
   type AiSyncKey,
   type SettingsStore,
+  type TimedSecret,
 } from "@animaquill/host";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { AiSync, type AiSyncAnswer, type AiSyncQuestion } from "./ai-sync.ts";
@@ -66,8 +68,13 @@ function platformOf() {
       for (const { name, ...entry } of changes.entries)
         if (tooLarge.has(name) && !entry.deleted) large.push(name);
         else if (isLaterEntry(kept.entries[name], entry)) kept.entries[name] = entry as AiEntry;
-      for (const { service, ...key } of changes.keys)
-        if (isLaterEntry(kept.keys[service], key)) kept.keys[service] = key as AiSyncKey;
+      for (const { service, ...key } of changes.keys) {
+        const before = kept.keys[service];
+        // As the platform does: two of what is secret of a service, part by part.
+        if (before && !before.deleted && !key.deleted)
+          kept.keys[service] = mergeSecret(before, key as TimedSecret);
+        else if (isLaterEntry(before, key)) kept.keys[service] = key as AiSyncKey;
+      }
       kept.revision += 1;
       return { state: stateOf(who()), refused: [], tooLarge: large };
     },
@@ -701,5 +708,162 @@ describe("entries of models, which editors before them would write back without"
     await expect(
       platform.access(() => "u1").change({ account: "u1", entries: [], keys: [] }),
     ).rejects.toBeInstanceOf(AiSyncNewer);
+  });
+});
+
+describe("turned off on this device and on again (review of S-A2)", () => {
+  test("a service and a key taken away here while it was off stay away, here and everywhere", async () => {
+    const platform = platformOf();
+    const a = await windowOf(browserOf(), platform, accountOf("u1"));
+    const b = await windowOf(browserOf(), platform, accountOf("u1"));
+    const x = a.ai.add("anthropic", "要删的")!;
+    const y = a.ai.add("deepseek", "只删key")!;
+    await a.ai.setKey(y, "sk-y");
+    await settle();
+    await a.sync.sync();
+    await b.sync.sync();
+    await settle();
+    expect(names(b.ai)).toEqual(["只删key", "要删的"]);
+    await b.sync.setEnabled(false);
+    await b.ai.remove(x);
+    await b.ai.removeKey(y);
+    await settle();
+    await b.sync.setEnabled(true);
+    await settle();
+    await a.sync.sync();
+    await b.sync.sync();
+    await settle();
+    expect(names(b.ai)).toEqual(["只删key"]);
+    expect(names(a.ai)).toEqual(["只删key"]);
+    expect(a.ai.getSnapshot().keyed.has(y)).toBe(false);
+  });
+  test("what changed elsewhere meanwhile is not taken back by this device, which did not change it", async () => {
+    const platform = platformOf();
+    const a = await windowOf(browserOf(), platform, accountOf("u1"));
+    const b = await windowOf(browserOf(), platform, accountOf("u1"));
+    const x = a.ai.add("anthropic", "旧名")!;
+    await settle();
+    await a.sync.sync();
+    await b.sync.sync();
+    await settle();
+    await b.sync.setEnabled(false);
+    a.ai.update(x, { name: "新名" });
+    await settle();
+    await a.sync.sync();
+    await settle();
+    await b.sync.setEnabled(true);
+    await settle();
+    await a.sync.sync();
+    await b.sync.sync();
+    await settle();
+    expect(names(a.ai)).toEqual(["新名"]);
+    expect(names(b.ai)).toEqual(["新名"]);
+  });
+});
+
+const gw = (extra = {}) => ({
+  id: "g",
+  kind: "openai-compatible",
+  name: "网关",
+  baseUrl: "https://gw.example/v1",
+  route: "direct",
+  api: "openai-completions",
+  headers: { "x-team": "v" },
+  enabled: ["m"],
+  models: [
+    { id: "m", added: "hand", baseUrl: "https://gw.example/claude", headers: { "x-m": "1" } },
+  ],
+  ...extra,
+});
+describe("what this device had before signing in, as settings of before version 4 move (review of S-A2)", () => {
+  for (const keyHeader of [undefined, "api-key"]) {
+    test(`untouched, they do not go into the account once moved; a header for the key: ${keyHeader ?? "none"}`, async () => {
+      const platform = platformOf();
+      const browser = browserOf();
+      browser.values.set("ai", {
+        version: 3,
+        services: [gw(keyHeader ? { keyHeader } : {})],
+        default: null,
+      });
+      await browser.keys.write("g", { key: "sk-gw-0123456789" });
+      const account = accountOf(undefined);
+      const w = await windowOf(browser, platform, account, { on: true, put: false });
+      await settle();
+      account.as("u1");
+      await settle();
+      await w.sync.sync();
+      await settle();
+      const ents = Object.keys(platform.accounts.get("u1")?.entries ?? {});
+      expect(ents.filter((n) => n.startsWith("service:"))).toEqual([]);
+    });
+  }
+});
+
+describe("an account as a platform of before 0.3.72 has it (review of S-A2)", () => {
+  test("entries with addresses in them and keys alone reach another device, and the platform has no address left", async () => {
+    const platform = platformOf();
+    const account = accountOf("u1");
+    platform.accounts.set("u1", {
+      revision: 1,
+      format: 2,
+      entries: {
+        "service:g": {
+          at: 1000,
+          value: {
+            id: "g",
+            kind: "openai-compatible",
+            name: "GW",
+            baseUrl: "https://gw.example/v1",
+            route: "direct",
+            headers: { "x-team": "v" },
+            enabled: ["m"],
+          },
+        },
+        order: { at: 1000, value: ["g"] },
+      },
+      keys: { g: { at: 1000, secret: { key: "sk-legacy-0123456789" } } },
+    });
+    const one = browserOf();
+    const a = await windowOf(one, platform, account, { on: true, put: true });
+    await settle();
+    expect(a.ai.serviceOf("g")?.baseUrl).toBe("https://gw.example/v1");
+    await a.sync.sync();
+    await settle();
+    const kept = platform.accounts.get("u1")!;
+    const two = browserOf();
+    const b = await windowOf(two, platform, account, { on: true, put: true });
+    await settle();
+    expect(b.ai.serviceOf("g")?.baseUrl).toBe("https://gw.example/v1");
+    expect(b.ai.serviceOf("g")?.headers).toEqual({ "x-team": "v" });
+    expect(JSON.stringify(kept.entries)).not.toMatch(/gw\.example|x-team/);
+  });
+});
+
+describe("what is secret of a service, changed on two devices at once (review of S-A2)", () => {
+  test("the key on one, the address on the other: both, everywhere, whichever goes first", async () => {
+    for (const first of ["a", "b"] as const) {
+      const platform = platformOf();
+      const a = await windowOf(browserOf(), platform, accountOf("u1"));
+      const b = await windowOf(browserOf(), platform, accountOf("u1"));
+      const id = a.ai.add("openai-compatible", "网关", { baseUrl: "https://gw.example/v1" })!;
+      await a.ai.setKey(id, "sk-old-0123456789");
+      await settle();
+      await a.sync.sync();
+      await b.sync.sync();
+      await settle();
+      platform.setOffline(true);
+      await a.ai.setKey(id, "sk-new-0123456789");
+      b.ai.update(id, { baseUrl: "https://new.example/v1" });
+      await settle();
+      platform.setOffline(false);
+      const order = first === "a" ? [a, b, a] : [b, a, b];
+      for (const each of order) await each.sync.sync();
+      await settle();
+      await settle();
+      for (const each of [a, b]) {
+        expect(each.ai.serviceOf(id)?.baseUrl, first).toBe("https://new.example/v1");
+        expect(await each.ai.keyOf(id), first).toBe("sk-new-0123456789");
+      }
+    }
   });
 });

@@ -6,6 +6,8 @@ import {
   AI_SECRET_BYTES,
   checkAiEntry,
   isLaterEntry,
+  mergeSecret,
+  readSecretTimes,
   readServiceSecret,
   urlHasSecret,
 } from "./ai-sync-rules.ts";
@@ -132,28 +134,20 @@ describe("what an entry can be", () => {
       id: "team/claude-x",
       name: "Claude X",
       contextWindow: 200000,
-      headers: { "x-team": "video" },
       thinkingLevelMap: { off: null, high: "max" },
     };
     expect(checkAiEntry("model:s1/team/claude-x", model)).toBe(true);
     expect(checkAiEntry("model:s1/other", model)).toBe(false);
     expect(checkAiEntry("model:/team/claude-x", model)).toBe(false);
     expect(checkAiEntry("model:s 1/team/claude-x", model)).toBe(false);
-    // Headers are people's to name, also like a secret: the settings remind them.
-    expect(checkAiEntry("model:s1/team/claude-x", { ...model, headers: { "api-key": "x" } })).toBe(
-      true,
-    );
     expect(checkAiEntry("model:s1/team/claude-x", { ...model, apiKey: "x" })).toBe(false);
-    expect(checkAiEntry("model:s1/team/claude-x", { ...model, headers: { "x-a": 1 } })).toBe(false);
-    expect(
-      checkAiEntry("model:s1/team/claude-x", {
-        ...model,
-        baseUrl: "https://x.example/v1?api_key=sk",
-      }),
-    ).toBe(false);
+    // Where it is and its headers are secret, never in an entry.
+    expect(checkAiEntry("model:s1/team/claude-x", { ...model, headers: { "x-team": "v" } })).toBe(
+      false,
+    );
     expect(
       checkAiEntry("model:s1/team/claude-x", { ...model, baseUrl: "https://x.example/v1" }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it("services as they are, nothing under the name of a secret", () => {
@@ -161,7 +155,6 @@ describe("what an entry can be", () => {
       id: "s1",
       kind: "anthropic",
       name: "A",
-      baseUrl: "https://x",
       route: "direct",
       enabled: [],
     };
@@ -182,7 +175,6 @@ describe("what an entry can be", () => {
       "https://api.example.com/v1?access_token=sk",
     ]) {
       expect(urlHasSecret(baseUrl), baseUrl).toBe(true);
-      expect(checkAiEntry("service:s1", { ...service, baseUrl }), baseUrl).toBe(false);
     }
     expect(urlHasSecret("https://api.example.com/v1?region=eu")).toBe(false);
     expect(urlHasSecret("not an address")).toBe(false);
@@ -286,10 +278,32 @@ describe("what is secret of a service", () => {
       expect(readServiceSecret(wrong), JSON.stringify(wrong).slice(0, 80)).toBeUndefined();
   });
 
-  it("is not in a service of format 3, which has no address", () => {
+  it("is never in an entry: a service or a model with its address or headers is not taken", () => {
     const service = { id: "s", kind: "custom", name: "s", route: "direct", enabled: [] };
     expect(checkAiEntry("service:s", service)).toBe(true);
-    expect(checkAiEntry("service:s", { ...service, baseUrl: "https://a.example" })).toBe(true);
-    expect(checkAiEntry("service:s", { ...service, baseUrl: "https://u:p@a.example" })).toBe(false);
+    expect(checkAiEntry("service:s", { ...service, baseUrl: "https://a.example" })).toBe(false);
+    expect(checkAiEntry("service:s", { ...service, headers: { a: "b" } })).toBe(false);
+  });
+});
+
+describe("what is secret of a service, changed in two places", () => {
+  it("is merged part by part, each the later, and the same once merged again", () => {
+    const kept = { at: 10, secret: { key: "old", baseUrl: "https://a.example" } };
+    const key = {
+      at: 20,
+      secret: { key: "new", baseUrl: "https://a.example" },
+      fieldsAt: { key: 20 },
+    };
+    const address = {
+      at: 15,
+      secret: { key: "old", baseUrl: "https://b.example" },
+      fieldsAt: { key: 10, baseUrl: 15, headers: 15, models: 15 },
+    };
+    const one = mergeSecret(mergeSecret(kept, key), address);
+    const two = mergeSecret(mergeSecret(kept, address), key);
+    expect(one.secret).toEqual({ key: "new", baseUrl: "https://b.example" });
+    expect(two.secret).toEqual(one.secret);
+    expect(mergeSecret(one, one)).toEqual(one);
+    expect(readSecretTimes({ key: 1, other: 2, baseUrl: "x" })).toEqual({ key: 1 });
   });
 });

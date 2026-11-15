@@ -957,7 +957,6 @@
       "modEnter": "Ctrl+Enter"
     },
     "account": {
-      "via": "用 GitHub 登录",
       "signedOut": "登录以后能用云端项目、云同步和云端 AI。"
     },
     "bytes": "{{value}} {{unit}}",
@@ -980,7 +979,6 @@
     },
     "chats": {
       "line": "AI 对话：占 {{size}}",
-      "reading": "AI 对话：正在读…",
       "failed": "AI 对话：没读到占多大",
       "clear": "清除",
       "clearTitle": "清除本地项目的对话？",
@@ -4999,14 +4997,13 @@
     },
     "github": {
       "name": "关联 GitHub",
-      "help": "云端项目要存到你的仓库，需要装 AnimaQuill 的 GitHub App，并选给它哪些仓库。现在不装也行，新建云端项目时会再问。",
       "linked": "已关联 {{name}}",
       "repositories": "已关联 {{name}}（{{count}} 个仓库）",
       "repositoriesMore": "已关联 {{name}}（{{count}} 个以上仓库）",
-      "linkedHelp": "云端项目存到你选给 AnimaQuill 的仓库里。",
       "install": "去装…",
       "manage": "管理仓库…",
-      "noRepositories": "已关联 {{name}}，还没选给它仓库"
+      "noRepositories": "已关联 {{name}}，还没选给它仓库",
+      "notLinked": "还没关联"
     },
     "status": {
       "idle": "开着，有改动时同步",
@@ -5015,14 +5012,12 @@
       "syncedAgo": "已同步 · {{ago}}",
       "offline": "离线，连上后同步",
       "failed": "同步出错",
-      "off": "关着，只在这台设备",
       "waiting": "等你在欢迎页里确认后开始",
       "saved": "跟账号"
     },
     "aiStatus": "{{status}} · {{counts}}",
     "retry": "重试",
     "changeFailed": "没能改，稍后再试。",
-    "githubGo": "去账号里管理",
     "chatImages": {
       "usage": "对话里的图片 {{used}} / {{limit}}",
       "manage": "管理",
@@ -5040,9 +5035,7 @@
   },
   "welcome": {
     "title": "欢迎，{{name}}",
-    "footer": "以后在 设置 › 云同步 里随时能改。",
     "start": "开始使用",
-    "later": "以后再说",
     "close": "关闭",
     "ai": {
       "name": "同步模型列表",

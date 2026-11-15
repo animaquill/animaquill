@@ -139,7 +139,7 @@ export function GitHubRow({ before }: { readonly before?: () => Promise<unknown>
                   { name, count: repositories.count },
                 )
               : t("cloudSync.github.linked", { name })
-          : t("cloudSync.github.help")
+          : t("cloudSync.github.notLinked")
       }
       control={
         <button
@@ -151,8 +151,6 @@ export function GitHubRow({ before }: { readonly before?: () => Promise<unknown>
           {t(installed ? "cloudSync.github.manage" : "cloudSync.github.install")}
         </button>
       }
-    >
-      {installed && <span className={styles.help}>{t("cloudSync.github.linkedHelp")}</span>}
-    </FeatureRow>
+    />
   );
 }

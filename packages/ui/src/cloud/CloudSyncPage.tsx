@@ -7,7 +7,6 @@ import type { ChatImageUsage } from "@animaquill/host";
 import type { AiCounts } from "../chat/ai-sync.ts";
 import { bytesText } from "../chat/shots.ts";
 import { useAiSyncText } from "../chat/AiSyncStatus.tsx";
-import { WhereIcon } from "../settings/WhereIcon.tsx";
 import { DEFAULT_SWITCHES, type CloudFeature } from "./cloud-sync.ts";
 import { countsText, hasAny } from "./cloud-text.ts";
 import { FeatureRow, Switch, useAccount } from "./CloudParts.tsx";
@@ -73,7 +72,7 @@ export function CloudSyncPage() {
 
   /** How what goes with the account stands, under its switch. */
   const line = (feature: "organizer" | "chats") => {
-    if (!on(feature)) return lineOf(t, "off", undefined, now);
+    if (!on(feature)) return { status: "off" as const, text: "" };
     if (!welcomed) return lineOf(t, "waiting", undefined, now);
     const { status, syncedAt } = feature === "organizer" ? organizerSync : chats;
     return lineOf(t, status, syncedAt, now);
@@ -81,7 +80,6 @@ export function CloudSyncPage() {
 
   const aiStatus = ai.snapshot.status;
   const canChange = welcomed && changing === undefined;
-  const device = <WhereIcon where="device" />;
 
   return (
     <div className={styles.page} data-testid="cloud-sync">
@@ -90,7 +88,6 @@ export function CloudSyncPage() {
         <FeatureRow
           id="ai"
           name={t("cloudSync.ai.name")}
-          where={device}
           help={t("cloudSync.ai.help")}
           control={
             <Switch
@@ -100,16 +97,19 @@ export function CloudSyncPage() {
             />
           }
         >
-          <span className={styles.status} data-testid="ai-sync-status" data-status={aiStatus}>
-            {aiStatus === "off" || aiStatus === "waiting" || counts === undefined || !hasAny(counts)
-              ? ai.text
-              : t("cloudSync.aiStatus", { status: ai.text, counts: countsText(t, counts, true) })}
-            {(aiStatus === "failed" || aiStatus === "offline") && (
-              <button type="button" className={styles.link} onClick={() => aiSync.retry()}>
-                {t("cloudSync.retry")}
-              </button>
-            )}
-          </span>
+          {/* Off says itself, by the switch. */}
+          {aiStatus !== "off" && (
+            <span className={styles.status} data-testid="ai-sync-status" data-status={aiStatus}>
+              {aiStatus === "waiting" || counts === undefined || !hasAny(counts)
+                ? ai.text
+                : t("cloudSync.aiStatus", { status: ai.text, counts: countsText(t, counts, true) })}
+              {(aiStatus === "failed" || aiStatus === "offline") && (
+                <button type="button" className={styles.link} onClick={() => aiSync.retry()}>
+                  {t("cloudSync.retry")}
+                </button>
+              )}
+            </span>
+          )}
         </FeatureRow>
         {(["organizer", "chats"] as const).map((feature) => {
           const { status, text } = line(feature);
@@ -118,7 +118,6 @@ export function CloudSyncPage() {
               key={feature}
               id={feature}
               name={t(`cloudSync.${feature}.name`)}
-              where={device}
               control={
                 <Switch
                   checked={on(feature)}
@@ -127,24 +126,26 @@ export function CloudSyncPage() {
                 />
               }
             >
-              <span
-                className={styles.status}
-                data-testid={`${feature}-sync-status`}
-                data-status={status}
-              >
-                {text}
-                {(status === "failed" || status === "offline") && (
-                  <button
-                    type="button"
-                    className={styles.link}
-                    onClick={() =>
-                      void (feature === "organizer" ? organizer.syncNow() : chatSync?.retry())
-                    }
-                  >
-                    {t("cloudSync.retry")}
-                  </button>
-                )}
-              </span>
+              {status !== "off" && (
+                <span
+                  className={styles.status}
+                  data-testid={`${feature}-sync-status`}
+                  data-status={status}
+                >
+                  {text}
+                  {(status === "failed" || status === "offline") && (
+                    <button
+                      type="button"
+                      className={styles.link}
+                      onClick={() =>
+                        void (feature === "organizer" ? organizer.syncNow() : chatSync?.retry())
+                      }
+                    >
+                      {t("cloudSync.retry")}
+                    </button>
+                  )}
+                </span>
+              )}
               {feature === "chats" && on("chats") && welcomed && <ChatImagesUsage />}
             </FeatureRow>
           );
@@ -152,29 +153,12 @@ export function CloudSyncPage() {
         <FeatureRow
           id="newProjectsInCloud"
           name={t("cloudSync.newProjectsInCloud.name")}
-          where={device}
           control={
             <Switch
               checked={on("newProjectsInCloud")}
               disabled={!canChange}
               onChange={(next) => void toggle("newProjectsInCloud", next)}
             />
-          }
-        />
-        {/* Linking GitHub is the account's: here only where it is. */}
-        <FeatureRow
-          id="github"
-          name={t("cloudSync.github.name")}
-          control={
-            <button
-              type="button"
-              className={styles.button}
-              onClick={() =>
-                workbench.settingsNav.go({ group: "account", depth: 1, item: "account.github" })
-              }
-            >
-              {t("cloudSync.githubGo")}
-            </button>
           }
         />
       </div>
@@ -190,7 +174,7 @@ type LineStatus = "idle" | "syncing" | "synced" | "offline" | "failed" | "off" |
 
 function lineOf(
   t: TFunction,
-  status: LineStatus,
+  status: Exclude<LineStatus, "off">,
   syncedAt: number | undefined,
   now: number,
 ): { status: LineStatus; text: string } {

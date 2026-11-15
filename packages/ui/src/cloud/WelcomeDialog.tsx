@@ -3,8 +3,7 @@ import { useLayoutEffect, useRef, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import type { SwitchValues, WelcomeRequest } from "./cloud-sync.ts";
-import { WhereIcon } from "../settings/WhereIcon.tsx";
-import { FeatureRow, GitHubRow, Switch } from "./CloudParts.tsx";
+import { FeatureRow, Switch } from "./CloudParts.tsx";
 import styles from "./CloudSync.module.css";
 
 /**
@@ -40,7 +39,6 @@ function WelcomeDialog({ welcome }: { readonly welcome: WelcomeRequest }) {
   const answer = () => cloudSync.answerWelcome(values);
   const set = (feature: keyof SwitchValues) => (on: boolean) =>
     cloudSync.editWelcome({ ...cloudSync.getSnapshot().welcome!.switches, [feature]: on });
-  const device = <WhereIcon where="device" />;
 
   return (
     <dialog
@@ -67,38 +65,29 @@ function WelcomeDialog({ welcome }: { readonly welcome: WelcomeRequest }) {
           <FeatureRow
             id="ai"
             name={t("welcome.ai.name")}
-            where={device}
             {...(values.ai && { help: t("welcome.ai.keys") })}
             control={<Switch checked={values.ai} onChange={set("ai")} />}
           />
           <FeatureRow
             id="organizer"
             name={t("welcome.organizer.name")}
-            where={device}
             control={<Switch checked={values.organizer} onChange={set("organizer")} />}
           />
           <FeatureRow
             id="chats"
             name={t("welcome.chats.name")}
-            where={device}
             control={<Switch checked={values.chats} onChange={set("chats")} />}
           />
           <FeatureRow
             id="newProjectsInCloud"
             name={t("welcome.newProjectsInCloud.name")}
-            where={device}
             control={
               <Switch checked={values.newProjectsInCloud} onChange={set("newProjectsInCloud")} />
             }
           />
-          <GitHubRow before={answer} />
         </div>
         <div className={styles.footer}>
-          <p>{t("welcome.footer")}</p>
           <div className={styles.buttons}>
-            <button type="button" onClick={() => void answer()}>
-              {t("welcome.later")}
-            </button>
             <button
               ref={start}
               type="button"

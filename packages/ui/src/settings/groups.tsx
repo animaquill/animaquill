@@ -96,6 +96,8 @@ export function ExportGroup() {
     <GroupPage title={t("settings.groups.export")}>
       <SettingRow
         id="export.hardware"
+        // How it stands says it all: one line, and a way to try again only where it failed.
+        help=""
         below={
           failed && (
             <span className={styles.status} data-testid="settings-hardware">
@@ -110,12 +112,11 @@ export function ExportGroup() {
           )
         }
       >
-        <Button
-          disabled={failures.length === 0}
-          onClick={() => void videos.retryHardware().then(read)}
-        >
-          {t("settings.hardware.retry")}
-        </Button>
+        {failures.length > 0 && (
+          <Button onClick={() => void videos.retryHardware().then(read)}>
+            {t("settings.hardware.retry")}
+          </Button>
+        )}
       </SettingRow>
     </GroupPage>
   );
@@ -296,7 +297,6 @@ export function AccountGroup() {
             {who.name}
           </span>
         }
-        help={t("settings.account.via")}
       >
         <Button onClick={() => void workbench.signOut()}>{t("account.signOut")}</Button>
       </SettingRow>
@@ -324,6 +324,9 @@ function SpaceRow() {
   }, [account]);
   useEffect(read, [read]);
   if (!account?.space) return null;
+  // Where there is none, nothing to say: only what there is.
+  if (space !== undefined && space !== "failed" && (space.mode === "off" || space.limit === 0))
+    return null;
   const text =
     space === undefined
       ? t("settings.space.reading")
@@ -377,8 +380,9 @@ export function StorageGroup() {
 }
 
 /**
- * Whether the browser keeps what is stored here until people clear it: asked for on its own, the
- * first time; only where the browser said no does anything show, to ask again.
+ * Whether the browser keeps what is stored here until people clear it: the editor asks for it on
+ * its own once something was saved (`Workbench`); only where the browser said no does anything
+ * show here, to ask again.
  */
 function PersistRow() {
   const { persistence, notifications } = useWorkbench();
@@ -389,9 +393,7 @@ function PersistRow() {
     if (!persistence) return;
     let gone = false;
     void (async () => {
-      const now =
-        (await persistence.persisted()) ||
-        (!persistence.wasAsked() && (await persistence.persist()));
+      const now = (await persistence.persisted()) || !persistence.wasAsked();
       if (!gone) setKept(now);
     })();
     return () => {
@@ -428,6 +430,8 @@ function KeysRow() {
     });
     if (sure) await ai.removeAllKeys();
   };
+  // None kept: nothing to say, nothing to take away.
+  if (snapshot.keyed.size === 0) return null;
   return (
     <SettingRow
       id="storage.keys"
@@ -492,24 +496,28 @@ function ChatsRow() {
     }
   };
 
+  // None here, or not read yet: nothing to say.
+  if (
+    usage === undefined ||
+    (usage !== "failed" && usage.all.count === 0 && usage.images.count === 0)
+  )
+    return null;
   return (
     <SettingRow
       id="storage.chats"
       name={
         <span data-testid="settings-chats">
-          {usage === undefined
-            ? t("settings.chats.reading")
-            : usage === "failed"
-              ? t("settings.chats.failed")
-              : t("settings.chats.line", {
-                  size: formatBytes(t, usage.all.bytes + usage.images.bytes),
-                })}
+          {usage === "failed"
+            ? t("settings.chats.failed")
+            : t("settings.chats.line", {
+                size: formatBytes(t, usage.all.bytes + usage.images.bytes),
+              })}
         </span>
       }
     >
       <Button
         danger
-        disabled={busy || usage === undefined || usage === "failed" || usage.local.count === 0}
+        disabled={busy || usage === "failed" || usage.local.count === 0}
         onClick={() => void clear()}
       >
         {t("settings.chats.clear")}
