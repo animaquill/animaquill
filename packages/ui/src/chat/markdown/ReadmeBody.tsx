@@ -1,5 +1,5 @@
 import { Image } from "lucide-react";
-import { createContext, memo, useContext, useState, type ReactNode } from "react";
+import { createContext, memo, useContext, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -44,55 +44,54 @@ function Link({
   const to = href === undefined ? undefined : readmeLink(href, place);
   if (!to) return <span data-testid="readme-not-link">{children}</span>;
   const words = textOf(node).trim();
+  // Words that say something else than where it goes: where it goes, in small type after them,
+  // for those who cannot hover.
+  // A file of the repository itself needs no saying.
+  const own =
+    place !== undefined &&
+    to.startsWith(`https://github.com/${place.owner}/${place.repo}/blob/${place.commit}/`);
+  const says = own || words === to || words === href;
   return (
-    <a
-      href={to}
-      target="_blank"
-      rel="noopener noreferrer"
-      title={words === to || words === href ? undefined : to}
-      data-testid="readme-link"
-    >
-      {children}
-    </a>
+    <>
+      <a
+        href={to}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={words === to || words === href ? undefined : to}
+        data-testid="readme-link"
+      >
+        {children}
+      </a>
+      {!says && (
+        <small className={readmeStyles.address} data-testid="readme-link-address">
+          {" "}
+          ({to})
+        </small>
+      )}
+    </>
   );
 }
 
-/** A picture from elsewhere: a box that says where from, and loads it only when asked. */
-function Elsewhere(props: { readonly url: string; readonly host: string; readonly alt: string }) {
+/**
+ * A picture from elsewhere: a box that says where from, and the way to open it in a tab of its own.
+ * The editor's pages show pictures only from GitHub's raw files (their policy), so it never loads
+ * here; opened, the place it is at sees who asks.
+ */
+function Elsewhere(props: { readonly url: string; readonly host: string }) {
   const { t } = useTranslation();
-  const [load, setLoad] = useState(false);
-  const [failed, setFailed] = useState(false);
-  if (load && !failed) {
-    return (
-      <img
-        src={props.url}
-        alt={props.alt}
-        referrerPolicy="no-referrer"
-        className={readmeStyles.picture}
-        data-testid="readme-image-loaded"
-        // The editor's pages show pictures only from a few places: then it opens in a tab.
-        onError={() => setFailed(true)}
-      />
-    );
-  }
   return (
     <span className={readmeStyles.elsewhere} data-testid="readme-image-elsewhere">
       <Image size={14} aria-hidden />
       <span>{t("ai.packs.readme.elsewhere", { host: props.host })}</span>
-      {failed ? (
-        <a href={props.url} target="_blank" rel="noopener noreferrer">
-          {t("ai.packs.readme.openImage")}
-        </a>
-      ) : (
-        <button
-          type="button"
-          title={t("ai.packs.readme.loadImageTitle")}
-          data-testid="readme-image-load"
-          onClick={() => setLoad(true)}
-        >
-          {t("ai.packs.readme.loadImage")}
-        </button>
-      )}
+      <a
+        href={props.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        title={t("ai.packs.readme.openImageTitle")}
+        data-testid="readme-image-open"
+      >
+        {t("ai.packs.readme.openImage")}
+      </a>
     </span>
   );
 }
@@ -120,7 +119,7 @@ function Picture({
     );
   }
   if (image.kind === "elsewhere") {
-    return <Elsewhere url={image.url} host={image.host} alt={alt ?? ""} />;
+    return <Elsewhere url={image.url} host={image.host} />;
   }
   return (
     <span className={readmeStyles.elsewhere} data-testid="readme-image-none">

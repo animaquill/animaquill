@@ -21,7 +21,8 @@ interface ViewOptions {
 /**
  * The page of model packs in the settings (docs/design/settings-and-properties.md of AnimaQuill
  * Cloud, 8.2), in the order of what people come here for: which pack each model that is on uses,
- * and another one; installing a new one (from GitHub, or a folder on this computer); and the packs
+ * and another one; installing a new one (from GitHub, a folder or a pack.json on this computer;
+ * "发现" joins them with S-P2); and the packs
  * installed, with their updates (looked for as the page opens, see `ModelPacks.lookForUpdates`),
  * where they are from, which models use them, reading a pack from this computer again, and removing
  * one. AnimaQuill's own come last, in one line. A pack's page (README, what it changes, a comparison,
@@ -87,29 +88,7 @@ export function ModelPacksSettings() {
 
   return (
     <section className={styles.packs} aria-label={t("ai.packs.title")} data-testid="model-packs">
-      <div className={styles.titleRow}>
-        <h2 className={settingsStyles.group}>{t("ai.packs.title")}</h2>
-        <span className={styles.grow} />
-        <button
-          type="button"
-          className={settingsStyles.button}
-          data-testid="pack-install-github"
-          onClick={() => {
-            install.clearFailure();
-            setFromGitHub(true);
-          }}
-        >
-          {t("ai.packs.installGitHub")}
-        </button>
-        <button
-          type="button"
-          className={settingsStyles.button}
-          data-testid="pack-install-folder"
-          onClick={() => install.pickFolder()}
-        >
-          {t("ai.packs.installFolder")}
-        </button>
-      </div>
+      <h2 className={settingsStyles.group}>{t("ai.packs.title")}</h2>
       <p className={settingsStyles.help}>{t("ai.packs.intro")}</p>
 
       {/* `data-setting`: what searching the settings goes to, see settings/registry.ts. */}
@@ -172,9 +151,49 @@ export function ModelPacksSettings() {
         })}
       </div>
 
+      <h3 className={styles.heading}>{t("ai.packs.installSection")}</h3>
+      <p className={settingsStyles.help}>{t("ai.packs.installSectionHelp")}</p>
+      <div className={styles.install} data-testid="pack-install-ways">
+        <button
+          type="button"
+          className={`${settingsStyles.button} ${styles.primary}`}
+          data-testid="pack-install-github"
+          onClick={() => {
+            install.clearFailure();
+            setFromGitHub(true);
+          }}
+        >
+          {t("ai.packs.installGitHub")}
+        </button>
+        <button
+          type="button"
+          className={settingsStyles.button}
+          data-testid="pack-install-folder"
+          onClick={() => install.pickFolder()}
+        >
+          {t("ai.packs.installFolder")}
+        </button>
+        <button
+          type="button"
+          className={settingsStyles.button}
+          data-testid="pack-install-file"
+          onClick={() => install.pickFile()}
+        >
+          {t("ai.packs.installFile")}
+        </button>
+      </div>
+
       <h3 className={styles.heading} data-setting="packs.installed">
         {t("ai.packs.installedCount", { count: snapshot.installed.length })}
       </h3>
+      {snapshot.installed.length === 0 && (
+        <p className={settingsStyles.help} data-testid="pack-none-installed">
+          {t("ai.packs.noneInstalled")}{" "}
+          <a href={t("ai.packs.formatUrl")} target="_blank" rel="noopener noreferrer">
+            {t("ai.packs.formatLink")}
+          </a>
+        </p>
+      )}
       <ul className={styles.installedList}>
         {snapshot.installed.map((installed) => (
           <InstalledRow
@@ -224,17 +243,6 @@ export function ModelPacksSettings() {
           </div>
         </li>
       </ul>
-      <p className={settingsStyles.help}>
-        {t("ai.packs.fileOnly")}{" "}
-        <button
-          type="button"
-          className={settingsStyles.link}
-          data-testid="pack-install-file"
-          onClick={() => install.pickFile()}
-        >
-          {t("ai.packs.installFile")}
-        </button>
-      </p>
       {rate && (
         <p className={settingsStyles.warning} data-testid="pack-rate">
           {t("ai.packs.github.rateLater")}

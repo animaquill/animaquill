@@ -266,6 +266,24 @@ function sameRepository(a: string, b: string): boolean {
 }
 
 /**
+ * The account a repository belongs to now and before, where GitHub said it for both and they are
+ * not the same: the same address may lead to a repository given to someone else.
+ */
+export function ownerMoved(
+  source: PackSource,
+  installedSource: PackSource,
+): { readonly before: string; readonly after: string } | undefined {
+  if (source.kind !== "github" || installedSource.kind !== "github") return undefined;
+  const now = source.owner && source.repo ? `${source.owner}/${source.repo}` : undefined;
+  const was =
+    installedSource.owner && installedSource.repo
+      ? `${installedSource.owner}/${installedSource.repo}`
+      : undefined;
+  if (!now || !was || now.toLowerCase() === was.toLowerCase()) return undefined;
+  return { before: was, after: now };
+}
+
+/**
  * Whether a new version of a pack comes from another author or place than the version installed:
  * anyone can write any id, so the same id is no proof that it is the same pack. Places are another
  * where one is on GitHub and the other is not, or both are on GitHub in other repositories or
@@ -280,6 +298,7 @@ export function originDiffers(
   const author = (each: ModelPack) => `${each.author?.name ?? ""}\n${each.author?.url ?? ""}`;
   if (author(pack) !== author(installed)) return true;
   if (source === undefined || installedSource === undefined) return false;
+  if (ownerMoved(source, installedSource)) return true;
   const online = (each: PackSource) => each.kind === "github" || each.kind === "discover";
   if (online(source) !== online(installedSource)) return true;
   return (

@@ -3140,7 +3140,8 @@
         "tab": {
           "changes": "改了什么",
           "readme": "介绍（README）"
-        }
+        },
+        "ownerMoved": "这个仓库原来属于 {{before}}，现在属于 {{after}}：可能已经转给了别人。"
       },
       "preview": {
         "open": "看模型实际收到的",
@@ -3243,7 +3244,6 @@
         "github": "GitHub",
         "gone": "已卸载"
       },
-      "fileOnly": "只有一个 pack.json 的包：",
       "installGitHubTitle": "从 GitHub 地址安装适配包",
       "installGitHubHelp": "填包的 GitHub 仓库地址，比如 https://github.com/作者/仓库。仓库有 v1.2.0 这样的版本标签时装最新的标签，没有就装默认分支的最新提交；要装某个分支、标签或提交，写成 …/tree/名字。只能装公开仓库。读到以后先把它改了什么逐段列出来，你确认了才装。",
       "githubAddress": "GitHub 地址",
@@ -3270,16 +3270,20 @@
         "cut": "介绍太长，只显示前 64 KB。",
         "whole": "在 GitHub 上看全文",
         "none": "这个包没有介绍。",
-        "note": "README 只按 Markdown 显示：不跑脚本、不嵌网页、HTML 按文字显示；仓库里的图片直接显示，外部图片点了才加载（那个网站会看到你的网络地址）；链接在新标签页打开。",
-        "elsewhere": "外部图片 {{host}}/…（没有加载）",
-        "loadImage": "加载图片",
-        "loadImageTitle": "加载后，图片所在的网站会看到你的网络地址",
-        "openImage": "编辑器不显示这个网站的图片，在新标签页打开",
+        "note": "README 只按 Markdown 显示：不跑脚本、不嵌网页、HTML 按文字显示；仓库里的图片直接显示，别处的图片不显示，可以在新标签页打开（那个网站会看到你的网络地址）；链接在新标签页打开，文字和地址不一样时后面写出地址。",
+        "elsewhere": "别处的图片 {{host}}/…（编辑器不显示别处的图片）",
+        "openImage": "在新标签页打开",
         "noImage": "图片（不显示）",
         "default": "AnimaQuill 自己的提示词和工具说明。没有专门适配包的模型用它；也可以为某个模型选它。",
         "comparison": "工具集 2026.1 的旧写法，开发和评测时对照用：不会自动用在任何模型上，只在为某个模型选它时才用。",
-        "builtin": "随 AnimaQuill 提供，随 AnimaQuill 更新，不能卸载。"
-      }
+        "builtin": "随 AnimaQuill 提供，随 AnimaQuill 更新，不能卸载。",
+        "openImageTitle": "打开后，图片所在的网站会看到你的网络地址"
+      },
+      "installSection": "装新的适配包",
+      "installSectionHelp": "适配包是一个 GitHub 仓库，贴上仓库地址就能装；自己写的包可以先从本机文件夹装上试。装之前会把它改了什么、它的介绍都给你看，你确认了才装。",
+      "noneInstalled": "还没装过别人写的包。适配包是一个 GitHub 仓库，贴上地址就能装。",
+      "formatLink": "怎么写一个适配包",
+      "formatUrl": "https://github.com/animaquill/animaquill/blob/main/docs/model-packs.md"
     },
     "autoTitle": "第一轮之后让模型给对话起一个短标题（一次很小的请求）",
     "baseUrlSecret": "地址里不能带密钥，请填在 key 里。",
@@ -3751,9 +3755,9 @@
     },
     "packLine": "适配包：{{name}}",
     "packDropped": "这个包有 {{count}} 处在这一版的工具里不再适用，那几处按通用写法。",
-    "packNone": "{{model}} 没有专门的适配包，正在用通用写法。可以在设置的“模型适配包”里选一个已装的包。",
+    "packNone": "{{model}} 用 {{label}}。可以在设置的“模型适配包”里选一个已装的包。",
     "packSwitched": "换成 {{model}}，改用适配包 {{name}}",
-    "packSwitchedNone": "换成 {{model}}，它没有专门的适配包，改用通用写法",
+    "packSwitchedNone": "换成 {{model}}，用 {{label}}",
     "packChanged": "原来的适配包不在了，改用 {{name}}",
     "packChosen": "改用适配包 {{name}}",
     "packUpdated": "适配包 {{name}} 开始时的那一版没有留下，改用已装的版本 {{version}}",
@@ -3821,7 +3825,7 @@
       "othersTitle": "不是为这个模型写的",
       "backModels": "返回模型",
       "backPacks": "返回",
-      "titlePack": "这个对话用 {{service}} · {{model}}，适配包 {{pack}}，点了换"
+      "titlePack": "这个对话用 {{service}} · {{model}} · {{pack}}，点了换"
     },
     "reasoning": {
       "label": "推理强度",

@@ -838,3 +838,10 @@
 .nameLink:hover {
   text-decoration: underline;
 }
+
+/* The repository belongs to another account than when it was installed. */
+.movedOwner {
+  margin: 0 0 6px;
+  color: var(--aq-danger-text);
+  font-weight: 600;
+}

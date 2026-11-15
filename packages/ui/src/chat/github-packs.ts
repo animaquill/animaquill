@@ -243,6 +243,19 @@ export function newestTag(names: readonly string[]): string | undefined {
   return best?.name;
 }
 
+/**
+ * A version a pack says before it passed the checks, to show: letters, digits, ".", "+" and "-",
+ * at most 40; nothing where it is anything else.
+ */
+export function plainVersion(version: unknown): string | undefined {
+  return typeof version === "string" && /^[0-9A-Za-z.+-]{1,40}$/.test(version)
+    ? version
+    : undefined;
+}
+
+/** How many pages of tags are read, of 100 each, to find the newest version. */
+const TAG_PAGES = 10;
+
 /** Asks GitHub, as a page that is no one: no cookies, no referrer. */
 type Ask = (url: string) => Promise<Response | GitHubFailure>;
 
@@ -326,20 +339,26 @@ async function resolve(
     const version = VERSION_TAG.test(ref) ? ref.slice(1) : undefined;
     return { owner, repo, commit, ref, tag: version !== undefined, ...(version && { version }) };
   }
-  const tags = await ask(`${base}/tags?per_page=100`);
-  if (typeof tags === "string") return { failure: tags };
-  let list: unknown;
-  try {
-    list = await tags.json();
-  } catch {
-    list = [];
+  // GitHub lists tags in no order of versions: all of them, page by page, up to a point.
+  const entries: { readonly name: string; readonly sha: string }[] = [];
+  for (let page = 1; page <= TAG_PAGES; page++) {
+    const tags = await ask(`${base}/tags?per_page=100${page > 1 ? `&page=${page}` : ""}`);
+    if (typeof tags === "string") return { failure: tags };
+    let list: unknown;
+    try {
+      list = await tags.json();
+    } catch {
+      list = [];
+    }
+    const found = Array.isArray(list) ? list : [];
+    for (const each of found) {
+      const tag = each as { name?: unknown; commit?: { sha?: unknown } };
+      if (typeof tag?.name === "string" && typeof tag.commit?.sha === "string") {
+        entries.push({ name: tag.name, sha: tag.commit.sha });
+      }
+    }
+    if (found.length < 100) break;
   }
-  const entries = (Array.isArray(list) ? list : []).flatMap((each: unknown) => {
-    const tag = each as { name?: unknown; commit?: { sha?: unknown } };
-    return typeof tag?.name === "string" && typeof tag.commit?.sha === "string"
-      ? [{ name: tag.name, sha: tag.commit.sha }]
-      : [];
-  });
   const newest = newestTag(entries.map(({ name }) => name));
   const tagged = entries.find(({ name }) => name === newest);
   if (newest && tagged && isCommit(tagged.sha)) {
@@ -413,7 +432,7 @@ export async function readGitHub(
         return {
           ok: false,
           failure: "tagMismatch",
-          detail: { tag: where.ref, version },
+          detail: { tag: where.ref, version: plainVersion(version) ?? "?" },
         };
       }
     }
@@ -482,10 +501,11 @@ export async function latestOf(
       }
     }
   }
+  const plain = plainVersion(version);
   return {
     state: "update",
     commit: where.commit,
-    ...(typeof version === "string" && version.length <= 40 && { version }),
+    ...(plain !== undefined && { version: plain }),
   };
 }
 

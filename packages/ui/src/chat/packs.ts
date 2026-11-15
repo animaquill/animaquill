@@ -148,7 +148,7 @@ const shortText = (value: unknown, most: number) =>
 /**
  * Where a pack was installed from, as kept. The account and repository it says it is from are only
  * kept as GitHub may spell them, so that settings written some other way cannot make a pack say it
- * is from "内置".
+ * is from "内置". Records of "发现" are not read until it has packs.
  */
 export function readSource(value: unknown): PackSource | undefined {
   if (!isRecord(value)) return undefined;
@@ -158,7 +158,8 @@ export function readSource(value: unknown): PackSource | undefined {
   if (
     value.kind === "github" &&
     typeof value.url === "string" &&
-    typeof value.commit === "string"
+    typeof value.commit === "string" &&
+    isCommit(value.commit)
   ) {
     const owner = shortText(value.owner, 39);
     const repo = shortText(value.repo, 100);
@@ -175,15 +176,7 @@ export function readSource(value: unknown): PackSource | undefined {
       ...(value.tag === true && { tag: true }),
     };
   }
-  if (
-    value.kind === "discover" &&
-    typeof value.entry === "string" &&
-    typeof value.repo === "string" &&
-    typeof value.commit === "string" &&
-    isCommit(value.commit)
-  ) {
-    return { kind: "discover", entry: value.entry, repo: value.repo, commit: value.commit };
-  }
+  // "发现" has no packs yet (S-P2): a record that says it came from there is not one this wrote.
   return undefined;
 }
 

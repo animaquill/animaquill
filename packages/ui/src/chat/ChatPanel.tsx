@@ -1,5 +1,6 @@
 import type { AssistantEntry, ChatEntry, ConversationSnapshot } from "@animaquill/agent";
 import { entryOf, type ProjectState } from "@animaquill/core";
+import { DEFAULT_PACK } from "@animaquill/tools";
 import { ArrowDown, ChevronDown, ChevronUp, Menu, MoreHorizontal, Quote } from "lucide-react";
 import {
   useCallback,
@@ -23,7 +24,7 @@ import { firstWords } from "./conversations.ts";
 import type { ModelPacks, ModelPacksSnapshot } from "./packs.ts";
 import packStyles from "./ModelPacks.module.css";
 import { OpenPackView, PackViewer, type PackViewRequest } from "./PackViews.tsx";
-import { noteLabel } from "./packText.ts";
+import { noteLabel, packLabel } from "./packText.ts";
 import { RunState } from "./RunState.tsx";
 import { followsAfterScroll, showsToLatest } from "./scroll.ts";
 import type { ChatSession } from "./session.ts";
@@ -520,7 +521,10 @@ function packSwitches(
             ? t("chat.packChosen", { name })
             : t("chat.packChanged", { name })
           : entry.pack.by === "fallback"
-            ? t("chat.packSwitchedNone", { model: entry.model })
+            ? t("chat.packSwitchedNone", {
+                model: entry.model,
+                label: packLabel(t, DEFAULT_PACK, snapshot, true),
+              })
             : t("chat.packSwitched", { model: entry.model, name }),
       );
     }
@@ -554,7 +558,10 @@ function packLinesOf(
     lines.push({
       text:
         first.pack.by === "fallback"
-          ? t("chat.packNone", { model: first.model })
+          ? t("chat.packNone", {
+              model: first.model,
+              label: packLabel(t, DEFAULT_PACK, packs.getSnapshot(), true),
+            })
           : t("chat.packLine", {
               name: noteLabel(t, first.pack, first.texts?.id, packs.getSnapshot()),
             }),
@@ -566,7 +573,10 @@ function packLinesOf(
     lines.push({
       text:
         note.by === "fallback"
-          ? t("chat.packNone", { model })
+          ? t("chat.packNone", {
+              model,
+              label: packLabel(t, DEFAULT_PACK, packs.getSnapshot(), true),
+            })
           : t("chat.packLine", { name: noteLabel(t, note, pack.id, packs.getSnapshot()) }),
       testId: "chat-pack",
     });

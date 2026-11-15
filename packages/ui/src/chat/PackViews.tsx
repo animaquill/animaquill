@@ -342,8 +342,15 @@ export function PackViewer(props: PackViewerProps) {
           {homepage && (
             <>
               {" · "}
-              <a href={homepage} target="_blank" rel="noopener noreferrer">
-                {t("ai.packs.viewer.homepage")}
+              {t("ai.packs.viewer.homepage")}{" "}
+              <a
+                href={homepage}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={homepage}
+                data-testid="pack-viewer-homepage"
+              >
+                {homepage}
               </a>
             </>
           )}

@@ -30,15 +30,9 @@
   border-radius: 4px;
 }
 
-.elsewhere button {
-  padding: 0;
-  color: var(--aq-link, var(--aq-accent));
-  font: inherit;
-  background: none;
-  border: 0;
-  cursor: pointer;
-}
-
-.elsewhere button:hover {
-  text-decoration: underline;
+/* Where a link goes, where its words say something else. */
+.address {
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
 }

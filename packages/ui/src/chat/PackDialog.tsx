@@ -31,6 +31,7 @@ import {
   labelText,
   originDiffers,
   originOf,
+  ownerMoved,
   packLabel,
   packName,
   problemText,
@@ -518,6 +519,7 @@ function Origin(props: {
   const { t } = useTranslation();
   const where = (each: PackSource | undefined) => (each ? sourceText(t, each) : "?");
   const differs = originDiffers(pack, installed, source, installedSource);
+  const moved = source && installedSource ? ownerMoved(source, installedSource) : undefined;
   return (
     <div
       className={`${styles.section} ${differs ? styles.origin : ""}`}
@@ -525,6 +527,11 @@ function Origin(props: {
       data-differs={differs ? "yes" : "no"}
     >
       {differs && <h3>{t("ai.packs.dialog.originDiffers")}</h3>}
+      {moved && (
+        <p className={styles.movedOwner} data-testid="pack-owner-moved">
+          {t("ai.packs.dialog.ownerMoved", moved)}
+        </p>
+      )}
       <ul className={styles.rows}>
         <li>
           {t("ai.packs.dialog.originInstalled", {
