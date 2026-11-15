@@ -24,6 +24,7 @@ export {
   promptOf,
   readEntry,
   readImage,
+  readSelection,
   type AnswerEnd,
   type AttachedImage,
   type ImageFrame,

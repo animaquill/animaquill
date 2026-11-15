@@ -1,4 +1,4 @@
-import type { TextsUsed } from "@animaquill/tools";
+import type { SelectionFacts, TextsUsed } from "@animaquill/tools";
 
 /**
  * A conversation with AI, as this editor keeps it. This is our own shape and not the one of the
@@ -57,6 +57,13 @@ export interface UserEntry {
   readonly at: number;
   /** The task this message started, see `aiTask`. */
   readonly task: string;
+  /**
+   * What the editor showed the moment people sent it: the timeline, the playhead and what was
+   * selected, which AI reads with `aq_selection_read` and never gets with the words. For a message
+   * that waited for the task before it, the moment it was written, not the one it went. Messages from
+   * before this was kept have none.
+   */
+  readonly selection?: SelectionFacts;
 }
 
 /** One call of a tool, as AI asked for it. */
@@ -206,6 +213,37 @@ function readCall(value: unknown): ToolCallEntry | undefined {
 
 const HASH = /^sha256:[0-9a-f]{64}$/;
 
+/** At most this many selected clips are read back with a message. */
+const MOST_SELECTED = 5_000;
+
+const string = (value: unknown) => (typeof value === "string" ? value : undefined);
+
+/** What the editor showed as a message was sent, as kept, where it is that. */
+export function readSelection(value: unknown): SelectionFacts | undefined {
+  if (!isRecord(value) || !Array.isArray(value.clips)) return undefined;
+  const timeline = string(value.timeline);
+  const playhead = string(value.playhead);
+  const version = string(value.version);
+  const clips = value.clips
+    .filter((clip): clip is string => typeof clip === "string")
+    .slice(0, MOST_SELECTED);
+  const transition = isRecord(value.transition) ? value.transition : undefined;
+  const join = string(transition?.join);
+  const clip = string(transition?.clip);
+  const edge =
+    transition?.edge === "enter" || transition?.edge === "exit" ? transition.edge : undefined;
+  return {
+    timeline,
+    playhead,
+    ...(version !== undefined && { version }),
+    clips,
+    ...(join !== undefined
+      ? { transition: { join } }
+      : clip !== undefined && edge !== undefined && { transition: { clip, edge } }),
+    ...(value.hidden === true && { hidden: true as const }),
+  };
+}
+
 /** A picture as kept, where it is one. */
 export function readImage(value: unknown): AttachedImage | undefined {
   if (!isRecord(value)) return undefined;
@@ -276,7 +314,15 @@ export function readEntry(value: unknown): ChatEntry | undefined {
     const images = Array.isArray(value.images)
       ? value.images.map(readImage).filter((image) => image !== undefined)
       : [];
-    return { role, text, at, task, ...(images.length > 0 && { images }) };
+    const selection = readSelection(value.selection);
+    return {
+      role,
+      text,
+      at,
+      task,
+      ...(images.length > 0 && { images }),
+      ...(selection && { selection }),
+    };
   }
   if (role === "tool") {
     const { call, name, ok, text, data } = value;

@@ -2,12 +2,12 @@ import { EDIT_TEXTS } from "./edit.ts";
 import { OPERATION_TEXTS } from "./operations.ts";
 import { PARAM_TEXTS } from "./params.ts";
 import { TYPE_TEXTS } from "./shared.ts";
-import { PICTURE_FACTS, SYSTEM_PARTS, SYSTEM_TEXTS } from "./system.ts";
+import { PICTURE_FACTS, SENT_FACT, SYSTEM_PARTS, SYSTEM_TEXTS } from "./system.ts";
 import { textIn, type TextTable } from "./table.ts";
 import { TOOL_TEXTS } from "./tools.ts";
 
 export * from "./table.ts";
-export { PICTURE_FACTS, SYSTEM_PARTS };
+export { PICTURE_FACTS, SENT_FACT, SYSTEM_PARTS };
 
 /** The words of the tools as AnimaQuill writes them, for every model: the default model pack. */
 export const DEFAULT_TEXTS: TextTable = {
@@ -41,16 +41,22 @@ export function systemPromptOf(options: {
    * where the place has pictures, as the browser does.
    */
   readonly pictures?: boolean;
+  /**
+   * Whether the place keeps what the editor showed as each message of the user was sent, said last
+   * (`SENT_FACT`): where it has the conversation, as the chat of the browser does.
+   */
+  readonly sent?: boolean;
 }): string {
   const texts = options.texts ?? DEFAULT_TEXTS;
   let prompt = "";
   for (const part of PARTS_OF[options.entry]) {
     const own = textIn(texts, `system.${part}`)?.trim() ?? "";
-    const facts =
+    const pictures =
       part === "host" && options.pictures !== undefined
         ? PICTURE_FACTS[options.pictures ? "sees" : "blind"]
         : "";
-    const text = [own, facts].filter((line) => line !== "").join("\n");
+    const sent = part === "host" && options.sent === true ? SENT_FACT : "";
+    const text = [own, pictures, sent].filter((line) => line !== "").join("\n");
     if (text === "") continue;
     if (prompt === "") prompt = text;
     else {

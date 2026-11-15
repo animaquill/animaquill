@@ -17,7 +17,7 @@ const READS: readonly (readonly [string, Record<string, unknown>])[] = [
   ["aq_file_read", { path: "scenes/title/index.html" }],
   ["aq_guide", { topic: "ops/clip.move" }],
   ["aq_check_run", { limit: 5 }],
-  ["aq_selection_read", {}],
+  ["aq_selection_read", { at: "now" }],
 ];
 
 /** A result without the epoch of the revision, which is new for every store. */

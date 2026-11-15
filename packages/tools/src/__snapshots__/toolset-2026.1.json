@@ -168,10 +168,28 @@
  },
  {
   "name": "aq_selection_read",
-  "description": "See what the user is pointing at in the editor right now: the timeline they are on, the playhead time, the current version, the selected clips (ids and one line each) and the selected transition. Call it when the user says \"this\", \"here\", \"these clips\" or \"now\". It only gives what the user chose to share with you; read the full objects with aq_object_read.",
+  "description": "See what the user is pointing at in the editor: the timeline they are on, the playhead time, the current version, the selected clips (ids and one line each) and the selected transition. The editor records this as each message of the user is sent. Call it when the user says \"this\", \"here\", \"these clips\" or \"now\": with at \"sent\" for what they pointed at as they sent a message (messages_back counts back from the latest message, 0 by default), with at \"now\" for what they point at right now. It only gives what the user chose to share with you; read the full objects with aq_object_read.",
   "inputSchema": {
    "type": "object",
-   "properties": {},
+   "properties": {
+    "at": {
+     "type": "string",
+     "enum": [
+      "now",
+      "sent"
+     ],
+     "description": "\"sent\": as a message of the user was sent, see messages_back. \"now\": as the editor is now."
+    },
+    "messages_back": {
+     "description": "Only with at \"sent\": which message of the user, counted back from the latest: 0 (the default) is the latest, the one this task started with, 1 the one before it.",
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 10000
+    }
+   },
+   "required": [
+    "at"
+   ],
    "additionalProperties": false
   }
  },

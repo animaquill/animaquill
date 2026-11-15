@@ -26,10 +26,11 @@ import type { Tool } from "./types.ts";
  * schemas of parameters. Measured 52 088 (2026-11-12, toolset 2026.3: aq_edit names its operations
  * and each branch of its schema says what the operation does; 2026.2 took 52 874, 2026.1 54 191);
  * the 48 tools before took 67 322. 2026.5 added seven operations of the project properties
- * (project.setDescription to timeline.setDefault) and took 55 334 (2026-11-15). It is a ceiling, so that the list does
- * not grow unnoticed.
+ * (project.setDescription to timeline.setDefault) and took 55 334 (2026-11-15); 2026.6 gave
+ * aq_selection_read at and messages_back, to read what the editor showed as a message was sent, and
+ * took 56 248 (2026-11-15). It is a ceiling, so that the list does not grow unnoticed.
  */
-const MOST_CHARACTERS = 55_500;
+const MOST_CHARACTERS = 56_500;
 
 const listOf = (tools: Iterable<Tool>) =>
   [...tools].map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
@@ -77,7 +78,7 @@ describe("the toolset", () => {
     ]);
   });
 
-  it("as the comparison table has it, is toolset 2026.1 to the byte, with the operations since", async () => {
+  it("as the comparison table has it, is toolset 2026.1 to the byte, with the operations and parameters since", async () => {
     const list = JSON.stringify(
       listOf(toolsOn(testHost(), undefined, DIRECTIVE_TEXTS).tools.values()),
       null,

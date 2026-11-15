@@ -138,6 +138,8 @@ export interface ChatSnapshot {
 export interface Queued {
   readonly text: string;
   readonly images?: readonly AttachedImage[];
+  /** What the editor showed as people sent it, which goes with it: not what it shows once it goes. */
+  readonly selection?: SelectionFacts;
 }
 
 /** What `ChatSession.packOptions` gives for a model. */
@@ -407,8 +409,16 @@ export class ChatSession {
     return this.#snapshot.conversation?.tasks.at(-1);
   }
 
+  /**
+   * What the editor shows now, to keep with a message sent now: nothing selected where it shows no
+   * timeline, so that the message still says it has a record.
+   */
+  #shown(): SelectionFacts {
+    return this.#options.selection() ?? { timeline: undefined, playhead: undefined, clips: [] };
+  }
+
   /** The tools of one task, on the project that was open when it started, and only that one. */
-  #toolsOf(task: string, caller: CallerState, use: PackUse) {
+  #toolsOf(task: string, caller: CallerState, use: PackUse, conversation: Conversation) {
     const project = this.#project;
     const { selection, problems, describe, problemInputs, ranNow } = this.#options;
     const tools = createToolset(
@@ -417,6 +427,15 @@ export class ChatSession {
           project && this.#options.project()?.store === project.store ? project.store : undefined,
         origin: () => aiTask(task),
         selection,
+        // What the editor showed as each message of the conversation was sent, for "sent".
+        sent: () =>
+          conversation
+            .getSnapshot()
+            .entries.flatMap((entry) =>
+              entry.role === "user"
+                ? [{ text: entry.text, ...(entry.selection && { selection: entry.selection }) }]
+                : [],
+            ),
         problems,
         ...(describe && { describe }),
         ...(problemInputs && { problemInputs }),
@@ -659,11 +678,15 @@ export class ChatSession {
     this.#keep();
   }
 
-  /** Queues a message to go once the task that runs is done. */
+  /**
+   * Queues a message to go once the task that runs is done, with what the editor shows now: as
+   * people send it, not as it goes.
+   */
   queue(text: string, images: readonly AttachedImage[] = []): void {
     if (!text.trim() && images.length === 0) return;
+    const selection = this.#shown();
     this.#set({
-      queued: [...this.#snapshot.queued, { text, ...(images.length > 0 && { images }) }],
+      queued: [...this.#snapshot.queued, { text, ...(images.length > 0 && { images }), selection }],
     });
   }
 
@@ -692,7 +715,7 @@ export class ChatSession {
     const [next, ...rest] = this.#snapshot.queued;
     if (next === undefined || outcome.end !== "done") return;
     this.#set({ queued: rest });
-    void this.send(next.text, next.images);
+    void this.send(next.text, next.images, next.selection);
   }
 
   /**
@@ -860,12 +883,17 @@ export class ChatSession {
 
   /**
    * Sends a message, which starts a task. Resolves once the task is over. Words that do not go out,
-   * or that the service refused before it said anything, go back to the input box.
+   * or that the service refused before it said anything, go back to the input box. The message
+   * keeps what the editor shows as it is called, unless `selection` says what it showed when people
+   * sent it (a queued message).
    */
   async send(
     text: string,
     images: readonly AttachedImage[] = [],
+    selection?: SelectionFacts,
   ): Promise<TaskOutcome | undefined> {
+    // Before anything waits: people may select something else meanwhile.
+    const shown = selection ?? this.#shown();
     const conversation = this.#snapshot.conversation;
     if (!conversation || conversation.running || (!text.trim() && images.length === 0))
       return undefined;
@@ -892,7 +920,7 @@ export class ChatSession {
       const now = this.modelNow();
       if (now) this.#set({ model: now.ref });
     }
-    const outcome = await conversation.send(text, target, images);
+    const outcome = await conversation.send(text, target, images, shown);
     if (outcome?.end === "failed" && project !== undefined && id !== undefined) {
       const entries = conversation.getSnapshot().entries;
       const turn = entries.slice(entries.findLastIndex((entry) => entry.role === "user") + 1);
@@ -913,7 +941,7 @@ export class ChatSession {
     const last = this.#snapshot.conversation
       ?.getSnapshot()
       .entries.findLast((entry) => entry.role === "user");
-    return last?.role === "user" ? this.send(last.text, last.images) : undefined;
+    return last?.role === "user" ? this.send(last.text, last.images, last.selection) : undefined;
   }
 
   /** The last turn once more without its pictures, where its model or service took none. */
@@ -921,7 +949,7 @@ export class ChatSession {
     const last = this.#snapshot.conversation
       ?.getSnapshot()
       .entries.findLast((entry) => entry.role === "user");
-    return last?.role === "user" ? this.send(last.text) : undefined;
+    return last?.role === "user" ? this.send(last.text, [], last.selection) : undefined;
   }
 
   /**
@@ -981,7 +1009,7 @@ export class ChatSession {
       key: target.key,
       maxToolCalls,
       system: browserSystemPrompt(use.texts, sees),
-      tools: (task) => this.#toolsOf(task, caller, use),
+      tools: (task) => this.#toolsOf(task, caller, use, conversation),
       // How hard the model reasons: as people set it for the model, else as its pack says.
       call: reasoning === undefined ? use.call : { ...use.call, reasoning },
       stamp: { toolset: TOOLSET_VERSION, texts: use.used, pack: note },

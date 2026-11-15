@@ -3290,7 +3290,11 @@
       "more": "等 {{count}} 个",
       "lines": "+{{added}} −{{removed}} 行",
       "problems": "{{count}} 个问题",
-      "passed": "通过"
+      "passed": "通过",
+      "selectionNow": "现在的",
+      "selectionSentAs": "「{{message}}」发出时的",
+      "selectionSentLatest": "最新一条消息发出时的",
+      "selectionSentBack": "往前第 {{count}} 条消息发出时的"
     },
     "toolText": {
       "forAi": "给 AI 的原文",

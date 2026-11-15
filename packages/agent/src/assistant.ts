@@ -49,10 +49,11 @@ export function keptData(
 
 /**
  * The system prompt of the assistant in the browser, from a table of texts, and whether its model
- * gets the pictures people attach (see `PICTURE_FACTS`).
+ * gets the pictures people attach (see `PICTURE_FACTS`). The chat keeps what the editor showed as
+ * each message was sent (see `SENT_FACT`).
  */
 export const browserSystemPrompt = (texts?: TextTable, pictures = true): string =>
-  systemPromptOf({ entry: "browser", ...(texts && { texts }), pictures });
+  systemPromptOf({ entry: "browser", ...(texts && { texts }), pictures, sent: true });
 
 /** What answers with the default words of the tools are recorded as made with. */
 export const DEFAULT_STAMP: AnswerStamp = { toolset: TOOLSET_VERSION, texts: DEFAULT_TEXTS_USED };

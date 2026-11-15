@@ -36,6 +36,17 @@ export interface SelectionFacts {
 }
 
 /**
+ * A message of the user in the conversation that the tools work for, with what the editor showed as
+ * it was sent: what `aq_selection_read` at "sent" reads.
+ */
+export interface SentMessage {
+  /** As the user wrote it. */
+  readonly text: string;
+  /** What the editor showed as it was sent; none where the message is from before it was kept. */
+  readonly selection?: SelectionFacts;
+}
+
+/**
  * Where the tools work: the project, who the changes are made as, and what only some hosts know,
  * such as what the editor selected and what scenes said about themselves when they ran.
  */
@@ -50,6 +61,12 @@ export interface ToolHost {
    */
   answer?(): string | undefined;
   selection?(): SelectionFacts | undefined;
+  /**
+   * The messages of the user in the conversation, oldest first, the one the task started with last.
+   * Only a host with the conversation has them, as the chat of the editor does; through MCP, the
+   * conversation is the client's, and there are none.
+   */
+  sent?(): readonly SentMessage[];
   /** What a scene says about the properties of a clip, once the editor ran it. */
   describe?(clip: ClipState): ClipDescription | undefined;
   /** All problems the host knows of, including what scene code threw. */

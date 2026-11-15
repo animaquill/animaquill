@@ -29,7 +29,7 @@ import { offsetOf, paged } from "../page.ts";
 import { mostLike } from "../similar.ts";
 import { PARAM } from "../texts/index.ts";
 import type { ToolDefinition } from "../tool.ts";
-import type { ToolResult } from "../types.ts";
+import type { SelectionFacts, ToolResult } from "../types.ts";
 
 /** A hash of a text, to tell later whether a file changed since it was read. */
 export function textHash(text: string): string {
@@ -774,53 +774,144 @@ export const fileRead: ToolDefinition<z.output<typeof FileReadParams>> = {
   },
 };
 
-const SelectionParams = z.strictObject({});
+const SelectionParams = z.strictObject({
+  at: z.enum(["now", "sent"]).describe(PARAM),
+  messages_back: z.number().int().min(0).max(10_000).optional().describe(PARAM),
+});
+
+/** How many characters of a message say which one it is, as the user wrote it. */
+const MESSAGE_WORDS = 16;
+
+/** The first words of a message, which say which one it is: links as their labels. */
+export function messageWords(text: string): string {
+  const plain = text
+    .replace(/\[([^\]]*)\]\(aq:[^)]*\)/g, "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+  const characters = [...plain];
+  return characters.length > MESSAGE_WORDS
+    ? `${characters.slice(0, MESSAGE_WORDS).join("")}…`
+    : plain;
+}
+
+/** What the editor showed, as lines: the clips as they are now, those gone since by their ids. */
+function selectionLines(call: Call, facts: SelectionFacts): string[] {
+  const state = call.store.getState();
+  const timeline =
+    facts.timeline === undefined ? undefined : entryOf(state.timelines, facts.timeline);
+  // As many as one result has room for: only those count as read.
+  let room = call.limits.result - 1_000;
+  const listed: string[] = [];
+  const clips: string[] = [];
+  const gone: string[] = [];
+  for (const id of facts.clips) {
+    const clip = timeline && entryOf(timeline.clips, id);
+    if (!clip) {
+      gone.push(id);
+      continue;
+    }
+    if (room < 0) continue;
+    const line = clipLine(clip);
+    room -= line.length + 3;
+    if (room < 0) continue;
+    clips.push(line);
+    listed.push(id);
+  }
+  const found = facts.clips.length - gone.length;
+  const transition = facts.transition
+    ? "join" in facts.transition
+      ? `join ${facts.transition.join}`
+      : `${facts.transition.clip} ${facts.transition.edge}`
+    : undefined;
+  const transitionGone =
+    facts.transition !== undefined &&
+    !(
+      timeline &&
+      ("join" in facts.transition
+        ? entryOf(timeline.joins ?? {}, facts.transition.join)
+        : entryOf(timeline.clips, facts.transition.clip))
+    );
+  if (facts.timeline !== undefined) {
+    sawAll(
+      call,
+      listed.map((id) => ({ kind: "clip", id, timeline: facts.timeline }) as ObjectRef),
+    );
+  }
+  const more =
+    found > clips.length
+      ? ` | and ${found - clips.length} more, not read (aq_timeline_read lists them)`
+      : "";
+  const timelineGone =
+    facts.timeline !== undefined && !timeline ? ` (timeline ${facts.timeline} is gone now)` : "";
+  const nothing = facts.clips.length === 0 && transition === undefined;
+  return [
+    `timeline=${facts.timeline ?? "none"} playhead=${facts.playhead ?? "none"} version=${facts.version ?? "master"}${timelineGone}`,
+    ...(nothing
+      ? ["nothing is selected"]
+      : [
+          ...(found > 0 || gone.length === 0
+            ? [`selected clips (${found}): ${clips.join(" | ") || "none"}${more}`]
+            : []),
+          ...(gone.length > 0
+            ? [`selected clips that are gone now (${gone.length}): ${gone.join(", ")}`]
+            : []),
+          ...(transition
+            ? [`selected transition: ${transition}${transitionGone ? " (gone now)" : ""}`]
+            : []),
+        ]),
+  ];
+}
 
 export const selectionRead: ToolDefinition<z.output<typeof SelectionParams>> = {
   name: "aq_selection_read",
   title: "What the user selected",
   params: SelectionParams,
-  run: (call) => {
-    const facts = call.host.selection?.();
-    if (!facts) return answer(call, ["there is no editor here, so nothing is selected"]);
-    if (facts.hidden) return answer(call, ["the user did not share the selection"]);
-    const state = call.store.getState();
-    const timeline =
-      facts.timeline === undefined ? undefined : entryOf(state.timelines, facts.timeline);
-    // As many as one result has room for: only those count as read.
-    let room = call.limits.result - 1_000;
-    const listed: string[] = [];
-    const clips: string[] = [];
-    for (const id of facts.clips) {
-      const clip = timeline && entryOf(timeline.clips, id);
-      if (!clip) continue;
-      const line = clipLine(clip);
-      room -= line.length + 3;
-      if (room < 0) break;
-      clips.push(line);
-      listed.push(id);
+  check: (args) =>
+    args.at === "now" && args.messages_back !== undefined
+      ? failed(
+          'error invalid-params: messages_back goes only with at "sent", which counts back the messages of the user; at "now" is what the editor shows now and goes without it.',
+        )
+      : undefined,
+  run: (call, args) => {
+    if (args.at === "now") {
+      const facts = call.host.selection?.();
+      if (!facts) return answer(call, ["there is no editor here, so nothing is selected"]);
+      if (facts.hidden) return answer(call, ["the user did not share the selection"]);
+      return answer(call, ['at "now": what the editor shows now', ...selectionLines(call, facts)], {
+        at: "now",
+      });
     }
-    const found = facts.clips.filter((id) => timeline && entryOf(timeline.clips, id)).length;
-    const transition = facts.transition
-      ? "join" in facts.transition
-        ? `join ${facts.transition.join}`
-        : `${facts.transition.clip} ${facts.transition.edge}`
-      : undefined;
-    if (facts.timeline !== undefined) {
-      sawAll(
-        call,
-        listed.map((id) => ({ kind: "clip", id, timeline: facts.timeline }) as ObjectRef),
+    const messages = call.host.sent?.();
+    if (!messages) {
+      return answer(call, [
+        'at "sent": this client does not share its conversation with AnimaQuill, so there is no record of what the editor showed as messages were sent; at "now" gives what it shows now.',
+      ]);
+    }
+    const back = args.messages_back ?? 0;
+    const count = messages.length;
+    const message = messages[count - 1 - back];
+    if (!message) {
+      return failed(
+        count === 0
+          ? "error out-of-range: this conversation has no messages of the user yet."
+          : `error out-of-range: messages_back ${back} is before the first message; this conversation has ${count} message${count === 1 ? "" : "s"} of the user, so messages_back goes from 0 to ${count - 1}.`,
       );
     }
-    const more =
-      found > clips.length
-        ? ` | and ${found - clips.length} more, not read (aq_timeline_read lists them)`
-        : "";
-    return answer(call, [
-      "values right now in the editor",
-      `timeline=${facts.timeline ?? "none"} playhead=${facts.playhead ?? "none"} version=${facts.version ?? "master"}`,
-      `selected clips (${found}): ${clips.join(" | ") || "none"}${more}`,
-      ...(transition ? [`selected transition: ${transition}`] : []),
-    ]);
+    const words = messageWords(message.text);
+    const head = `at "sent", messages_back ${back}: as the user sent ${JSON.stringify(words)}`;
+    const data = { at: "sent", messages_back: back, message: words };
+    const facts = message.selection;
+    if (!facts) {
+      return answer(
+        call,
+        [
+          head,
+          'this message has no record of what the editor showed, as it was sent before the editor kept one; at "now" gives what it shows now.',
+        ],
+        data,
+      );
+    }
+    if (facts.hidden) return answer(call, [head, "the user did not share the selection"], data);
+    return answer(call, [head, ...selectionLines(call, facts)], data);
   },
 };

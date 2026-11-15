@@ -1,3 +1,4 @@
+import type { SelectionFacts } from "@animaquill/tools";
 import {
   type AnswerEnd,
   type AssistantEntry,
@@ -164,12 +165,14 @@ export class Conversation {
 
   /**
    * Starts a task with what people wrote, and waits for it to end. One at a time: while a task
-   * runs this does nothing and says so with undefined.
+   * runs this does nothing and says so with undefined. `selection` is what the editor showed as
+   * people sent it, kept with the message (see `UserEntry.selection`).
    */
   async send(
     text: string,
     target: TaskTarget,
     images: readonly AttachedImage[] = [],
+    selection?: SelectionFacts,
   ): Promise<TaskOutcome | undefined> {
     if (this.running || (!text.trim() && images.length === 0)) return undefined;
     const now = this.#options.now ?? Date.now;
@@ -180,6 +183,7 @@ export class Conversation {
       at: now(),
       task,
       ...(images.length > 0 && { images }),
+      ...(selection && { selection }),
     };
     const history = this.#snapshot.entries;
     this.#set({ entries: [...history, user] });

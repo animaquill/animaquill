@@ -5,6 +5,7 @@ import { DIRECTIVE_TEXTS } from "./texts/eval/directive.ts";
 import {
   DEFAULT_TEXTS,
   PICTURE_FACTS,
+  SENT_FACT,
   hashOfTexts,
   systemPromptOf,
   type TextTable,
@@ -140,6 +141,17 @@ describe("the system prompt", () => {
     expect(blind.endsWith(`\n${PICTURE_FACTS.blind}`)).toBe(true);
     expect(blind).not.toContain("The user can attach pictures");
     expect(systemPromptOf({ entry: "mcp", pictures: true })).not.toContain("pictures");
+  });
+
+  it("says last, where the place keeps them, that each message keeps what the editor showed as it was sent", () => {
+    const prompt = systemPromptOf({ entry: "browser", pictures: true, sent: true });
+    expect(prompt.endsWith(`\n${PICTURE_FACTS.sees}\n${SENT_FACT}`)).toBe(true);
+    expect(SENT_FACT).toBe(
+      "- The editor keeps the playhead and the selection of the moment each message of the user was sent, and aq_selection_read reads them as well as those of now.",
+    );
+    // Through MCP the conversation is the client's: nothing of it is kept.
+    expect(systemPromptOf({ entry: "mcp", sent: true })).not.toContain(SENT_FACT);
+    expect(systemPromptOf({ entry: "browser" })).not.toContain(SENT_FACT);
   });
 
   it("has only how projects and work go, the rules and the guard for MCP", () => {

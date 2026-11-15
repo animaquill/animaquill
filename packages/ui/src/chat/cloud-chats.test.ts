@@ -7,6 +7,7 @@ import {
   type ChatSyncAccess,
   type SavedChat,
 } from "@animaquill/host";
+import { readEntry } from "@animaquill/agent";
 import { describe, expect, test } from "vitest";
 import { CloudChats } from "./cloud-chats.ts";
 
@@ -137,6 +138,25 @@ describe("conversations of projects of the platform", () => {
     expect(platform.kept.get("p1/c1")?.revision).toBe(1);
     expect((await two.chats.list("local-1")).map(({ id }) => id)).toEqual(["c1"]);
     expect((await two.chats.load("local-1", "c1"))?.entries).toHaveLength(1);
+  });
+
+  test("what the editor showed as each message was sent goes with it, and another device reads it", async () => {
+    const platform = platformChats();
+    const one = await deviceOf(platform);
+    const two = await deviceOf(platform);
+    const selection = {
+      timeline: "main",
+      playhead: "12.5",
+      clips: ["clip_title", "clip_logo"],
+      transition: { clip: "clip_title", edge: "exit" },
+    };
+    await one.chats.save({
+      ...chat("c1", [], 1),
+      entries: [{ role: "user", text: "把这两个放慢", at: 1, task: "chat-t1", selection }],
+    });
+    const there = await two.chats.load("local-1", "c1");
+    const [entry] = (there?.entries ?? []).map(readEntry);
+    expect(entry?.role === "user" && entry.selection).toEqual(selection);
   });
 
   test("written over an old revision: refused, and the other device's is taken here", async () => {

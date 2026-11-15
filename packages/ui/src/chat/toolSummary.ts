@@ -155,8 +155,19 @@ export function toolSummary(
       const topic = text(args.topic) ?? text(args.query);
       return topic ? cut(topic) : "";
     }
+    case "aq_selection_read": {
+      if (args.at === "now") return say("chat.toolSummary.selectionNow");
+      if (args.at !== "sent") return "";
+      // Which message, by its first words as the result named it, else by how far back it is.
+      const message = result?.ok ? text(result.data?.message) : undefined;
+      if (message) return say("chat.toolSummary.selectionSentAs", { message });
+      const back = typeof args.messages_back === "number" ? args.messages_back : 0;
+      return back === 0
+        ? say("chat.toolSummary.selectionSentLatest")
+        : say("chat.toolSummary.selectionSentBack", { count: back });
+    }
     default:
-      // aq_project_status, aq_selection_read and the tools before these: the name says it.
+      // aq_project_status and the tools before these: the name says it.
       return "";
   }
 }

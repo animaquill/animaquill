@@ -18,6 +18,7 @@ export { textKeys, type TextKey } from "./text-keys.ts";
 export {
   DEFAULT_TEXTS,
   PICTURE_FACTS,
+  SENT_FACT,
   type EditExample,
   type OperationExample,
   type TextTable,
@@ -39,6 +40,7 @@ export * from "./packs/index.ts";
 export type {
   JsonSchema,
   SelectionFacts,
+  SentMessage,
   Tool,
   ToolAnnotations,
   ToolHost,

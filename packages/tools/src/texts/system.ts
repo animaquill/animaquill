@@ -32,6 +32,15 @@ export const PICTURE_FACTS = {
     '- This model cannot see pictures: pictures the user attached reach you only as their lines, marked "not attached".',
 } as const;
 
+/**
+ * What the place AI works in says of the messages of the user, after `host`: that it keeps the
+ * playhead and the selection of the moment each was sent, which `aq_selection_read` at "sent" reads.
+ * A fact of the host, like `PICTURE_FACTS`: only a place that has the conversation keeps them, as the
+ * chat of the editor does and MCP does not.
+ */
+export const SENT_FACT =
+  "- The editor keeps the playhead and the selection of the moment each message of the user was sent, and aq_selection_read reads them as well as those of now.";
+
 /** The parts of the system prompt, in order. */
 export const SYSTEM_PARTS = [
   "intro",

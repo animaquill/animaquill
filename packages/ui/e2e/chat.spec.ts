@@ -589,7 +589,7 @@ test("a turn of six tools folds once done, a failed one shows open, and the answ
     { tool: "aq_timeline_read", input: { from: "0", to: "30" } },
     { tool: "aq_object_read", input: { ids: ["clip_nope"] } },
     { tool: "aq_search", input: { query: "标题" } },
-    { tool: "aq_selection_read", input: {} },
+    { tool: "aq_selection_read", input: { at: "now" } },
     { tool: "aq_guide", input: { topic: "ops/clip.move" } },
   ];
   let count = 0;

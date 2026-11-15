@@ -757,6 +757,7 @@ describe("what a model gets, and two packs side by side", () => {
         entry: "browser",
         texts: usePack(steady, "deepseek-chat").texts,
         pictures: true,
+        sent: true,
       }),
     );
     const keys = segmentsOf(preview).map(({ key }) => key);

@@ -6,6 +6,7 @@ import type { Locator, Page, Route } from "@playwright/test";
 import {
   ANTHROPIC,
   addAnthropic,
+  anthropicCalls,
   addModel,
   anthropicSays,
   closeSettings,
@@ -218,6 +219,87 @@ test("the time and the objects selected go in as blocks, and AI gets them as lin
   await expect(clips(page).nth(2)).toHaveAttribute("aria-selected", "true");
   await user.getByTestId("chat-chip").first().click();
   await expect(timeShown(page)).toContainText("0:01/00");
+});
+
+/** What the tools said to the last answer, as Anthropic gets it. */
+function toolResults(sent: Sent): string[] {
+  const last = sent.messages.at(-1);
+  if (!last || !Array.isArray(last.content)) return [];
+  return last.content.flatMap((part: { type?: string; content?: unknown }) => {
+    if (part.type !== "tool_result") return [];
+    const inner = part.content;
+    if (typeof inner === "string") return [inner];
+    return Array.isArray(inner) ? inner.map((piece: { text?: string }) => piece.text ?? "") : [];
+  });
+}
+
+/** A clip by what the list of clips calls it. */
+const clipNamed = (page: Page, name: RegExp) =>
+  content(page, "timeline")
+    .getByRole("listbox", { name: "时间轴片段", exact: true })
+    .getByRole("option", { name });
+
+/** Selects a clip, the way people do: a click on it, where the list of clips says it is. */
+async function clickClip(page: Page, name: RegExp) {
+  await tab(page, "timeline").click();
+  const place = await clipNamed(page, name).boundingBox();
+  if (!place) throw new Error(`no clip ${String(name)}`);
+  await page.mouse.click(place.x + 12, place.y + 10);
+}
+
+test("AI reads what was selected as a message was sent, though people selected another since, and what is selected now", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const sent: Sent[] = [];
+  let selectedAgain: () => void = () => {};
+  const again = new Promise<void>((resolve) => (selectedAgain = resolve));
+  await page.route(ANTHROPIC, async (route) => {
+    if (isConnectionTest(route)) return answer(route, "OK");
+    const body = route.request().postDataJSON() as Sent;
+    sent.push(body);
+    if (sent.length > 1) return answer(route, "看到了。");
+    // The first answer waits until people selected something else.
+    await again;
+    return route.fulfill({
+      status: 200,
+      headers: { "content-type": "text/event-stream", "access-control-allow-origin": "*" },
+      body: anthropicCalls([
+        { name: "aq_selection_read", input: { at: "sent" } },
+        { name: "aq_selection_read", input: { at: "now" } },
+      ]),
+    });
+  });
+  await setUp(page);
+  await clickClip(page, /^城市，/);
+  await expect(clipNamed(page, /^城市，/)).toHaveAttribute("aria-selected", "true");
+  await tab(page, "chat").click();
+  await box(page).fill("把这个放慢一点");
+  await box(page).press("Enter");
+  await expect(chat(page).getByTestId("chat-user")).toContainText("把这个放慢一点");
+  // Another one while AI works.
+  await clickClip(page, /^纯色，.*0:02\/00 到/);
+  await expect(clipNamed(page, /^纯色，.*0:02\/00 到/)).toHaveAttribute("aria-selected", "true");
+  selectedAgain();
+  await tab(page, "chat").click();
+  await expect(chat(page).getByTestId("chat-answer")).toHaveText("看到了。");
+
+  // The words went as they were, without what was selected.
+  expect(JSON.stringify(lastUser(sent[0] as Sent))).not.toContain("clip_0");
+  const [then, now] = toolResults(sent[1] as Sent);
+  expect(then).toContain('at "sent", messages_back 0: as the user sent "把这个放慢一点"');
+  expect(then).toContain("selected clips (1): clip_0");
+  expect(then).not.toContain("clip_1");
+  expect(now).toContain('at "now"');
+  expect(now).toContain("selected clips (1): clip_1");
+  expect(now).not.toContain("clip_0");
+
+  // Each call says which it read.
+  const process = chat(page).getByTestId("chat-process").last();
+  await process.getByRole("button").first().click();
+  const summaries = chat(page).getByTestId("chat-tool-summary");
+  await expect(summaries).toHaveText(["「把这个放慢一点」发出时的", "现在的"]);
+  await shoot(page, "SEL-calls", chat(page).getByTestId("chat"));
 });
 
 test("more than eight objects are the first three and one block for the rest", async ({ page }) => {

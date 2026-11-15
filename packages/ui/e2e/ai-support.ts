@@ -82,6 +82,64 @@ export function anthropicSays(text: string, model = "claude-test"): string {
   return events.map(([name, data]) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`).join("");
 }
 
+/** What Anthropic streams for an answer that only calls tools, each with its input. */
+export function anthropicCalls(
+  calls: readonly { readonly name: string; readonly input: Record<string, unknown> }[],
+  model = "claude-test",
+): string {
+  const events: [string, unknown][] = [
+    [
+      "message_start",
+      {
+        type: "message_start",
+        message: {
+          id: "msg_test",
+          type: "message",
+          role: "assistant",
+          model,
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 10, output_tokens: 1 },
+        },
+      },
+    ],
+  ];
+  calls.forEach(({ name, input }, index) => {
+    events.push(
+      [
+        "content_block_start",
+        {
+          type: "content_block_start",
+          index,
+          content_block: { type: "tool_use", id: `toolu_${index + 1}`, name, input: {} },
+        },
+      ],
+      [
+        "content_block_delta",
+        {
+          type: "content_block_delta",
+          index,
+          delta: { type: "input_json_delta", partial_json: JSON.stringify(input) },
+        },
+      ],
+      ["content_block_stop", { type: "content_block_stop", index }],
+    );
+  });
+  events.push(
+    [
+      "message_delta",
+      {
+        type: "message_delta",
+        delta: { stop_reason: "tool_use", stop_sequence: null },
+        usage: { output_tokens: 2 },
+      },
+    ],
+    ["message_stop", { type: "message_stop" }],
+  );
+  return events.map(([name, data]) => `event: ${name}\ndata: ${JSON.stringify(data)}\n\n`).join("");
+}
+
 /** Whether a request is the test of a connection: a word, at most 16 tokens. */
 export const isConnectionTest = (route: Route) =>
   (route.request().postDataJSON() as { max_tokens?: number } | null)?.max_tokens === 16;

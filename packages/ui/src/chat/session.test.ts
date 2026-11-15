@@ -14,6 +14,7 @@ import {
 } from "@animaquill/host";
 import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SelectionFacts } from "@animaquill/tools";
 import { ModelPacks } from "./packs.ts";
 import { ChatSession, titlePrompt, type ChatSessionOptions } from "./session.ts";
 import { AiSettingsStore } from "./settings.ts";
@@ -87,6 +88,7 @@ function setup(
   let fake: FakeEndpoint | undefined;
   const problems = new ProblemSet({ reports: ["runtime"] });
   const packs = new ModelPacks(settings, { saveFailed: () => {} });
+  let shown: SelectionFacts | undefined;
   const chat = new ChatSession({
     chats,
     ai,
@@ -97,7 +99,7 @@ function setup(
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    selection: () => undefined,
+    selection: () => shown,
     problems: () => problems,
     undone: (result) => undone.push(result),
     fake: () => fake,
@@ -123,6 +125,10 @@ function setup(
     markers,
     problems,
     fake: (endpoint: FakeEndpoint) => (fake = endpoint),
+    /** What the editor shows from now on: the timeline, the playhead and what is selected. */
+    select: (clips: string[], playhead = "0") => {
+      shown = { timeline: "main", playhead, clips };
+    },
   };
 }
 
@@ -480,8 +486,8 @@ describe("a conversation of its own", () => {
     await vi.waitFor(() => expect(chat.running).toBe(true));
     chat.queue("第二句");
     chat.queue("第三句");
-    expect(chat.unqueue(1)).toEqual({ text: "第三句" });
-    expect(chat.getSnapshot().queued).toEqual([{ text: "第二句" }]);
+    expect(chat.unqueue(1)).toMatchObject({ text: "第三句" });
+    expect(chat.getSnapshot().queued).toMatchObject([{ text: "第二句" }]);
     await running;
     await vi.waitFor(() =>
       expect(
@@ -494,6 +500,119 @@ describe("a conversation of its own", () => {
     );
     await vi.waitFor(() => expect(chat.running).toBe(false));
     expect(chat.getSnapshot().queued).toEqual([]);
+  });
+
+  it("keeps with each message what the editor showed as it was sent, which AI reads, and never with the words", async () => {
+    const chats = memoryChats();
+    const { chat, fake, select } = setup({ chats });
+    select(["clip_first"], "3");
+    const heard: unknown[] = [];
+    fake({
+      fake: [
+        () => {
+          // People select something else while AI works.
+          select(["clip_second"], "8");
+          return {
+            calls: [
+              { name: "aq_selection_read", args: { at: "sent" } },
+              { name: "aq_selection_read", args: { at: "now" } },
+            ],
+          };
+        },
+        { text: "好" },
+      ],
+      heard: (messages) => heard.push(messages),
+    });
+    await chat.send("把这个放慢");
+    const entries = chat.getSnapshot().conversation?.getSnapshot().entries ?? [];
+    const user = entries.find((entry) => entry.role === "user");
+    expect(user?.role === "user" && user.selection).toEqual({
+      timeline: "main",
+      playhead: "3",
+      clips: ["clip_first"],
+    });
+    const results = entries.flatMap((entry) => (entry.role === "tool" ? [entry.text] : []));
+    expect(results[0]).toContain('as the user sent "把这个放慢"');
+    expect(results[0]).toContain("playhead=3");
+    expect(results[0]).toContain("clip_first");
+    expect(results[0]).not.toContain("clip_second");
+    expect(results[1]).toContain('at "now"');
+    expect(results[1]).toContain("clip_second");
+    expect(results[1]).not.toContain("clip_first");
+    // What the model got of the message is its words.
+    const first = JSON.stringify(heard[0]);
+    expect(first).toContain("把这个放慢");
+    expect(first).not.toContain("clip_first");
+    // It goes with the conversation as it is kept, and comes back with it.
+    await chat.flush();
+    const saved = await chats.load("p1", chat.getSnapshot().id as string);
+    expect(saved?.entries[0]).toMatchObject({ selection: { clips: ["clip_first"] } });
+    const reopened = setup({ chats });
+    await reopened.chat.open(chat.getSnapshot().id as string);
+    const back = reopened.chat.getSnapshot().conversation?.getSnapshot().entries[0];
+    expect(back?.role === "user" && back.selection?.clips).toEqual(["clip_first"]);
+  });
+
+  it("a queued message keeps what the editor showed as people sent it, not as it goes", async () => {
+    const { chat, fake, select } = setup();
+    select(["clip_a"]);
+    fake({ fake: [{ text: "一" }, { text: "二" }], charactersPerSecond: 20 });
+    const running = chat.send("第一句");
+    await vi.waitFor(() => expect(chat.running).toBe(true));
+    select(["clip_b"], "4");
+    chat.queue("这个也改");
+    // Selected after pressing send, before it goes.
+    select(["clip_c"], "9");
+    await running;
+    await vi.waitFor(() => expect(chat.running).toBe(false));
+    await vi.waitFor(() =>
+      expect(
+        chat
+          .getSnapshot()
+          .conversation?.getSnapshot()
+          .entries.flatMap((entry) => (entry.role === "user" ? [entry.selection?.clips] : [])),
+      ).toEqual([["clip_a"], ["clip_b"]]),
+    );
+  });
+
+  it("an earlier message without a record, from before they were kept, reads as it did, and says so", async () => {
+    const chats = memoryChats();
+    await chats.save({
+      id: "old",
+      project: "p1",
+      title: "旧对话",
+      updatedAt: 1,
+      entries: [
+        { role: "user", text: "以前说的", at: 1, task: "chat-old" },
+        {
+          role: "assistant",
+          text: "好的",
+          calls: [],
+          at: 2,
+          end: "done",
+          service: "fake",
+          protocol: "fake",
+          model: "fake",
+        },
+      ],
+    });
+    const { chat, fake, select } = setup({ chats });
+    await vi.waitFor(() => expect(chat.getSnapshot().saved).toHaveLength(1));
+    await chat.open("old");
+    expect(chat.getSnapshot().conversation?.getSnapshot().entries).toHaveLength(2);
+    select(["clip_now"]);
+    fake({
+      fake: [
+        { calls: [{ name: "aq_selection_read", args: { at: "sent", messages_back: 1 } }] },
+        { text: "好" },
+      ],
+    });
+    await chat.send("现在这个");
+    const results = (chat.getSnapshot().conversation?.getSnapshot().entries ?? []).flatMap(
+      (entry) => (entry.role === "tool" ? [entry.text] : []),
+    );
+    expect(results[0]).toContain('as the user sent "以前说的"');
+    expect(results[0]).toContain("this message has no record of what the editor showed");
   });
 
   it("starts a new conversation from a turn: what came before, the turn's words to send", async () => {

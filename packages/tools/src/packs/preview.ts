@@ -39,8 +39,9 @@ export function previewOf(pack: ModelPack, model: string, pictures = true): Pack
   const use = usePack(pack, model);
   const tools = createToolset(NO_HOST, new CallerState(), use.texts, { results: use.results });
   return {
-    // With what the browser says of pictures, for a model that takes them unless said otherwise.
-    system: systemPromptOf({ entry: "browser", texts: use.texts, pictures }),
+    // With what the browser says of pictures, for a model that takes them unless said otherwise,
+    // and of the messages it keeps.
+    system: systemPromptOf({ entry: "browser", texts: use.texts, pictures, sent: true }),
     parts: SYSTEM_PARTS.map((part) => ({
       part,
       text: textIn(use.texts, `system.${part}`)?.trim() ?? "",

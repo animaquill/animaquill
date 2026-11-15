@@ -38,6 +38,19 @@ const line = (name: string, args: Record<string, unknown>, done?: ToolEntry) =>
 describe("the line of a call of a tool", () => {
   it("says what each of the twelve tools did, without JSON", () => {
     expect(line("aq_project_status", {})).toBe("");
+    expect(line("aq_selection_read", { at: "now" })).toBe("现在的");
+    expect(line("aq_selection_read", { at: "sent" })).toBe("最新一条消息发出时的");
+    expect(line("aq_selection_read", { at: "sent", messages_back: 2 })).toBe(
+      "往前第 2 条消息发出时的",
+    );
+    // Once it ran, by the first words of the message, as the result named it.
+    expect(
+      line(
+        "aq_selection_read",
+        { at: "sent", messages_back: 1 },
+        result({ message: "把开场放慢…" }),
+      ),
+    ).toBe("「把开场放慢…」发出时的");
     expect(line("aq_selection_read", {})).toBe("");
     expect(line("aq_timeline_read", { from: "50", to: "62" })).toBe("正片 0:50–1:02");
     expect(line("aq_timeline_read", { timeline: "tl_b", tracks: ["v1", "v2"] })).toBe(

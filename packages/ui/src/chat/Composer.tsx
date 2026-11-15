@@ -305,7 +305,7 @@ export function Composer(props: {
                     const next = chat.unqueue(0);
                     if (next !== undefined) {
                       props.onSent();
-                      void chat.send(next.text, next.images);
+                      void chat.send(next.text, next.images, next.selection);
                     }
                   }}
                 >

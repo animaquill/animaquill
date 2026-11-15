@@ -42,7 +42,11 @@ export const TOOL_TEXTS = {
   "tools.aq_file_read.params.offset": "The first line to read, from 1; 1 by default.",
   "tools.aq_file_read.params.limit": "How many lines at most, 1 to {max}; {default} by default.",
   "tools.aq_selection_read.description":
-    "What the user is pointing at in the editor right now: the timeline they are on, the playhead time, the current version, the selected clips (ids and one line each) and the selected transition. It has only what the user chose to share; the full objects are in aq_object_read.",
+    'What the user points at in the editor: the timeline, the playhead time, the version shown, the selected clips (ids and one line each, as they are now) and the selected transition. The editor keeps these as they were when each message of the user was sent. at "sent" gives them for one message, which is what "this" or "here" in it points at, even after the user selected something else; at "now" gives those of now. One call gives one, such as {"at": "sent"} for the message this task started with, {"at": "sent", "messages_back": 1} for the one before, or {"at": "now"}. Clips selected then and gone since are listed by id. It has only what the user chose to share, and no whole objects: those are in aq_object_read.',
+  "tools.aq_selection_read.params.at":
+    '"sent": as a message of the user was sent, see messages_back. "now": as the editor is now.',
+  "tools.aq_selection_read.params.messages_back":
+    'Only with at "sent": which message of the user, counted back from the latest: 0 (the default) is the latest, the one this task started with, 1 the one before it.',
   "tools.aq_guide.description":
     'The AnimaQuill manual: short pages on how the editor does things (topics "howto/…", such as "howto/keyframes", "howto/times" and "howto/transitions"), a reference page for every operation of aq_edit (topic "ops/<operation>", such as "ops/property.edit": parameters and the fields inside them, what it returns, its errors and examples), the types that operations share (topics "types/…", such as "types/ClipSource"), the project format (topics "format/…": times, ids, world coordinates, clips, transitions, effects, properties and keyframes), and how scene code talks to the editor (topics "scene-runtime/…"); the format and scene runtime pages are in Chinese. Without arguments it gives the table of contents; topic gives one page; query searches the titles and text by keywords.',
   "tools.aq_guide.params.topic":
