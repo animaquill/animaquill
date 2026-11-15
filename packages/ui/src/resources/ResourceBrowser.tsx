@@ -10,6 +10,7 @@ import {
   type DragEvent,
   type KeyboardEvent,
   type MouseEvent,
+  type ReactNode,
 } from "react";
 import { useTranslation } from "react-i18next";
 import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
@@ -70,7 +71,15 @@ export interface ResourceBrowserProps<T> {
   /** A resource something else points at now, such as a block of the chat: it lights up. */
   readonly pointed?: string | undefined;
   /** What the menu of a resource has. Without it, the way to it in the explorer. */
-  readonly menu?: (resource: Resource<T>) => readonly (readonly MenuItem[])[];
+  readonly menu?: (
+    resource: Resource<T>,
+    /** Where people chose more than one, with Ctrl or Shift: all of them, this one among them. */
+    chosen: readonly Resource<T>[],
+  ) => readonly (readonly MenuItem[])[];
+  /** People can choose more than one, with Ctrl (⌘) and Shift, for what the menu does with them. */
+  readonly multiple?: boolean;
+  /** What a resource says on its picture besides, such as where its file is. */
+  readonly mark?: (resource: Resource<T>) => ReactNode;
   /** What it says when there is nothing at all. */
   readonly empty?: string;
   /** What can be dragged, of what can be used here. Nothing can without `onDragStart`. */
@@ -163,7 +172,15 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<string>();
   const [pointed, setPointed] = useState<string>();
-  const [menu, setMenu] = useState<{ x: number; y: number; resource: Resource<T> }>();
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    resource: Resource<T>;
+    chosen: readonly Resource<T>[];
+  }>();
+  /** More than one chosen, with Ctrl or Shift; and where Shift goes from. */
+  const [chosen, setChosen] = useState<ReadonlySet<string>>(() => new Set());
+  const anchor = useRef<string | undefined>(undefined);
   const list = useRef<HTMLElement>(null);
   const id = useId();
 
@@ -327,18 +344,62 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
     } else if (entry && (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10"))) {
       event.preventDefault();
       const box = (options[index] as HTMLElement).getBoundingClientRect();
-      setMenu({ x: box.left, y: box.bottom, resource: entry.resource });
+      setMenu({
+        x: box.left,
+        y: box.bottom,
+        resource: entry.resource,
+        chosen: chosenWith(entry.resource),
+      });
     }
+  };
+
+  /** What a menu of this resource is about: all that are chosen where it is one of them. */
+  const chosenWith = (resource: Resource<T>): readonly Resource<T>[] => {
+    if (!chosen.has(resource.id) || chosen.size < 2) return [resource];
+    const byId = new Map(resources.map((each) => [each.id, each]));
+    return [...chosen].flatMap((each) => byId.get(each) ?? []);
+  };
+
+  /** A click with Ctrl or Shift chooses more than one, where the tab takes that. */
+  const chooseMore = (event: MouseEvent<HTMLElement>, resource: Resource<T>): boolean => {
+    if (!props.multiple) return false;
+    if (event.shiftKey && anchor.current !== undefined) {
+      const ids = entries.map((entry) => entry.resource.id);
+      const from = ids.indexOf(anchor.current);
+      const to = ids.indexOf(resource.id);
+      if (from >= 0 && to >= 0) {
+        setChosen(new Set(ids.slice(Math.min(from, to), Math.max(from, to) + 1)));
+        return true;
+      }
+    }
+    if (event.ctrlKey || event.metaKey) {
+      // From the one chosen before, where it was chosen alone.
+      const before = anchor.current ?? selected;
+      const next = new Set(chosen.size > 0 ? chosen : before === undefined ? [] : [before]);
+      if (next.has(resource.id)) next.delete(resource.id);
+      else next.add(resource.id);
+      setChosen(next);
+      anchor.current = resource.id;
+      return true;
+    }
+    anchor.current = resource.id;
+    if (chosen.size > 0) setChosen(new Set());
+    return false;
   };
 
   const onContextMenu = (event: MouseEvent<HTMLElement>, resource: Resource<T>) => {
     event.preventDefault();
     event.currentTarget.focus({ preventScroll: true });
-    setMenu({ x: event.clientX, y: event.clientY, resource });
+    const about = chosenWith(resource);
+    if (about.length < 2 && chosen.size > 0) setChosen(new Set());
+    setMenu({ x: event.clientX, y: event.clientY, resource, chosen: about });
   };
 
-  const menuGroups = (resource: Resource<T>): readonly (readonly MenuItem[])[] =>
-    props.menu?.(resource) ?? [
+  const menuGroups = (
+    resource: Resource<T>,
+    about: readonly Resource<T>[],
+  ): readonly (readonly MenuItem[])[] =>
+    props.menu?.(resource, about) ?? [
       [
         {
           id: "reveal",
@@ -427,6 +488,7 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
                   id={`${headingId}-items`}
                   className={styles.grid}
                   role="listbox"
+                  aria-multiselectable={props.multiple ? true : undefined}
                   aria-labelledby={headingId}
                 >
                   {group.items.map((resource) => {
@@ -439,7 +501,8 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
                         role="option"
                         tabIndex={key === activeKey ? 0 : -1}
                         aria-label={resource.name}
-                        aria-selected={key === activeKey}
+                        aria-selected={key === activeKey || chosen.has(resource.id)}
+                        data-chosen={chosen.has(resource.id) ? "" : undefined}
                         aria-disabled={off ? true : undefined}
                         aria-current={isCurrent?.(resource) ? true : undefined}
                         aria-describedby={off ? reasonId : undefined}
@@ -460,6 +523,7 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
                         onPointerLeave={() => setPointed((was) => (was === key ? undefined : was))}
                         onClick={(event) => {
                           choose(key, resource);
+                          if (chooseMore(event, resource)) return;
                           // The second click of a double click, or one that only chooses.
                           if (event.detail > 1 || event.ctrlKey || event.metaKey) return;
                           activate(resource, event.currentTarget);
@@ -483,6 +547,7 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
                       >
                         <div className={styles.picture}>
                           <Icon resource={resource} playing={key === pointed} />
+                          {props.mark?.(resource)}
                         </div>
                         <span className={styles.name}>{resource.name}</span>
                         {notice?.badge !== undefined && notice.resource === resource.id && (
@@ -524,7 +589,7 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
           x={menu.x}
           y={menu.y}
           label={menu.resource.name}
-          groups={menuGroups(menu.resource)}
+          groups={menuGroups(menu.resource, menu.chosen)}
           onClose={() => setMenu(undefined)}
         />
       )}

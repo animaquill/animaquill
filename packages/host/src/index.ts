@@ -179,6 +179,85 @@ export interface Host {
    * Without it cards show a colour and a letter.
    */
   readonly covers?: CoverStore;
+  /**
+   * The files of assets this browser sends somewhere for projects, and how far each got, see
+   * `UploadStore`. Without it nothing is sent.
+   */
+  readonly uploads?: UploadStore;
+}
+
+/**
+ * Where a file of an asset goes: into the large file storage of the repository of a project of the
+ * platform (Git LFS of GitHub). The cloud space and storages of people's own come later
+ * (docs/design/asset-storage.md of AnimaQuill Cloud, 5 and 6).
+ */
+export type UploadTarget = "lfs";
+
+/**
+ * How a file of an asset on its way goes, as this browser keeps it: waiting for its turn or being
+ * sent ("waiting"), stopped by people ("paused"), stopped for something people have to do
+ * ("failed", `UploadRecord.problem` says what), or there ("done").
+ */
+export type UploadRecordState = "waiting" | "paused" | "failed" | "done";
+
+/**
+ * A file of an asset that this browser sends somewhere, for a project it has: the file as the asset
+ * had it when it was asked for (`hash`, `size`), and how far it got. What the asset says where its
+ * file is changes only once the file is there, see `asset.setStorage`.
+ */
+export interface UploadRecord {
+  /** What this browser keeps the project by, see `ProjectEntry.key`. */
+  readonly key: string;
+  readonly asset: string;
+  readonly target: UploadTarget;
+  readonly hash: string;
+  readonly size: number;
+  /** What people know the asset by, for lists outside the project, as on the start page. */
+  readonly name: string;
+  /** The project on the platform, by its id there, see `CloudLink.project`. */
+  readonly project: string;
+  readonly state: UploadRecordState;
+  /** What the platform knows the upload by, once it began. */
+  readonly upload?: string;
+  /** Bytes the platform said it has, the last time it said. */
+  readonly received?: number;
+  /** For "failed": why, as a word of the editor's, see `UploadProblem` of the editor. */
+  readonly problem?: string;
+  /** When it was asked for, and when it got there: milliseconds since 1970. */
+  readonly at: number;
+  readonly doneAt?: number;
+  /** Another file of an asset whose file was there before, which goes where that one went. */
+  readonly replaced?: true;
+}
+
+/**
+ * The files of assets this browser sends somewhere, by project and asset: one each, kept in this
+ * browser for all its windows, so that what was on its way goes on once the project is open again.
+ * Only one window of a browser sends the files of a project (`uploader`); the others hear how it
+ * goes, and tell it what people want, over `line`.
+ */
+export interface UploadStore {
+  /** Of one project, or of all of them. */
+  list(key?: string): Promise<readonly UploadRecord[]>;
+  /**
+   * Changes what is kept of the files of these assets of a project, each in one go with reading it,
+   * so that no window writes over what another one changed meanwhile: `change` gets the record
+   * as it is (undefined for none) and says what it becomes, null for none, undefined for as it is.
+   * Resolves to what each is then.
+   */
+  update(
+    key: string,
+    assets: readonly string[],
+    change: (record: UploadRecord | undefined, asset: string) => UploadRecord | null | undefined,
+  ): Promise<readonly (UploadRecord | undefined)[]>;
+  /** All of a project, which this browser does not have any more. */
+  forget(key: string): Promise<void>;
+  /** Which window sends the files of a project: one at a time. */
+  uploader(key: string): FolderWriter;
+  /** How the windows of this browser tell each other about the uploads of a project. */
+  line(key: string): CloudLine | undefined;
+  /** Hears that the uploads of a project changed, in any window of this browser. */
+  listen(listener: (key: string) => void): () => void;
 }
 
 /**
@@ -746,6 +825,11 @@ export interface CloudAccess {
    * it, there is none.
    */
   readonly lfs?: LfsAccess;
+  /**
+   * What people have in the large file storage of their repositories through the platform, and how
+   * they go about it, see `LfsAccountAccess`. Without it, nothing is known of it.
+   */
+  readonly lfsAccount?: LfsAccountAccess;
   /** The covers of its projects, for the start page on any computer. Without it, there are none. */
   readonly cover?: CoverAccess;
   /**
@@ -1548,6 +1632,54 @@ export interface LfsAccess {
   state(upload: string): Promise<LfsUpload>;
   /** Gives the upload up: what the platform has of the file goes. */
   cancel(upload: string): Promise<void>;
+}
+
+/** A repository and what the platform put into its large file storage, see `LfsAccount`. */
+export interface LfsRepositoryUse {
+  /** Its number on GitHub, and its names as last seen. */
+  readonly repo: number;
+  readonly fullName: string;
+  /** Where people see it. */
+  readonly url: string;
+  /** The project of the platform that is saved to it. */
+  readonly project: { readonly id: string; readonly name: string };
+  readonly files: number;
+  readonly bytes: number;
+}
+
+/**
+ * What a person has in the large file storage (Git LFS) of the repositories of their projects, as
+ * far as the platform knows (the account keeps the room and the traffic, which only GitHub says),
+ * and how they go about it, for all their computers.
+ */
+export interface LfsAccount {
+  /** Whose it is, see `AccountSnapshot.id`. */
+  readonly account: string;
+  /**
+   * When they said they know what putting files there means (it cannot be taken out file by file,
+   * and it is their account's room), the first time; missing while they never did.
+   */
+  readonly acknowledgedAt?: number;
+  /** Their projects, by id on the platform, whose new assets go there by themselves. */
+  readonly auto: readonly string[];
+  /** By repository, the largest first. */
+  readonly repositories: readonly LfsRepositoryUse[];
+}
+
+/**
+ * See `LfsAccount`. Rejects with a `CloudSignedOut` when nobody is signed in, a `CloudOtherAccount`
+ * where the session is of another account than `account`, and otherwise where the platform cannot
+ * say.
+ */
+export interface LfsAccountAccess {
+  read(): Promise<LfsAccount>;
+  change(
+    account: string,
+    changes: {
+      readonly acknowledged?: true;
+      readonly auto?: { readonly project: string; readonly on: boolean };
+    },
+  ): Promise<LfsAccount>;
 }
 
 /** What the platform says when it refuses something about sending files to the storage. */

@@ -1146,3 +1146,13 @@
 .cardLink:focus-visible .description {
   opacity: 1;
 }
+
+/* Files of assets that did not get into the large file storage yet: they go on once it is open. */
+.uploads {
+  display: block;
+  overflow: hidden;
+  color: var(--aq-link, var(--aq-accent));
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

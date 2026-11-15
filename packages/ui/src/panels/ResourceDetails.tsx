@@ -20,6 +20,7 @@ import { parseTags, type ProjectItem } from "../resources/project-resources.ts";
 import type { Resource } from "../resources/resources.ts";
 import { resourceTypeName } from "../resources/type-names.ts";
 import { downloadFrom } from "../storage/places.ts";
+import { AssetPlace } from "../storage/AssetPlace.tsx";
 import { formatSize } from "../transfer/transfer.ts";
 import { textOf } from "../properties/names.ts";
 import { EffectIcon } from "./EffectsPanel.tsx";
@@ -108,12 +109,16 @@ export function useResourceActions() {
     const state = store?.getState();
     if (!state) return;
     const uses = usesOf(state, { kind: item.kind, id: item.id });
+    // In the large file storage: that copy stays there, which people should know.
+    const inLfs =
+      item.kind === "asset" && placedAsset(state, item.id, workbench.here())?.storage === "lfs";
+    const lfsNote = inLfs ? ` ${t("storage.uploads.removeNote")}` : "";
     // Used somewhere, it says how much goes with it, and where, each place a click away.
     const confirmed = await dialogs.confirm(
       uses.length > 0
         ? {
             title: t("explorer.remove.inUseTitle", { name: resource.name, count: uses.length }),
-            message: t("explorer.remove.inUse", { count: uses.length }),
+            message: t("explorer.remove.inUse", { count: uses.length }) + lfsNote,
             confirm: t("explorer.remove.confirmWithUses"),
             danger: true,
             details: [
@@ -128,7 +133,7 @@ export function useResourceActions() {
           }
         : {
             title: t("explorer.remove.title", { name: resource.name }),
-            message: t("explorer.remove.message"),
+            message: t("explorer.remove.message") + lfsNote,
             confirm: t("explorer.remove.confirm"),
             danger: true,
           },
@@ -490,6 +495,9 @@ function ResourceDetails({
               </dd>
             </div>
           </dl>
+          {data.kind === "project" && data.item.kind === "asset" && (
+            <AssetPlace asset={data.item.id} />
+          )}
           {actions.some((group) => group.length > 0) && (
             <div className={styles.actions} role="group" aria-label={t("explorer.actions.label")}>
               {actions.flat().map((action) => (

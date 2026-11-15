@@ -99,3 +99,19 @@
   margin: 4px 0;
   background: var(--aq-border);
 }
+
+.note {
+  margin-left: auto;
+  padding-left: 16px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+.item:hover:enabled .note,
+.item:focus:enabled .note {
+  color: inherit;
+}
+
+.more {
+  margin-left: 8px;
+}

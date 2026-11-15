@@ -9,7 +9,7 @@ import { isCloudKind, type ProjectCard } from "./cards.ts";
  */
 
 /** A view on the right: one of the side bar, or a group by its id. */
-export type ViewId = "recent" | "all" | "starred" | "exports" | `group:${string}`;
+export type ViewId = "recent" | "all" | "starred" | "exports" | "storage" | `group:${string}`;
 
 export const groupView = (group: string): ViewId => `group:${group}`;
 
@@ -80,6 +80,8 @@ export function sectionsOf({ cards, groups, unfinishedExports }: SectionInput): 
 
 /** A view that is not there any more, such as a group taken away elsewhere, is "最近打开". */
 export function viewThere(view: ViewId, sections: readonly StartSection[]): ViewId {
+  // A page of its own, at the foot of the side bar: always there.
+  if (view === "storage") return view;
   return sections.some((section) => section.id === view) ? view : "recent";
 }
 
@@ -104,6 +106,7 @@ export function cardsOfView(cards: readonly ProjectCard[], view: ViewId): Projec
     case "starred":
       return cards.filter((card) => card.starred);
     case "exports":
+    case "storage":
       return [];
     default:
       return [...cards];

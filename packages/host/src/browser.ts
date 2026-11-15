@@ -1,3 +1,4 @@
+import { browserUploads } from "./uploads.ts";
 import { browserAccountKeys, browserChatImages, browserChats, browserKeys } from "./ai.ts";
 import { createWorkCache } from "./caches.ts";
 import { createExportStore } from "./exports.ts";
@@ -1002,7 +1003,8 @@ export type { BrowserCoverAccessOptions } from "./covers.ts";
 export type { BrowserCloudOptions } from "./cloud.ts";
 export { browserRepository, statusOf } from "./repository.ts";
 export type { BrowserRepositoryOptions } from "./repository.ts";
-export { browserLfs, uploadOf } from "./lfs.ts";
+export { browserLfs, browserLfsAccount, lfsAccountOf, uploadOf } from "./lfs.ts";
+export { browserUploads, uploadRecordOf } from "./uploads.ts";
 export type { BrowserLfsOptions } from "./lfs.ts";
 export { browserCloudProjects, projectSummaryOf } from "./cloud-projects.ts";
 export type { BrowserCloudProjectsOptions } from "./cloud-projects.ts";
@@ -1172,6 +1174,7 @@ export function createBrowserHost(
   const exports = createExportStore(database, locks);
   const chats = browserChats(database);
   const covers = browserCoverStore(database);
+  const uploads = browserUploads(database, locks);
   // What an export kept of a project that is gone would only take room on the disk.
   const forget = async (project: string) => {
     await Promise.all([
@@ -1179,6 +1182,7 @@ export function createBrowserHost(
       drafts.forget(project),
       chats.forget(project).catch(() => {}),
       covers.forget(project).catch(() => {}),
+      uploads.forget(project).catch(() => {}),
     ]);
     for (const saved of await exports.list(project).catch(() => [])) {
       // One that a window is at is that window's to finish or give up.
@@ -1223,5 +1227,6 @@ export function createBrowserHost(
     chatImages: browserChatImages(database),
     organizer: browserOrganizer(database),
     covers,
+    uploads,
   };
 }

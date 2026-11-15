@@ -1,6 +1,6 @@
 import type { ProjectStore } from "@animaquill/core";
 import type { CloudProjectSummary } from "@animaquill/host";
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { CloudPanelBody } from "../app/CloudPanel.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
@@ -9,6 +9,8 @@ import { cloudPanel, panelInputOf, type PanelActionId } from "../cloud/panel.ts"
 import settings from "../settings/Settings.module.css";
 import { formatSize } from "../transfer/transfer.ts";
 import { Facts, Group, Heading, Row, Small, length, moment } from "./parts.tsx";
+import { Toggle } from "../settings/parts.tsx";
+import { placeRows, placeSummary } from "../storage/place-choice.ts";
 import styles from "./Project.module.css";
 
 const noSubscription = () => () => {};
@@ -269,6 +271,7 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
           )}
         />
       )}
+      {linked && <AssetRows project={linked.link.project} />}
       {panel && linked && (
         <>
           <Heading>{t("projectProps.storage.sync")}</Heading>
@@ -302,5 +305,72 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
         </>
       )}
     </Group>
+  );
+}
+
+/**
+ * Where the assets of a project of the platform are (docs/design/asset-storage.md of AnimaQuill
+ * Cloud, 4.3): how many in the large file storage and how large, how many only here, the dialog to
+ * choose, and whether new ones go there by themselves, for all the person's computers.
+ */
+function AssetRows({ project }: { readonly project: string }) {
+  const workbench = useWorkbench();
+  const { uploads, lfsAccount, missingFiles } = workbench;
+  const { t } = useTranslation();
+  const { store } = useSession();
+  const state = useProject(store);
+  const snapshot = useSyncExternalStore(uploads.subscribe, uploads.getSnapshot);
+  const missing = useSyncExternalStore(missingFiles.subscribe, missingFiles.getSnapshot);
+  const account = useSyncExternalStore(lfsAccount.subscribe, lfsAccount.getSnapshot);
+  const [auto, setAuto] = useState<boolean>();
+  useEffect(() => {
+    void lfsAccount.refresh();
+  }, [lfsAccount]);
+  const summary = useMemo(
+    () =>
+      placeSummary(
+        state ? placeRows(state, snapshot.items, new Set(missing.keys()), workbench.here()) : [],
+      ),
+    [state, snapshot.items, missing, workbench],
+  );
+  if (!uploads.available) return null;
+  const isAuto = auto ?? account.account?.auto.includes(project) ?? false;
+  const change = async (on: boolean) => {
+    setAuto(on);
+    if (!(await lfsAccount.setAuto(project, on))) {
+      setAuto(!on);
+      workbench.notifications.push(t("storage.uploads.properties.autoFailed"));
+    }
+  };
+  return (
+    <>
+      <Row id="assets" name={t("storage.uploads.properties.assets")}>
+        <span className={settings.value} data-testid="project-assets">
+          {t("storage.uploads.properties.assetsValue", {
+            lfs: summary.there,
+            size: formatSize(summary.thereBytes),
+            here: summary.here,
+          })}
+        </span>
+        <Small
+          disabled={snapshot.blocked !== undefined}
+          onClick={() => void workbench.choosePlaces()}
+        >
+          {t("storage.uploads.action.choose")}
+        </Small>
+      </Row>
+      <Row
+        id="assetsAuto"
+        name={t("storage.uploads.properties.auto")}
+        help={t("storage.uploads.properties.autoHelp")}
+      >
+        <Toggle
+          label={t("storage.uploads.properties.auto")}
+          checked={isAuto}
+          disabled={account.status !== "ready"}
+          onChange={(on) => void change(on)}
+        />
+      </Row>
+    </>
   );
 }

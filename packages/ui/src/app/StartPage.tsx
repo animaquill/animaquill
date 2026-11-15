@@ -1,3 +1,4 @@
+import { StorageSpace } from "../storage/StorageSpace.tsx";
 import type { FolderStatus } from "@animaquill/host";
 import {
   ChevronDown,
@@ -6,6 +7,7 @@ import {
   Ellipsis,
   Folder,
   FolderOpen,
+  HardDrive,
   Layers,
   LayoutGrid,
   List,
@@ -145,6 +147,9 @@ function UnfinishedExports({
 }
 
 /** A project folder that the address of this window asks for, which waits for people. */
+/** The views that are a page of their own, not a list of projects. */
+const isPage = (view: ViewId): boolean => view === "exports" || view === "storage";
+
 function Waiting({ waiting }: { waiting: WaitingFolder }) {
   const { projectFolders } = useWorkbench();
   const { t } = useTranslation();
@@ -502,6 +507,18 @@ function Sidebar({
         )}
       </div>
       <div className={styles.foot}>
+        {situation.hasPlatform && (
+          <button
+            type="button"
+            className={styles.navButton}
+            aria-current={view === "storage" ? "page" : undefined}
+            data-view="storage"
+            onClick={() => onView("storage")}
+          >
+            <HardDrive size={15} className={styles.navIcon} aria-hidden="true" />
+            <span className={styles.navName}>{t("storage.uploads.space.nav")}</span>
+          </button>
+        )}
         <Account situation={situation} />
         <SettingsButton />
       </div>
@@ -692,6 +709,10 @@ function CardItem({
 }: CardsProps & { card: ProjectCard }) {
   const workbench = useWorkbench();
   const { t } = useTranslation();
+  const unfinishedUploads = useSyncExternalStore(
+    workbench.uploads.subscribeUnfinished,
+    workbench.uploads.getUnfinished,
+  );
   const more = useRef<HTMLDivElement>(null);
   const [problem, setProblem] = useState<string | undefined>();
   const folder = card.key === undefined ? undefined : statuses.get(card.key);
@@ -803,6 +824,13 @@ function CardItem({
       )}
     </span>
   );
+  const unfinished =
+    unfinishedUploads.get(card.key ?? "") ?? unfinishedUploads.get(card.project ?? "") ?? 0;
+  const uploadsLine = unfinished > 0 && (
+    <span className={styles.uploads} data-card-uploads={unfinished}>
+      {t("storage.uploads.start.unfinished", { count: unfinished })}
+    </span>
+  );
   const inside =
     display === "cards" ? (
       <>
@@ -810,6 +838,7 @@ function CardItem({
         <span className={styles.words}>
           {name}
           {statusLine}
+          {uploadsLine}
         </span>
       </>
     ) : (
@@ -830,7 +859,10 @@ function CardItem({
           {name}
         </span>
         <span className={styles.cell}>{cardPlace(card, t)}</span>
-        <span className={styles.cell}>{statusLine}</span>
+        <span className={styles.cell}>
+          {statusLine}
+          {uploadsLine}
+        </span>
         {cards.some((each) => durationOf(each, covers) !== undefined) && (
           <span className={styles.cell}>
             {durationMs === undefined ? "" : durationText(durationMs)}
@@ -1235,7 +1267,7 @@ export function StartPage() {
     covers,
   );
   // Covers for the cards there are to see, fetched in their order where they have to be.
-  const seen = current === "exports" ? [] : welcome ? remoteCards(cards) : listed;
+  const seen = isPage(current) ? [] : welcome ? remoteCards(cards) : listed;
   // Covers of the platform only for the cards on the screen, or nearly: not hundreds in a row.
   const watch = useMemo(() => {
     if (typeof IntersectionObserver === "undefined") return undefined;
@@ -1384,7 +1416,7 @@ export function StartPage() {
   /** What is said about the projects of the platform where those are what people look at. */
   const cloudNote = (): ReactNode => {
     const looksAtCloud = shownFilter === "cloud" || (filters.length === 0 && situation.hasPlatform);
-    if (!looksAtCloud || current === "exports" || notice !== undefined) return null;
+    if (!looksAtCloud || isPage(current) || notice !== undefined) return null;
     if (cloudState === "signedOut")
       return (
         <p className={styles.note} data-cloud-list={cloudState}>
@@ -1432,10 +1464,16 @@ export function StartPage() {
       <main className={styles.main} ref={main} tabIndex={-1} data-view={current}>
         {folders.waiting && <Waiting waiting={folders.waiting} />}
         <div className={styles.head}>
-          <h1>{"key" in title ? t(title.key as "start.view.all") : title.text}</h1>
+          <h1>
+            {current === "storage"
+              ? t("storage.uploads.space.title")
+              : "key" in title
+                ? t(title.key as "start.view.all")
+                : title.text}
+          </h1>
           {!loading &&
             !welcome &&
-            current !== "exports" &&
+            !isPage(current) &&
             !(notice !== undefined && cards.length === 0) && (
               <div className={styles.tools}>
                 {filters.length > 0 && (
@@ -1531,9 +1569,7 @@ export function StartPage() {
             <NewCards situation={situation} large onNew={newProject} />
           </section>
         ) : (
-          current !== "exports" && (
-            <NewCards situation={situation} large={false} onNew={newProject} />
-          )
+          !isPage(current) && <NewCards situation={situation} large={false} onNew={newProject} />
         )}
 
         {(isUnread || failed.links) && (
@@ -1544,7 +1580,9 @@ export function StartPage() {
         )}
         {cloudNote()}
 
-        {current === "exports" ? (
+        {current === "storage" ? (
+          <StorageSpace />
+        ) : current === "exports" ? (
           <UnfinishedExports found={exports} nameOf={nameOf} refresh={readExports} />
         ) : welcome ? (
           remoteCards(cards).length > 0 && (

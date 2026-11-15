@@ -1,0 +1,113 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 960px;
+}
+
+.about {
+  margin: 0;
+  color: var(--aq-text-muted);
+}
+
+.part {
+  padding: 14px 16px;
+  background: var(--aq-bg-panel, var(--aq-bg-input));
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+}
+
+.later {
+  opacity: 0.7;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.head h2 {
+  margin: 0;
+  color: var(--aq-text-strong);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.muted {
+  margin: 8px 0 0;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+.total {
+  margin: 12px 0 8px;
+}
+
+.total strong {
+  color: var(--aq-text-strong);
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.tableBox {
+  overflow-x: auto;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.table th {
+  padding: 6px 8px;
+  color: var(--aq-text-muted);
+  font-weight: normal;
+  text-align: left;
+  background: var(--aq-bg-input);
+}
+
+.table td {
+  padding: 6px 8px;
+  border-top: 1px solid var(--aq-border);
+}
+
+.code {
+  color: var(--aq-text);
+  font-family: var(--aq-font-mono, monospace);
+}
+
+.link,
+.linkButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  color: var(--aq-link, var(--aq-accent));
+  font: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.button {
+  padding: 2px 10px;
+  color: var(--aq-text);
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.tag {
+  margin-left: 4px;
+  padding: 0 6px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  font-weight: normal;
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+}

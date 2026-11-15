@@ -1,3 +1,4 @@
+import { UploadMark, useAssetMarks, usePlaceMenu } from "../storage/marks.tsx";
 import { Boxes, FolderTree, Library, TriangleAlert } from "lucide-react";
 import { useMemo, useRef, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -73,16 +74,32 @@ export function ExplorerPanel() {
   // oxlint-disable-next-line react-hooks/exhaustive-deps -- listOf only reads what is listed here
   const resources = useMemo(() => listOf(node), [node, own, transitions, effects, gone]);
   const actions = useResourceActions();
-  const menu = (resource: Resource<ExplorerItem>) => [
-    [
-      {
-        id: "details",
-        label: t("explorer.actions.details"),
-        run: () => workbench.openResourcePage(resource.id, resource.name),
-      },
-    ],
-    ...actions(resource),
-  ];
+  const placeMenu = usePlaceMenu();
+  const marks = useAssetMarks();
+  const markOf = ({ data }: Resource<ExplorerItem>) =>
+    data.kind === "project" && data.item.kind === "asset" ? (
+      <UploadMark mark={marks.get(data.item.id)} />
+    ) : undefined;
+  const assetsOf = (chosen: readonly Resource<ExplorerItem>[]) =>
+    chosen.flatMap(({ data }) =>
+      data.kind === "project" && data.item.kind === "asset" ? [data.item.id] : [],
+    );
+  const menu = (resource: Resource<ExplorerItem>, chosen: readonly Resource<ExplorerItem>[]) => {
+    const place = placeMenu(assetsOf(chosen));
+    // Of more than one: only what goes for all of them.
+    if (chosen.length > 1) return place ? [[place]] : [];
+    return [
+      [
+        {
+          id: "details",
+          label: t("explorer.actions.details"),
+          run: () => workbench.openResourcePage(resource.id, resource.name),
+        },
+      ],
+      ...(place ? [[place]] : []),
+      ...actions(resource),
+    ];
+  };
 
   const noteOf = (at: ExplorerNode): string | undefined => {
     if (at === "missing")
@@ -125,6 +142,8 @@ export function ExplorerPanel() {
                 onSelect={(resource) => explorer.select(resource.id)}
                 onActivate={(resource) => workbench.openResource(resource.id, resource.name)}
                 menu={menu}
+                multiple
+                mark={markOf}
                 {...(node === "missing" && { empty: t("explorer.noMissing") })}
                 canDrag={({ data }) =>
                   data.kind === "transition" ||

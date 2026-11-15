@@ -1,0 +1,96 @@
+.place {
+  margin: 10px 0 4px;
+  padding: 8px 10px;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.failed {
+  border-color: var(--aq-danger);
+}
+
+.title {
+  margin: 0 0 6px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  font-weight: normal;
+}
+
+.headline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 4px;
+  color: var(--aq-text-strong);
+}
+
+.note {
+  margin: 0 0 6px;
+  color: var(--aq-text-muted);
+}
+
+.problem {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 6px;
+  color: var(--aq-danger);
+}
+
+.bar {
+  height: 4px;
+  margin: 6px 0;
+  overflow: hidden;
+  background: var(--aq-bg-menu);
+  border-radius: 2px;
+}
+
+.bar span {
+  display: block;
+  height: 100%;
+  background: var(--aq-accent);
+  transition: width 0.3s;
+}
+
+.there .bar span {
+  background: var(--aq-success, var(--aq-accent));
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.buttons button {
+  padding: 2px 10px;
+  color: var(--aq-text);
+  background: var(--aq-bg-menu);
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.buttons button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.buttons .primary {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+  border-color: var(--aq-accent);
+}
+
+.link,
+.buttons .link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--aq-link, var(--aq-accent));
+  background: none;
+  border: 0;
+  cursor: pointer;
+}

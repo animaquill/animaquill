@@ -40,6 +40,7 @@ import { duration } from "../export/window.ts";
 import { useProject, useSession, useWorkbench } from "./context.ts";
 import { Bubble } from "./Bubble.tsx";
 import { CloudPanelBody } from "./CloudPanel.tsx";
+import { UploadsSection, uploadTotals } from "../storage/UploadsSection.tsx";
 import panelStyles from "./CloudPanel.module.css";
 import { OperationStatus } from "./OperationStatus.tsx";
 import { PlaceIcon, type Place } from "./PlaceIcon.tsx";
@@ -460,7 +461,7 @@ function CloudPanelBubble({
   /** What it points at. */
   button: RefObject<HTMLElement | null>;
   /** The part of the panel that the status people clicked is about. */
-  focus: PanelSection | undefined;
+  focus: PanelSection | "assets" | undefined;
 }) {
   const workbench = useWorkbench();
   const { t } = useTranslation();
@@ -512,9 +513,10 @@ function CloudPanelBubble({
       <CloudPanelBody
         panel={panel}
         run={(id) => workbench.runCloudAction(id)}
-        {...(focus && { focus })}
+        {...(focus && focus !== "assets" && { focus })}
         place={place}
       />
+      {snapshot.kind === "linked" && <UploadsSection focused={focus === "assets"} />}
     </Bubble>
   );
 }
@@ -579,7 +581,13 @@ function SaveStatuses({
   );
   const group = useRef<HTMLSpanElement>(null);
   const wasOpen = useRef(false);
-  const [focus, setFocus] = useState<PanelSection>();
+  const [focus, setFocus] = useState<PanelSection | "assets">();
+  // The files of assets on their way say so on the status of the repository.
+  const uploadsNow = useSyncExternalStore(
+    workbench.uploads.subscribe,
+    workbench.uploads.getSnapshot,
+  );
+  const uploading = uploadTotals(uploadsNow);
   // Failing for long is looked at again every minute, and whenever the platform says something.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -612,7 +620,7 @@ function SaveStatuses({
         )
       : undefined;
   const opensPanel = panel?.opens === "panel";
-  const openAt = (section: PanelSection) => {
+  const openAt = (section: PanelSection | "assets") => {
     if (wasOpen.current && focus === section) shown.set(false);
     else {
       setFocus(section);
@@ -627,7 +635,17 @@ function SaveStatuses({
       interpolation: { escapeValue: false },
     });
   const github = panel?.github;
-  const isError = github?.kind === "error";
+  // Only what people have to do something about stands out; files on their way do not.
+  const isError = github?.kind === "error" || uploading.needsPeople;
+  const uploadWord =
+    outer.kind !== "linked"
+      ? undefined
+      : uploading.needsPeople
+        ? t("storage.uploads.panel.barFailed")
+        : uploading.going.length > 0
+          ? t("storage.uploads.panel.bar", { percent: uploading.percent })
+          : undefined;
+  const githubWord = github && (uploadWord ?? githubText(github, t));
   return (
     <span ref={group} className={styles.saves}>
       <LocalStatus
@@ -687,18 +705,21 @@ function SaveStatuses({
               </span>
             </button>
           </Tip>
-          {github && (
-            <Tip name={label("github", githubText(github, t))} usage={githubAbout(github, t)}>
+          {github && githubWord && (
+            <Tip name={label("github", githubWord)} usage={githubAbout(github, t)}>
               <button
                 type="button"
                 className={`${styles.name} ${styles.save} ${isError ? styles.alert : ""}`}
                 aria-haspopup="dialog"
-                aria-label={label("github", githubText(github, t))}
+                aria-label={label("github", githubWord)}
                 aria-description={githubAbout(github, t)}
                 data-save-status="github"
                 data-github={github.kind}
                 data-github-cause={github.cause}
-                onClick={() => openAt("github")}
+                data-uploads={
+                  uploadWord === undefined ? undefined : uploading.needsPeople ? "failed" : "going"
+                }
+                onClick={() => openAt(uploadWord === undefined ? "github" : "assets")}
               >
                 {isError ? (
                   <CircleAlert size={12} aria-hidden="true" />
@@ -706,7 +727,7 @@ function SaveStatuses({
                   <GitBranch size={12} aria-hidden="true" />
                 )}
                 <span className={styles.saveLabel}>{t("saveStatus.github")}</span>
-                <span className={styles.saveWord}>{githubText(github, t)}</span>
+                <span className={styles.saveWord}>{githubWord}</span>
               </button>
             </Tip>
           )}

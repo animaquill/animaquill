@@ -216,8 +216,15 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     const exporting = videos.getSnapshot() !== undefined;
     // A project that is moving into a folder stays in the browser, and the folder has half of it.
     const moving = projectFolders?.moving === true;
+    // Files of assets on their way stop, and go on once the project is open again: people are
+    // asked, as they are when they close it.
     const atRisk =
-      session.hasUnsavedChanges || transfer.running || trials.notKept || exporting || moving;
+      session.hasUnsavedChanges ||
+      transfer.running ||
+      trials.notKept ||
+      exporting ||
+      moving ||
+      workbench.uploading;
     if (atRisk || code.hasUnsaved) event.preventDefault();
   };
   window.addEventListener("beforeunload", onBeforeUnload);

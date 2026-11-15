@@ -19,6 +19,7 @@ import { MemoryWriters } from "@animaquill/host/memory";
 import { shortDescription } from "@animaquill/host";
 import { createProject } from "@animaquill/schema";
 import { MemoryLines, MemoryPlatform, digestOf } from "../src/cloud/cloud-support.ts";
+import { LabLfs, LabLfsAccount } from "./lfs.ts";
 
 /**
  * For the browser tests, and for looking at the pages (`?cloud=fake`, with `?account=fake`): a
@@ -186,6 +187,9 @@ export class LabRepositories implements RepositoryAccess {
 export interface CloudLab {
   readonly platform: MemoryPlatform;
   readonly repositories: LabRepositories;
+  /** The large file storage of the pretend repositories, see `LabLfs`. */
+  readonly lfs: LabLfs;
+  readonly lfsAccount: LabLfsAccount;
   /**
    * A project that is on the platform already, as one from another computer: with a repository of
    * that name, or without one. `ago`: how long ago it changed, in milliseconds. Returns its id.
@@ -217,6 +221,13 @@ export function fakeCloud(account: AccountAccess): { cloud: CloudAccess; lab: Cl
     return work();
   };
   let seeded = 0;
+  const lfs = new LabLfs((project) =>
+    String(repositories.statuses.get(project)?.repository?.id ?? 0),
+  );
+  const lfsAccount = new LabLfsAccount(() => {
+    const snapshot = account.getSnapshot();
+    return snapshot.status === "signedIn" ? snapshot.id : undefined;
+  });
   return {
     cloud: {
       platform: location.origin,
@@ -239,10 +250,14 @@ export function fakeCloud(account: AccountAccess): { cloud: CloudAccess; lab: Cl
       syncer: (key) => writers.writer(`cloud.${key}`, PAGE),
       line: (key) => lines.line(key),
       repository: repositories,
+      lfs,
+      lfsAccount,
     },
     lab: {
       platform,
       repositories,
+      lfs,
+      lfsAccount,
       seed(name, { repository, ago = 0, listed } = {}) {
         const store = ProjectStore.create(createProject({ name }));
         const data = store.encodeState();

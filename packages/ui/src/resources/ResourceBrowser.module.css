@@ -289,3 +289,9 @@
     animation: none;
   }
 }
+
+/* Chosen with others, with Ctrl or Shift, for what the menu does with all of them. */
+.item[data-chosen] {
+  background: var(--aq-bg-selected, var(--aq-bg-hover));
+  box-shadow: 0 0 0 1px var(--aq-accent);
+}

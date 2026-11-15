@@ -176,6 +176,13 @@ export type ProgressRequest = {
 } & ProgressOptions &
   ProgressState;
 
+/** Which assets of the open project go into the large file storage, see `PlacesDialog`. */
+export interface PlacesDialogOptions {
+  readonly title: string;
+  /** Chosen to start with, in place of those the project uses. */
+  readonly chosen?: readonly string[];
+}
+
 export type DialogRequest =
   | ({ readonly kind: "prompt"; readonly id: number } & PromptOptions)
   | ({ readonly kind: "confirm"; readonly id: number } & ConfirmOptions)
@@ -185,6 +192,7 @@ export type DialogRequest =
   | ({ readonly kind: "connect"; readonly id: number } & ConnectDialogOptions)
   | ({ readonly kind: "create"; readonly id: number } & CreateDialogOptions)
   | ({ readonly kind: "reconcile"; readonly id: number } & ReconcileDialogOptions)
+  | ({ readonly kind: "places"; readonly id: number } & PlacesDialogOptions)
   | ProgressRequest;
 
 type DialogValue = string | boolean | FormAnswer | undefined;
@@ -229,6 +237,11 @@ export class Dialogs {
     return this.#ask({ kind: "reconcile", id: this.#nextId++, ...options }) as Promise<
       FormAnswer | undefined
     >;
+  }
+
+  /** Resolves to whether people started to send files, or to false when they cancelled. */
+  async places(options: PlacesDialogOptions): Promise<boolean> {
+    return (await this.#ask({ kind: "places", id: this.#nextId++, ...options })) === true;
   }
 
   /**

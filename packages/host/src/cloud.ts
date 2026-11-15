@@ -15,6 +15,7 @@ import type {
   ChatSyncAccess,
   CloudSwitchesAccess,
   LfsAccess,
+  LfsAccountAccess,
   RepositoryAccess,
 } from "./index.ts";
 
@@ -351,7 +352,7 @@ export function webSocketConnection(url: string): CloudConnection {
 }
 
 /** What windows of a browser tell each other about a project, over a BroadcastChannel. */
-function broadcastLine(name: string): CloudLine | undefined {
+export function broadcastLine(name: string): CloudLine | undefined {
   if (typeof BroadcastChannel === "undefined") return undefined;
   const channel = new BroadcastChannel(name);
   return {
@@ -381,6 +382,8 @@ export interface BrowserCloudOptions {
   readonly repository?: RepositoryAccess;
   /** Sending files of assets into the large file storage of repositories, see `browserLfs`. */
   readonly lfs?: LfsAccess;
+  /** What people have there, and how they go about it, see `browserLfsAccount`. */
+  readonly lfsAccount?: LfsAccountAccess;
   /** The covers of its projects, where the platform keeps them, see `browserCoverAccess`. */
   readonly cover?: CoverAccess;
   /** How the person organises their projects, where the platform keeps it, see `browserOrganizerAccess`. */
@@ -407,6 +410,7 @@ export function browserCloud(options: BrowserCloudOptions): CloudAccess {
     ...(options.wake && { wake: options.wake }),
     ...(options.repository && { repository: options.repository }),
     ...(options.lfs && { lfs: options.lfs }),
+    ...(options.lfsAccount && { lfsAccount: options.lfsAccount }),
     ...(options.cover && { cover: options.cover }),
     ...(options.organizer && { organizer: options.organizer }),
     ...(options.aiSync && { aiSync: options.aiSync }),

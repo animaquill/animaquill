@@ -118,6 +118,30 @@ import { MissingFileWatch } from "../resources/missing-files.ts";
 import type { FolderTiming } from "../folder/session.ts";
 import { ProjectFolders, type FolderLinking, type PlacedFiles } from "./project-folders.ts";
 import { ProjectSession, projectKeyOf } from "./session.ts";
+import type { RepositoryWatch } from "../cloud/repository-watch.ts";
+import { LfsAccountState } from "../storage/lfs-account.ts";
+import {
+  AssetUploads,
+  type UploadBlock,
+  type UploadFiles,
+  type UploadProblem,
+  type UploadProject,
+} from "../storage/uploads.ts";
+import { GITHUB_BILLING } from "../storage/links.ts";
+
+/**
+ * Pauses of archiving for which the repository cannot take files either: it is not there to the
+ * platform, or the platform may not touch it.
+ */
+/** A file brought in that is larger than this is said to be only here, once (4.3). */
+const LARGE_IMPORT_BYTES = 100 * 1024 * 1024;
+
+const LFS_STOPPING: ReadonlySet<string> = new Set([
+  "gone",
+  "uninstalled",
+  "suspended",
+  "transferred",
+]);
 import { StartHabits } from "../start/habits.ts";
 import {
   chooseCover,
@@ -197,7 +221,25 @@ export class Workbench {
    * down: the uploads tell, once there are any (step 14.2③). Files the editor writes go by every
    * place all the same, as merges of the folder do.
    */
-  readonly here: HereOf = () => undefined;
+  readonly here: HereOf = () => {
+    const cloud = this.cloud?.getSnapshot();
+    const id =
+      cloud?.kind === "linked" ? cloud.repository?.getSnapshot().status?.repository?.id : undefined;
+    if (id === undefined) return undefined;
+    // The same object while it is the same, as what is worked out from it is kept by it.
+    if (this.#here?.repo !== String(id)) this.#here = { repo: String(id) };
+    return this.#here;
+  };
+  #here: { readonly repo: string } | undefined;
+  /**
+   * The files of assets of the open project on their way into the large file storage of its
+   * repository, see `AssetUploads`.
+   */
+  readonly uploads: AssetUploads;
+  /** What people have in the large file storage of GitHub, and how they go about it. */
+  readonly lfsAccount: LfsAccountState;
+  /** What was said about the files of the open project, which goes with it as it closes. */
+  readonly #uploadNotices: number[] = [];
   readonly dialogs = new Dialogs();
   readonly session: ProjectSession;
   readonly timeline: TimelineEditor;
@@ -286,6 +328,7 @@ export class Workbench {
   /** For tests only: new projects can stay in this browser, see `Host.projectsHereForTests`. */
   readonly #projectsHere: boolean;
   readonly #memory: WindowMemory;
+  readonly #settings: Host["settings"];
   /** Which projects of the platform windows of this browser are making, see `Host.making`. */
   readonly #making: MakingNotes | undefined;
   /** The page is going away on purpose, with everything kept, see `leavePage`. */
@@ -499,6 +542,7 @@ export class Workbench {
     this.persistence = host.persistence;
     this.#projectsHere = host.projectsHereForTests === true;
     this.#memory = host.windowMemory;
+    this.#settings = host.settings;
     this.#making = host.making;
     this.session = new ProjectSession(
       host.projects,
@@ -857,6 +901,15 @@ export class Workbench {
     this.missingFiles = new MissingFileWatch(this.session, this.media, this.projectFolders, () =>
       this.here(),
     );
+    this.uploads = new AssetUploads({
+      store: host.uploads,
+      lfs: () => cloud?.lfs,
+      project: () => this.#uploadProject(),
+      files: () => this.#uploadFiles(),
+      onAllDone: (count) => this.notifications.push(t("storage.uploads.notice.allDone", { count })),
+    });
+    this.lfsAccount = new LfsAccountState(cloud?.lfsAccount, host.account);
+    this.#followUploads(host);
     this.#keepPresence(host);
     this.organizer = new StartOrganizer({
       organizer: host.organizer,
@@ -1875,6 +1928,16 @@ export class Workbench {
       // go on with from the panel.
       connect.close();
     }
+    // Connected: whether the assets go into the large file storage too, once.
+    const done = connect.getSnapshot().phase;
+    const project = this.#uploadProject();
+    if (
+      (done === "done" || done === "archiving") &&
+      project?.project &&
+      this.uploads.available &&
+      this.#assetCount() > 0
+    )
+      void this.#askOnce(`connected.${project.project}`, "connected");
   }
 
   /**
@@ -2299,6 +2362,146 @@ export class Workbench {
       this.notifications.push(this.t("start.cover.restoreFailed"));
   }
 
+  /** The open project, as the uploads of its files go by it, see `UploadProject`. */
+  #uploadProject(): UploadProject | undefined {
+    const store = this.session.store;
+    if (!store) return undefined;
+    const key = projectKeyOf(store);
+    const cloud = this.cloud?.getSnapshot();
+    if (cloud?.kind !== "linked") return { key, store, blocked: "notCloud" };
+    const project = cloud.link.project;
+    const blocked = ((): UploadBlock | undefined => {
+      if (!cloud.made) return "notMade";
+      if (!this.#platform?.lfs) return "unsupported";
+      if (this.account?.getSnapshot().status === "signedOut") return "signedOut";
+      const status = cloud.repository?.getSnapshot().status;
+      if (status?.state === "none") return "noRepository";
+      if (status?.unusable !== undefined) return "repository";
+      if (status?.state === "paused" && LFS_STOPPING.has(status.reason ?? "")) return "repository";
+      return undefined;
+    })();
+    return { key, store, project, ...(blocked && { blocked }) };
+  }
+
+  /** Where the files of the open project are read from, for the uploads. */
+  #uploadFiles(): UploadFiles | undefined {
+    const store = this.session.store;
+    if (!store) return undefined;
+    const key = projectKeyOf(store);
+    const folder = this.projectFolders?.assets();
+    const open = this.projectFolders?.getSnapshot().open;
+    if (folder && open)
+      return {
+        read: async (asset, { hash, size }) => {
+          const path = this.session.store?.getState().assets?.[asset]?.path;
+          if (path === undefined) return { kind: "missing" };
+          const status = await open.record.folder.status().catch(() => "ask" as const);
+          if (status !== "ready") return { kind: "access" };
+          const found = await folder.fileAt(path);
+          if (found.kind !== "there") return { kind: found.kind };
+          if (found.file.size !== size || !isSameHash(found.hash, hash)) return { kind: "changed" };
+          return { kind: "there", file: found.file };
+        },
+      };
+    return {
+      read: async (_asset, { hash, size }) => {
+        const file = await this.projects
+          .media(key)
+          .get(hash)
+          .catch(() => undefined);
+        if (!file) return { kind: "missing" };
+        return file.size === size ? { kind: "there", file } : { kind: "changed" };
+      },
+    };
+  }
+
+  /** The uploads follow the open project, and how it stands with the platform and the account. */
+  #followUploads(host: Host): void {
+    let repository: RepositoryWatch | undefined;
+    let stopRepository: (() => void) | undefined;
+    let signedIn = host.account?.getSnapshot().status === "signedIn";
+    const follow = () => {
+      // Signed in again: what failed for that goes on.
+      const now = host.account?.getSnapshot().status === "signedIn";
+      if (now && !signedIn) void this.uploads.retryAll(["signedOut"]);
+      signedIn = now;
+      const cloud = this.cloud?.getSnapshot();
+      const watch = cloud?.kind === "linked" ? cloud.repository : undefined;
+      if (watch !== repository) {
+        stopRepository?.();
+        repository = watch;
+        stopRepository = watch?.subscribe(follow);
+      }
+      this.uploads.follow();
+    };
+    this.session.subscribe(follow);
+    this.cloud?.subscribe(follow);
+    host.account?.subscribe(follow);
+    this.projectFolders?.subscribe(follow);
+    follow();
+  }
+
+  /**
+   * Files of assets that this window sends and that are not there yet: closing the project stops
+   * them, which people are asked about. Resolves to whether to go on.
+   */
+  async #settleUploads(): Promise<boolean> {
+    const { t } = this;
+    const { sender, items } = this.uploads.getSnapshot();
+    const going = items.filter(({ phase }) =>
+      ["queued", "reading", "sending", "checking", "pushing", "offline", "busy"].includes(phase),
+    );
+    if (sender !== "here" || going.length === 0) return true;
+    const left = going.reduce((all, item) => all + Math.max(0, item.size - item.received), 0);
+    return this.dialogs.confirm({
+      title: t("storage.uploads.leave.title", { count: going.length, left: formatSize(left) }),
+      message: t("storage.uploads.leave.message"),
+      confirm: t("storage.uploads.leave.leave"),
+      cancel: t("storage.uploads.leave.stay"),
+    });
+  }
+
+  /** Whether files of assets go somewhere from this window now, which a reload would stop. */
+  get uploading(): boolean {
+    const { sender, items } = this.uploads.getSnapshot();
+    return (
+      sender === "here" &&
+      items.some(({ phase }) => ["reading", "sending", "checking", "pushing"].includes(phase))
+    );
+  }
+
+  /**
+   * Puts the files of these assets into the large file storage: at once where people said before
+   * that they know what it means, and through the dialog otherwise, which asks them first.
+   */
+  async putInLfs(assets: readonly string[]): Promise<void> {
+    if (!this.lfsAccount.acknowledged) await this.lfsAccount.refresh();
+    if (this.lfsAccount.acknowledged) await this.uploads.add(assets);
+    else await this.choosePlaces(assets);
+  }
+
+  /** Does what helps with a file that did not get into the large file storage, see `UploadProblem`. */
+  async fixUpload(problem: UploadProblem): Promise<void> {
+    switch (problem) {
+      case "githubQuota":
+        window.open(GITHUB_BILLING, "_blank", "noopener,noreferrer");
+        return;
+      case "changed":
+      case "missing":
+        this.layout.openPanel("problems");
+        return;
+      case "access":
+        await this.projectFolders?.allowAgain();
+        await this.uploads.retryAll(["access"]);
+        return;
+      case "signedOut":
+        await this.signIn();
+        return;
+      default:
+        return;
+    }
+  }
+
   /** Back to the start page. */
   async closeProject(): Promise<void> {
     await this.#changeProject();
@@ -2346,15 +2549,106 @@ export class Workbench {
    */
   async importDropped(transfer: DataTransfer): Promise<readonly string[]> {
     const folders = this.projectFolders;
-    if (!folders?.assets()) return this.media.importFiles([...transfer.files]);
-    return this.#importPlaced(await folders.droppedFiles(transfer));
+    const before = this.#assetCount();
+    if (!folders?.assets())
+      return this.#imported(await this.media.importFiles([...transfer.files]), before);
+    return this.#imported(await this.#importPlaced(await folders.droppedFiles(transfer)), before);
   }
 
   /** Lets people choose files to bring in, in the project folder where it is one: see `importDropped`. */
   async pickFiles(): Promise<readonly string[]> {
     const folders = this.projectFolders;
+    const before = this.#assetCount();
     const placed = folders?.assets() ? await folders.pickFiles() : undefined;
-    return placed ? this.#importPlaced(placed) : this.media.pickFiles();
+    return this.#imported(
+      placed ? await this.#importPlaced(placed) : await this.media.pickFiles(),
+      before,
+    );
+  }
+
+  #noticeOfUploads(...args: Parameters<Notifications["push"]>): void {
+    this.#uploadNotices.push(this.notifications.push(...args));
+  }
+
+  #assetCount(): number {
+    return Object.keys(this.session.store?.getState().assets ?? {}).length;
+  }
+
+  /**
+   * New assets of a project of the platform (docs/design/asset-storage.md of AnimaQuill Cloud, 4.3
+   * and 4.6): into the large file storage by themselves where people turned that on for the
+   * project; otherwise they stay here, and people hear once where that is not safe: a large file,
+   * a project only in this browser, and the first assets of a new project.
+   */
+  #imported(ids: readonly string[], before: number): readonly string[] {
+    const project = this.#uploadProject();
+    if (ids.length === 0 || !project?.project || !this.uploads.available) return ids;
+    const { t } = this;
+    const platform = project.project;
+    if (this.lfsAccount.isAuto(platform)) {
+      void this.uploads.add(ids);
+      return ids;
+    }
+    const put = (assets: readonly string[]) => ({
+      label: t("storage.uploads.notice.put"),
+      run: () => void this.putInLfs(assets),
+    });
+    const assets = this.session.store?.getState().assets ?? {};
+    for (const id of ids) {
+      const asset = assets[id];
+      if (asset?.size === undefined || asset.size <= LARGE_IMPORT_BYTES) continue;
+      this.#noticeOfUploads(
+        t("storage.uploads.notice.large", {
+          name: asset.name ?? asset.path,
+          size: formatSize(asset.size),
+          interpolation: { escapeValue: false },
+        }),
+        {
+          stays: true,
+          actions: [put([id]), { label: t("storage.uploads.notice.no"), run: () => {} }],
+        },
+      );
+    }
+    const cloud = this.cloud?.getSnapshot();
+    if (cloud?.kind === "linked" && cloud.local === "browser") {
+      this.#noticeOfUploads(t("storage.uploads.notice.browserOnly"), {
+        stays: true,
+        actions: [put(ids), { label: t("storage.uploads.notice.later"), run: () => {} }],
+      });
+    } else if (before === 0) void this.#askOnce(`firstImport.${platform}`, "firstImport");
+    return ids;
+  }
+
+  /**
+   * Asks once whether to put the assets of the open project into the large file storage, opening
+   * the dialog for that: `what` says why now. Once for each `name`, in this browser.
+   */
+  async #askOnce(name: string, what: "connected" | "firstImport"): Promise<void> {
+    const key = `uploads.asked.${name}`;
+    const settings = this.#settings;
+    if ((await settings.load(key).catch(() => true)) !== undefined) return;
+    await settings.save(key, Date.now()).catch(() => {});
+    const { t } = this;
+    this.#noticeOfUploads(t(`storage.uploads.notice.${what}`), {
+      stays: true,
+      actions: [
+        { label: t("storage.uploads.notice.choose"), run: () => void this.choosePlaces() },
+        { label: t("storage.uploads.notice.later"), run: () => {} },
+      ],
+    });
+  }
+
+  /**
+   * The dialog where people choose which assets of the open project go into the large file storage,
+   * with these chosen to start with: by default those the project uses. Resolves once it is over.
+   */
+  async choosePlaces(chosen?: readonly string[]): Promise<void> {
+    if (!this.session.store) return;
+    void this.lfsAccount.refresh();
+    await this.dialogs.places({
+      title: this.t("storage.uploads.dialog.title"),
+      ...(chosen && { chosen }),
+    });
   }
 
   async #importPlaced({ inside, files, unreadable }: PlacedFiles): Promise<readonly string[]> {
@@ -3035,6 +3329,7 @@ export class Workbench {
     } else {
       if (!(await this.#settleCode())) return false;
       if (!(await this.#settleTrial())) return false;
+      if (!(await this.#settleUploads())) return false;
     }
     // Quietly, the project could not be changed meanwhile: what its log does not have is not there.
     if (!(await this.session.trySave()) && !quietly) {
@@ -3052,6 +3347,9 @@ export class Workbench {
     await this.layout.detach();
     this.cloudPanel.set(false);
     this.projectNav.close();
+    // What is on its way stops where it is, and goes on the next time the project is open.
+    await this.uploads.close();
+    for (const id of this.#uploadNotices.splice(0)) this.notifications.dismiss(id);
     // What the platform does not have yet stays in the log, for whoever syncs next.
     await this.cloud?.close();
     // The folder gets what is waiting first, and the next window gets to write it.

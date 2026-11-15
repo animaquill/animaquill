@@ -1,8 +1,13 @@
+import { CHANGE_TIMEOUT_MS, REQUEST_TIMEOUT_MS, withinTime } from "./answers.ts";
 import {
+  CloudOtherAccount,
   CloudSignedOut,
   LfsRefused,
   type LfsAccess,
+  type LfsAccount,
+  type LfsAccountAccess,
   type LfsRefusal,
+  type LfsRepositoryUse,
   type LfsUpload,
   type LfsUploadState,
 } from "./index.ts";
@@ -182,5 +187,81 @@ export function browserLfs(options: BrowserLfsOptions): LfsAccess {
     async cancel(upload) {
       await call("DELETE", uploadPath(upload));
     },
+  };
+}
+
+const repositoryOf = (value: unknown): LfsRepositoryUse | undefined => {
+  if (!isObject(value) || !isObject(value.project)) return undefined;
+  const repo = count(value.repo);
+  const fullName = text(value.fullName);
+  const url = text(value.url);
+  const id = text(value.project.id);
+  const name = text(value.project.name);
+  const files = count(value.files);
+  const bytes = count(value.bytes);
+  if (
+    repo === undefined ||
+    fullName === undefined ||
+    url === undefined ||
+    !url.startsWith("https://") ||
+    id === undefined ||
+    name === undefined ||
+    files === undefined ||
+    bytes === undefined
+  )
+    return undefined;
+  return { repo, fullName, url, project: { id, name }, files, bytes };
+};
+
+/** What the platform said, or undefined where it is not that. Repositories it cannot read are left out. */
+export const lfsAccountOf = (value: unknown): LfsAccount | undefined => {
+  if (!isObject(value)) return undefined;
+  const account = text(value.account);
+  if (account === undefined || !Array.isArray(value.auto) || !Array.isArray(value.repositories))
+    return undefined;
+  const acknowledgedAt = count(value.acknowledgedAt);
+  return {
+    account,
+    ...optional("acknowledgedAt", acknowledgedAt),
+    auto: value.auto.filter((id): id is string => typeof id === "string"),
+    repositories: value.repositories.flatMap((each) => repositoryOf(each) ?? []),
+  };
+};
+
+/**
+ * What people have in the large file storage through a platform, over its HTTP API, see
+ * `LfsAccountAccess`:
+ *
+ * - `GET <api>/me/lfs`: `{account, acknowledgedAt?, auto, repositories}`.
+ * - `POST <api>/me/lfs` `{account, acknowledged?: true, auto?: {project, on}}`: the same.
+ */
+export function browserLfsAccount(options: BrowserLfsOptions): LfsAccountAccess {
+  const request = options.fetch ?? ((input, init) => fetch(input, init));
+  const ask = async (init: RequestInit, signal: AbortSignal): Promise<LfsAccount> => {
+    const response = await request(options.api("/me/lfs"), { cache: "no-store", ...init, signal });
+    const answer: unknown = await response.json().catch(() => undefined);
+    const said = isObject(answer) ? answer.error : undefined;
+    if (response.status === 401 || said === "signedOut")
+      throw new CloudSignedOut("Nobody is signed in");
+    if (response.status === 409 && said === "otherAccount")
+      throw new CloudOtherAccount("Somebody else is signed in");
+    if (!response.ok) throw new Error(`The platform answered ${response.status}`);
+    const found = lfsAccountOf(answer);
+    if (!found) throw new Error("The platform answered something that cannot be read");
+    return found;
+  };
+  return {
+    read: () => withinTime(REQUEST_TIMEOUT_MS, (signal) => ask({}, signal)),
+    change: (account, changes) =>
+      withinTime(CHANGE_TIMEOUT_MS, (signal) =>
+        ask(
+          {
+            method: "POST",
+            headers: { ...options.changeHeaders, "content-type": "application/json" },
+            body: JSON.stringify({ account, ...changes }),
+          },
+          signal,
+        ),
+      ),
   };
 }

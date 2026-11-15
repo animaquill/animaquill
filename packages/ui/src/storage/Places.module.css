@@ -1,0 +1,204 @@
+.dialog {
+  width: min(900px, calc(100vw - 32px));
+  max-height: calc(100dvh - 64px);
+  margin: 32px auto auto;
+  padding: 0;
+  overflow: auto;
+  color: var(--aq-text);
+  background: var(--aq-bg-menu);
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+  box-shadow: var(--aq-shadow);
+}
+
+.dialog::backdrop {
+  background: #00000066;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+.quick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.quick button {
+  padding: 2px 10px;
+  color: var(--aq-text);
+  background: var(--aq-bg-input);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.quick button.on {
+  border-color: var(--aq-accent);
+  color: var(--aq-text-strong);
+}
+
+.order select {
+  margin-left: 4px;
+  color: var(--aq-text);
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+}
+
+.tableBox {
+  max-height: 46dvh;
+  overflow: auto;
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.table th {
+  position: sticky;
+  top: 0;
+  padding: 6px 8px;
+  color: var(--aq-text-muted);
+  font-weight: normal;
+  text-align: left;
+  background: var(--aq-bg-panel, var(--aq-bg-menu));
+}
+
+.table td {
+  padding: 6px 8px;
+  border-top: 1px solid var(--aq-border);
+  vertical-align: middle;
+}
+
+.table tbody tr {
+  cursor: pointer;
+}
+
+.table tr.off {
+  color: var(--aq-text-muted);
+  cursor: default;
+}
+
+.name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  word-break: break-all;
+}
+
+.unused {
+  color: var(--aq-warning, #d7a33a);
+}
+
+.more {
+  padding: 0;
+  color: var(--aq-link, var(--aq-accent));
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.summary {
+  margin: 12px 0;
+  padding: 10px 12px;
+  background: var(--aq-bg-input);
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.content .summary p,
+.summary p {
+  margin: 0 0 6px;
+}
+
+.total {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--aq-text-strong);
+  font-size: 13px;
+}
+
+.repo {
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+.summary a {
+  color: var(--aq-link, var(--aq-accent));
+}
+
+.summary details summary {
+  color: var(--aq-text-muted);
+  cursor: pointer;
+}
+
+.summary details p {
+  margin: 6px 0 0;
+  color: var(--aq-text-muted);
+}
+
+.switch,
+.acknowledge {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.acknowledge {
+  padding: 8px 10px;
+  border: 1px solid var(--aq-warning, #d7a33a);
+  border-radius: 4px;
+}
+
+.problem {
+  color: var(--aq-danger);
+}
+
+.footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 12px;
+  color: var(--aq-text-muted);
+  font-size: 12px;
+}
+
+@media (max-width: 640px) {
+  .table th:nth-child(4),
+  .table td:nth-child(4) {
+    display: none;
+  }
+}
+
+/* Not the fields of text that other dialogs have. */
+.dialog input[type="checkbox"] {
+  flex: none;
+  width: auto;
+  margin: 2px 0 0;
+  padding: 0;
+  accent-color: var(--aq-accent);
+}
+
+.dialog .table input[type="checkbox"] {
+  margin: 0;
+}

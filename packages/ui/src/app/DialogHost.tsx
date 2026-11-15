@@ -7,6 +7,7 @@ import { NewProjectDialog } from "./NewProjectDialog.tsx";
 import { ReconcileDialog } from "./ReconcileDialog.tsx";
 import styles from "./DialogHost.module.css";
 import { RepositoryDialog } from "./RepositoryDialog.tsx";
+import { PlacesDialog } from "../storage/PlacesDialog.tsx";
 
 /** Something that takes a while. It stays until that is over, whatever people press. */
 function Progress({ request }: { request: ProgressRequest }) {
@@ -55,6 +56,7 @@ type CreateRequest = Extract<DialogRequest, { kind: "create" }>;
 type ReconcileRequest = Extract<DialogRequest, { kind: "reconcile" }>;
 type QuestionRequest = Exclude<
   DialogRequest,
+  | Extract<DialogRequest, { kind: "places" }>
   | ProgressRequest
   | FormRequest
   | RepositoryRequest
@@ -286,5 +288,6 @@ export function DialogHost() {
   if (request.kind === "connect") return <ConnectDialog key={request.id} request={request} />;
   if (request.kind === "create") return <NewProjectDialog key={request.id} request={request} />;
   if (request.kind === "reconcile") return <ReconcileDialog key={request.id} request={request} />;
+  if (request.kind === "places") return <PlacesDialog key={request.id} request={request} />;
   return <Dialog key={request.id} request={request} />;
 }
