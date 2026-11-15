@@ -109,6 +109,37 @@ describe("the moment a cover shows", () => {
     expect(shot?.seconds).toBe(shot!.durationMs >= 1000 ? 1 : shot!.durationMs / 2000);
   });
 
+  it("is the frame the project chose, while that is on its timeline", () => {
+    const store = projectOf();
+    const main = store.getState().manifest.timelines[0] ?? "";
+    const longer = store.execute({
+      type: "section.add",
+      params: { timeline: main, duration: "10" },
+    });
+    expect(longer.ok).toBe(true);
+    const chosen = store.execute({
+      type: "project.setCover",
+      params: { cover: { timeline: main, time: "7.5" } },
+    });
+    expect(chosen.ok).toBe(true);
+    expect(coverShotOf(store.getState(), "folder-1")).toMatchObject({
+      timeline: main,
+      seconds: 7.5,
+    });
+    // A file can say a moment past the end, or a timeline that is not there: the editor picks one.
+    const state = store.getState();
+    const past = {
+      ...state,
+      manifest: { ...state.manifest, cover: { timeline: main, time: "9999" } },
+    };
+    expect(coverShotOf(past, "folder-1")?.seconds).toBe(1);
+    const gone = {
+      ...state,
+      manifest: { ...state.manifest, cover: { timeline: "gone", time: "2" } },
+    };
+    expect(coverShotOf(gone, "folder-1")?.seconds).toBe(1);
+  });
+
   it("is small: its longer side 480 pixels, whatever the shape", () => {
     expect(coverSize(3840, 2160)).toEqual({ width: 480, height: 270 });
     expect(coverSize(1080, 1920)).toEqual({ width: 270, height: 480 });

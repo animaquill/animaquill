@@ -732,12 +732,35 @@ describe("changes that do not go through", () => {
     const { workbench } = setup();
     await create(workbench, "一");
     lock(workbench);
-    const renaming = workbench.renameProject();
-    await dialogOf(workbench);
-    workbench.dialogs.answer("二");
-    await renaming;
+    expect(workbench.projectEdits.rename("二")).toBe(false);
     expect(nameOf(workbench)).toBe("一");
     expect(notices(workbench)).toEqual(["notice.commandFailed"]);
+  });
+
+  it("renames in the project properties, at the name, which only open with a project", async () => {
+    const { workbench } = setup();
+    workbench.actions.get("project.rename")?.run();
+    expect(workbench.projectNav.isOpen).toBe(false);
+    expect(workbench.actions.get("project.properties")?.visible?.()).toBe(false);
+    await create(workbench, "一");
+    expect(workbench.actions.get("project.properties")?.visible?.()).toBe(true);
+    workbench.openSettings();
+    workbench.actions.get("project.rename")?.run();
+    expect(workbench.projectNav.isOpen).toBe(true);
+    expect(workbench.settingsNav.isOpen).toBe(false);
+    expect(workbench.projectNav.getSnapshot()).toEqual({
+      group: "general",
+      depth: 1,
+      item: "name",
+    });
+    expect(workbench.projectEdits.rename("  二  ")).toBe(true);
+    expect(nameOf(workbench)).toBe("二");
+    // One dialog at a time; and they close with the project.
+    workbench.openSettings();
+    expect(workbench.projectNav.isOpen).toBe(false);
+    workbench.openProjectProperties();
+    await workbench.closeProject();
+    expect(workbench.projectNav.isOpen).toBe(false);
   });
 
   it("says why undo cannot do anything", async () => {

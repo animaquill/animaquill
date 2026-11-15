@@ -282,6 +282,30 @@ describe("where the handles are", () => {
   });
 });
 
+describe("the safe area", () => {
+  it("is a frame inside the picture where the master has one, also with nothing selected", async () => {
+    const { store, run, overlay } = await setup();
+    const safe = () => overlay.getSnapshot().scene.marks.find(({ kind }) => kind === "safe");
+    expect(safe()).toBeUndefined();
+    const [master] = store.getState().manifest.formats;
+    run("project.setFormats", {
+      formats: [{ ...master, safeArea: { top: 0.1, right: 0.05, bottom: 0.2, left: 0 } }],
+    });
+    // The picture is 960 × 540 in a viewport of that size.
+    expect(safe()).toEqual({
+      kind: "safe",
+      corners: [
+        { x: 0, y: 54 },
+        { x: 912, y: 54 },
+        { x: 912, y: 432 },
+        { x: 0, y: 432 },
+      ],
+    });
+    run("project.setFormats", { formats: [master] });
+    expect(safe()).toBeUndefined();
+  });
+});
+
 describe("dragging", () => {
   it("the box moves the clip, and only shows that until letting go", async () => {
     const { addClip, overlay, writer, property, pointer, store } = await setup();

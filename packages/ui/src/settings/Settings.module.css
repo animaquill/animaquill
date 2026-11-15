@@ -29,6 +29,12 @@
   box-shadow: var(--aq-shadow);
 }
 
+/* The project properties: the same shell, a little smaller (5.1). */
+.dialog[data-kind="properties"] {
+  width: min(820px, 92vw);
+  height: min(640px, 92dvh);
+}
+
 .dialog[data-narrow] {
   top: 0;
   left: 0;

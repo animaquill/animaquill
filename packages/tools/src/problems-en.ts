@@ -1,6 +1,7 @@
 import {
   PROPERTY_CODES,
   REFERENCE_CODES,
+  TIMING_CODES,
   UNSUPPORTED_CODES,
   type ProjectProblem,
   type ProjectState,
@@ -49,6 +50,8 @@ export const PROBLEM_TEXTS: Readonly<Record<string, (params: Params) => string>>
     "keyframes of the volume are not applied by this editor version yet: the first one holds",
   "unsupported-loop": () =>
     "loop is not applied by this editor version yet: the media does not start again",
+  "time-off-grid": (p) =>
+    `${str(p.count)} of its times are between frames of the editing frame rate ${str(p.fps)}; playing and exporting are as usual, and dragging lands on frames`,
   "unsupported-draft": () => "a draft clip still shows and exports in this editor version",
   "unsupported-override": (p) =>
     `the changes of version ${str(p.version ?? p.format ?? p.language)} are not applied by this editor version yet`,
@@ -81,6 +84,7 @@ export const PROBLEM_TEXTS: Readonly<Record<string, (params: Params) => string>>
 export const STATIC_PROBLEM_CODES: readonly string[] = [
   ...REFERENCE_CODES,
   ...UNSUPPORTED_CODES,
+  ...TIMING_CODES,
   ...PROPERTY_CODES,
 ];
 

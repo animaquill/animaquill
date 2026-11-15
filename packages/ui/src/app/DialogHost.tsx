@@ -81,7 +81,14 @@ function Form({ request }: { request: FormRequest }) {
   }, []);
 
   const dismiss = () => dialogs.answer(undefined);
-  const { title, fields, notes = [] } = request;
+  const { title, fields, notes = [], notesFirst = false } = request;
+  const noteList = notes.length > 0 && (
+    <ul className={styles.notes}>
+      {notes.map((note) => (
+        <li key={note}>{note}</li>
+      ))}
+    </ul>
+  );
   return (
     <dialog
       ref={dialog}
@@ -97,6 +104,7 @@ function Form({ request }: { request: FormRequest }) {
     >
       <div className={styles.content}>
         <h2>{title}</h2>
+        {notesFirst && noteList}
         <div className={styles.fields}>
           {fields.map(({ id, label, options }) => (
             <label key={id} className={styles.field}>
@@ -114,13 +122,7 @@ function Form({ request }: { request: FormRequest }) {
             </label>
           ))}
         </div>
-        {notes.length > 0 && (
-          <ul className={styles.notes}>
-            {notes.map((note) => (
-              <li key={note}>{note}</li>
-            ))}
-          </ul>
-        )}
+        {!notesFirst && noteList}
         <div className={styles.buttons}>
           <button type="button" onClick={dismiss}>
             {t("dialog.cancel")}
@@ -163,6 +165,8 @@ function Dialog({ request }: { request: QuestionRequest }) {
   const isConfirm = request.kind === "confirm";
   const danger = isConfirm && request.danger === true;
   const details = request.kind === "confirm" ? (request.details ?? []) : [];
+  const notes = request.kind === "choice" ? (request.notes ?? []) : [];
+  const pictures = request.kind === "choice" ? (request.pictures ?? []) : [];
   const canConfirm = !isPrompt || request.allowEmpty === true || value.trim().length > 0;
   const confirm = () => {
     if (canConfirm) dialogs.answer(isPrompt ? value.trim() : true);
@@ -180,7 +184,7 @@ function Dialog({ request }: { request: QuestionRequest }) {
   return (
     <dialog
       ref={dialog}
-      className={details.length > 0 ? styles.wide : styles.dialog}
+      className={details.length > 0 || pictures.length > 0 ? styles.wide : styles.dialog}
       aria-label={request.title}
       onCancel={(event) => {
         event.preventDefault();
@@ -194,6 +198,23 @@ function Dialog({ request }: { request: QuestionRequest }) {
       <div className={styles.content} onKeyDown={onKeyDown}>
         <h2>{request.title}</h2>
         {!isPrompt && <p>{request.message}</p>}
+        {pictures.length > 0 && (
+          <div className={styles.pictures}>
+            {pictures.map(({ label, url }) => (
+              <figure key={label}>
+                <img src={url} alt={label} />
+                <figcaption>{label}</figcaption>
+              </figure>
+            ))}
+          </div>
+        )}
+        {notes.length > 0 && (
+          <ul className={styles.notes}>
+            {notes.map((note) => (
+              <li key={note}>{note}</li>
+            ))}
+          </ul>
+        )}
         {details.map(({ title, items }) => (
           <section key={title} className={styles.list}>
             <h3>{title}</h3>

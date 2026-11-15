@@ -2,15 +2,15 @@
 
 exports[`results > of aq_check_run read as they did 1`] = `
 "rev <epoch>:0
-0 errors, 18 warnings; format: ok
+0 errors, 20 warnings; format: ok
 sources: project data; scene runtime: not checked here
-problems 1-5 of 18:
+problems 1-5 of 20:
 W unsupported-audio-property clip_interview "采访" at time.speed: time.speed is not applied by this editor version yet; preview and export ignore it
 W unsupported-library clip_logo: uses library lib_7f3a, which this editor version cannot read yet: missing from preview and export
 W unsupported-library clip_card: uses library lib_7f3a, which this editor version cannot read yet: missing from preview and export
 W unsupported-draft clip_idea "样片：换个开场": a draft clip still shows and exports in this editor version
 W unsupported-audio-property clip_interview_audio at audio.pan: audio.pan is not applied by this editor version yet; preview and export ignore it
-13 more; cursor "c1" gives the next ones."
+15 more; cursor "c1" gives the next ones."
 `;
 
 exports[`results > of aq_guide read as they did 1`] = `
@@ -56,7 +56,14 @@ howto/scene-code — scene and sound code: files and folders, what the code reac
 Operations of aq_edit (each page: what it does, parameters and the fields inside them, result, errors, examples):
 ops/project.rename — renames the project
 ops/project.setFrameRate — sets the frame rate the timeline counts frames by
+ops/project.setDescription — sets the description of the project
+ops/project.setCredits — sets the credits of the project
+ops/project.setFormats — sets the picture formats, the first the master
+ops/project.setLanguages — sets the languages, the first the master
+ops/project.setCover — sets the moment the cover of the project shows
 ops/timeline.rename — renames a timeline
+ops/timeline.setBackground — sets the background color of a timeline
+ops/timeline.setDefault — makes a timeline open first
 ops/section.add — adds a section to a timeline, which makes it longer
 ops/section.update — changes the duration or name of a section
 ops/section.remove — removes a section; a timeline keeps at least one
@@ -142,13 +149,14 @@ project settings
 exports[`results > of aq_project_status read as they did 1`] = `
 "rev <epoch>:0
 project "原子是什么" fps=30 formats=landscape(1920x1080) vertical(1080x1920) languages=zh-CN en
+description "一条用到格式每种能力的示例项目。"
 editable=yes
 timelines (2): main "主线" 0..30.005 tracks=5 clips=11 | highlight "60 秒精华" 0..8 tracks=1 clips=1
 scenes (1): title "标题卡" entry=index.html
 sounds (1): impacts "打击音效" entry=main.js
 assets (7): font-sans font path="assets/fonts/sans.woff2" | interview "采访" video path="assets/interview.mp4" 12.5s 1920x1080 | logo image path="assets/logo.svg" | narration-en audio path="assets/voice/en.flac" 26s | narration-zh audio path="assets/voice/zh.flac" 20s | raw-footage video path="assets/raw.mov" | studio-loop audio path="assets/loop.wav"
 code files (1): code/animate.js
-problems: 0 errors, 18 warnings (aq_check_run lists them)"
+problems: 0 errors, 20 warnings (aq_check_run lists them)"
 `;
 
 exports[`results > of aq_search read as they did 1`] = `

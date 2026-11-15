@@ -95,6 +95,7 @@ async function renameTo(page: Page, name: string) {
   await chooseFrom(page, "文件", "重命名项目");
   await page.getByRole("textbox", { name: "项目名称" }).fill(name);
   await page.keyboard.press("Enter");
+  await page.keyboard.press("Escape");
 }
 
 /** A new project in a folder of that name, the way people make one: see `installChosen`. */

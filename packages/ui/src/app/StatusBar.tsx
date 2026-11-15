@@ -400,7 +400,7 @@ function FolderSaveStatus({ open }: { open: OpenFolder }) {
 const NO_CLOUD: CloudProjectsSnapshot = { kind: "none" };
 
 /** Whether the browser keeps what it stores, for the panel, see `PanelInput.persisted`. */
-const storedOf = (workbench: {
+export const storedOf = (workbench: {
   cloud: { persisted: boolean | undefined } | undefined;
   persistence: { clearsWhenIdle: boolean } | undefined;
 }) => {
@@ -412,7 +412,7 @@ const storedOf = (workbench: {
 };
 const noCloud = () => NO_CLOUD;
 /** Whether the open project can be edited and taken away, for the panel, see `PanelInput`. */
-const cloudOf = (workbench: {
+export const cloudOf = (workbench: {
   cloud:
     | {
         unusable: PanelInput["unusable"];
@@ -824,13 +824,16 @@ export function StatusBar() {
   return (
     <footer className={styles.bar}>
       {project ? (
-        <button
-          type="button"
-          className={styles.name}
-          onClick={() => void workbench.renameProject()}
-        >
-          {project.manifest.name}
-        </button>
+        <Tip name={t("projectProps.title")} usage={t("projectProps.statusUsage")}>
+          <button
+            type="button"
+            className={styles.name}
+            aria-haspopup="dialog"
+            onClick={() => workbench.openProjectProperties()}
+          >
+            {project.manifest.name}
+          </button>
+        </Tip>
       ) : (
         <span>{t("app.noProject")}</span>
       )}

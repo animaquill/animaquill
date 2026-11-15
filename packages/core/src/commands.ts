@@ -91,6 +91,23 @@ import {
   type TrackState,
 } from "./model.ts";
 import { STORAGE, type Origin } from "./origin.ts";
+import {
+  BackgroundSet,
+  CoverSet,
+  CreditsSet,
+  DefaultSet,
+  DescriptionSet,
+  FilesRemoved,
+  FormatsSet,
+  LanguagesSet,
+  setBackground,
+  setCover,
+  setCredits,
+  setDefault,
+  setDescription,
+  setFormats,
+  setLanguages,
+} from "./project-edits.ts";
 import { deepEqual } from "./patch.ts";
 import { StorageChange, setStorage } from "./places.ts";
 import { PropertyEdit, applyEdit } from "./property-edit.ts";
@@ -642,6 +659,60 @@ export const OPERATIONS = [
     },
   ),
 
+  define(
+    "project.setDescription",
+    "设置项目的说明，空的就去掉说明。",
+    DescriptionSet,
+    setDescription,
+    {
+      group: "project",
+      result: Nothing,
+      failures: [],
+    },
+  ),
+
+  define("project.setCredits", "设置项目的署名：每条有角色和名字。", CreditsSet, setCredits, {
+    group: "project",
+    result: Nothing,
+    failures: [],
+  }),
+
+  define(
+    "project.setFormats",
+    "设置项目的画幅（第一个是母版）：加、改、删、换母版。删掉的画幅的差异文件一起删。",
+    FormatsSet,
+    setFormats,
+    {
+      group: "project",
+      result: FilesRemoved.optional(),
+      failures: ["invalid-value"],
+    },
+  ),
+
+  define(
+    "project.setLanguages",
+    "设置项目的语言（第一种是母版）：加、改名、删、换母版。删掉的语言的字符串表和差异文件一起删。",
+    LanguagesSet,
+    setLanguages,
+    {
+      group: "project",
+      result: FilesRemoved.optional(),
+      failures: ["invalid-value"],
+    },
+  ),
+
+  define(
+    "project.setCover",
+    "设置项目的封面帧：哪条时间轴的哪一刻；null 去掉。",
+    CoverSet,
+    setCover,
+    {
+      group: "project",
+      result: Nothing,
+      failures: ["not-found", "invalid-value"],
+    },
+  ),
+
   /**
    * An asset of a file only here, or in the person's own Git: where else a file is kept, uploads
    * write down once it got there (`asset.setStorage`), and files say.
@@ -869,6 +940,22 @@ export const OPERATIONS = [
       timelineOf(draft, timeline);
       draft.set([...timelinePath(timeline), "name"], name);
     },
+    { group: "timeline", result: Nothing, failures: ["not-found"] },
+  ),
+
+  define(
+    "timeline.setBackground",
+    "设置时间轴的背景色，null 是默认的黑色。",
+    BackgroundSet,
+    setBackground,
+    { group: "timeline", result: Nothing, failures: ["not-found"] },
+  ),
+
+  define(
+    "timeline.setDefault",
+    "让一条时间轴默认打开：排到项目的时间轴列表最前面。",
+    DefaultSet,
+    setDefault,
     { group: "timeline", result: Nothing, failures: ["not-found"] },
   ),
 

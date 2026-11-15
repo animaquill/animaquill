@@ -34,6 +34,7 @@ const RULES: { readonly [R in InvalidValue["rule"]]: Extract<InvalidValue, { rul
   "join-incomplete": { rule: "join-incomplete", join: "j1" },
   "sound-entry": { rule: "sound-entry", entry: "index.html" },
   "size-unknown": { rule: "size-unknown", asset: "a1" },
+  "time-outside": { rule: "time-outside", path: "cover.time", time: "12", length: "10" },
 };
 
 const CODES: { readonly [C in FailureCode]: CommandFailure & { readonly code: C } } = {

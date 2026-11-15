@@ -113,6 +113,13 @@ export const InvalidValue = z.discriminatedUnion("rule", [
   z.strictObject({ rule: z.literal("sound-entry"), entry: z.string() }),
   /** Where a file is kept elsewhere cannot be written down without its size. */
   z.strictObject({ rule: z.literal("size-unknown"), asset: z.string() }),
+  /** A moment that has to be on a timeline is at its end or after it. */
+  z.strictObject({
+    rule: z.literal("time-outside"),
+    path: z.string(),
+    time: z.string(),
+    length: z.string(),
+  }),
 ]);
 export type InvalidValue = z.output<typeof InvalidValue>;
 

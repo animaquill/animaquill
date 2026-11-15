@@ -93,6 +93,8 @@ export const INVALID_VALUE_TEXTS: RuleTexts = {
   "sound-entry": ({ entry }) =>
     `The entry of a sound has to be a .js or .mjs file, not ${JSON.stringify(entry)}.`,
   "size-unknown": ({ asset }) => `The size of the file of asset ${asset} is not known yet.`,
+  "time-outside": ({ path, time, length }) =>
+    `${path} ${time} is not before the end of the timeline, which is ${length} seconds long.`,
 };
 
 function invalidValue(params: InvalidValue): string {

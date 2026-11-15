@@ -383,6 +383,45 @@ describe("making proxies", () => {
     expect(proxyOnDisk()).toBe(proxyText(SPEC));
   });
 
+  it("go all at once when people free the space, and are not made again until they ask", async () => {
+    const { proxies, hash, inFolder, disk, maker } = await setup();
+    await proxies.settled();
+    disk.write(`${ROOT}/${PROXY_FOLDER}/notes.txt`, "people's own");
+    expect(await proxies.usage()).toEqual({
+      count: 1,
+      bytes: new Blob([proxyText(SPEC)]).size,
+    });
+    expect(proxies.standInFor(hash)).toBeDefined();
+    expect(await proxies.removeAll()).toBe(1);
+    expect(stateOf(proxies, hash)).toEqual({ kind: "none" });
+    expect(proxies.standInFor(hash)).toBeUndefined();
+    // Only what the editor made goes.
+    expect(inFolder()).toEqual(["notes.txt"]);
+    expect(await proxies.usage()).toEqual({ count: 0, bytes: 0 });
+    await proxies.lookAgain();
+    await proxies.settled();
+    expect(maker.made).toHaveLength(1);
+    proxies.make(hash);
+    await proxies.settled();
+    expect(stateOf(proxies, hash)).toEqual({ kind: "ready" });
+  });
+
+  it("go also while one is being made, which stops first", async () => {
+    const maker = fakeMaker();
+    maker.hold();
+    const { proxies, hash, inFolder } = await setup({ maker });
+    await vi.waitFor(() => expect(maker.made).toHaveLength(1));
+    expect(await proxies.removeAll()).toBe(0);
+    expect(maker.made[0]?.cancelled).toBe(true);
+    expect(inFolder()).toEqual([]);
+    expect(stateOf(proxies, hash)).toEqual({ kind: "stopped" });
+  });
+
+  it("are only taken away by the window that writes the folder", async () => {
+    const { proxies } = await setup({ writes: false, asked: false });
+    expect(await proxies.removeAll()).toBeUndefined();
+  });
+
   it("leaves nothing a crash could have the next page take for a proxy", async () => {
     const maker = fakeMaker();
     maker.hold();

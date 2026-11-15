@@ -304,6 +304,7 @@ async function renameTo(page: Page, name: string) {
   await chooseFrom(page, "文件", "重命名项目");
   await page.getByRole("textbox", { name: "项目名称" }).fill(name);
   await page.keyboard.press("Enter");
+  await page.keyboard.press("Escape");
 }
 
 async function removeProject(page: Page, name: string) {
@@ -448,6 +449,7 @@ test.describe("a project that travels", () => {
     await chooseFrom(page, "文件", "重命名项目");
     await page.getByRole("textbox", { name: "项目名称" }).fill("原来的项目");
     await page.keyboard.press("Enter");
+    await page.keyboard.press("Escape");
     await saved(page);
     const before = await stored(page);
 
@@ -479,9 +481,11 @@ test.describe("a project that travels", () => {
     await chooseFrom(page, "文件", "重命名项目");
     await page.getByRole("textbox", { name: "项目名称" }).fill("别的名字");
     await page.keyboard.press("Enter");
+    await page.keyboard.press("Escape");
     await chooseFrom(page, "文件", "重命名项目");
     await page.getByRole("textbox", { name: "项目名称" }).fill("测试项目");
     await page.keyboard.press("Enter");
+    await page.keyboard.press("Escape");
 
     await startExport(page);
     await expect(dialog(page).getByText("“测试项目 (2)”")).toBeVisible();

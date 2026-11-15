@@ -79,7 +79,7 @@ import {
   type OverlayPointer,
 } from "./gestures.ts";
 import type { SceneHandles } from "./scene-handles.ts";
-import { worldToScreen } from "./screen.ts";
+import { pictureOnScreen, worldToScreen } from "./screen.ts";
 
 export { ROTATE_REACH } from "./clip-visual.ts";
 export { SIDES, type GripLook, type GripRole, type Mark, type Side } from "./extension.ts";
@@ -557,12 +557,40 @@ export class OverlayEditor {
     };
   }
 
+  /**
+   * The safe area of the master format, as a dashed frame inside the picture, also while it plays
+   * (docs/design/settings-and-properties.md of AnimaQuill Cloud, 5.2). Nothing of an export.
+   */
+  #safeArea(): Mark | undefined {
+    const area = this.#sources.session.store?.getState().manifest.formats[0]?.safeArea;
+    const size = this.#sources.quality.getSnapshot().size;
+    if (!area || !size || !(this.#width > 0 && this.#height > 0)) return undefined;
+    const picture = pictureOnScreen(
+      { width: this.#width, height: this.#height },
+      size.full,
+      size.shown,
+    );
+    const left = picture.x + picture.width * area.left;
+    const right = picture.x + picture.width * (1 - area.right);
+    const top = picture.y + picture.height * area.top;
+    const bottom = picture.y + picture.height * (1 - area.bottom);
+    if (!(right > left && bottom > top)) return undefined;
+    const corners = [
+      { x: left, y: top },
+      { x: right, y: top },
+      { x: right, y: bottom },
+      { x: left, y: bottom },
+    ];
+    return { kind: "safe", corners };
+  }
+
   #scene(): OverlayScene {
     const frame = this.#frame();
     const { handles, timeline } = this.#sources;
+    const safe = this.#safeArea();
     if (!frame) {
       handles.want(undefined);
-      return EMPTY;
+      return safe ? { ...EMPTY, marks: [safe] } : EMPTY;
     }
     const { selection } = timeline.getSnapshot();
     const showing = frame.plan.layers.filter((layer) => showsAt(layer, frame.seconds));
@@ -574,7 +602,7 @@ export class OverlayEditor {
       .filter(({ layer }) => selection.has(layer.id) || shownAt(layer, frame.seconds) > 0)
       .map(({ layer, corners }) => ({ clip: layer.id, corners }))
       .toReversed();
-    const marks: Mark[] = [];
+    const marks: Mark[] = safe ? [safe] : [];
     const grips: Grip[] = [];
     const [only] = selected;
     const target = pictures === 1 && only && this.#isChangeable(only) ? only : undefined;

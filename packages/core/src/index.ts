@@ -424,3 +424,4 @@ export {
   type ResourceUse,
   type UsedResource,
 } from "./uses.ts";
+export { versionsAbout } from "./project-edits.ts";

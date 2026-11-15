@@ -28,10 +28,12 @@ async function chooseFrom(page: Page, menu: string, item: string) {
   await page.getByRole("menu").getByRole("menuitem", { name: item, exact: true }).click();
 }
 
+/** Renames the project in its properties, which "重命名项目" opens at the name, and closes them. */
 async function renameTo(page: Page, name: string) {
   await chooseFrom(page, "文件", "重命名项目");
   await page.getByRole("textbox", { name: "项目名称" }).fill(name);
   await page.keyboard.press("Enter");
+  await page.keyboard.press("Escape");
   await expect(statusName(page, name)).toBeVisible();
 }
 
@@ -194,12 +196,14 @@ test.describe("with a project", () => {
     await saved(page);
   });
 
-  test("renames from the status bar", async ({ page }) => {
+  test("renames in the project properties, which the name in the status bar opens", async ({
+    page,
+  }) => {
     await statusName(page, "测试项目").click();
     const input = page.getByRole("textbox", { name: "项目名称" });
     await expect(input).toHaveValue("测试项目");
     await input.fill("点状态栏改的");
-    await page.getByRole("button", { name: "重命名" }).click();
+    await input.press("Enter");
     await expect(statusName(page, "点状态栏改的")).toBeVisible();
   });
 
@@ -414,6 +418,7 @@ test.describe("when saving fails", () => {
     await chooseFrom(page, "文件", "重命名项目");
     await page.getByRole("textbox", { name: "项目名称" }).fill("没保存上");
     await page.keyboard.press("Enter");
+    await page.keyboard.press("Escape");
     await expect(page.locator("footer").getByText("没有保存")).toBeVisible();
   }
 
@@ -483,8 +488,9 @@ test.describe("dialogs", () => {
     await openRename(page);
     for (let i = 0; i < 6; i++) {
       await page.keyboard.press("Tab");
+      // Whatever has the focus is in the dialog, not in the editor behind it.
       const behind = await page.evaluate(
-        () => document.activeElement?.closest("header, main, footer") !== null,
+        () => document.activeElement?.closest('[role="dialog"], dialog') === null,
       );
       expect(behind).toBe(false);
     }
@@ -492,7 +498,7 @@ test.describe("dialogs", () => {
 
   test("close by clicking next to them, but not by clicking inside", async ({ page }) => {
     await openRename(page);
-    await page.getByRole("dialog").getByRole("heading").click();
+    await page.getByRole("dialog").getByRole("heading", { name: "项目属性" }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.mouse.click(5, 300);
     await expect(page.getByRole("dialog")).toHaveCount(0);

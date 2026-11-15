@@ -638,7 +638,7 @@ describe("the packs that come with AnimaQuill", () => {
     expect(usePack(claude, "claude-mythos-5").call.reasoning).toBe("high");
   });
 
-  it("the words to compare with are a pack too, which gives toolset 2026.1 to the byte", async () => {
+  it("the words to compare with are a pack too, which gives toolset 2026.1 to the byte, with the operations since", async () => {
     const { readFileSync } = await import("node:fs");
     const list = JSON.stringify(
       listOf(createToolset(testHost(), new CallerState(), usePack(DIRECTIVE_PACK, "any").texts)),

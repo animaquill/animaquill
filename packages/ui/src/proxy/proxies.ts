@@ -368,6 +368,62 @@ export class ProxyFiles implements StandIns {
     if (open) await this.#look(open);
   }
 
+  /**
+   * How many proxies the folder of the open project has, and how large they are together, as the
+   * project properties show it. Undefined where there is no folder, or it cannot be read now.
+   */
+  async usage(): Promise<{ readonly count: number; readonly bytes: number } | undefined> {
+    const open = this.#open;
+    if (!open) return undefined;
+    let folder: LocalFolder;
+    try {
+      folder = await (await open.folder.inside(".animaquill")).inside("proxies");
+    } catch {
+      return { count: 0, bytes: 0 };
+    }
+    let count = 0;
+    let bytes = 0;
+    try {
+      for await (const path of folder.list()) {
+        if (path.includes("/") || proxyOf(path) === undefined) continue;
+        const file = await folder.file(path).catch(() => undefined);
+        if (!file) continue;
+        count += 1;
+        bytes += file.size;
+      }
+    } catch {
+      return undefined;
+    }
+    return { count, bytes };
+  }
+
+  /**
+   * Takes away every proxy of the open project, as people ask to free the space: what is on its way
+   * stops, the preview plays the videos themselves, and none gets made again until people ask, as
+   * after `stop`. Only the window that writes the folder does it; resolves to how many proxies
+   * went, or undefined where this window does not write the folder.
+   */
+  async removeAll(): Promise<number | undefined> {
+    const open = this.#open;
+    if (!open || !open.writes) return undefined;
+    this.stop();
+    open.tidying = true;
+    try {
+      // What was on its way finishes stopping first: what it leaves looks like what a crash left.
+      await Promise.allSettled(open.busy);
+      for (const entry of open.entries.values()) {
+        if (entry.state.kind !== "ready") continue;
+        entry.file = undefined;
+        entry.state = { kind: "none" };
+      }
+      this.#changed();
+      const removed = await open.place.tidy(() => true);
+      return removed.filter((name) => proxyOf(name) !== undefined).length;
+    } finally {
+      open.tidying = false;
+    }
+  }
+
   /** Resolves once what was asked for so far is done, for tests. */
   async settled(): Promise<void> {
     for (;;) {

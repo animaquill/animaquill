@@ -132,6 +132,9 @@ function paintMark(context: Context, theme: OverlayTheme, area: Rect, mark: Mark
       if (circle(context, area, mark.at, Math.max(mark.radius, 1))) {
         stroke(context, theme, theme.line, true);
       }
+      return;
+    case "safe":
+      if (trace(context, area, mark.corners, true)) stroke(context, theme, theme.muted, true);
   }
 }
 

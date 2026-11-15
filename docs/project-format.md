@@ -86,9 +86,28 @@ assets/                            素材文件
 
 `safeArea` 是平台在画面上用自己的按钮和文字盖住的地方：`top`、`right`、`bottom`、`left` 四个都要写，各是这一边被盖住的部分占画面的比例，0 到 1。
 
-`fonts`、语言的 `font`、`safeArea`、`cover` 和 `credits` 现在只是记下来，编辑器还不用它们。场景里的字体放进素材，用 `aq.asset` 取，见[场景和声音](#场景和声音)。
+`fonts`、语言的 `font` 和 `credits` 现在只是记下来，编辑器还不用它们。场景里的字体放进素材，用 `aq.asset` 取，见[场景和声音](#场景和声音)。母版的 `safeArea` 只在预览里画成参考框，不影响导出。`cover` 是开始页卡片封面用的那一帧，不写或者那一刻已经不在时间轴里时，编辑器自己挑一帧。
 
 带 `locked` 的标签表示项目不可编辑，用户和 AI 都不能改，直到标签被移除。
+
+**编辑器怎么改这些字段。** 编辑器的“项目属性”和 AI 都通过命令改，每条命令是一步，能撤销（标签只有用户本人能改）：
+
+| 命令 | 改什么 | 一起发生的事 |
+| --- | --- | --- |
+| `project.rename` | `name` | 文件夹名、云端项目的仓库名不变 |
+| `project.setDescription` | `description` | 空的就去掉这个字段 |
+| `project.setCredits` | `credits`，整份 | 每条的 `name` 不能空；空列表去掉这个字段 |
+| `project.setTags` | `tags`，整份 | 只有用户本人能用，项目锁定时也能用（这是解锁的办法） |
+| `project.setFrameRate` | `fps` | 时间按秒存，片段、关键帧、标记都不动；不落在新帧率格子上的时间列入问题 `time-off-grid` |
+| `project.setFormats` | `formats`，整份，第一个是母版 | 去掉的画幅，它的差异文件（`format.<画幅>.json`、`version.<语言>.<画幅>.json`）同一步删掉，结果里列在 `filesRemoved` |
+| `project.setLanguages` | `languages`，整份，第一种是母版 | 去掉的语言，它的字符串表 `locales/<语言>.json` 和差异文件同一步删掉，结果里列在 `filesRemoved` |
+| `project.setCover` | `cover` | 时间轴要在 `timelines` 里，时刻要在它的结尾之前；`null` 去掉 |
+| `timeline.setBackground` | 一条时间轴的 `background` | `null` 去掉，也就是黑色 |
+| `timeline.setDefault` | `timelines` 的顺序 | 这条排到最前面，其余的顺序不变 |
+
+整份改的命令写入前按本节的规则校验整个 `animaquill.json`，比如画幅和语言的 ID 不能重复，不对就整条拒绝，什么都不写。
+
+舞台的短边固定是 1080 个世界单位，所以母版换一个同比例的尺寸，画面里的位置和大小都不变；换比例时画面的宽变了，靠边的内容可能出画或者多出空白。
 
 ## 时间轴
 
@@ -673,6 +692,8 @@ k = 1080 / min(format.width, format.height)
 - `audio.pan`、`audio.pitch`、`audio.preservePitch` 和 `time.speed` 不生效（`unsupported-audio-property`）；`audio.volume` 有关键帧时只用第一个值（`unsupported-volume-keys`）。
 - `loop` 不生效（`unsupported-loop`）；`draft` 的片段照常显示和导出（`unsupported-draft`）。
 - 语言和画幅的差异不生效，预览和导出都用母版（`unsupported-override`）；导出那个画幅时导出前会停下。
+
+还有一类问题和做不到无关，只是提醒：时间不落在剪辑帧率（`fps`）的格子上（`time-off-grid`），每个片段一条（它的开头、结尾和关键帧），每条时间轴一条（段落的分界和标记）。多半是换了帧率以后，按原来的帧对齐的时间。播放和导出照常，不会因为它停下。
 
 ## 导出和导入
 

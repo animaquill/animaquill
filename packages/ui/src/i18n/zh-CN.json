@@ -627,7 +627,8 @@
       "join-one-clip": "衔接转场的两边要是两个片段",
       "join-incomplete": "这个衔接转场不完整：{{join}}",
       "sound-entry": "声音的入口要是 .js 或 .mjs 文件",
-      "size-unknown": "素材还不知道文件有多大，记不下它放在哪里：别的电脑要靠大小核对"
+      "size-unknown": "素材还不知道文件有多大，记不下它放在哪里：别的电脑要靠大小核对",
+      "time-outside": "{{path}} 的 {{time}} 秒不在时间轴里：时间轴只有 {{length}} 秒长"
     }
   },
   "panel": {
@@ -1104,10 +1105,10 @@
       "performanceClosed": "打开项目后可用。"
     },
     "elsewhere": {
-      "project": "项目的帧率、分辨率属于项目，不在设置里：帧率在“文件 › 项目帧率”里改，也可以点状态栏上的帧率。"
+      "project": "项目的帧率、分辨率、名称这些属于项目，不在设置里，在“项目属性”里改：点状态栏左下角的项目名，或者“文件 › 项目属性…”。"
     },
     "elsewhereWords": {
-      "project": "帧率 fps 分辨率 画幅 尺寸 宽高 项目"
+      "project": "帧率 fps 分辨率 画幅 尺寸 宽高 项目 名称 封面 语言 安全区 背景"
     },
     "seeAlsoLinks": {
       "cloud": "新建项目默认存云端还是本地，在",
@@ -1416,7 +1417,12 @@
       "project": {
         "rename": "改项目名",
         "setFrameRate": "改帧率",
-        "setTags": "改标签"
+        "setTags": "改标签",
+        "setDescription": "改项目说明",
+        "setCredits": "改署名",
+        "setFormats": "改画幅",
+        "setLanguages": "改语言",
+        "setCover": "改封面帧"
       },
       "asset": {
         "add": "添加素材",
@@ -1444,7 +1450,9 @@
         "merge": "并入文件"
       },
       "timeline": {
-        "rename": "改时间轴名"
+        "rename": "改时间轴名",
+        "setBackground": "改背景色",
+        "setDefault": "改默认打开的时间轴"
       },
       "section": {
         "add": "添加段落",
@@ -1939,7 +1947,8 @@
       "unsupported-volume-keys": "音量的关键帧这一版还不生效，整段只用第一个关键帧的音量",
       "unsupported-loop": "循环这一版还不生效：素材放完以后不会从头再放",
       "unsupported-draft": "这是样片，本来不该进成片，这一版的编辑器还照常显示和导出它",
-      "unsupported-override": "版本“{{version}}”的差异这一版还不应用，预览和导出用的都是母版"
+      "unsupported-override": "版本“{{version}}”的差异这一版还不应用，预览和导出用的都是母版",
+      "time-off-grid": "有 {{count}} 处时间不在 {{fps}} 帧的格子上（多是换帧率之前对齐的）。播放和导出照常，拖动时会吸到最近的帧"
     },
     "fix": {
       "property": {
@@ -4901,5 +4910,299 @@
     },
     "again": "再试一次",
     "putOff": "先收起"
+  },
+  "projectProps": {
+    "title": "项目属性",
+    "action": "项目属性…",
+    "openGroup": "项目属性：{{group}}",
+    "statusUsage": "点一下打开项目属性：名称、画幅、帧率、封面、存放位置这些都在里面",
+    "close": "关闭项目属性",
+    "groupsLabel": "项目属性的分组",
+    "and": "、",
+    "readOnly": "只读",
+    "undoable": "能撤销（Ctrl+Z）。",
+    "removedFiles": "一起删掉的文件",
+    "seconds": "{{value}} 秒",
+    "groups": {
+      "general": "常规",
+      "picture": "画面和帧率",
+      "sound": "声音",
+      "timelines": "时间轴",
+      "languages": "语言和版本",
+      "cover": "封面",
+      "fonts": "字体",
+      "libraries": "关联的库",
+      "storage": "存放和同步"
+    },
+    "locked": {
+      "tag": "这个项目被锁定标签锁住了，你和 AI 都改不了。在下面的“标签”里去掉锁定就能改。",
+      "platform": "这个项目现在只能看、不能改。",
+      "toTags": "去标签"
+    },
+    "general": {
+      "name": "名称",
+      "nameHelp": "只改项目里的名字。",
+      "nameHelpElsewhere": "只改项目里的名字。{{where}}都不跟着改。",
+      "nameRepository": "GitHub 仓库名（{{repository}}）",
+      "nameFolder": "本地文件夹名（{{folder}}）",
+      "description": "说明",
+      "descriptionHelp": "写给人看的，开始页卡片悬停时显示，AI 读项目概况时也能看到。按 Ctrl+Enter 或点别处保存。",
+      "descriptionPlaceholder": "这个项目做什么、给谁看",
+      "credits": "署名",
+      "creditsHelp": "谁做了什么，只记下来，不进成片。没写名字的行不保存。",
+      "creditRole": "第 {{number}} 条署名的角色",
+      "creditName": "第 {{number}} 条署名的名字",
+      "rolePlaceholder": "角色，比如音乐",
+      "namePlaceholder": "名字",
+      "removeCredit": "删掉第 {{number}} 条署名",
+      "addCredit": "加一行",
+      "tags": "标签",
+      "tagsHelp": "标签只有你能改，AI 改不了。带“锁定”的标签会让整个项目只读，你和 AI 都改不了，去掉锁定才能改。",
+      "id": "项目 ID",
+      "idHelp": "项目在格式里的编号，换名字也不变。",
+      "copy": "复制",
+      "copyId": "复制项目 ID",
+      "copied": "项目 ID 已复制",
+      "copyFailed": "没能复制，浏览器不让写剪贴板",
+      "formatVersion": "格式版本",
+      "formatVersionValue": "{{version}}（这一版编辑器用 {{current}}）",
+      "times": "创建和最后修改",
+      "noCreated": "本地项目不记创建时间。",
+      "created": "创建",
+      "updated": "最后修改"
+    },
+    "tags": {
+      "none": "还没有标签",
+      "add": "加标签",
+      "addTitle": "新标签的名字",
+      "color": "标签“{{name}}”的颜色",
+      "name": "第 {{number}} 个标签的名字",
+      "locks": "锁定",
+      "remove": "删掉标签“{{name}}”",
+      "lockTitle": "锁定这个项目？",
+      "lockMessage": "锁定后整个项目只读，你和 AI 都改不了，直到去掉锁定。",
+      "lock": "锁定",
+      "unlockTitle": "去掉锁定？",
+      "unlockMessage": "去掉以后项目又能改了，你和 AI 都能改。",
+      "unlock": "去掉锁定"
+    },
+    "formats": {
+      "title": "画幅",
+      "help": "项目按画幅导出，第一个是母版：预览、AI 看的都是母版。改母版的大小或者比例会先告诉你后果。",
+      "master": "母版",
+      "masterNote": "预览和 AI 默认用它",
+      "versionsNote": "有差异，还不生效，导出前会提示",
+      "fps": "{{fps}} 帧",
+      "makeMaster": "设为母版",
+      "edit": "改",
+      "editLabel": "改画幅“{{name}}”",
+      "removeLabel": "删掉画幅“{{name}}”",
+      "add": "加一个画幅：",
+      "preset": {
+        "landscape": "横屏",
+        "vertical": "竖屏",
+        "square": "方形",
+        "custom": "自定义"
+      },
+      "name": "名字",
+      "width": "宽（像素）",
+      "height": "高（像素）",
+      "exportFps": "导出帧率",
+      "save": "保存",
+      "unnamed": "未命名画幅",
+      "removeTitle": "删掉这个画幅？",
+      "removeMessage": "有 {{count}} 个差异文件只属于这个画幅，会一起删掉。",
+      "remove": "删掉"
+    },
+    "fps": {
+      "name": "剪辑帧率",
+      "help": "时间轴按它数帧，拖动时吸到它的帧上。时间按秒存，改帧率不移动任何东西。",
+      "custom": "自定义…",
+      "customLabel": "自定义的帧率",
+      "confirmTitle": "把帧率从 {{from}} 改成 {{to}}？",
+      "nothingMoves": "片段、关键帧、字幕的时间都按秒记，一个都不会移动。",
+      "timecode": "时间码按 {{to}} 帧显示：{{before}} 会变成 {{after}}。",
+      "offGrid": "有 {{count}} 处时间不在 {{to}} 帧的格子上（多是按原来的帧对齐的）。播放和导出照常，拖动时会吸到最近的帧；它们会在问题选项卡里列出来，不挡导出。",
+      "allOnGrid": "所有时间都落在 {{to}} 帧的格子上。",
+      "proxies": "{{count}} 个视频的代理文件要按 {{to}} 帧重新生成，打开这些视频时会提示。",
+      "master": "母版画幅“{{name}}”的导出帧率",
+      "masterAlong": "一起改成 {{to}}",
+      "masterKeep": "不改（{{fps}}）",
+      "confirm": "改成 {{to}}"
+    },
+    "size": {
+      "title": "把母版改成 {{width}} × {{height}}？",
+      "larger": "比例没变，只是更清晰：画面里的位置和大小都不变。导出会更大、更慢。",
+      "smaller": "比例没变：画面里的位置和大小都不变。导出会更小、更快，也更模糊。",
+      "confirm": "改"
+    },
+    "ratio": {
+      "title": "把母版从 {{from}} 改成 {{to}}？",
+      "message": "画面的宽高比变了：原来靠边的内容可能出画，或者多出空白。下面是播放头这一帧改之前和之后的样子。",
+      "suggest": "要做另一种比例的版本（比如竖屏版），加一个画幅更好：母版不动，新画幅单独导出。",
+      "before": "现在",
+      "after": "改了以后",
+      "change": "仍然改母版",
+      "add": "加一个画幅（母版不动）",
+      "newName": "新画幅 {{ratio}}"
+    },
+    "background": {
+      "name": "背景色",
+      "help": "画面没有东西盖住的地方露出它，预览和导出都一样。这里改的是全部时间轴，单条在“时间轴”里改。",
+      "differ": "各条时间轴的背景色不一样，在这里改会统一。",
+      "black": "恢复黑色"
+    },
+    "safe": {
+      "name": "安全区",
+      "help": "母版“{{name}}”的安全区：只在预览里画参考框，不影响导出。",
+      "none": "不显示",
+      "action": "动作安全",
+      "title": "字幕安全",
+      "custom": "自定义",
+      "top": "上",
+      "right": "右",
+      "bottom": "下",
+      "left": "左"
+    },
+    "sound": {
+      "sampleRate": "采样率",
+      "sampleRateHelp": "编辑器固定用 48 kHz 混音和导出，不是项目的设置。",
+      "sampleRateValue": "48 kHz（固定）",
+      "mix": "混音",
+      "mixHelp": "总线和主输出写在时间轴里，这一版还不生效：出声的轨道直接混在一起。",
+      "noMix": "没有",
+      "mixes": "{{names}} 有混音（还不生效）"
+    },
+    "timelines": {
+      "intro": "每条时间轴一项：名字能改，选哪条默认打开，单条的背景色。时长在时间轴上改。",
+      "missing": "这条时间轴的文件读不出来。",
+      "name": "名字",
+      "nameLabel": "时间轴 {{id}} 的名字",
+      "length": "时长",
+      "sections": "段落",
+      "markers": "标记",
+      "beats": "节拍线",
+      "count": "{{count}} 个",
+      "noBeats": "没有",
+      "beatSegments": "{{count}} 段",
+      "default": "默认打开",
+      "background": "背景色",
+      "backgroundLabel": "时间轴“{{name}}”的背景色",
+      "later": "新建和删除时间轴在做（多时间轴）。标记和节拍线等时间轴补全后在时间轴上编辑。"
+    },
+    "languages": {
+      "title": "语言",
+      "help": "第一种是母版。删一种语言会一起删掉它的字符串表和差异文件，删之前会列出来。",
+      "nameLabel": "语言 {{id}} 的名字",
+      "font": "字体：{{font}}",
+      "removeLabel": "删掉语言“{{name}}”",
+      "removeTitle": "删掉语言“{{name}}”？",
+      "removeFiles": "这些文件会一起删掉（{{count}} 个），能撤销。",
+      "removeNothing": "这种语言没有字符串表和差异文件，只从语言列表里去掉。",
+      "remove": "删掉",
+      "tag": "语言标记",
+      "name": "名字",
+      "add": "加上",
+      "addOne": "加一种语言"
+    },
+    "versions": {
+      "title": "版本（差异文件）",
+      "help": "语言和画幅的差异这一版还不生效，预览和导出都用母版；导出那个画幅时会先提示。",
+      "none": "没有差异文件",
+      "line": "{{timeline}} · {{what}} · 还不生效",
+      "language": "语言“{{name}}”",
+      "format": "画幅“{{name}}”",
+      "both": "语言“{{language}}”的画幅“{{format}}”"
+    },
+    "cover": {
+      "intro": "开始页卡片上的封面。选定的一帧跟着项目走，换一台设备也一样；用图片的话，图片存在这个浏览器里，云端项目也存在平台上。",
+      "frame": "封面帧",
+      "frameHelp": "不选时编辑器挑第一条时间轴的第 1 秒。改了以后开始页的封面过一会儿就换。",
+      "auto": "让编辑器挑",
+      "chosen": "选定的一帧",
+      "timeline": "时间轴",
+      "time": "时间（秒）",
+      "playhead": "用播放头的位置",
+      "picture": "开始页的封面图",
+      "pictureHelp": "可以换成一张图片，盖过封面帧；恢复自动后又按封面帧生成。开始页卡片上的“设封面”也是这一项。",
+      "now": "现在的封面",
+      "noneYet": "还没生成",
+      "isChosen": "现在用的是你选的图片。",
+      "isAuto": "现在是编辑器按封面帧生成的。",
+      "choose": "用一张图片…",
+      "restore": "恢复自动",
+      "cannotChoose": "这里不能换封面图。"
+    },
+    "fonts": {
+      "intro": "字体功能在做：这里列出项目登记的字体，帮你看出项目里用了什么。场景里的字体放进素材，用 aq.asset 取。",
+      "title": "项目的字体",
+      "none": "项目没有登记字体",
+      "line": "素材“{{asset}}”，粗细 {{weight}}，{{style}}",
+      "style": {
+        "normal": "正体",
+        "italic": "斜体"
+      },
+      "languages": "每种语言用的字体",
+      "noFont": "没有指定"
+    },
+    "libraries": {
+      "intro": "编辑器还不会取库里的内容，库的第一版做好后在这里管理。这里只列出 libraries.json 里写的库。",
+      "none": "没有关联库",
+      "type": "类型",
+      "types": {
+        "assets": "素材库",
+        "experience": "经验库"
+      },
+      "source": "来源",
+      "track": "跟着",
+      "pinned": "固定的存档",
+      "followLatest": "跟随最新",
+      "notPinned": "没有固定（会列进问题）"
+    },
+    "storage": {
+      "kind": {
+        "folder": "本地项目",
+        "cloudFolder": "云端项目 · 文件夹加云同步",
+        "cloudBrowser": "云端项目 · 只在这个浏览器里",
+        "browser": "只在这个浏览器里"
+      },
+      "kindHelp": {
+        "folder": "项目就是电脑上的一个文件夹，改动直接写进去，没有云同步。",
+        "cloudFolder": "项目是电脑上的一个文件夹，同时同步到平台，平台再存进你的 GitHub 仓库。",
+        "cloudBrowser": "项目在平台上，这个浏览器里有一份，靠云同步保存，没有本地文件夹。",
+        "browser": "旧的浏览器项目：只存在这个浏览器里，清浏览器数据会丢。"
+      },
+      "openPanel": "打开云端面板",
+      "platform": "平台",
+      "platformFacts": "平台上的这个项目",
+      "id": "平台上的编号",
+      "size": "大小",
+      "sizeValue": "文档 {{documents}} · 素材 {{count}} 个 {{assets}}",
+      "duration": "时长（主时间轴）",
+      "repository": "GitHub 仓库",
+      "repositoryPrivate": "{{name}}（私有）",
+      "repositoryPublic": "{{name}}（公开）",
+      "archivedAt": "最后存进仓库",
+      "local": "这台电脑上",
+      "folder": "本地文件夹 {{name}}",
+      "folderHelp": "浏览器只记得文件夹的名字，不知道完整路径。",
+      "save": {
+        "saved": "已保存",
+        "saving": "正在保存",
+        "failed": "没能保存"
+      },
+      "proxies": "代理文件",
+      "proxiesHelp": "大视频的低清副本，放在文件夹的 .animaquill/proxies 里，只给预览用，删了要用时会再提示生成。",
+      "proxiesValue": "{{count}} 个 · {{size}}",
+      "removeProxies": "删掉代理",
+      "removeProxiesTitle": "删掉这个项目的全部代理文件？",
+      "removeProxiesMessage": "预览会直接放原视频，可能变卡；以后要用代理时会再提示生成。正在生成的也会停下。",
+      "proxiesRemoved": "删掉了 {{count}} 个代理文件",
+      "proxiesElsewhere": "另一个窗口在写这个文件夹，请在那个窗口里删。",
+      "noFolder": "没有本地文件夹",
+      "noFolderCloud": "只在这个浏览器里加云同步：项目靠平台保存，这台电脑上没有文件夹。可以在下面关联一个文件夹。",
+      "noFolderBrowser": "项目只在这个浏览器里，没有文件夹，也没有云同步。下面可以把它放进文件夹或加云同步。",
+      "sync": "同步和存档"
+    }
   }
 }

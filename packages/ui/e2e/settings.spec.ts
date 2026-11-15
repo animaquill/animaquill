@@ -162,7 +162,7 @@ test("searching finds a setting in any group, goes there and makes it stand out"
   await expect(settingsOf(page).getByTestId("settings-crumb")).toHaveText("› 搜索结果");
   await expect(current(page)).toHaveCount(0);
   await expect(settingsOf(page).getByTestId("settings-elsewhere")).toContainText(
-    "帧率在“文件 › 项目帧率”里改",
+    "在“项目属性”里改",
   );
   await expect(results.filter({ hasText: "预览和播放 › 预览画质" })).toHaveCount(1);
   await search.fill("画质");

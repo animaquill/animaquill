@@ -46,7 +46,9 @@ export type Mark =
   /** Where a code object is, and what its handles draw. */
   | { readonly kind: "bounds"; readonly corners: readonly Point[] }
   | { readonly kind: "line"; readonly points: readonly Point[]; readonly closed: boolean }
-  | { readonly kind: "ring"; readonly at: Point; readonly radius: number };
+  | { readonly kind: "ring"; readonly at: Point; readonly radius: number }
+  /** The safe area of the master format, as a frame to go by, see `ProjectFormat.safeArea`. */
+  | { readonly kind: "safe"; readonly corners: readonly Point[] };
 
 /** What an extension gets to know about the clip it says the handles of. */
 export interface ExtensionTarget {

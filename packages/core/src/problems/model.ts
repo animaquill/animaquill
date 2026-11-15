@@ -18,6 +18,8 @@ export type ProblemSource =
   | "unsupported"
   /** What clips hold for their scenes and what the scenes describe do not agree. */
   | "properties"
+  /** Times that are not on a frame of the editing frame rate, see `timingProblems`. */
+  | "timing"
   /** What code of scenes and sounds said when it ran. Hosts that run it report it. */
   | "runtime"
   /** What the code editor sees in files. */

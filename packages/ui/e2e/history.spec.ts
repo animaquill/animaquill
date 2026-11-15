@@ -23,6 +23,7 @@ async function rename(page: Page, name: string) {
   await page.getByRole("contentinfo").getByRole("button", { name: "测试项目" }).click();
   await page.getByRole("textbox", { name: "项目名称" }).fill(name);
   await page.keyboard.press("Enter");
+  await page.keyboard.press("Escape");
   await expect(page.getByRole("contentinfo").getByRole("button", { name })).toBeVisible();
 }
 

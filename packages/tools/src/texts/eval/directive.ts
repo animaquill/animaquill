@@ -60,6 +60,14 @@ export const DIRECTIVE_OVERRIDES = {
   // summaries, and these examples; the branches of the schema had no description.
   "ops.project.rename.summary": "rename the project",
   "ops.project.setFrameRate.summary": "set the frame rate the timeline counts frames by",
+  // Operations that came after toolset 2026.1, in the way it put the others.
+  "ops.project.setDescription.summary": "set the description of the project",
+  "ops.project.setCredits.summary": "set the credits of the project",
+  "ops.project.setFormats.summary": "set the picture formats, the first the master",
+  "ops.project.setLanguages.summary": "set the languages, the first the master",
+  "ops.project.setCover.summary": "set the moment the cover of the project shows",
+  "ops.timeline.setBackground.summary": "set the background color of a timeline",
+  "ops.timeline.setDefault.summary": "make a timeline open first",
   "ops.asset.update.summary": "rename an asset or change its tags",
   "ops.asset.remove.summary": "remove an asset, and with withUses the clips that use it",
   "ops.scene.add.summary":

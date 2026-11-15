@@ -179,14 +179,14 @@ export class KeybindingService {
     this.#panel = panel;
   }
 
-  /** Runs the action of a key press, if it has one. */
-  handle(event: KeyDown): void {
+  /** Runs the action of a key press, if it has one: of `only`, where it says which may run. */
+  handle(event: KeyDown, only?: ReadonlySet<string>): void {
     // During composition the keys belong to the input method.
     if (event.defaultPrevented || event.isComposing) return;
     const combo = comboOf(event, this.platform);
     if (!combo) return;
     const action = this.#actionFor(combo, this.#scopeOf(event.target));
-    if (!action) return;
+    if (!action || (only && !only.has(action.id))) return;
     if (isTextEntry(event.target) && !worksWhileTyping(combo)) return;
     if (isSlider(event.target) && SLIDER_KEYS.has(combo)) return;
     // Also for a key that is held down, or the browser would get it the second time around.

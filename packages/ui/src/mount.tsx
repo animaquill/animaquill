@@ -12,6 +12,9 @@ import { layouts } from "./workbench/layouts.ts";
 import { workerHasher } from "./media/hasher.ts";
 import { workerProxyMaker } from "./proxy/maker.ts";
 
+/** The keys that work while the project properties are open. */
+const UNDO_ONLY: ReadonlySet<string> = new Set(["edit.undo", "edit.redo"]);
+
 export interface EditorOptions {
   readonly host: Host;
   /** Shown in the status bar, so that a report can say which build it is about. */
@@ -158,13 +161,16 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
 
   // A dialog has to be answered first: nothing behind it should change in the meantime. Keys
   // typed in the settings are theirs too.
+  // In the project properties only undo and redo: what they change is a step like any other.
   const onKeyDown = (event: KeyboardEvent) => {
     if (
-      !workbench.dialogs.getSnapshot() &&
-      !workbench.cloudSync.getSnapshot().welcome &&
-      !workbench.settingsNav.isOpen
+      workbench.dialogs.getSnapshot() ||
+      workbench.cloudSync.getSnapshot().welcome ||
+      workbench.settingsNav.isOpen
     )
-      workbench.keybindings.handle(event);
+      return;
+    if (workbench.projectNav.isOpen) workbench.keybindings.handle(event, UNDO_ONLY);
+    else workbench.keybindings.handle(event);
   };
   window.addEventListener("keydown", onKeyDown);
 

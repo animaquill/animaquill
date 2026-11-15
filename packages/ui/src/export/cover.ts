@@ -1,6 +1,6 @@
 import { timelineLength, type ProjectState, type ProjectStore } from "@animaquill/core";
 import { COVER_BYTES, coverEtag, type CoverAccess, type CoverStore } from "@animaquill/host";
-import { toSeconds } from "@animaquill/schema";
+import { parseTime, toSeconds } from "@animaquill/schema";
 
 /**
  * The cover of a project for its card on the start page, see the design of the start page
@@ -86,9 +86,10 @@ export interface CoverShot {
 }
 
 /**
- * The moment of the main timeline a cover shows, and how long that timeline is: one second in,
- * past a fade from black, or the middle of a shorter one, see the plan, 8.2. Undefined for a
- * project without a timeline.
+ * The moment a cover shows, and how long the main timeline is: the frame the project chose for its
+ * cover (`cover` of animaquill.json, which the project properties set), where it is still on its
+ * timeline; else one second into the main timeline, past a fade from black, or the middle of a
+ * shorter one, see the plan, 8.2. Undefined for a project without a timeline.
  */
 export function coverShotOf(
   state: ProjectState,
@@ -98,13 +99,26 @@ export function coverShotOf(
   const main = timeline === undefined ? undefined : state.timelines[timeline];
   if (timeline === undefined || !main) return undefined;
   const length = toSeconds(timelineLength(main));
-  return {
-    state,
-    key,
-    timeline,
-    seconds: length >= 1 ? 1 : length / 2,
-    durationMs: Math.round(length * 1000),
-  };
+  const durationMs = Math.round(length * 1000);
+  const chosen = chosenShot(state);
+  if (chosen) return { state, key, ...chosen, durationMs };
+  return { state, key, timeline, seconds: length >= 1 ? 1 : length / 2, durationMs };
+}
+
+/** The frame the project chose for its cover, while it is on a timeline the project has. */
+function chosenShot(state: ProjectState): { timeline: string; seconds: number } | undefined {
+  const { cover } = state.manifest;
+  const chosen = cover && state.timelines[cover.timeline];
+  if (!cover || !chosen) return undefined;
+  try {
+    const seconds = toSeconds(parseTime(cover.time));
+    const length = toSeconds(timelineLength(chosen));
+    return seconds >= 0 && (seconds < length || seconds === 0)
+      ? { timeline: cover.timeline, seconds }
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** What the project is, as versions of it are told apart: the same anywhere it is the same. */

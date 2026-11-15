@@ -32,6 +32,16 @@ export interface ChoiceOptions {
   readonly message: string;
   /** In the order of the buttons. Cancelling is always there, in front of them. */
   readonly choices: readonly DialogChoice[];
+  /** What people should know besides, one line each, under the message. */
+  readonly notes?: readonly string[];
+  /** Pictures side by side under the message, such as before and after a change. */
+  readonly pictures?: readonly DialogPicture[];
+}
+
+export interface DialogPicture {
+  readonly label: string;
+  /** Where the picture is, such as an object URL that whoever asks takes away afterwards. */
+  readonly url: string;
 }
 
 export interface DialogChoice {
@@ -47,6 +57,8 @@ export interface FormOptions {
   readonly fields: readonly FormField[];
   /** What people should know first, one line each. */
   readonly notes?: readonly string[];
+  /** The notes go above the fields: what the choice is about comes first. */
+  readonly notesFirst?: boolean;
   readonly confirm: string;
 }
 

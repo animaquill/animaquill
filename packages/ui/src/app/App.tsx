@@ -10,6 +10,7 @@ import { CommandPaletteView } from "./CommandPaletteView.tsx";
 import { DialogHost } from "./DialogHost.tsx";
 import { WelcomeHost } from "../cloud/WelcomeDialog.tsx";
 import { SettingsHost } from "../settings/SettingsDialog.tsx";
+import { ProjectPropertiesHost } from "../project/ProjectDialog.tsx";
 import styles from "./App.module.css";
 import { WorkbenchContext, useSession } from "./context.ts";
 import { NotificationList } from "./NotificationList.tsx";
@@ -101,6 +102,7 @@ export function App({ workbench, i18n }: AppProps) {
             <NotificationList />
             <CommandPaletteView />
             <SettingsHost />
+            <ProjectPropertiesHost />
             <DialogHost />
             <WelcomeHost />
           </div>

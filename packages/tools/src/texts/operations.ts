@@ -26,6 +26,129 @@ export const OPERATION_TEXTS = {
     { title: "The NTSC rate of 29.97", params: { fps: "30000/1001" } },
   ],
 
+  "ops.project.setDescription.summary": "sets the description of the project",
+  "ops.project.setDescription.description":
+    "Sets description of animaquill.json: what the project is about, in the words of people. The start page shows it on the card of the project. An empty or blank text takes the description away.",
+  "ops.project.setDescription.examples": [
+    {
+      title: "A description",
+      params: { description: "A two-minute explainer about atoms, landscape and vertical." },
+    },
+  ],
+
+  "ops.project.setCredits.summary": "sets the credits of the project",
+  "ops.project.setCredits.description":
+    "Sets credits of animaquill.json, as a whole list: each credit has a role (what was done, may be empty) and a name (not empty). The editor only keeps them; no export shows them. An empty list takes them all away.",
+  "ops.project.setCredits.fields.credits.role": 'What was done, such as "Music"; may be empty.',
+  "ops.project.setCredits.fields.credits.name": "Who did it, not empty.",
+  "ops.project.setCredits.examples": [
+    {
+      title: "Two credits",
+      params: {
+        credits: [
+          { role: "Director", name: "Lin" },
+          { role: "Music", name: "Sample author" },
+        ],
+      },
+    },
+  ],
+
+  "ops.project.setFormats.summary": "sets the picture formats, the first the master",
+  "ops.project.setFormats.description":
+    "Sets formats of animaquill.json, as a whole list of at least one: each has id, name, width and height in pixels, fps (the export frame rate) and may have safeArea (fractions of each side that platforms cover, 0 to 1). The first one is the master: the preview and AI read it, and its aspect ratio decides how wide the stage is (the short side is 1080 world units at any size, so a size of the same ratio changes no position). Positions stay as they are when the ratio changes, so content near the edges can end up outside of the picture. A format left out of the list takes its versions along in the same step (timelines/<id>/overrides/format.<format>.json and version.<language>.<format>.json); the result lists them as filesRemoved, and dry_run lists them without changing anything. Ids of formats are told apart by the format: the same id twice fails.",
+  "ops.project.setFormats.fields.formats.id": "Id of the format; versions refer to it.",
+  "ops.project.setFormats.fields.formats.name": "Name people see.",
+  "ops.project.setFormats.fields.formats.width": "Width in pixels, a whole number above 0.",
+  "ops.project.setFormats.fields.formats.height": "Height in pixels, a whole number above 0.",
+  "ops.project.setFormats.fields.formats.fps":
+    'Frame rate it is exported at, such as "30" or "30000/1001".',
+  "ops.project.setFormats.fields.formats.safeArea":
+    "Fractions of the picture, 0 to 1, that a platform covers on each side: top, right, bottom, left. The preview can show it; exports do not change.",
+  "ops.project.setFormats.fields.formats.safeArea.top": "Fraction covered at the top, 0 to 1.",
+  "ops.project.setFormats.fields.formats.safeArea.right": "Fraction covered at the right, 0 to 1.",
+  "ops.project.setFormats.fields.formats.safeArea.bottom":
+    "Fraction covered at the bottom, 0 to 1.",
+  "ops.project.setFormats.fields.formats.safeArea.left": "Fraction covered at the left, 0 to 1.",
+  "ops.project.setFormats.errors.invalid-value":
+    "The manifest with these formats does not fit the project format, such as two formats with one id (the error names the place).",
+  "ops.project.setFormats.examples": [
+    {
+      title: "The master in 4K, the vertical format as it is",
+      params: {
+        formats: [
+          { id: "landscape", name: "Landscape", width: 3840, height: 2160, fps: "30" },
+          {
+            id: "vertical",
+            name: "Vertical",
+            width: 1080,
+            height: 1920,
+            fps: "30000/1001",
+            safeArea: { top: 0.1, right: 0.15, bottom: 0.2, left: 0 },
+          },
+        ],
+      },
+    },
+    {
+      title: "Only the landscape format: the versions of the vertical one go along",
+      params: {
+        formats: [{ id: "landscape", name: "Landscape", width: 1920, height: 1080, fps: "30" }],
+      },
+    },
+  ],
+
+  "ops.project.setLanguages.summary": "sets the languages, the first the master",
+  "ops.project.setLanguages.description":
+    'Sets languages of animaquill.json, as a whole list of at least one: each has id (a language tag such as "en" or "zh-CN"), name, and may have font (a family of fonts). The first one is the master. A language left out of the list takes its string table (locales/<id>.json) and its versions (language.<id>.json and version.<id>.<format>.json of each timeline) along in the same step; the result lists them as filesRemoved, and dry_run lists them without changing anything. The same id twice fails.',
+  "ops.project.setLanguages.fields.languages.id":
+    'Language tag, such as "en" or "zh-CN"; string tables and versions refer to it.',
+  "ops.project.setLanguages.fields.languages.name": "Name people see.",
+  "ops.project.setLanguages.fields.languages.font":
+    "Family of fonts for this language, from fonts of animaquill.json.",
+  "ops.project.setLanguages.errors.invalid-value":
+    "The manifest with these languages does not fit the project format, such as two languages with one id.",
+  "ops.project.setLanguages.examples": [
+    {
+      title: "Another name for English",
+      params: {
+        languages: [
+          { id: "zh-CN", name: "Chinese" },
+          { id: "en", name: "English (US)" },
+        ],
+      },
+    },
+  ],
+
+  "ops.project.setCover.summary": "sets the moment the cover of the project shows",
+  "ops.project.setCover.description":
+    "Sets cover of animaquill.json: a moment of a timeline that the start page makes the picture of the project from. The moment is before the end of the timeline. null takes it away, and the start page uses a moment of its own choosing.",
+  "ops.project.setCover.fields.cover": '{"timeline":"<timeline id>","time":"<seconds>"}, or null.',
+  "ops.project.setCover.fields.cover.timeline": "Timeline id (aq_project_status).",
+  "ops.project.setCover.fields.cover.time": 'Seconds from the start of the timeline: "2.5".',
+  "ops.project.setCover.errors.not-found": "There is no timeline with this id in the project.",
+  "ops.project.setCover.errors.invalid-value":
+    "The moment is at the end of the timeline or after it (the error gives the length).",
+  "ops.project.setCover.examples": [
+    { title: "The frame at 2.5 seconds", params: { cover: { timeline: "main", time: "2.5" } } },
+    { title: "No frame chosen", params: { cover: null } },
+  ],
+
+  "ops.timeline.setBackground.summary": "sets the background color of a timeline",
+  "ops.timeline.setBackground.description":
+    "Sets background of a timeline: what shows where no clip or transition covers the picture, in the preview and in exports. null takes it away, which is black.",
+  "ops.timeline.setBackground.errors.not-found": "There is no timeline with this id.",
+  "ops.timeline.setBackground.examples": [
+    { title: "A dark blue background", params: { timeline: "main", background: "#101830" } },
+    { title: "Back to black", params: { timeline: "main", background: null } },
+  ],
+
+  "ops.timeline.setDefault.summary": "makes a timeline open first",
+  "ops.timeline.setDefault.description":
+    "Puts a timeline first in timelines of animaquill.json: it opens by default and stands for the project. The others keep their order. The timeline already first changes nothing.",
+  "ops.timeline.setDefault.errors.not-found": "There is no timeline with this id in the project.",
+  "ops.timeline.setDefault.examples": [
+    { title: "Open the highlights first", params: { timeline: "highlight" } },
+  ],
+
   "ops.asset.update.summary": "renames an asset or changes its tags",
   "ops.asset.update.description":
     "Changes the name or the tags of an asset of assets.json. Clips that use the asset stay on it. Where its file is and what the file is (path, hash, size, media info) only the user changes. aq_project_status and aq_search list assets with their ids.",

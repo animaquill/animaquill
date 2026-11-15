@@ -1,6 +1,7 @@
 import { projectFrameRate } from "@animaquill/core";
 import { useState, useSyncExternalStore, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
+import { isFrameRate } from "../project/changes.ts";
 import { Bubble } from "../app/Bubble.tsx";
 import { Tip } from "../app/Tip.tsx";
 import { useWorkbench } from "../app/context.ts";
@@ -114,9 +115,11 @@ function FrameRateBubble({
   const [invalid, setInvalid] = useState(false);
   const isCommon = COMMON_RATES.some(({ fps }) => fps === current);
 
+  // What changing it comes to is asked about first, as in the project properties.
   const apply = (fps: string) => {
-    if (workbench.applyFrameRate(fps)) onClose();
-    else setInvalid(true);
+    if (!isFrameRate(fps)) return setInvalid(true);
+    onClose();
+    void workbench.projectEdits.setFrameRate(fps);
   };
 
   return (

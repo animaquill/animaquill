@@ -62,4 +62,10 @@ export const PARAM_TEXTS = {
   "params.time": 'Seconds as a string: "12.5".',
   "params.note": "A longer note.",
   "params.color": 'Color: "#ff6b8a".',
+  "params.description": "Text people read about the project; empty takes it away.",
+  "params.credits": 'Each {"role","name"}, the whole list.',
+  "params.formats": "Picture formats, the whole list; the first is the master.",
+  "params.languages": "Languages, the whole list; the first is the master.",
+  "params.cover": 'A moment, {"timeline","time"}; null for none.',
+  "params.background": 'Color: "#101830"; null for black.',
 } satisfies TextTable;

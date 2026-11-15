@@ -87,6 +87,14 @@ const noTimeline = (state: ProjectState, id: string | undefined): ToolResult => 
 
 const StatusParams = z.strictObject({});
 
+/** How long the description of a project is shown, in characters: it is what people wrote. */
+const MAX_DESCRIPTION = 500;
+
+const described = (text: string) =>
+  JSON.stringify(
+    [...text].length > MAX_DESCRIPTION ? `${[...text].slice(0, MAX_DESCRIPTION).join("")}…` : text,
+  );
+
 export const projectStatus: ToolDefinition<z.output<typeof StatusParams>> = {
   name: "aq_project_status",
   title: "Project overview",
@@ -137,6 +145,9 @@ export const projectStatus: ToolDefinition<z.output<typeof StatusParams>> = {
     ]);
     return answer(call, [
       `project ${quoted(manifest.name)} fps=${projectFrameRate(manifest)} formats=${formats.join(" ")} languages=${languages.join(" ")}`,
+      ...(manifest.description === undefined
+        ? []
+        : [`description ${described(manifest.description)}`]),
       editable,
       `timelines (${timelines.length}): ${timelines.join(" | ")}`,
       listLine("scenes", scenes, call.limits.listed),

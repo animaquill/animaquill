@@ -22,7 +22,6 @@ import {
   clipEnd,
   clipOffset,
   clipStart,
-  projectFrameRate,
   ProjectStore,
   withId,
   type OperationCall,
@@ -67,7 +66,7 @@ import { connectionsFor, type Connection } from "../keyframes/connect.ts";
 import { KeyframeEditor } from "../keyframes/editor.ts";
 import { OverlayEditor } from "../overlay/editor.ts";
 import { SceneHandles } from "../overlay/scene-handles.ts";
-import { CoverMaker, CoverUploads, type CoverShot } from "../export/cover.ts";
+import { CoverMaker, CoverUploads, canvasEncoder, type CoverShot } from "../export/cover.ts";
 import { ExportCompositor, exportCompositorOptions } from "../export/compositor.ts";
 import { StillExport } from "../export/still.ts";
 import { VideoExport } from "../export/video.ts";
@@ -88,13 +87,15 @@ import { TrialSession } from "../properties/trial.ts";
 import { PropertyWriter } from "../properties/writer.ts";
 import { registerTimelineActions } from "../timeline/actions.ts";
 import { TimelineEditor } from "../timeline/editor.ts";
-import { frameAt, frameTime } from "../timeline/frames.ts";
+import { frameAt, frameSeconds, frameTime } from "../timeline/frames.ts";
 import { keepFiles, type ImportReport, type PreparedProject } from "../transfer/import.ts";
 import { downloadFrom, type HereOf } from "../storage/places.ts";
 import { ProjectTransfer, formatSize } from "../transfer/transfer.ts";
 import { ActionRegistry, type Action } from "./actions.ts";
 import { Dialogs } from "./dialogs.ts";
 import { commandFailedText } from "../i18n/failures.ts";
+import { ProjectEdits } from "../project/edits.ts";
+import { PROJECT_GROUPS, ProjectNav, type ProjectPlace } from "./project-nav.ts";
 import { Flag } from "./flag.ts";
 import { InputMode } from "./input-mode.ts";
 import { KeybindingService } from "./keybindings.ts";
@@ -318,6 +319,12 @@ export class Workbench {
   readonly chatSync: CloudChats | undefined;
   /** Whether the settings are open in this window, and where in them, see `SettingsNav`. */
   readonly settingsNav: SettingsNav;
+  /** Where this browser keeps the covers of projects, for the project properties to show one. */
+  readonly coverStore: CoverStore | undefined;
+  /** Whether the project properties are open in this window, and where, see `ProjectNav`. */
+  readonly projectNav: ProjectNav;
+  /** What the project properties change, asked about first where it changes the picture. */
+  readonly projectEdits: ProjectEdits;
   /** Whether the preview offers to make a proxy of a video that plays too slowly. */
   readonly proxyOffer: SwitchSetting;
   /** The conversations this browser keeps, for the settings to say what they take. */
@@ -466,6 +473,7 @@ export class Workbench {
       }
     });
     this.settingsNav = new SettingsNav(host.windowMemory);
+    this.projectNav = new ProjectNav(host.windowMemory);
     this.proxyOffer = new SwitchSetting(host.settings, "proxyOffer", true);
     this.palette = new CommandPalette(host.settings, this.actions);
     this.resourceHabits = new ResourceHabits(host.settings);
@@ -610,6 +618,23 @@ export class Workbench {
       sceneName: (number) => t("scene.newName", { number }),
       soundName: (number) => t("sound.newName", { number }),
       soundWords: () => ({ duration: t("sound.param.duration"), seed: t("sound.param.seed") }),
+    });
+    this.projectEdits = new ProjectEdits({
+      t,
+      dialogs: this.dialogs,
+      notifications: this.notifications,
+      store: () => this.session.store,
+      playhead: () => {
+        const model = this.timeline.getSnapshot().model;
+        return (
+          model && { timeline: model.id, seconds: frameSeconds(this.timeline.frame, model.rate) }
+        );
+      },
+      proxies: () =>
+        [...(this.proxies?.getSnapshot().states.values() ?? [])].filter(
+          ({ kind }) => kind === "ready" || kind === "making" || kind === "waiting",
+        ).length,
+      picture: (state, timeline, seconds) => this.#framePicture(state, timeline, seconds),
     });
     // Conversations of projects of the platform go with the account.
     this.chatSync =
@@ -821,6 +846,7 @@ export class Workbench {
       ...(host.covers && { covers: host.covers }),
       ...(cloud?.cover && { cloud: cloud.cover }),
     });
+    this.coverStore = host.covers;
     this.covers = host.covers && this.#coverMaker(host.covers, cloud?.cover, library);
     this.#noteOpened();
     this.proxies =
@@ -1205,6 +1231,7 @@ export class Workbench {
    */
   openSettings(place?: SettingsPlace): void {
     this.palette.close();
+    this.projectNav.close();
     this.settingsNav.open(place);
   }
 
@@ -2376,42 +2403,44 @@ export class Workbench {
     await this.#showCreate(this.#newCreate({ imported: prepared }), prepared);
   }
 
-  async renameProject(): Promise<void> {
-    const { store } = this.session;
-    if (!store) return;
-    const { t } = this;
-    const name = await this.dialogs.prompt({
-      title: t("project.nameLabel"),
-      value: store.getState().manifest.name,
-      confirm: t("project.rename"),
-    });
-    if (!name) return;
-    const result = store.execute({ type: "project.rename", params: { name } });
-    if (!result.ok) {
-      this.notifications.push(commandFailedText(t, result.error));
+  /**
+   * Opens the project properties of the open project (docs/design/settings-and-properties.md of
+   * AnimaQuill Cloud, 5), at a place such as the name, or where they were last. The settings close:
+   * one dialog at a time.
+   */
+  openProjectProperties(place?: ProjectPlace): void {
+    if (!this.session.store) return;
+    this.palette.close();
+    this.settingsNav.close();
+    this.projectNav.open(place);
+  }
+
+  /** The name of the project, in the project properties, ready to type over. */
+  renameProject(): void {
+    this.openProjectProperties({ group: "general", depth: 1, item: "name" });
+  }
+
+  /**
+   * A frame of a project as it would be, small: what the project properties show before and after
+   * a change of the shape of the picture. As the cover is drawn, in a compositor of its own.
+   */
+  async #framePicture(
+    state: ProjectState,
+    timeline: string,
+    seconds: number,
+  ): Promise<Blob | undefined> {
+    const key = this.session.key;
+    if (key === undefined) return undefined;
+    const image = await this.#coverPicture(
+      { state, key, timeline, seconds },
+      new AbortController().signal,
+      this.projects,
+    );
+    try {
+      return await canvasEncoder(image)("image/jpeg", 0.8);
+    } finally {
+      image.close();
     }
-  }
-
-  /** Sets the rate of editing. Formats keep the rates they are exported at. */
-  applyFrameRate(fps: string): boolean {
-    const result = this.session.store?.execute({
-      type: "project.setFrameRate",
-      params: { fps: fps.trim() },
-    });
-    return result?.ok === true;
-  }
-
-  /** Asks for a frame rate that is not on the list. */
-  async setFrameRate(): Promise<void> {
-    const { store } = this.session;
-    if (!store) return;
-    const { t } = this;
-    const fps = await this.dialogs.prompt({
-      title: t("project.frameRateLabel"),
-      value: projectFrameRate(store.getState().manifest),
-      confirm: t("project.frameRateConfirm"),
-    });
-    if (fps && !this.applyFrameRate(fps)) this.notifications.push(t("notice.frameRateInvalid"));
   }
 
   /**
@@ -2725,6 +2754,7 @@ export class Workbench {
     this.covers?.leaving();
     await this.layout.detach();
     this.cloudPanel.set(false);
+    this.projectNav.close();
     // What the platform does not have yet stays in the log, for whoever syncs next.
     await this.cloud?.close();
     // The folder gets what is waiting first, and the next window gets to write it.
@@ -2765,11 +2795,30 @@ export class Workbench {
       enabled: isOpen,
     });
     this.actions.register({
-      id: "project.rename",
-      title: (t) => t("project.renameAction"),
-      run: () => void this.renameProject(),
+      id: "project.properties",
+      title: (t) => t("projectProps.action"),
+      run: () => this.openProjectProperties(),
+      keys: ["mod+alt+,"],
       menu: { name: "file", group: "project" },
       enabled: isOpen,
+      visible: isOpen,
+    });
+    for (const group of PROJECT_GROUPS) {
+      this.actions.register({
+        id: `project.properties.${group}`,
+        title: (t) => t("projectProps.openGroup", { group: t(`projectProps.groups.${group}`) }),
+        run: () => this.openProjectProperties({ group, depth: 1 }),
+        enabled: isOpen,
+        visible: isOpen,
+      });
+    }
+    this.actions.register({
+      id: "project.rename",
+      title: (t) => t("project.renameAction"),
+      run: () => this.renameProject(),
+      menu: { name: "file", group: "project" },
+      enabled: isOpen,
+      visible: isOpen,
     });
     this.actions.register({
       id: "project.importMedia",
@@ -2781,9 +2830,10 @@ export class Workbench {
     this.actions.register({
       id: "project.frameRate",
       title: (t) => t("project.frameRate"),
-      run: () => void this.setFrameRate(),
+      run: () => this.openProjectProperties({ group: "picture", depth: 1, item: "fps" }),
       menu: { name: "file", group: "project" },
       enabled: isOpen,
+      visible: isOpen,
     });
     // Where projects are folders, opening one takes the place of bringing one into the browser.
     if (!this.projectFolders) {

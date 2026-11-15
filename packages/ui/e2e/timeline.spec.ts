@@ -1262,6 +1262,8 @@ test.describe("the status bar", () => {
   test("changes the frame rate from a list, and the ruler follows", async ({ page }) => {
     await bar(page).getByRole("button", { name: "项目帧率" }).click();
     await page.getByRole("dialog").getByRole("radio", { name: "24", exact: true }).click();
+    // What changing it comes to is asked first, as in the project properties.
+    await page.locator("dialog[open]").getByRole("button", { name: "改成 24" }).click();
     await expect(bar(page).getByRole("button", { name: "项目帧率" })).toHaveText("24 帧");
     await stage(page).focus();
     await page.keyboard.press("End");
@@ -1278,8 +1280,9 @@ test.describe("the status bar", () => {
     await expect(bubble.getByText("帧率要写成大于 0 的数字")).toBeVisible();
     await bubble.getByLabel("自定义").fill("48");
     await bubble.getByRole("button", { name: "应用" }).click();
-    await expect(bar(page).getByRole("button", { name: "项目帧率" })).toHaveText("48 帧");
     await expect(bubble).toHaveCount(0);
+    await page.locator("dialog[open]").getByRole("button", { name: "改成 48" }).click();
+    await expect(bar(page).getByRole("button", { name: "项目帧率" })).toHaveText("48 帧");
   });
 
   test("changes the time and the length in a bubble", async ({ page }) => {

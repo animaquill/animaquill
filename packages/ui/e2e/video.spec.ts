@@ -1435,8 +1435,9 @@ test.describe("an export after a reload", () => {
       .getByRole("menu")
       .getByRole("menuitem", { name: "重命名项目", exact: true })
       .click();
-    await again.getByRole("textbox").fill("改过的项目");
+    await again.getByRole("textbox", { name: "项目名称" }).fill("改过的项目");
     await again.keyboard.press("Enter");
+    await again.keyboard.press("Escape");
     await expect(again.getByRole("contentinfo")).toContainText("已保存");
     await again.reload();
     await offer(again).getByRole("button", { name: "继续导出" }).click();

@@ -3,6 +3,7 @@ import { clipEnd, clipStart, entryOf, type ProjectState } from "../model.ts";
 import { compareProblems, type ProjectProblem } from "./model.ts";
 import { propertyProblems, type PropertyInputs } from "./properties.ts";
 import { referenceProblems } from "./references.ts";
+import { timingProblems } from "./timing.ts";
 import { unsupportedProblems } from "./unsupported.ts";
 
 export interface StaticInputs {
@@ -22,9 +23,12 @@ export function staticProblems(
         propertyProblems(state, timeline, { describe, ...(registered && { registered }) }),
       )
     : [];
-  return [...referenceProblems(state), ...unsupportedProblems(state), ...properties].toSorted(
-    compareProblems,
-  );
+  return [
+    ...referenceProblems(state),
+    ...unsupportedProblems(state),
+    ...timingProblems(state),
+    ...properties,
+  ].toSorted(compareProblems);
 }
 
 /** What an export makes. */

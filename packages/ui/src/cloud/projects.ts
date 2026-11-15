@@ -2768,6 +2768,22 @@ export class CloudProjects {
   }
 
   /**
+   * What the platform's list says of the open project now, as its properties show it: when it was
+   * made and changed, how large it is. Undefined where it is no project of the platform yet, or
+   * the platform cannot say now.
+   */
+  async summaryOfOpen(): Promise<CloudProjectSummary | undefined> {
+    const snapshot = this.#snapshot;
+    if (snapshot.kind !== "linked" || !snapshot.made) return undefined;
+    try {
+      const list = await this.#within(LIST_WAIT_MS, this.#options.cloud.list());
+      return list.find((each) => each.id === snapshot.link.project);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
    * Whether the platform has the project of a link, as its list says right now, see
    * `OnlyHere.cloud`. The list is the only thing that says so: a copy that synced a moment ago
    * may be of a project that was taken away since, on another computer.

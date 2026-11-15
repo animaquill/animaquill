@@ -1,0 +1,339 @@
+/* The project properties: the shell and rows of the settings (Settings.module.css), and what only
+   they have, such as tables of formats and languages and the cards of where the project is. */
+
+.closeEnd {
+  margin-left: auto;
+}
+
+.control {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.text {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 4px 8px;
+  color: var(--aq-text-strong);
+  font: inherit;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.text:focus {
+  border-color: var(--aq-accent);
+  outline: 0;
+}
+
+.text[aria-invalid="true"] {
+  border-color: var(--aq-danger);
+}
+
+.text:disabled {
+  color: var(--aq-text-muted);
+  cursor: not-allowed;
+}
+
+textarea.text {
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.wideText {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.grow {
+  flex: 1;
+  min-width: 120px;
+}
+
+.color {
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.color:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.listRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.check {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  color: var(--aq-text);
+  white-space: nowrap;
+}
+
+.code {
+  padding: 1px 4px;
+  color: var(--aq-text-strong);
+  font-family: var(--aq-font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  background: var(--aq-bg-input);
+  border-radius: 3px;
+  word-break: break-all;
+}
+
+.facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  margin: 6px 0 0;
+}
+
+.fact {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fact dt {
+  flex: none;
+  color: var(--aq-text-muted);
+}
+
+.fact dt::after {
+  content: "：";
+}
+
+.fact dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--aq-text-strong);
+}
+
+.table {
+  display: flex;
+  flex-direction: column;
+  margin-top: 8px;
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+}
+
+.tableRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 104px 44px 76px auto;
+  gap: 6px 12px;
+  align-items: center;
+  padding: 8px 10px;
+}
+
+.tableRow[data-language] {
+  grid-template-columns: minmax(150px, 1fr) 64px minmax(0, 1fr) auto;
+}
+
+.editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  align-items: center;
+  padding: 8px 10px;
+}
+
+.tableRow + .tableRow,
+.tableRow + .editor,
+.editor + .tableRow,
+.adds {
+  border-top: 1px solid var(--aq-border);
+}
+
+.editor {
+  align-items: flex-end;
+  background: var(--aq-bg-hover);
+}
+
+.cellName {
+  display: inline-flex;
+  flex: 1 1 140px;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  color: var(--aq-text-strong);
+  font-size: 13px;
+}
+
+.cellMono {
+  color: var(--aq-text-strong);
+  font-family: var(--aq-font-mono, ui-monospace, monospace);
+}
+
+.cellMuted {
+  color: var(--aq-text-muted);
+}
+
+.cellNote {
+  grid-row: 2;
+  grid-column: 1 / -1;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+.cellNote:empty {
+  display: none;
+}
+
+.cellActions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-left: auto;
+}
+
+.badge {
+  padding: 0 5px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+}
+
+.adds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 8px 10px;
+}
+
+.field {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+.sides {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.sides .field {
+  flex-direction: row;
+  gap: 4px;
+  align-items: center;
+}
+
+.timeline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  align-items: flex-end;
+  margin-top: 6px;
+}
+
+.plainList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0;
+  padding: 0 0 0 16px;
+  color: var(--aq-text);
+  line-height: 1.6;
+}
+
+.cover {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: flex-start;
+  margin-top: 6px;
+}
+
+.coverImage,
+.coverEmpty {
+  width: 192px;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+  background: #000;
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.coverEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+.coverSide {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lockedBar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 12px 20px 0;
+  padding: 8px 10px;
+  color: var(--aq-warning-text, #e3b341);
+  background: color-mix(in srgb, var(--aq-warning, #d29922) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--aq-warning, #d29922) 45%, transparent);
+  border-radius: 4px;
+}
+
+.lockedBar span {
+  flex: 1;
+  line-height: 1.6;
+}
+
+.lockedBar button {
+  padding: 3px 10px;
+  color: inherit;
+  font: inherit;
+  background: none;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.panel {
+  margin-top: 8px;
+  padding: 4px 8px;
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+}
+
+/* Narrow, a row of a table goes on as many lines as it needs. */
+[data-narrow] .tableRow,
+[data-narrow] .tableRow[data-language] {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.tableRow .cellActions {
+  flex-wrap: nowrap;
+}
