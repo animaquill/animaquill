@@ -136,8 +136,12 @@ export function DialogFrame(props: {
   /** Whether the press that may close the dialog began outside of it. */
   const pressedOutside = useRef(false);
 
-  /** What had the focus as the dialog opened: also through React trying the dialog out twice. */
-  const [opener] = useState(() => document.activeElement);
+  /**
+   * What had the focus as the dialog opened, taken as it goes in rather than as it renders: what
+   * opened it, such as the command palette, may give the focus back to where it was in the same
+   * commit. Kept through React trying the dialog out twice.
+   */
+  const opener = useRef<Element | null | undefined>(undefined);
   /** Set as the dialog goes: the focus may leave it then. */
   const leaving = useRef(false);
 
@@ -145,18 +149,22 @@ export function DialogFrame(props: {
   // it all, so there only the dialog.
   useLayoutEffect(() => {
     leaving.current = false;
+    opener.current ??= document.activeElement;
     if (matchMedia(NARROW).matches || !initialFocus?.current) dialog.current?.focus();
     else initialFocus.current.focus();
     return () => {
       leaving.current = true;
-      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+      const was = opener.current;
+      if (was instanceof HTMLElement && was.isConnected) was.focus();
     };
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- only as it opens
   }, []);
 
   // The focus stays in the dialog, as in any dialog that is in the way of what is behind it: what
   // leaves it for the editor comes back. Dialogs over it, and the notifications, are not that.
-  useEffect(() => {
+  // From the moment it goes in, not after the browser has drawn it: effects that run then, such
+  // as those of what goes away in the same commit, would otherwise take the focus out for good.
+  useLayoutEffect(() => {
     const keepFocus = (event: FocusEvent) => {
       const element = dialog.current;
       const target = event.target as Element | null;

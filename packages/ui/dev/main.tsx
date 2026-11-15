@@ -70,6 +70,9 @@ const holdLoad = new URLSearchParams(location.search).has("holdLoad")
   ? () => new Promise<void>((resolve) => Object.assign(window, { aqLoad: resolve }))
   : undefined;
 
+/** Without React's strict mode, as the site is in effect: `?strict=off`, see `strict` of the editor. */
+const strict = new URLSearchParams(location.search).get("strict") !== "off";
+
 /**
  * Reports go where they go on a site, which the development server does not answer: tests stand in
  * for the server there.
@@ -118,6 +121,7 @@ if (root)
     ...(sceneStage && { sceneStage: "plain" }),
     ...(soundLimit !== null && { soundLimitMs: Number(soundLimit) }),
     ...(proxyFrameMs !== null && { proxyFrameMs: Number(proxyFrameMs) }),
+    ...(!strict && { strict: false }),
     ...(holdLoad && { holdLoad }),
     panels: [crashTest, frameTest],
     onWorkbench: (workbench) => {

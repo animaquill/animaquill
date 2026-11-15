@@ -1,6 +1,14 @@
 import type { Page } from "@playwright/test";
 import { addAnthropic, closeSettings, goToSettingsGroup, settingsOf } from "./ai-support.ts";
-import { chooseLayout, createProject, devPageOnly, expect, tab, test } from "./support.ts";
+import {
+  chooseLayout,
+  createProject,
+  devPageOnly,
+  editorReady,
+  expect,
+  tab,
+  test,
+} from "./support.ts";
 
 /**
  * The settings, a dialog over the editor or the start page (docs/design/settings-and-properties.md
@@ -64,6 +72,57 @@ test("opens in every way the editor has, at the group it was in, and Esc closes 
   await page.keyboard.press("Control+Shift+KeyP");
   await expect(page.getByRole("combobox", { name: "命令面板" })).toHaveCount(0);
   await page.keyboard.press("Escape");
+});
+
+test.describe("as on the site, where React runs each effect once", () => {
+  // The development page runs effects twice, which put the focus back in the dialog after what
+  // closed in the same commit took it away: on the site Esc then did nothing (0.3.67).
+  devPageOnly("?strict=off");
+  test.use({ withProject: false });
+
+  test("the focus goes in from every way, Tab goes round in it, and Esc gives it back", async ({
+    page,
+  }) => {
+    await page.goto("/?strict=off");
+    await editorReady(page);
+    await createProject(page);
+    const inSettings = () =>
+      settingsOf(page).evaluate((dialog) => dialog.contains(document.activeElement));
+    const before = header(page).getByRole("button", { name: "设置" });
+    const ways = [
+      () => page.keyboard.press("Control+Comma"),
+      () => before.click(),
+      () => palette(page, "设置"),
+      () => palette(page, "设置：AI 模型"),
+    ];
+    for (const open of ways) {
+      await before.focus();
+      await open();
+      await expect(settingsOf(page)).toBeVisible();
+      await expect.poll(inSettings).toBe(true);
+      await page.keyboard.press("Escape");
+      await expect(settingsOf(page)).toBeHidden();
+      // From the palette too, where it was before the palette.
+      await expect(before).toBeFocused();
+    }
+    // Tab and Shift+Tab never leave it.
+    await palette(page, "设置");
+    for (let step = 0; step < 40; step += 1) {
+      await page.keyboard.press(step < 20 ? "Tab" : "Shift+Tab");
+      expect(await inSettings()).toBe(true);
+    }
+    await page.keyboard.press("Escape");
+    await expect(settingsOf(page)).toBeHidden();
+    // The project properties have the same dialog.
+    const properties = page.getByTestId("project-properties");
+    await palette(page, "项目属性…");
+    await expect(properties).toBeVisible();
+    await expect
+      .poll(() => properties.evaluate((dialog) => dialog.contains(document.activeElement)))
+      .toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(properties).toBeHidden();
+  });
 });
 
 test.describe("with an account", () => {

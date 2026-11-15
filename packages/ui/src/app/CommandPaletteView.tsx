@@ -1,6 +1,6 @@
 import {
-  useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -41,7 +41,9 @@ function Dialog() {
   const id = useId();
   const entries = useMemo(() => palette.search(query, t), [palette, query, t]);
 
-  useEffect(() => {
+  // Back where it was before what the palette ran opens anything: a dialog it opens takes the
+  // focus as it goes in, in the same commit, and must not lose it to this afterwards.
+  useLayoutEffect(() => {
     input.current?.focus();
     return () => previousFocus?.focus();
   }, [previousFocus]);

@@ -38,6 +38,12 @@ export interface EditorOptions {
   readonly panels?: readonly PanelDefinition[];
   /** For tests: what no control can do yet, such as changing code. */
   readonly onWorkbench?: (workbench: Workbench) => void;
+  /**
+   * For tests: `false` renders without React's strict mode, as the site does in effect. In
+   * development strict mode runs every effect twice, which hides what goes wrong only when it runs
+   * once, such as the focus of a dialog taken away by what closes in the same commit.
+   */
+  readonly strict?: boolean;
 }
 
 /**
@@ -132,11 +138,8 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
   options.onWorkbench?.(workbench);
 
   const root = createRoot(element);
-  root.render(
-    <StrictMode>
-      <App workbench={workbench} i18n={i18n} />
-    </StrictMode>,
-  );
+  const app = <App workbench={workbench} i18n={i18n} />;
+  root.render(options.strict === false ? app : <StrictMode>{app}</StrictMode>);
   void workbench.resume();
 
   // Pages can go away without warning, so hiding is the last reliable moment to save.
