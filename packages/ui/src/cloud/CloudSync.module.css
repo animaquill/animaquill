@@ -155,6 +155,11 @@
   opacity: 0.5;
 }
 
+/* What goes with a line of status, quieter than it. */
+.aside {
+  opacity: 0.8;
+}
+
 /* Which conversations have pictures on the platform, under the switch of the conversations. */
 .imageList {
   display: flex;

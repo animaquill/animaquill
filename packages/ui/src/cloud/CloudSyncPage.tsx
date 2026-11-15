@@ -352,7 +352,7 @@ function ChatImagesUsage() {
     const sure = await dialogs.confirm({
       title: t("cloudSync.chatImages.deleteTitle", { title }),
       message: t("cloudSync.chatImages.deleteMessage"),
-      confirm: t("cloudSync.chatImages.delete"),
+      confirm: t("cloudSync.chatImages.deleteConfirm"),
       danger: true,
     });
     if (!sure) return;
@@ -372,6 +372,7 @@ function ChatImagesUsage() {
           used: roomText(usage.used),
           limit: roomText(usage.limit),
         })}
+        <span className={styles.aside}>· {t("cloudSync.chatImages.released")}</span>
         <button
           type="button"
           className={styles.link}
