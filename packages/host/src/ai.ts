@@ -263,8 +263,13 @@ export function browserChats(
       return found as SavedChat | undefined;
     },
     async save(chat) {
-      const { transaction, store, all } = await allOf(chat.project, "readwrite");
+      // The write goes first, in the same turn as the transaction opens: a page that goes right
+      // after (the tab closes, a reload) takes the answer with it only if the write waits for a
+      // read to come back.
+      const transaction = (await database()).transaction(CHATS, "readwrite");
+      const store = transaction.objectStore(CHATS);
       store.put(chat);
+      const all = (await resultOf(store.index(BY_PROJECT).getAll(chat.project))) as SavedChat[];
       // The oldest go, so that one project does not fill the disk with what nobody reads again.
       const others = all.filter(({ id }) => id !== chat.id);
       const over = others.length + 1 - limit;

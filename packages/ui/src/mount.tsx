@@ -144,7 +144,7 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
 
   // Pages can go away without warning, so hiding is the last reliable moment to save.
   const save = () => {
-    if (document.visibilityState !== "hidden") return;
+    if (document.visibilityState !== "hidden" && !leaving) return;
     void workbench.layout.flush();
     workbench.timeline.flush();
     workbench.keyframes.flush();
@@ -153,6 +153,13 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     void workbench.chat.flush();
   };
   document.addEventListener("visibilitychange", save);
+  // A reload or a closing tab does not always say it hid first.
+  let leaving = false;
+  window.addEventListener("pagehide", () => {
+    leaving = true;
+    save();
+    leaving = false;
+  });
 
   // People come back from their files, where they may have taken proxies away, and perhaps from
   // another tab, where they signed in or out.

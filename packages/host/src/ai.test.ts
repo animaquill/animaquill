@@ -1,4 +1,4 @@
-import { IDBFactory } from "fake-indexeddb";
+import { IDBFactory, IDBIndex, IDBObjectStore } from "fake-indexeddb";
 import { describe, expect, it } from "vitest";
 import {
   KEYS_DATABASE,
@@ -137,6 +137,32 @@ describe("conversations with AI", () => {
     await chats.forget("p");
     expect(await chats.list("p")).toEqual([]);
     expect((await chats.list("other")).map(({ id }) => id)).toEqual(["x"]);
+  });
+
+  it("write a conversation before they read anything, so that a page that goes right after keeps it", async () => {
+    const factory = new IDBFactory();
+    const chats = browserChats(() => factory, 2);
+    await chats.save(chat("warm", 1));
+    const calls: string[] = [];
+    const proto = IDBObjectStore.prototype;
+    const index = IDBIndex.prototype;
+    const put = proto.put;
+    const getAll = index.getAll;
+    proto.put = function (...args: Parameters<typeof put>) {
+      calls.push("put");
+      return put.apply(this, args);
+    };
+    index.getAll = function (...args: Parameters<typeof getAll>) {
+      calls.push("getAll");
+      return getAll.apply(this, args);
+    };
+    try {
+      await chats.save(chat("last", 2));
+    } finally {
+      proto.put = put;
+      index.getAll = getAll;
+    }
+    expect(calls[0]).toBe("put");
   });
 
   it("say how many there are of each project, and about how much they take", async () => {
