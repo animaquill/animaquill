@@ -50,15 +50,17 @@ describe("what a transition is", () => {
     expect(findTransition({ type: "toString" }, "sound", "enter").kind).toBe("missing");
   });
 
-  it("is done here for every picture that comes with the editor, and for no sound so far", () => {
-    for (const type of Object.keys(BUILT_IN_TRANSITIONS.picture)) {
-      for (const use of ["enter", "exit", "join"] as const) {
-        const found = findTransition({ type }, "picture", use);
-        expect(isSupported(found, "picture", use), `${type} ${use}`).toBe(true);
+  it("is done here for every transition that comes with the editor", () => {
+    for (const media of ["picture", "sound"] as const) {
+      for (const type of Object.keys(BUILT_IN_TRANSITIONS[media])) {
+        for (const use of ["enter", "exit", "join"] as const) {
+          const found = findTransition({ type }, media, use);
+          expect(isSupported(found, media, use), `${media} ${type} ${use}`).toBe(true);
+        }
       }
     }
-    const fade = findTransition({ type: "fade" }, "sound", "enter");
-    expect(isSupported(fade, "sound", "enter")).toBe(false);
+    const wipe = findTransition({ type: "wipe" }, "sound", "enter");
+    expect(isSupported(wipe, "sound", "enter")).toBe(false);
     expect(Object.keys(SUPPORTED_TRANSITIONS.picture)).toEqual(["enter", "exit", "join"]);
   });
 

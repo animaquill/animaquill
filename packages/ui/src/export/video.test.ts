@@ -923,7 +923,8 @@ describe("an export that does not finish", () => {
     expect(context.compositor.frames).toHaveLength(45);
   });
 
-  it("stops where a transition of sound is, which this editor does not play yet", async () => {
+  /** An export with sound, whose clip of sound goes out with a transition. */
+  const withSoundExit = (exit: Record<string, unknown>) => {
     const silence = () => ({
       mix: async (_: number, frames: number) =>
         ({
@@ -937,8 +938,22 @@ describe("an export that does not finish", () => {
     const path = "timelines/main/timeline.json";
     const timeline = JSON.parse(store.exportFiles().files.get(path) as string);
     const audio = timeline.tracks.find(({ kind }: { kind: string }) => kind === "audio");
-    audio.clips[0].exit = { type: "fade", duration: "1/2" };
+    audio.clips[0].exit = exit;
     expect(store.importFile(path, JSON.stringify(timeline), { origin: USER }).ok).toBe(true);
+    return context;
+  };
+
+  it("goes through the transitions of sound that come with the editor", async () => {
+    const context = withSoundExit({ type: "fade-linear", duration: "1/2" });
+    const running = context.videos.start();
+    await answer(context);
+    await running;
+    expect(context.compositor.frames).toHaveLength(60);
+    expect(context.said()[0]).toContain("export.video.done");
+  });
+
+  it("stops where a transition of sound is, which this editor cannot do", async () => {
+    const context = withSoundExit({ type: "plugin.echo", duration: "1/2" });
     const running = context.videos.start();
     await answer(context);
     const shown = await notice(context);

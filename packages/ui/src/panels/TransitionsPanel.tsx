@@ -23,7 +23,7 @@ import {
 } from "../resources/transitions.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import { TRANSITION_DRAG_TYPE, transitionDrag } from "../timeline/transition-drag.ts";
-import { greysOut } from "../timeline/transition-place.ts";
+import { firstLength, greysOut } from "../timeline/transition-place.ts";
 
 const reducedMotion = () =>
   typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -46,7 +46,7 @@ export function TransitionIcon({ resource, playing }: ResourceIconProps<Transiti
       setDrawn(at(STILL_PROGRESS));
       return;
     }
-    const seconds = toSeconds(parseTime(pick.duration));
+    const seconds = toSeconds(parseTime(firstLength(pick)));
     const began = performance.now();
     // One frame asked for at a time, by the same loop, until it stops.
     const loop = { frame: 0 };

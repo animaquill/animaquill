@@ -207,6 +207,7 @@ export {
   SOUND_SAMPLE_RATE,
   type MadeSound,
 } from "./sound-plan.ts";
+export { fadeGainAt, fadesDuring, fadesGainAt, type SoundFade } from "./sound-fades.ts";
 export {
   MAX_SCENE_FRAME,
   TIME_TOLERANCE,

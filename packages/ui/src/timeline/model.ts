@@ -40,10 +40,11 @@ export type Edge = "enter" | "exit";
 export const EDGES: readonly Edge[] = ["enter", "exit"];
 
 /**
- * Whether people can put transitions on the clips of a track. Only the picture does them so far:
- * sound and captions get theirs later. What a file gave them still shows, and can be taken away.
+ * Whether people can put transitions on the clips of a track: pictures and sound. Captions get
+ * theirs later. What a file gave them still shows, and can be taken away.
  */
-export const canHaveTransitions = (track: TrackState): boolean => track.kind === "video";
+export const canHaveTransitions = (track: TrackState): boolean =>
+  track.kind === "video" || track.kind === "audio";
 
 /** How long a transition is in seconds, as it shows: never longer than its clip. */
 function secondsOfEdge(transition: Transition | undefined, clip: ClipState): number {
@@ -84,10 +85,8 @@ export type JoinTrouble =
   | "hidden"
   /** Another one on the same cut comes first by id. */
   | "taken"
-  /** This editor cannot do it, and the preview shows a dissolve instead. */
-  | "missing"
-  /** Joins of sound do nothing yet. */
-  | "sound";
+  /** This editor cannot do it, and the preview shows a dissolve or plays a cross-fade instead. */
+  | "missing";
 
 /** A join on the cut between two clips that follow each other, as the timeline draws it. */
 export interface JoinBox {
@@ -249,11 +248,9 @@ function joinBoxes(
     const trouble: JoinTrouble | undefined =
       place.kind === "hidden" || place.kind === "taken"
         ? place.kind
-        : media === "sound"
-          ? "sound"
-          : isSupported(found, media, "join")
-            ? undefined
-            : "missing";
+        : isSupported(found, media, "join")
+          ? undefined
+          : "missing";
     const still =
       project && trouble === undefined ? stillDuring(project, { ...effect, at: cut }) : [];
     const at = toSeconds(cut);

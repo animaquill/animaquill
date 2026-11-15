@@ -29,6 +29,9 @@ function fakeContext() {
     made.push({ channels, length, rate });
     return {
       destination: {} as AudioDestinationNode,
+      createBuffer: () => {
+        throw new Error("Nothing here has transitions");
+      },
       createGain() {
         const gain = { gain: { value: 1 }, connect() {} };
         current = gain;

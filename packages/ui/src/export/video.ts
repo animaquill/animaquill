@@ -2,7 +2,6 @@ import { readSound, SoundFailed, SoundMixer, type SoundSource } from "@animaquil
 import {
   buildAudioPlan,
   buildRenderPlan,
-  entryOf,
   madeSoundsOf,
   showsAt,
   timelineLength,
@@ -1630,9 +1629,8 @@ export class VideoExport {
     const frames = framesOf(range, plan.scenes.fps);
     const { total } = frames;
     // The file says what the project says, or the export stops where it would not.
-    const timeline = entryOf(state.timelines, timelineId);
     const heard = saved.sound ? buildAudioPlan(state, timelineId) : undefined;
-    const notDone = timeline ? transitionsNotDone(timeline, plan, heard) : [];
+    const notDone = transitionsNotDone(plan, heard);
     const controller = new AbortController();
     const { signal } = controller;
     this.#controller = controller;

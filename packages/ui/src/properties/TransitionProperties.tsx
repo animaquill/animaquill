@@ -41,7 +41,7 @@ import {
   type JoinBox,
   type TimelineModel,
 } from "../timeline/model.ts";
-import { transitionName } from "../timeline/transition-names.ts";
+import { joinTroubleKey, transitionName } from "../timeline/transition-names.ts";
 import { CONTROLS } from "./controls.tsx";
 import type { PropertyRow } from "./inspect.ts";
 import { textOf } from "./names.ts";
@@ -65,7 +65,7 @@ function whyNot(model: TimelineModel, box: ClipBox, edge: Edge) {
   const kind = model.rowOfClip.get(box.id)?.track.kind;
   if (kind === "caption") return "caption" as const;
   if (model.joined.has(`${box.id} ${edge}`)) return "joined" as const;
-  return kind === "audio" ? ("sound" as const) : ("unsupported" as const);
+  return kind === "audio" ? ("unsupportedSound" as const) : ("unsupported" as const);
 }
 
 /** Whether a speed curve goes past 0 and 1 as it is for a transition, see `progressAt`. */
@@ -562,12 +562,12 @@ function JoinProperties({ join: id }: { readonly join: string }) {
       )}
       {join.trouble && (
         <div className={styles.hint} role="status">
-          <span>{t(`transition.why.join.${join.trouble}`)}</span>
+          <span>{t(joinTroubleKey(join.trouble, media))}</span>
         </div>
       )}
       {join.still.length > 0 && (
         <div className={styles.hint} role="status">
-          <span>{t("transition.still")}</span>
+          <span>{t(media === "sound" ? "transition.silent" : "transition.still")}</span>
         </div>
       )}
       <div className={styles.hint}>

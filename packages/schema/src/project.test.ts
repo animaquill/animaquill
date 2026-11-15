@@ -54,8 +54,6 @@ describe("the example project", () => {
     const { project, problems } = readProject(fixture());
     expect(problems.map(({ severity, code, path }) => [severity, code, path])).toEqual([
       ["warning", "transition-missing", "tracks.0.joins.1"],
-      ["warning", "transition-unsupported", "tracks.2.clips.1.enter"],
-      ["warning", "transition-unsupported", "tracks.2.clips.1.exit"],
     ]);
     expect(project?.manifest.name).toBe("原子是什么");
     expect(project?.timelines.get("main")?.overrides.size).toBe(3);
@@ -740,10 +738,11 @@ describe("transitions that do not do what they say", () => {
       (d) => (d.tracks[0].clips[0].enter = { transition: "ink", duration: "1" }),
     ],
     ["library-missing", "tracks.0.joins.1", (d) => (d.tracks[0].joins[1].library = "gone")],
+    // Sound has its fades, but no wipe.
     [
-      "transition-unsupported",
+      "transition-missing",
       "tracks.2.clips.0.enter",
-      (d) => (d.tracks[2].clips[0].enter = { type: "fade", duration: "1" }),
+      (d) => (d.tracks[2].clips[0].enter = { type: "wipe", duration: "1" }),
     ],
     [
       "transition-too-long",

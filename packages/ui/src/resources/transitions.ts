@@ -1,4 +1,9 @@
-import { BUILT_IN_TRANSITIONS, TRANSITION_USES, type TransitionUse } from "@animaquill/schema";
+import {
+  BUILT_IN_TRANSITIONS,
+  TRANSITION_USES,
+  type TransitionMedia,
+  type TransitionUse,
+} from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import type { AttachContext } from "../timeline/transition-place.ts";
 import { builtInPick, isPicked, type TransitionPick } from "../timeline/transition-place.ts";
@@ -25,25 +30,36 @@ export const typeOfUse = (use: TransitionUse): string => `transition.${use}`;
 /** The order of the uses as people see them. */
 const USE_ORDER: readonly TransitionUse[] = ["enter", "join", "exit"];
 
+/** Every transition that comes with the editor, pictures first, with what it works on first. */
+function builtInTypes(): readonly (readonly [string, TransitionMedia])[] {
+  const types = new Map<string, TransitionMedia>();
+  for (const media of ["picture", "sound"] as const) {
+    for (const type of Object.keys(BUILT_IN_TRANSITIONS[media])) {
+      if (!types.has(type)) types.set(type, media);
+    }
+  }
+  return [...types];
+}
+
 /**
- * The picture transitions that come with the editor, once for each place they can go, each with the
- * name it has there: `fade` comes in as 淡入 and goes out as 淡出. Which way one goes and such are
- * its properties, which people set once it is there. Those of the project and of libraries come with
- * their own lists later, see `ResourceSource`.
+ * The transitions that come with the editor, once for each place they can go, each with the name
+ * it has there: `fade` comes in as 淡入 and goes out as 淡出, on pictures and on sound alike, and
+ * `fade-linear` is for sound only. Which way one goes and such are its properties, which people set
+ * once it is there. Those of the project and of libraries come with their own lists later, see
+ * `ResourceSource`.
  */
 export function builtInTransitions(t: TFunction): readonly Resource<TransitionItem>[] {
   const resources: Resource<TransitionItem>[] = [];
   for (const use of USE_ORDER.filter((value) => TRANSITION_USES.includes(value))) {
-    for (const [type, spec] of Object.entries(BUILT_IN_TRANSITIONS.picture)) {
-      if (!spec.uses.includes(use)) continue;
+    for (const [type, media] of builtInTypes()) {
       const pick = builtInPick(type);
-      if (!pick) continue;
+      if (!pick?.uses.includes(use)) continue;
       const tags = textOf(t, `transitionPanel.tags.${type}`, "");
       resources.push({
         id: `transition:built-in:${type}:${use}`,
         source: { kind: "built-in" },
         type: typeOfUse(use),
-        name: transitionName(t, pick.name, use, "picture"),
+        name: transitionName(t, pick.name, use, media),
         tags: tags ? tags.split("、") : [],
         keywords: [type, t(`transition.uses.${use}`)],
         data: { pick, use },

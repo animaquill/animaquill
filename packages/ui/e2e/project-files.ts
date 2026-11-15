@@ -11,13 +11,46 @@ interface TimelineFile {
   sections: { duration: string }[];
 }
 
-/** Brings in a project with clips that nothing in the editor can make, as a folder of files. */
+/** A quiet tone of `seconds`, as a WAV file: 8 kHz mono, enough to play. */
+function toneFile(seconds: number): Buffer {
+  const rate = 8000;
+  const samples = Math.round(seconds * rate);
+  const data = Buffer.alloc(samples * 2);
+  for (let index = 0; index < samples; index += 1) {
+    data.writeInt16LE(Math.round(3000 * Math.sin((2 * Math.PI * 220 * index) / rate)), index * 2);
+  }
+  const header = Buffer.alloc(44);
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write("WAVEfmt ", 8);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(rate, 24);
+  header.writeUInt32LE(rate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(data.length, 40);
+  return Buffer.concat([header, data]);
+}
+
+/** The asset that clips of `sound` in `importClips` can play, with `{ asset: TONE }`. */
+export const TONE = "tone";
+
+/**
+ * Brings in a project with clips that nothing in the editor can make, as a folder of files: `clips`
+ * on the video track and `sound` on the audio track, which have the asset `TONE` to play.
+ */
 export async function importClips(
   page: Page,
   seconds: number,
   clips: readonly unknown[],
+  sound: readonly unknown[] = [],
 ): Promise<void> {
-  const files = ProjectStore.create(createProject({ name: "写好的项目" })).exportFiles().files;
+  const files: Map<string, string | Buffer> = ProjectStore.create(
+    createProject({ name: "写好的项目" }),
+  ).exportFiles().files;
   const path = "timelines/main/timeline.json";
   const timeline = JSON.parse(files.get(path) as string) as TimelineFile;
   const track = timeline.tracks.find(({ kind }) => kind === "video");
@@ -25,6 +58,14 @@ export async function importClips(
   if (!track || !section) throw new Error("no room for clips");
   section.duration = String(seconds);
   track.clips = [...clips];
+  if (sound.length > 0) {
+    const audio = timeline.tracks.find(({ kind }) => kind === "audio");
+    if (!audio) throw new Error("no room for sound");
+    audio.clips = [...sound];
+    const asset = { name: "测试音", kind: "audio", path: "assets/tone.wav", storage: "git" };
+    files.set("assets.json", JSON.stringify({ assets: { [TONE]: asset } }));
+    files.set("assets/tone.wav", toneFile(seconds));
+  }
   files.set(path, JSON.stringify(timeline));
   const folder = mkdtempSync(join(tmpdir(), "animaquill-project-"));
   try {

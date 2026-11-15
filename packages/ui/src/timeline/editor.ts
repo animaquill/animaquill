@@ -3,6 +3,7 @@ import {
   add,
   compare,
   formatTime,
+  mediaOfTrack,
   newId,
   parseTime,
   subtract,
@@ -51,6 +52,7 @@ import {
   type EffectContext,
 } from "./effect-place.ts";
 import { sceneTemplate } from "./scene-template.ts";
+import { joinTroubleKey } from "./transition-names.ts";
 import { soundTemplate } from "./sound-template.ts";
 import type { TouchStart, TouchTarget } from "./touch.ts";
 import {
@@ -2409,12 +2411,16 @@ export class TimelineEditor implements TouchTarget {
     if (pointer.y < RULER_HEIGHT) return undefined;
     const hit = this.hitAt(pointer);
     if (hit.kind !== "join") return undefined;
-    const { join } = hit;
-    if (join.trouble) return `transition.why.join.${join.trouble}`;
+    const { join, row } = hit;
+    const media = mediaOfTrack(row.track.kind);
+    if (join.trouble) return joinTroubleKey(join.trouble, media);
     const seconds = this.timeAt(pointer.x);
     const still = join.still.find(({ from, to }) => seconds >= from && seconds <= to);
     if (!still) return undefined;
-    return still.to <= join.at ? "transition.stillBefore" : "transition.stillAfter";
+    // Where a picture stands still on a frame, sound is silent.
+    const before = still.to <= join.at;
+    if (media === "sound") return before ? "transition.silentBefore" : "transition.silentAfter";
+    return before ? "transition.stillBefore" : "transition.stillAfter";
   }
 
   leave(): void {

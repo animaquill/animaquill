@@ -1,4 +1,5 @@
 import type { AudioPlan, SoundLayer } from "@animaquill/core";
+import { faded } from "./fades.ts";
 import { readSound, type SoundChunk, type SoundReader } from "./index.ts";
 
 /** What a mix is rendered at. Every encoder takes it, and video works with it. */
@@ -30,7 +31,7 @@ export type SoundSource = (
 /** What a mix needs of the context it renders in, so that it can be tested without one. */
 export type MixContext = Pick<
   OfflineAudioContext,
-  "createGain" | "createBufferSource" | "destination" | "startRendering"
+  "createBuffer" | "createGain" | "createBufferSource" | "destination" | "startRendering"
 >;
 
 export interface MixerOptions {
@@ -80,8 +81,8 @@ const SKIP_AHEAD_SECONDS = 5;
 
 /**
  * Mixes what a plan says, one piece of the timeline at a time, the way playback would sound: each
- * sound at its place, from its offset, with its volume. Muted and soloed tracks are already in the
- * plan. Nothing here holds more than a piece.
+ * sound at its place, from its offset, with its volume and its transitions (`faded`, as playback
+ * has them). Muted and soloed tracks are already in the plan. Nothing here holds more than a piece.
  *
  * Each sound gets read once, front to back, over all the pieces it is in. Reading from somewhere in
  * the middle can take long: a file without an index, such as many MP3, gets read from its start for
@@ -139,7 +140,8 @@ export class SoundMixer {
       const reader = this.#options.read ?? readSound;
       read = (start, end) => reader(file, start, end);
     }
-    const chunks = read(from, toFile(sound.end))[Symbol.asyncIterator]();
+    // Before the file begins there is nothing to read: it is silent there.
+    const chunks = read(Math.max(from, 0), toFile(sound.end))[Symbol.asyncIterator]();
     return { chunks, held: [], mixed: from };
   }
 
@@ -176,7 +178,7 @@ export class SoundMixer {
         const end = Math.min(at + chunk.duration, to);
         if (end > begin) {
           const node = context.createBufferSource();
-          node.buffer = chunk.buffer;
+          node.buffer = faded(sound, chunk, (...size) => context.createBuffer(...size)).buffer;
           node.connect(gain);
           node.start(begin - start, begin - at, end - begin);
         }

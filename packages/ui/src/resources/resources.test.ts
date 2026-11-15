@@ -201,14 +201,19 @@ describe("the transitions that come with the editor", () => {
 
   it("are listed once for each place they go, each kind on its own, with their names there", () => {
     const transitions = builtInTransitions(t);
-    // One of each kind, in, between and out: which way and what color are its properties.
-    expect(transitions).toHaveLength(4 * 3);
+    // One of each kind, in, between and out: which way and what color are its properties. A fade
+    // is one for pictures and sound alike, and the linear one is for sound.
+    expect(transitions).toHaveLength(5 * 3);
     expect(new Set(transitions.map(({ id }) => id)).size).toBe(transitions.length);
     const names = (type: string) =>
       transitions.filter((item) => item.type === type).map(({ name }) => name);
-    expect(names("transition.enter")).toEqual(["淡入", "闪入", "擦入", "推入"]);
-    expect(names("transition.join")).toEqual(["叠化", "闪色", "擦除", "推移"]);
-    expect(names("transition.exit")).toEqual(["淡出", "闪出", "擦出", "推出"]);
+    expect(names("transition.enter")).toEqual(["淡入", "闪入", "擦入", "推入", "线性淡入"]);
+    expect(names("transition.join")).toEqual(["叠化", "闪色", "擦除", "推移", "等增益交叉淡化"]);
+    expect(names("transition.exit")).toEqual(["淡出", "闪出", "擦出", "推出", "线性淡出"]);
+    const fade = transitions.find(({ name }) => name === "淡入")?.data.pick;
+    expect(fade?.lengths).toEqual({ picture: "0.5", sound: "0.2" });
+    const linear = transitions.find(({ name }) => name === "线性淡入")?.data.pick;
+    expect(linear?.lengths).toEqual({ sound: "0.2" });
     expect(transitions.find(({ name }) => name === "推入")?.data.pick.name).toEqual({
       type: "push",
     });

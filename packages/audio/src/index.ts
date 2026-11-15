@@ -1,6 +1,9 @@
 import type { AudioPlan, SoundLayer } from "@animaquill/core";
 import { ALL_FORMATS, AudioBufferSink, BlobSource, Input } from "mediabunny";
 
+import { faded } from "./fades.ts";
+
+export { faded, sampleTime, type MakeBuffer } from "./fades.ts";
 export { computePeaks, PEAKS_PER_SECOND } from "./peaks.ts";
 export { wavOf } from "./wav.ts";
 export {
@@ -230,7 +233,8 @@ export class PlaybackAudio {
     run.gains.set(sound.id, gain);
 
     const toFile = (seconds: number) => seconds - sound.start + sound.offset;
-    const from = toFile(Math.max(sound.start, since));
+    // Before the file begins there is nothing to read: it is silent there.
+    const from = Math.max(toFile(Math.max(sound.start, since)), 0);
     for await (const chunk of this.#read(file, from, toFile(sound.end))) {
       // A suspended context does not move, so nothing it would schedule can be right.
       while (context.state !== "running" && !run.stopped) await sleep(POLL_MS / 2);
@@ -268,7 +272,8 @@ export class PlaybackAudio {
     const end = Math.min(at + chunk.duration, sound.end);
     if (end <= begin) return when;
     const node = context.createBufferSource();
-    node.buffer = chunk.buffer;
+    // Its transitions, sample by sample as the mix of an export has them.
+    node.buffer = faded(sound, chunk, (...size) => context.createBuffer(...size)).buffer;
     node.connect(gain);
     node.addEventListener("ended", () => run.nodes.delete(node));
     run.nodes.add(node);

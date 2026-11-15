@@ -1,15 +1,17 @@
-import { clipEnd, clipStart, type ClipState, type CommandCall } from "@animaquill/core";
+import { clipEnd, clipStart, roomAt, type ClipState, type CommandCall } from "@animaquill/core";
 import {
   ZERO,
   builtInTransition,
   compare,
   formatTime,
+  mediaOfTrack,
   newId,
   parseTime,
   toSeconds,
   type Rational,
   type SpeedCurve,
   type Transition,
+  type TransitionMedia,
   type TransitionUse,
 } from "@animaquill/schema";
 import { frameAt, frameTime } from "./frames.ts";
@@ -41,32 +43,52 @@ export interface TransitionName {
 }
 
 /**
- * A transition as people pick it, with what it comes with: where it can go, and how long it is and
- * how it goes when it is put somewhere. Only the editor's own so far. Those of the project and of
- * libraries bring the same from their descriptions.
+ * A transition as people pick it, with what it comes with: where it can go, what on, and how long it
+ * is and how it goes when it is put somewhere. Only the editor's own so far. Those of the project
+ * and of libraries bring the same from their descriptions.
  */
 export interface TransitionPick {
   readonly name: TransitionName;
   readonly uses: readonly TransitionUse[];
-  /** Seconds, as the project format writes them. */
-  readonly duration: string;
+  /**
+   * What it works on, pictures or sound, each with how long it is when it is put there: seconds,
+   * as the project format writes them. `fade` is one of each.
+   */
+  readonly lengths: Readonly<Partial<Record<TransitionMedia, string>>>;
   readonly curve?: SpeedCurve;
 }
 
+/** Whether a transition goes on pictures or on sound. */
+export const worksOn = (pick: TransitionPick, media: TransitionMedia): boolean =>
+  pick.lengths[media] !== undefined;
+
+/** How long a pick is where it goes first, for showing how it goes. */
+export const firstLength = (pick: TransitionPick): string =>
+  pick.lengths.picture ?? pick.lengths.sound ?? "0.5";
+
 /**
- * A picture transition that comes with the editor, or nothing for one there is not. It comes with
- * the defaults of its properties, which people change once it is there.
+ * A transition that comes with the editor, for pictures, sound or both, or nothing for one there is
+ * not. It comes with the defaults of its properties, which people change once it is there.
  */
 export function builtInPick(type: string): TransitionPick | undefined {
-  const spec = builtInTransition("picture", type);
+  const picture = builtInTransition("picture", type);
+  const sound = builtInTransition("sound", type);
+  const spec = picture ?? sound;
   if (!spec) return undefined;
+  const uses = [...new Set([...(picture?.uses ?? []), ...(sound?.uses ?? [])])];
   return {
     name: { type },
-    uses: spec.uses,
-    duration: spec.duration,
+    uses,
+    lengths: {
+      ...(picture && { picture: picture.duration }),
+      ...(sound && { sound: sound.duration }),
+    },
     ...(spec.curve && { curve: spec.curve }),
   };
 }
+
+/** What the clips of a row are, pictures or sound. */
+const mediaOf = (row: Row): TransitionMedia => mediaOfTrack(row.track.kind);
 
 /** Whether a transition is the one picked, whatever it sets for its properties. */
 export const isPicked = (transition: TransitionName, { name }: TransitionPick): boolean =>
@@ -77,9 +99,17 @@ export const isPicked = (transition: TransitionName, { name }: TransitionPick): 
 
 const atMost = (value: Rational, limit: Rational) => (compare(value, limit) > 0 ? limit : value);
 
-/** The length of a pick in whole frames, which is what people see, and never no frames at all. */
-function presetLength(pick: TransitionPick, model: TimelineModel): Rational {
-  const frames = frameAt(toSeconds(parseTime(pick.duration)), model.rate);
+/**
+ * The length of a pick on pictures or sound in whole frames, which is what people see, and never no
+ * frames at all.
+ */
+function presetLength(
+  pick: TransitionPick,
+  model: TimelineModel,
+  media: TransitionMedia,
+): Rational {
+  const length = pick.lengths[media] ?? firstLength(pick);
+  const frames = frameAt(toSeconds(parseTime(length)), model.rate);
   return frameTime(Math.max(frames, 1), model.rate);
 }
 
@@ -95,9 +125,11 @@ function edgeTransition(
   pick: TransitionPick,
 ): Transition | undefined {
   const current = clip[edge];
+  const row = model.rowOfClip.get(clip.id);
+  const media = row ? mediaOf(row) : "picture";
   const length = current
     ? parseTime(current.duration)
-    : atMost(presetLength(pick, model), longestTransition(clip, edge, model));
+    : atMost(presetLength(pick, model, media), longestTransition(clip, edge, model));
   if (compare(length, ZERO) <= 0) return undefined;
   // What it names is checked by the command, as anything a file says.
   return {
@@ -118,6 +150,9 @@ export function canTakeEdge(model: TimelineModel, box: ClipBox, edge: Edge): boo
 /** Whether people can put transitions on the clips of a row. */
 const takesTransitions = (row: Row): boolean =>
   !row.gone && row.track.locked !== true && canHaveTransitions(row.track);
+
+/** Whether a pick goes on the clips of a row: one for pictures on a video track, and so on. */
+const fitsRow = (pick: TransitionPick, row: Row): boolean => worksOn(pick, mediaOf(row));
 
 /** Whether two clips follow each other with nothing in between, which a join needs. */
 const touching = (from: ClipBox, to: ClipBox) =>
@@ -155,8 +190,8 @@ export type TransitionDrop =
  * Where a transition dragged to a moment on a row goes: on a cut between two clips that touch, it
  * goes between them, within `reach` seconds of the cut; on the first third of a clip it comes in,
  * on the last third it goes out, and on a transition that is there it takes its place. The middle
- * of a clip takes nothing, and nor does anywhere the transition cannot go: a locked track, sound
- * and captions so far, an edge that a join has, an edge without room.
+ * of a clip takes nothing, and nor does anywhere the transition cannot go: a locked track, captions
+ * so far, a track of the other media, an edge that a join has, an edge without room.
  */
 export function transitionDropAt(
   model: TimelineModel,
@@ -165,7 +200,7 @@ export function transitionDropAt(
   reach: number,
   pick: TransitionPick,
 ): TransitionDrop | undefined {
-  if (!row || !takesTransitions(row)) return undefined;
+  if (!row || !takesTransitions(row) || !fitsRow(pick, row)) return undefined;
   const join = joinAt(row, seconds);
   if (join) {
     if (!pick.uses.includes("join")) return undefined;
@@ -178,7 +213,7 @@ export function transitionDropAt(
   if (seam) {
     const { from, to } = seam;
     if (model.joined.has(`${from.id} exit`) || model.joined.has(`${to.id} enter`)) return undefined;
-    const half = toSeconds(presetLength(pick, model)) / 2;
+    const half = toSeconds(presetLength(pick, model, mediaOf(row))) / 2;
     const start = Math.max(from.start, from.end - half);
     return {
       kind: "join",
@@ -196,7 +231,9 @@ export function transitionDropAt(
   const length =
     current > 0
       ? current
-      : toSeconds(atMost(presetLength(pick, model), longestTransition(box.clip, edge, model)));
+      : toSeconds(
+          atMost(presetLength(pick, model, mediaOf(row)), longestTransition(box.clip, edge, model)),
+        );
   return edge === "enter"
     ? {
         kind: "edge",
@@ -295,6 +332,81 @@ function replaceJoinCall(model: TimelineModel, join: string, pick: TransitionPic
   return { type: "join.update", params: { timeline: model.id, join, changes } };
 }
 
+/** The clips linked to one on audio tracks, which people can put transitions on. */
+function soundOf(model: TimelineModel, box: ClipBox): readonly [Row, ClipBox][] {
+  const { link } = box.clip;
+  if (link === undefined) return [];
+  return (model.links.get(link) ?? []).flatMap((id) => {
+    const row = model.rowOfClip.get(id);
+    const other = model.boxes.get(id);
+    return row && other && row.track.kind === "audio" && takesTransitions(row)
+      ? [[row, other]]
+      : [];
+  });
+}
+
+/**
+ * Where the sound of two clips of pictures meets at the same cut as they do, on an audio track
+ * that can take it, with no join there yet and room for one: the two clips of sound linked to them.
+ */
+function soundCut(model: TimelineModel, from: ClipBox, to: ClipBox) {
+  const cut = clipStart(to.clip);
+  for (const [row, before] of soundOf(model, from)) {
+    if (compare(clipEnd(before.clip), cut) !== 0) continue;
+    const after = soundOf(model, to).find(
+      ([other, box]) => other === row && compare(clipStart(box.clip), cut) === 0,
+    )?.[1];
+    if (!after || joinBetween(row, before, after)) continue;
+    if (model.joined.has(`${before.id} exit`) || model.joined.has(`${after.id} enter`)) continue;
+    // A cross-fade needs a little of both, wherever it goes around the cut.
+    const room = (box: ClipBox, end: "start" | "end") =>
+      compare(roomAt(model.ends, box.clip, end), ZERO) > 0;
+    if (!room(before, "end") || !room(after, "start")) continue;
+    return { before, after };
+  }
+  return undefined;
+}
+
+/**
+ * New joins of pictures bring a cross-fade of their sound along, in the same step, where the sound
+ * linked to the two clips meets at the same cut: a `fade` of sound, as long as sound has it. A cut
+ * of sound that the calls have already is left as they have it. See docs/design/transitions.md,
+ * section 6.
+ */
+function withSoundAlong(
+  model: TimelineModel,
+  calls: readonly CommandCall[],
+): readonly CommandCall[] {
+  const params = (call: CommandCall) => call.params as Readonly<Record<string, unknown>>;
+  const cuts = new Set(
+    calls
+      .filter(({ type }) => type === "join.add")
+      .map((call) => `${String(params(call)["from"])} ${String(params(call)["to"])}`),
+  );
+  const along: CommandCall[] = [];
+  for (const call of calls) {
+    if (call.type !== "join.add") continue;
+    const from = model.boxes.get(String(params(call)["from"]));
+    const to = model.boxes.get(String(params(call)["to"]));
+    const row = from && model.rowOfClip.get(from.id);
+    if (!from || !to || row?.track.kind !== "video") continue;
+    const sound = soundCut(model, from, to);
+    if (!sound || cuts.has(`${sound.before.id} ${sound.after.id}`)) continue;
+    cuts.add(`${sound.before.id} ${sound.after.id}`);
+    along.push({
+      type: "join.add",
+      params: {
+        timeline: model.id,
+        id: newId("join"),
+        from: sound.before.id,
+        to: sound.after.id,
+        type: "fade",
+      },
+    });
+  }
+  return along.length > 0 ? [...calls, ...along] : calls;
+}
+
 /** What puts the pick in the place of the transition at an edge of a clip, as long as that one is. */
 function replaceEdgeCall(
   model: TimelineModel,
@@ -326,14 +438,14 @@ export function dropCalls(
   | undefined {
   if (drop.kind === "join") {
     const made = joinCall(model, drop.row, drop.from, drop.to, pick);
-    return made && { calls: [made.call], chosen: { join: made.id } };
+    return made && { calls: withSoundAlong(model, [made.call]), chosen: { join: made.id } };
   }
   const call = edgesCall(model, drop.box, [drop.edge], pick);
   return call && { calls: [call], chosen: { clip: drop.box.id, edge: drop.edge } };
 }
 
 /** Why the clips selected cannot take transitions at all. */
-export type Blocked = "locked" | "sound" | "caption";
+export type Blocked = "locked" | "caption";
 
 /** What a click on a transition in the tab is about: what is selected on the timeline. */
 export type AttachContext =
@@ -385,14 +497,7 @@ export function attachContext(
       ids.add(id);
       byRow.set(row, ids);
     } else {
-      blocked ??=
-        row.track.locked === true
-          ? "locked"
-          : row.track.kind === "audio"
-            ? "sound"
-            : row.track.kind === "caption"
-              ? "caption"
-              : "locked";
+      blocked ??= row.track.locked !== true && row.track.kind === "caption" ? "caption" : "locked";
     }
   }
   const boxes: ClipBox[] = [];
@@ -430,8 +535,9 @@ export function attachProblem(
 ):
   | "nothing"
   | "locked"
-  | "sound"
   | "caption"
+  | "pictureOnly"
+  | "soundOnly"
   | "chosenEnter"
   | "chosenExit"
   | "chosenJoin"
@@ -440,6 +546,12 @@ export function attachProblem(
   | "use"
   | undefined {
   if (!pick.uses.includes(use)) return "use";
+  // One for pictures where there is only sound, or the other way round.
+  const otherMedia = worksOn(pick, "picture") ? "pictureOnly" : "soundOnly";
+  const fits = (box: ClipBox) => {
+    const row = model?.rowOfClip.get(box.id);
+    return row !== undefined && fitsRow(pick, row);
+  };
   switch (context.kind) {
     case "nothing":
       return use === "join" ? "joinHow" : "nothing";
@@ -447,19 +559,24 @@ export function attachProblem(
       if (use === "join") return "joinHow";
       if (context.locked) return "locked";
       if (context.edge !== use) return context.edge === "enter" ? "chosenEnter" : "chosenExit";
-      return undefined;
+      return fits(context.box) ? undefined : otherMedia;
     case "join":
       if (context.locked) return "locked";
-      return use === "join" ? undefined : "chosenJoin";
+      if (use !== "join") return "chosenJoin";
+      return fits(context.join.from) ? undefined : otherMedia;
     case "clips": {
       if (use === "join") {
-        return context.pairs.some(([row, from, to]) => model && canJoin(model, row, from, to))
-          ? undefined
-          : "joinHow";
+        const joinable = context.pairs.filter(
+          ([row, from, to]) => model && canJoin(model, row, from, to),
+        );
+        if (joinable.some(([row]) => fitsRow(pick, row))) return undefined;
+        return joinable.length > 0 ? otherMedia : "joinHow";
       }
       if (context.blocked) return context.blocked;
       if (!model) return "nothing";
-      const any = context.boxes.some((box) => canTakeEdge(model, box, use));
+      const fitting = context.boxes.filter(fits);
+      if (fitting.length === 0) return otherMedia;
+      const any = fitting.some((box) => canTakeEdge(model, box, use));
       return any ? undefined : "noRoom";
     }
   }
@@ -504,13 +621,15 @@ export function attachCalls(
         : [replaceJoinCall(model, context.join.id, pick)];
     case "clips":
       if (use === "join") {
-        return context.pairs.flatMap(([row, from, to]) => {
-          const made = joinCall(model, row, from, to, pick);
+        const calls = context.pairs.flatMap(([row, from, to]) => {
+          const made = fitsRow(pick, row) ? joinCall(model, row, from, to, pick) : undefined;
           return made ? [made.call] : [];
         });
+        return withSoundAlong(model, calls);
       }
       return context.boxes.flatMap((box) => {
-        const call = edgesCall(model, box, [use], pick);
+        const row = model.rowOfClip.get(box.id);
+        const call = row && fitsRow(pick, row) ? edgesCall(model, box, [use], pick) : undefined;
         return call ? [call] : [];
       });
   }

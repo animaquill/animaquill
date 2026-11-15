@@ -481,8 +481,7 @@ describe("the render plan", () => {
     const brightness = layer && effectValuesAt(layer, { id: "c", type: "brightness" }, 1);
     expect(brightness).toEqual({ values: { brightness: 0.5 }, idle: false });
     // An export stops where something this editor cannot do shows.
-    const timeline = store.getState().timelines["main"];
-    const notDone = timeline && plan ? transitionsNotDone(timeline, plan, undefined) : [];
+    const notDone = plan ? transitionsNotDone(plan, undefined) : [];
     expect(notDone).toEqual([{ clip: "c", use: "effect", media: "picture", start: 0, end: 4 }]);
   });
 

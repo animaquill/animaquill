@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { importClips } from "./project-files.ts";
+import { TONE, importClips } from "./project-files.ts";
 import { content, expect, findCompositor, tab, tabScrolls, test } from "./support.ts";
 
 /**
@@ -83,9 +83,28 @@ test("lists the transitions by where they go, finds them, and groups them other 
   await expect(groups.nth(1)).toHaveAccessibleName("衔接转场");
   await expect(groups.nth(2)).toHaveAccessibleName("出转场");
   // One of each kind: which way it goes and what color it has are what people set afterwards.
-  await expect(groups.nth(0).getByRole("option")).toHaveText(["淡入", "闪入", "擦入", "推入"]);
-  await expect(groups.nth(1).getByRole("option")).toHaveText(["叠化", "闪色", "擦除", "推移"]);
-  await expect(groups.nth(2).getByRole("option")).toHaveText(["淡出", "闪出", "擦出", "推出"]);
+  // A fade is for pictures and sound alike; the linear one is for sound.
+  await expect(groups.nth(0).getByRole("option")).toHaveText([
+    "淡入",
+    "闪入",
+    "擦入",
+    "推入",
+    "线性淡入",
+  ]);
+  await expect(groups.nth(1).getByRole("option")).toHaveText([
+    "叠化",
+    "闪色",
+    "擦除",
+    "推移",
+    "等增益交叉淡化",
+  ]);
+  await expect(groups.nth(2).getByRole("option")).toHaveText([
+    "淡出",
+    "闪出",
+    "擦出",
+    "推出",
+    "线性淡出",
+  ]);
   await panel(page).screenshot(shot("transitions-panel.png"));
 
   const search = panel(page).getByRole("searchbox", { name: "搜索转场" });
@@ -204,6 +223,106 @@ test("go on what is selected with a click: in at the start, out at the end, betw
   // a has it at its start; b comes in by the join, so its start does not take one.
   await chooseAt(page, await onTop(page, 0, 0.08));
   await expect(properties(page).getByRole("region", { name: "闪入" })).toBeVisible();
+});
+
+test.describe("on sound", () => {
+  const sound = { kind: "audio", media: { asset: TONE } };
+  const color = (value: string) => ({ kind: "color", color: value });
+  /** Pictures a and b with their sound linked, at the same cut, and a sound of its own after them. */
+  async function openWithSound(page: Page) {
+    await importClips(
+      page,
+      10,
+      [
+        { id: "a", name: "红", start: "0", duration: "3", source: color("#ff0000"), link: "la" },
+        { id: "b", name: "绿", start: "3", duration: "3", source: color("#00ff00"), link: "lb" },
+      ],
+      [
+        {
+          id: "sa",
+          name: "人声一",
+          start: "0",
+          duration: "3",
+          offset: "1",
+          source: sound,
+          link: "la",
+        },
+        {
+          id: "sb",
+          name: "人声二",
+          start: "3",
+          duration: "3",
+          offset: "1",
+          source: sound,
+          link: "lb",
+        },
+        { id: "sc", name: "音乐", start: "7", duration: "3", offset: "1", source: sound },
+      ],
+    );
+    await tab(page, "transitions").click();
+    await expect(panel(page)).toBeVisible();
+  }
+  const clip = (page: Page, name: string) =>
+    content(page, "timeline").getByRole("option", { name: new RegExp(`^${name}，`) });
+  async function on(page: Page, name: string, share: number, top = false) {
+    const box = await boxOf(clip(page, name));
+    return { x: box.x + box.width * share, y: top ? box.y + 8 : box.y + box.height / 2 + 6 };
+  }
+
+  test("go in, out and across as fades of sound, which say how long they are", async ({ page }) => {
+    await openWithSound(page);
+    // A fade in where it is dropped, as long as sound has it: 0.2 seconds, 6 frames.
+    await drag(page, "淡入", await on(page, "音乐", 0.1));
+    await expect(properties(page).getByRole("region", { name: "淡入" })).toBeVisible();
+    await expect(properties(page).getByRole("textbox", { name: "时长" })).toHaveValue("0:00/06");
+    await expect(properties(page).getByRole("status")).toHaveCount(0);
+    await drag(page, "线性淡出", await on(page, "音乐", 0.9));
+    await expect(properties(page).getByRole("region", { name: "线性淡出" })).toBeVisible();
+    // A transition of pictures only does not go on sound, and says so when clicked.
+    await page.mouse.click(...xy(await on(page, "音乐", 0.5)));
+    await expect(item(page, "擦入")).toHaveAttribute("aria-disabled", "true");
+    await item(page, "擦入").hover();
+    await expect(panel(page).getByRole("status")).toHaveText("这个转场只能用在画面上");
+    // A cross-fade between the two sounds, and a longer one typed in.
+    const cut = await boxOf(clip(page, "人声一"));
+    await drag(page, "等增益交叉淡化", { x: cut.x + cut.width - 1, y: cut.y + cut.height / 2 });
+    await expect(properties(page).getByText("人声一 → 人声二")).toBeVisible();
+    await expect(properties(page).getByRole("region", { name: "等增益交叉淡化" })).toBeVisible();
+    const length = properties(page).getByRole("textbox", { name: "时长" });
+    await length.fill("0:00/15");
+    await length.press("Enter");
+    await expect(length).toHaveValue("0:00/15");
+    // Another kind in its place, from the tab.
+    await item(page, "叠化").click();
+    await expect(properties(page).getByRole("region", { name: "交叉淡化" })).toBeVisible();
+    await expect(properties(page).getByRole("status")).toHaveCount(0);
+    await content(page, "timeline").screenshot(shot("sound-transitions.png"));
+    // And it goes with Delete.
+    await content(page, "timeline").getByRole("group", { name: "时间轴" }).focus();
+    await page.keyboard.press("Delete");
+    await expect(properties(page).getByText("人声一 → 人声二")).toHaveCount(0);
+  });
+
+  test("come along with a join of the pictures linked to them, and go with it in one undo", async ({
+    page,
+  }) => {
+    await openWithSound(page);
+    const cut = await boxOf(clip(page, "红"));
+    await drag(page, "推移", { x: cut.x + cut.width - 1, y: cut.y + cut.height / 2 });
+    await expect(properties(page).getByText("红 → 绿")).toBeVisible();
+    // The sound under it cross-fades at the same cut.
+    await page.mouse.click(...xy(await on(page, "人声一", 0.995, true)));
+    await expect(properties(page).getByText("人声一 → 人声二")).toBeVisible();
+    await expect(properties(page).getByRole("region", { name: "交叉淡化" })).toBeVisible();
+    await content(page, "timeline").screenshot(shot("sound-linked-join.png"));
+    // One undo takes both away.
+    await content(page, "timeline").getByRole("group", { name: "时间轴" }).focus();
+    await page.keyboard.press("Control+z");
+    await page.mouse.click(...xy(await on(page, "人声一", 0.995, true)));
+    await expect(properties(page).getByText("人声一 → 人声二")).toHaveCount(0);
+    await page.mouse.click(...xy(await on(page, "红", 0.995, true)));
+    await expect(properties(page).getByText("红 → 绿")).toHaveCount(0);
+  });
 });
 
 test("keep what was used recently where it is until the tab is opened again", async ({ page }) => {

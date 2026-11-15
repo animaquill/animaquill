@@ -30,7 +30,7 @@ import {
   type ValueType,
 } from "@animaquill/schema";
 import { compileChannel, type Channel, type Channels } from "./curve.ts";
-import { joinSpan, joinsInEffect, spanOfJoin, type JoinInEffect } from "./joins.ts";
+import { joinsInEffect, spanOfJoin, type JoinInEffect } from "./joins.ts";
 import {
   clipEnd,
   clipOffset,
@@ -40,12 +40,12 @@ import {
   orderedTracks,
   type ClipState,
   type JoinState,
-  type TimelineState,
   type TrackState,
 } from "./model.ts";
 import type { ProjectState } from "./model.ts";
 import { isSceneOwned } from "./registration.ts";
 import { sceneSourceOf, type SceneSource } from "./scene-plan.ts";
+import type { SoundFade } from "./sound-fades.ts";
 import { madeSoundOf } from "./sound-plan.ts";
 import { stageOf, type Size } from "./view.ts";
 
@@ -187,13 +187,21 @@ export interface SoundLayer {
   readonly id: string;
   /** The file, by its content. */
   readonly file: string;
-  /** Seconds on the timeline. */
+  /**
+   * Seconds on the timeline that it sounds: its clip, and past it where a join has it go on, on its
+   * own clock, as `RenderLayer.shows`.
+   */
   readonly start: number;
   readonly end: number;
-  /** The time in the file at the start of the clip. */
+  /**
+   * The time in the file at `start`. A join can have it start before the file does, or go on past
+   * its end: there it is silent.
+   */
   readonly offset: number;
   /** 1 is the original volume. */
   readonly gain: number;
+  /** Its transitions, which change its gain over their time, see `fadesGainAt`. Without, none. */
+  readonly fades?: readonly SoundFade[];
   /** Code makes this file, so it not being here yet is no problem, and it may be soon. */
   readonly made?: true;
 }
@@ -426,18 +434,15 @@ export interface TransitionNotDone {
 
 /**
  * Where a file of a timeline would show or sound otherwise than the project says, earliest first.
- * Transitions of pictures that this editor cannot do show as fades, and no transition of sound is
- * heard yet. An export stops at the first of them, instead of a file with a fade or a sound that
- * goes on where the project says something else. Only what the file gets counts: what does not
- * show in the plan, or is not heard, is no matter.
+ * Transitions that this editor cannot do show and sound as fades. An export stops at the first of
+ * them, instead of a file with a fade where the project says something else. Only what the file
+ * gets counts: what does not show in the plan, or is not heard, is no matter.
  */
 export function transitionsNotDone(
-  timeline: TimelineState,
   plan: Pick<RenderPlan, "layers" | "joins">,
   audio: AudioPlan | undefined,
 ): readonly TransitionNotDone[] {
   const found: TransitionNotDone[] = [];
-  const heard = new Set(audio?.sounds.map(({ id }) => id));
   for (const layer of plan.layers) {
     if (layer.effects?.some(({ missing }) => missing)) {
       const start = layer.shows?.from ?? layer.start;
@@ -454,24 +459,12 @@ export function transitionsNotDone(
   for (const { from, missing, start, end } of plan.joins) {
     if (missing) found.push({ clip: from, use: "join", media: "picture", start, end });
   }
-  const joined = new Set<string>();
-  for (const join of joinsInEffect(timeline)) {
-    joined.add(`${join.from.id} exit`).add(`${join.to.id} enter`);
-    if (!heard.has(join.from.id) || !heard.has(join.to.id)) continue;
-    const [start, end] = joinSpan(join);
-    found.push({ clip: join.from.id, use: "join", media: "sound", start, end });
-  }
-  for (const id of heard) {
-    const clip = entryOf(timeline.clips, id);
-    for (const use of EDGES) {
-      const transition = clip?.[use];
-      if (!clip || !transition || joined.has(`${id} ${use}`)) continue;
-      const length = edgeLength(parseTime(transition.duration), parseTime(clip.duration));
-      const [start, end] =
-        use === "enter"
-          ? [clipStart(clip), add(clipStart(clip), length)]
-          : [subtract(clipEnd(clip), length), clipEnd(clip)];
-      found.push({ clip: id, use, media: "sound", start: toSeconds(start), end: toSeconds(end) });
+  // A join is there once, at the side before its cut.
+  for (const { id, fades } of audio?.sounds ?? []) {
+    for (const { use, way, missing, start, end } of fades ?? []) {
+      if (missing && (use !== "join" || way === "out")) {
+        found.push({ clip: id, use, media: "sound", start, end });
+      }
     }
   }
   return found.toSorted((a, b) => a.start - b.start || a.clip.localeCompare(b.clip));
@@ -685,6 +678,57 @@ function soundFileOf(state: ProjectState, clip: ClipState): string | undefined {
 }
 
 /**
+ * How a transition of sound goes, as far as this editor can tell. What it cannot do sounds as a
+ * `fade`, and says so, as a picture shows one.
+ */
+function soundShapeOf(
+  transition: TransitionRef,
+  use: TransitionUse,
+): Pick<SoundFade, "shape" | "missing"> {
+  const found = findTransition(transition, "sound", use);
+  if (found.kind !== "built-in" || !isSupported(found, "sound", use)) {
+    return { shape: "power", missing: true };
+  }
+  return { shape: found.type === "fade-linear" ? "gain" : "power" };
+}
+
+/** The transition at the start or the end of a clip with sound. It is never longer than the clip. */
+function edgeFade(clip: ClipState, edge: Edge): SoundFade | undefined {
+  const transition = clip[edge];
+  if (!transition) return undefined;
+  const length = edgeLength(parseTime(transition.duration), parseTime(clip.duration));
+  const [start, end] =
+    edge === "enter"
+      ? [clipStart(clip), add(clipStart(clip), length)]
+      : [subtract(clipEnd(clip), length), clipEnd(clip)];
+  return {
+    use: edge,
+    way: edge === "enter" ? "in" : "out",
+    ...soundShapeOf(transition, edge),
+    start: toSeconds(start),
+    end: toSeconds(end),
+    duration: toSeconds(length),
+    ...(transition.curve && { curve: transition.curve }),
+  };
+}
+
+/** One side of a cross-fade, over the whole of its join, with where that is, exactly. */
+function joinFade(join: JoinInEffect, way: SoundFade["way"]) {
+  const { from, to } = spanOfJoin(join);
+  const { transition } = join;
+  const fade: SoundFade = {
+    use: "join",
+    way,
+    ...soundShapeOf(transition, "join"),
+    start: toSeconds(from),
+    end: toSeconds(to),
+    duration: toSeconds(subtract(to, from)),
+    ...(transition.curve && { curve: transition.curve }),
+  };
+  return { fade, from, to };
+}
+
+/**
  * Solo wins: as soon as one track has it, only those tracks sound. `volumeOf` is for what people are
  * trying out, which they have to hear: it gives the volume of a clip when that is not the saved one.
  */
@@ -704,6 +748,12 @@ export function buildAudioPlan(
       .filter((track) => (soloing ? track.solo : !track.muted))
       .map((track) => [track.id, track]),
   );
+  // Joins win over the transitions at their edges, and have their clips sound past the cut.
+  const joined = new Map<string, JoinInEffect>();
+  for (const join of joinsInEffect(timeline)) {
+    if (!audible.has(join.track)) continue;
+    joined.set(`${join.from.id} exit`, join).set(`${join.to.id} enter`, join);
+  }
   const sounds: SoundLayer[] = [];
   for (const clip of Object.values(timeline.clips)) {
     const track = audible.get(clip.track);
@@ -713,13 +763,36 @@ export function buildAudioPlan(
     const decibels =
       numberOf(track.properties, "audio.volume", 0) +
       (volumeOf?.(clip.id) ?? numberOf(effectiveProperties(clip), "audio.volume", 0));
+    let start = clipStart(clip);
+    let end = clipEnd(clip);
+    const fades: SoundFade[] = [];
+    const enter = joined.get(`${clip.id} enter`);
+    if (enter) {
+      const fade = joinFade(enter, "in");
+      start = fade.from;
+      fades.push(fade.fade);
+    } else {
+      const fade = edgeFade(clip, "enter");
+      if (fade) fades.push(fade);
+    }
+    const exit = joined.get(`${clip.id} exit`);
+    if (exit) {
+      const fade = joinFade(exit, "out");
+      end = fade.to;
+      fades.push(fade.fade);
+    } else {
+      const fade = edgeFade(clip, "exit");
+      if (fade) fades.push(fade);
+    }
     sounds.push({
       id: clip.id,
       file,
-      start: toSeconds(clipStart(clip)),
-      end: toSeconds(clipEnd(clip)),
-      offset: toSeconds(clipOffset(clip)),
+      start: toSeconds(start),
+      end: toSeconds(end),
+      // Its own clock, which reads less before the clip.
+      offset: toSeconds(subtract(clipOffset(clip), subtract(clipStart(clip), start))),
       gain: gainOf(decibels),
+      ...(fades.length > 0 && { fades }),
       ...(clip.source.kind === "sound" && { made: true as const }),
     });
   }

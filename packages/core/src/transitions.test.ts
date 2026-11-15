@@ -205,7 +205,7 @@ describe("setting the transitions of a clip", () => {
     expect(clipOf()).not.toHaveProperty("enter");
   });
 
-  it("refuses what sound and captions cannot do yet", () => {
+  it("takes the transitions of sound, and refuses those of pictures on sound", () => {
     const { store, track: _video } = withClip({ start: "0", duration: "4" });
     const main = store.getState().timelines["main"];
     const audio = main && orderedTracks(main).find(({ kind }) => kind === "audio");
@@ -218,12 +218,25 @@ describe("setting the transitions of a clip", () => {
     success(
       store.execute({ type: "clip.add", params: { timeline: "main", track: audio?.id, ...clip } }),
     );
+    const linear = { type: "fade-linear", duration: "0.2" };
+    success(
+      store.execute({
+        type: "clip.setTransition",
+        params: { timeline: "main", clip: "s", enter: fade("0.2"), exit: linear },
+      }),
+    );
+    expect(store.getState().timelines["main"]?.clips["s"]).toMatchObject({
+      enter: fade("0.2"),
+      exit: linear,
+    });
     const result = store.execute({
       type: "clip.setTransition",
-      params: { timeline: "main", clip: "s", enter: fade("0.2") },
+      params: { timeline: "main", clip: "s", enter: { type: "wipe", duration: "0.2" } },
     });
-    expect(failure(result).code).toBe("transition-unsupported");
-    expect(failure(result).params).toEqual({ type: "fade", media: "sound", use: "enter" });
+    expect(failure(result).code).toBe("transition-missing");
+    expect(failure(result).params).toEqual({
+      why: { reason: "media", type: "wipe", media: "sound" },
+    });
   });
 
   it("always takes one away, and changes the length and speed of one that a file left", () => {
@@ -379,7 +392,7 @@ describe("transitions of clips that are added", () => {
     expect(left.exportFiles().problems).toEqual([]);
   });
 
-  it("of sound come along too, which this editor cannot play yet", () => {
+  it("of sound come along too", () => {
     const files = writeProject(createProject({ name: "粘贴" }));
     const path = "timelines/main/timeline.json";
     const timeline = JSON.parse(files.get(path) as string);
@@ -701,12 +714,10 @@ describe("what an export stops at", () => {
     const state = store.getState();
     const plan = buildRenderPlan(state, "main");
     if (!plan) throw new Error("no plan");
-    const timelineState = state.timelines["main"];
-    if (!timelineState) throw new Error("no timeline");
     return {
       store,
       notDone: (sound = true) =>
-        transitionsNotDone(timelineState, plan, sound ? buildAudioPlan(state, "main") : undefined),
+        transitionsNotDone(plan, sound ? buildAudioPlan(state, "main") : undefined),
     };
   };
   const sound = { kind: "audio", media: { asset: "tone" } };
@@ -721,7 +732,7 @@ describe("what an export stops at", () => {
     expect(notDone()).toEqual([]);
   });
 
-  it("is a transition of a picture that shows as a fade, and a transition of sound", () => {
+  it("is a transition of a picture that shows as a fade", () => {
     const { store, notDone } = project((video, audio) => {
       video.clips.push(
         {
@@ -757,12 +768,16 @@ describe("what an export stops at", () => {
     ]);
   });
 
-  it("is a sound that is heard, at its transitions and its joins, and only with sound", () => {
+  it("is a transition of sound that sounds as a fade, where it is heard, and a join once", () => {
     const { store } = project((_video, audio) => {
-      withTone(audio);
-      audio.clips.push({ id: "t", start: "3", duration: "2", source: sound });
+      audio.clips.push(
+        { id: "s", start: "1", duration: "2", source: sound, enter: fade("0.5") },
+        { id: "t", start: "3", duration: "2", source: sound, exit: fade("0.5") },
+        { id: "u", start: "5", duration: "2", source: sound },
+      );
       audio.joins = [
-        { id: "k", from: "s", to: "t", type: "fade", duration: "1/2", align: "after" },
+        { id: "k", from: "s", to: "t", type: "fade-linear", duration: "1/2", align: "after" },
+        { id: "m", from: "t", to: "u", type: "plugin.melt", duration: "1/2", align: "before" },
       ];
     });
     const asset = { kind: "audio", path: "a.wav", storage: "local", hash: "sha256-a" };
@@ -770,15 +785,15 @@ describe("what an export stops at", () => {
     const state = store.getState();
     const timeline = state.timelines["main"] as NonNullable<(typeof state.timelines)["main"]>;
     const plan = buildRenderPlan(state, "main") as NonNullable<ReturnType<typeof buildRenderPlan>>;
-    const audible = transitionsNotDone(timeline, plan, buildAudioPlan(state, "main"));
-    // The exit of s is where the join is, which wins.
-    expect(audible).toEqual([{ clip: "s", use: "join", media: "sound", start: 3, end: 3.5 }]);
-    expect(transitionsNotDone(timeline, plan, undefined)).toEqual([]);
+    // Those that come with the editor are heard. The exit of t is where the join m is, which wins.
+    const audible = transitionsNotDone(plan, buildAudioPlan(state, "main"));
+    expect(audible).toEqual([{ clip: "t", use: "join", media: "sound", start: 4.5, end: 5 }]);
+    expect(transitionsNotDone(plan, undefined)).toEqual([]);
     const audio = orderedTracks(timeline).find(({ kind }) => kind === "audio")?.id;
     const muted = { timeline: "main", track: audio, changes: { muted: true } };
     success(store.execute({ type: "track.update", params: muted }));
     const quiet = store.getState();
-    expect(transitionsNotDone(timeline, plan, buildAudioPlan(quiet, "main"))).toEqual([]);
+    expect(transitionsNotDone(plan, buildAudioPlan(quiet, "main"))).toEqual([]);
   });
 
   it("is no join with a hidden side, and no clip that does not show", () => {

@@ -1198,21 +1198,14 @@ describe("transitions at the edges of clips", () => {
     expect(clip("a").exit).toEqual(fade("3"));
   });
 
-  it("are not offered on a locked track, nor on sound, which has none yet", async () => {
-    const { editor, addClip, at, clip, video, audio, commandFailed } = await setup();
+  it("are offered on sound, as fades of sound, and not on a locked track", async () => {
+    const { editor, addClip, at, clip, video, audio } = await setup();
     addClip("a", 2, 4);
     addClip("s", 2, 4, audio);
-    const top = near(editor, at(2), audio, 2);
-    const onSound = editor.hitAt(top);
-    expect(onSound.kind === "clip" && onSound.handle).toBeUndefined();
-    expect(editor.setTransitionLength("s", "enter", exactly(1))).toBe(false);
-    expect(commandFailed).toHaveBeenCalledWith(
-      expect.objectContaining({
-        code: "transition-unsupported",
-        params: { type: "fade", media: "sound", use: "enter" },
-      }),
-    );
-    expect(clip("s").enter).toBeUndefined();
+    expect(editor.setTransitionLength("s", "enter", exactly(1))).toBe(true);
+    expect(clip("s").enter).toEqual(fade("1"));
+    const onSound = editor.hitAt(near(editor, at(3), audio, 2));
+    expect(onSound.kind === "clip" && onSound.handle).toBe("enter");
     editor.updateTrack(video, { locked: true });
     const locked = editor.hitAt(near(editor, at(2), video, 2));
     expect(locked.kind === "clip" && locked.handle).toBeUndefined();
@@ -1378,8 +1371,8 @@ describe("transitions from their tab", () => {
     expect(editor.transitionDropAt(at(10.5), fade)).toMatchObject({ kind: "edge", edge: "enter" });
     expect(editor.transitionDropAt(at(11.5), fade)).toBeUndefined();
     expect(editor.transitionDropAt(at(12.5), fade)).toMatchObject({ kind: "edge", edge: "exit" });
-    // Sound takes none yet, and what does not take it lights nothing up.
-    expect(editor.showTransitionDrop(at(2.5, audio), fade)).toBe(false);
+    // Sound takes none of pictures only, and what does not take it lights nothing up.
+    expect(editor.showTransitionDrop(at(2.5, audio), push)).toBe(false);
     expect(editor.preview).toBeUndefined();
     expect(editor.showTransitionDrop(at(11.5), fade)).toBe(false);
     expect(editor.preview).toBeUndefined();
@@ -1513,12 +1506,75 @@ describe("transitions from their tab", () => {
     expect(editor.attachTransition(fade, "enter")).toBeUndefined();
   });
 
+  it("go on sound as transitions of sound, as long as sound has them", async () => {
+    const { editor, at, main, store, audio } = await clips();
+    const linear = pick("fade-linear");
+    expect(editor.transitionDropAt(at(2.5, audio), linear)).toMatchObject({
+      kind: "edge",
+      edge: "enter",
+      start: 2,
+      end: 2.2,
+    });
+    expect(editor.transitionDropAt(at(2.5), linear)).toBeUndefined();
+    expect(editor.dropTransition(at(2.5, audio), linear)).toBe(true);
+    expect(main().clips["s"]?.enter).toEqual({ type: "fade-linear", duration: "0.2" });
+    // On pictures and sound selected together, each gets its own length.
+    editor.selectOnly("a");
+    editor.addToSelection("s");
+    expect(editor.attachTransition(fade, "exit")).toMatchObject({ edges: 2 });
+    expect(main().clips["a"]?.exit).toEqual({ type: "fade", duration: "0.5" });
+    expect(main().clips["s"]?.exit).toEqual({ type: "fade", duration: "0.2" });
+    // One for pictures only leaves the sound as it is.
+    expect(editor.attachTransition(push, "exit")).toMatchObject({ edges: 1 });
+    expect(main().clips["s"]?.exit).toEqual({ type: "fade", duration: "0.2" });
+    store.undo();
+    store.undo();
+    expect(main().clips["s"]).not.toHaveProperty("exit");
+  });
+
+  it("between pictures cross-fade their linked sound at the same cut, in the same step", async () => {
+    const { editor, at, main, store, video, audio, addClip } = await setup();
+    addClip("a", 2, 3, video, { link: "la" });
+    addClip("b", 5, 3, video, { link: "lb" });
+    addClip("sa", 2, 3, audio, { link: "la" });
+    addClip("sb", 5, 3, audio, { link: "lb" });
+    expect(editor.dropTransition(at(5), push)).toBe(true);
+    const joins = () =>
+      Object.values(main().joins ?? {})
+        .map(({ from, to, transition }) => [from, to, transition?.type, transition?.duration])
+        .toSorted();
+    expect(joins()).toEqual([
+      ["a", "b", "push", "0.5"],
+      ["sa", "sb", "fade", "0.2"],
+    ]);
+    store.undo();
+    expect(main()).not.toHaveProperty("joins");
+    // Selected together, the sound gets the one it fits once, and pictures only theirs.
+    for (const id of ["a", "b", "sa", "sb"]) editor.addToSelection(id);
+    expect(editor.attachTransition(fade, "join")).toMatchObject({ joins: 2 });
+    expect(joins()).toEqual([
+      ["a", "b", "fade", "0.5"],
+      ["sa", "sb", "fade", "0.2"],
+    ]);
+    store.undo();
+    // Sound that is not at the same cut, or already joined, gets nothing.
+    addClip("c", 10, 2, video, { link: "lc" });
+    addClip("d", 12, 2, video, { link: "ld" });
+    addClip("sc", 10, 1.5, audio, { link: "lc" });
+    addClip("sd", 11.5, 2.5, audio, { link: "ld" });
+    expect(editor.dropTransition(at(12), push)).toBe(true);
+    expect(joins()).toEqual([["c", "d", "push", "0.5"]]);
+  });
+
   it("say why they cannot go on what is selected", async () => {
     const { editor, video } = await clips();
     expect(editor.attachProblem("enter", fade)).toBe("nothing");
     expect(editor.attachProblem("join", fade)).toBe("joinHow");
     editor.selectOnly("s");
-    expect(editor.attachProblem("enter", fade)).toBe("sound");
+    expect(editor.attachProblem("enter", fade)).toBeUndefined();
+    expect(editor.attachProblem("enter", push)).toBe("pictureOnly");
+    editor.selectOnly("a");
+    expect(editor.attachProblem("enter", pick("fade-linear"))).toBe("soundOnly");
     editor.updateTrack(video, { locked: true });
     editor.selectOnly("a");
     expect(editor.attachProblem("enter", fade)).toBe("locked");

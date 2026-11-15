@@ -1,4 +1,4 @@
-import { bezierProgress } from "@animaquill/core";
+import { bezierProgress, fadeGainAt, type SoundFade } from "@animaquill/core";
 import { findTransition, type SpeedCurve, type TransitionUse } from "@animaquill/schema";
 import { codeOf } from "@animaquill/render/transitions";
 import type { TransitionFrame, TransitionHost } from "@animaquill/render/transitions";
@@ -74,6 +74,64 @@ function sample(colors: readonly [string, string], shape: "circle" | "triangle")
   return canvas;
 }
 
+/** The colors of the two sides, as their sample pictures have them. */
+const SIDE_COLORS = { from: "#5ab0d6", to: "#e8b04a" } as const;
+
+/**
+ * A transition of sound, which has no picture: how loud each side is over its progress, the side
+ * before the cut going down and the one after it coming up, with where it is now.
+ */
+function drawGain(
+  target: HTMLCanvasElement,
+  context: CanvasRenderingContext2D,
+  name: TransitionName,
+  use: TransitionUse,
+  progress: number,
+): boolean {
+  const found = findTransition(name, "sound", use);
+  if (found.kind !== "built-in") return false;
+  const { width, height } = target;
+  const pad = height * 0.16;
+  const x = (share: number) => pad + share * (width - 2 * pad);
+  const y = (gain: number) => height - pad - gain * (height - 2 * pad);
+  const shape = found.type === "fade-linear" ? "gain" : "power";
+  const fade = (way: SoundFade["way"]): SoundFade => ({
+    use,
+    way,
+    shape,
+    start: 0,
+    end: 1,
+    duration: 1,
+  });
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.globalAlpha = 1;
+  context.globalCompositeOperation = "source-over";
+  context.fillStyle = NOTHING;
+  context.fillRect(0, 0, width, height);
+  const sides: (readonly [SoundFade["way"], string])[] = [];
+  if (use !== "enter") sides.push(["out", SIDE_COLORS.from]);
+  if (use !== "exit") sides.push(["in", SIDE_COLORS.to]);
+  context.lineWidth = Math.max(2, height / 30);
+  for (const [way, color] of sides) {
+    context.strokeStyle = color;
+    context.beginPath();
+    for (let step = 0; step <= 32; step += 1) {
+      const share = step / 32;
+      const gain = fadeGainAt(fade(way), share);
+      if (step === 0) context.moveTo(x(share), y(gain));
+      else context.lineTo(x(share), y(gain));
+    }
+    context.stroke();
+  }
+  context.strokeStyle = "#ffffffb3";
+  context.lineWidth = 1;
+  context.beginPath();
+  context.moveTo(x(progress), pad / 2);
+  context.lineTo(x(progress), height - pad / 2);
+  context.stroke();
+  return true;
+}
+
 class TransitionPreviews {
   #samples: Samples | undefined;
   readonly #runners = new Map<string, Runner>();
@@ -97,7 +155,7 @@ class TransitionPreviews {
     const context = target.getContext("2d");
     if (!context || !this.works || name.type === undefined) return false;
     const found = findTransition(name, "picture", use);
-    if (found.kind !== "built-in") return false;
+    if (found.kind !== "built-in") return drawGain(target, context, name, use, progress);
     const runner = this.#runnerOf(found.type);
     const samples = (this.#samples ??= {
       from: sample(["#2b5fa8", "#5ab0d6"], "circle"),

@@ -30,6 +30,7 @@ interface Clip {
   readonly name?: string;
   readonly start: string;
   readonly duration: string;
+  readonly offset?: string;
   readonly source: Record<string, unknown>;
   readonly properties?: Record<string, unknown>;
   readonly enter?: Record<string, unknown>;
@@ -60,7 +61,11 @@ function projectFolder(
   clips: readonly Clip[],
   files: Readonly<Record<string, Buffer>> = {},
   assets: Record<string, unknown> = {},
-  sound: readonly { readonly muted?: boolean; readonly clips: readonly Clip[] }[] = [],
+  sound: readonly {
+    readonly muted?: boolean;
+    readonly clips: readonly Clip[];
+    readonly joins?: readonly Record<string, unknown>[];
+  }[] = [],
   /** Sounds that code makes, by id: what is in their `sound.js`. */
   codes: Readonly<Record<string, string>> = {},
   /** Joins between the clips of the first track. */
@@ -87,10 +92,10 @@ function projectFolder(
   }));
   (timeline.tracks[0] as { clips: unknown[] }).clips = [...clips];
   if (joins.length > 0) Object.assign(timeline.tracks[0] as object, { joins });
-  sound.forEach(({ muted, clips: heard }, index) => {
-    const track = { id: `sound${index}`, kind: "audio", clips: heard, ...(muted && { muted }) };
-    if (index === 0)
-      Object.assign(timeline.tracks[1] as object, { clips: heard, ...(muted && { muted }) });
+  sound.forEach(({ muted, clips: heard, joins: crossing }, index) => {
+    const more = { ...(muted && { muted }), ...(crossing && { joins: crossing }) };
+    const track = { id: `sound${index}`, kind: "audio", clips: heard, ...more };
+    if (index === 0) Object.assign(timeline.tracks[1] as object, { clips: heard, ...more });
     else timeline.tracks.push(track as never);
   });
   written.set(path, JSON.stringify(timeline));
@@ -1018,6 +1023,86 @@ test.describe("the sound of a video", () => {
     // Nothing of the muted track, which is louder and higher.
     expect(decibels(before.rms)).toBeLessThan(-60);
     expect(decibels(after.rms)).toBeLessThan(-60);
+  });
+});
+
+test.describe("the sound of a video with transitions", () => {
+  test("goes in, out and across as their gain curves say, with the sound past the cuts", async ({
+    page,
+  }) => {
+    const tone = { kind: "audio", media: { asset: "tone" } };
+    /** A part of the file where it is on the timeline, so that the sound goes on across a cut. */
+    const part = (id: string, start: number, more: Record<string, unknown> = {}): Clip => ({
+      id,
+      start: String(start),
+      duration: "2",
+      offset: String(start),
+      source: tone,
+      ...more,
+    });
+    const clips = [
+      part("in", 0, { enter: { type: "fade-linear", duration: "1" } }),
+      part("b", 2),
+      part("c", 4),
+      part("d", 6),
+      part("e", 8, { exit: { type: "fade", duration: "1" } }),
+    ];
+    const joins = [
+      // The same recording on both sides: equal gain keeps it as it is.
+      { id: "linear", from: "b", to: "c", type: "fade-linear", duration: "1" },
+      // Equal power is 3 dB up in the middle of the same recording.
+      { id: "power", from: "d", to: "e", type: "fade", duration: "1" },
+    ];
+    await open(
+      page,
+      projectFolder(
+        10,
+        [movingSquare(10)],
+        { "assets/tone.wav": tones([{ hz: 440, seconds: 11 }]) },
+        { tone: { name: "测试音", kind: "audio", path: "assets/tone.wav", storage: "git" } },
+        [{ clips, joins }],
+      ),
+    );
+    await chooseFrom(page, "导出视频…");
+    await dialog(page).getByRole("button", { name: "导出", exact: true }).click();
+    await exported(page);
+    const file = (await savedFile(page)) as Buffer;
+    const sound = await soundOf(page, file);
+    if (!sound) throw new Error("No sound");
+    const { rate, samples } = sound;
+    // Of the tone as it is in the file: 0.5 as a sine.
+    const full = 0.5 / Math.SQRT2;
+    // 22 periods of 440 Hz, around each moment.
+    const at = (seconds: number) =>
+      measure(samples, rate, seconds - 0.025, seconds + 0.025).rms / full;
+    const wanted: readonly (readonly [number, number])[] = [
+      [0.25, 0.25],
+      [0.5, 0.5],
+      [0.75, 0.75],
+      [1.5, 1],
+      [3.6, 1],
+      [4, 1],
+      [4.4, 1],
+      [7.75, Math.cos(Math.PI / 8) + Math.sin(Math.PI / 8)],
+      [8, Math.SQRT2],
+      [9.5, Math.SQRT1_2],
+    ];
+    const heard = wanted.map(([seconds]) => at(seconds));
+    console.log(
+      `sound transitions ${sound.codec}: ` +
+        wanted
+          .map(
+            ([seconds, gain], index) =>
+              `${seconds} s ${heard[index]?.toFixed(3)} (${gain.toFixed(3)})`,
+          )
+          .join(", "),
+    );
+    wanted.forEach(([seconds, gain], index) => {
+      // Half a decibel, as the level of the mix itself.
+      expect(Math.abs(decibels((heard[index] as number) / gain)), `at ${seconds} s`).toBeLessThan(
+        0.5,
+      );
+    });
   });
 });
 

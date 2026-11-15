@@ -1,10 +1,4 @@
-import {
-  buildRenderPlan,
-  entryOf,
-  showsAt,
-  transitionsNotDone,
-  type ProjectState,
-} from "@animaquill/core";
+import { buildRenderPlan, showsAt, transitionsNotDone, type ProjectState } from "@animaquill/core";
 import type { FolderAccess, ProjectLibrary } from "@animaquill/host";
 import { failureOf, StillFailed } from "@animaquill/render";
 import type { TFunction } from "i18next";
@@ -81,8 +75,7 @@ export class StillExport {
     if (!plan) return;
     const seconds = frame / model.rate.fps;
     // A picture is no sound: only what shows otherwise than the project says stops it.
-    const shown = entryOf(state.timelines, model.id);
-    const notDone = shown ? transitionsNotDone(shown, plan, undefined) : [];
+    const notDone = transitionsNotDone(plan, undefined);
     const otherwise = notDone.find((span) => showsAt(span, seconds));
     if (otherwise) {
       await this.#say(notDoneFailure(otherwise), state);

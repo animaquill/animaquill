@@ -1,6 +1,16 @@
 import type { TransitionMedia, TransitionRef, TransitionUse } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import { textOf } from "../properties/names.ts";
+import type { JoinTrouble } from "./model.ts";
+
+/** Why a join does not do what it says, as a key of the texts: sound plays what pictures show. */
+export const joinTroubleKey = (
+  trouble: JoinTrouble,
+  media: TransitionMedia,
+): `transition.why.join.${JoinTrouble | "missingSound"}` =>
+  trouble === "missing" && media === "sound"
+    ? "transition.why.join.missingSound"
+    : `transition.why.join.${trouble}`;
 
 /**
  * What people call a transition, where it is: the ones that come with the editor have names by use,

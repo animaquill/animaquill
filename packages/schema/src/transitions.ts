@@ -238,6 +238,8 @@ export function transitionValueProblems(
 
 /** Every picture transition that comes with the editor. */
 const PICTURES = ["fade", "dip", "wipe", "push"];
+/** And every one of sound. */
+const SOUNDS = ["fade", "fade-linear"];
 
 /**
  * What this editor does so far. The format has the rest already, so that a project can have it: it
@@ -247,7 +249,7 @@ export const SUPPORTED_TRANSITIONS: Readonly<
   Record<TransitionMedia, Readonly<Record<TransitionUse, readonly string[]>>>
 > = {
   picture: { enter: PICTURES, exit: PICTURES, join: PICTURES },
-  sound: { enter: [], exit: [], join: [] },
+  sound: { enter: SOUNDS, exit: SOUNDS, join: SOUNDS },
 };
 
 /** How a transition says what it is. One of `type`, `transition`, or `library` with `resource`. */
