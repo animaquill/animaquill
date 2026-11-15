@@ -101,7 +101,7 @@ export class ChatAttachments {
   /** By draft: what the window keeps, and what is being made now. */
   readonly #lists = new Map<string, readonly Attachment[]>();
   /** Addresses of pictures to show, by their hash, for as long as the page. */
-  readonly #urls = new Map<string, Promise<string | undefined>>();
+  readonly #urls = new Map<string, { count: number; readonly url: Promise<string | undefined> }>();
 
   constructor(options: AttachmentsOptions) {
     this.#options = options;
@@ -318,17 +318,34 @@ export class ChatAttachments {
     return { data: btoa(binary), mimeType: blob.type || ref.type };
   }
 
-  /** An address to show a picture kept here at; nothing where it is not here. */
-  urlOf(image: string): Promise<string | undefined> {
-    let url = this.#urls.get(image);
-    if (!url) {
-      url = this.#images.read(image).then(
-        (blob) => (blob ? URL.createObjectURL(blob) : undefined),
-        () => undefined,
-      );
-      this.#urls.set(image, url);
+  /**
+   * An address to show a picture kept here at, for as long as something holds it: each `holdUrl`
+   * comes with one `releaseUrl`, and the last release revokes the address. Nothing where the picture
+   * is not here.
+   */
+  holdUrl(image: string): Promise<string | undefined> {
+    let held = this.#urls.get(image);
+    if (!held) {
+      held = {
+        count: 0,
+        url: this.#images.read(image).then(
+          (blob) => (blob ? URL.createObjectURL(blob) : undefined),
+          () => undefined,
+        ),
+      };
+      this.#urls.set(image, held);
     }
-    return url;
+    held.count += 1;
+    return held.url;
+  }
+
+  releaseUrl(image: string): void {
+    const held = this.#urls.get(image);
+    if (!held) return;
+    held.count -= 1;
+    if (held.count > 0) return;
+    this.#urls.delete(image);
+    void held.url.then((url) => url && URL.revokeObjectURL(url));
   }
 }
 

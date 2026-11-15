@@ -480,6 +480,39 @@ function PlusMenu(props: {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const toggle = useRef<HTMLButtonElement>(null);
+  /** Opened from the keyboard: the first item that can be chosen gets the focus. */
+  const [fromKeys, setFromKeys] = useState(false);
+  const items = () =>
+    [...(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])].filter(
+      (item) => !item.disabled,
+    );
+  useEffect(() => {
+    if (!open || !fromKeys) return;
+    ref.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
+  }, [open, fromKeys]);
+  const closeMenu = () => {
+    setOpen(false);
+    toggle.current?.focus();
+  };
+  // As the other menus: ↑ and ↓ go through what can be chosen, Home and End to the ends, Enter
+  // chooses, Esc closes back to the button.
+  const onMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const list = items();
+    const at = list.indexOf(document.activeElement as HTMLButtonElement);
+    const go = (index: number) => list[(index + list.length) % list.length]?.focus();
+    if (event.key === "ArrowDown") go(at + 1);
+    else if (event.key === "ArrowUp") go(at < 0 ? -1 : at - 1);
+    else if (event.key === "Home") go(0);
+    else if (event.key === "End") go(-1);
+    else if (event.key === "Escape") closeMenu();
+    else if (event.key === "Tab") setOpen(false);
+    else return;
+    if (event.key !== "Tab") {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
   useEffect(() => {
     if (!open) return;
     const close = (event: PointerEvent) => {
@@ -498,13 +531,30 @@ function PlusMenu(props: {
         aria-expanded={open}
         aria-haspopup="menu"
         data-testid="chat-tools-more"
+        ref={toggle}
         onPointerDown={(event) => event.preventDefault()}
-        onClick={() => setOpen(!open)}
+        onClick={(event) => {
+          // A click of the mouse keeps the caret in the box; Enter or Space goes into the menu.
+          setFromKeys(event.detail === 0);
+          setOpen(!open);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            setFromKeys(true);
+            setOpen(true);
+          }
+        }}
       >
         <Plus size={13} aria-hidden />
       </button>
       {open && (
-        <div className={`${styles.menu} ${styles.menuUp}`} role="menu">
+        <div
+          className={`${styles.menu} ${styles.menuUp}`}
+          role="menu"
+          aria-label={t("chat.compose.more")}
+          onKeyDown={onMenuKeyDown}
+        >
           {props.tools.map((tool) => (
             <button
               key={tool.id}
@@ -515,6 +565,7 @@ function PlusMenu(props: {
               onPointerDown={(event) => event.preventDefault()}
               onClick={() => {
                 setOpen(false);
+                if (fromKeys) toggle.current?.focus();
                 props.onRun(tool.id);
               }}
             >

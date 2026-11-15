@@ -164,6 +164,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const box = useRef<HTMLDivElement>(null);
     /** What the box said last, so that its own changes do not draw it again under the caret. */
     const said = useRef<string | undefined>(undefined);
+    // An input method composes now: what it has is not words yet. Blocks that come meanwhile
+    // wait for it, so that they land after the words and not among the letters it shows.
+    const composing = useRef(false);
+    const waiting = useRef<Piece[][]>([]);
     const { value, onChange, gone } = props;
 
     useLayoutEffect(() => {
@@ -196,6 +200,10 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const put = (pieces: readonly Piece[]) => {
       const root = box.current;
       if (!root || pieces.length === 0) return;
+      if (composing.current) {
+        waiting.current.push([...pieces]);
+        return;
+      }
       root.focus();
       const selection = document.getSelection();
       const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : undefined;
@@ -235,8 +243,8 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
 
     const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
       const root = box.current;
-      const composing = event.nativeEvent.isComposing;
-      if (root && (event.key === "Backspace" || event.key === "Delete") && !composing) {
+      const typing = event.nativeEvent.isComposing || event.keyCode === 229 || composing.current;
+      if (root && (event.key === "Backspace" || event.key === "Delete") && !typing) {
         const chip = chipBeside(root, event.key === "Backspace");
         if (chip) {
           // Selected and deleted as the browser does it, so that Ctrl+Z brings it back.
@@ -256,12 +264,14 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         event.preventDefault();
         return;
       }
-      if (event.key === "Enter" && event.shiftKey && !composing) {
+      if (event.key === "Enter" && event.shiftKey && !typing) {
         event.preventDefault();
         document.execCommand("insertLineBreak");
         changed();
         return;
       }
+      // Keys while an input method composes are its own: Enter picks a word, it sends nothing.
+      if (typing) return;
       props.onKeyDown(event);
     };
 
@@ -329,6 +339,16 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         tabIndex={0}
         spellCheck={false}
         onInput={changed}
+        onCompositionStart={() => {
+          composing.current = true;
+        }}
+        onCompositionEnd={() => {
+          composing.current = false;
+          changed();
+          const pieces = waiting.current.flat();
+          waiting.current = [];
+          if (pieces.length > 0) put(pieces);
+        }}
         onKeyDown={onKeyDown}
         onPaste={onPaste}
         onCopy={(event) => onCopy(event, false)}

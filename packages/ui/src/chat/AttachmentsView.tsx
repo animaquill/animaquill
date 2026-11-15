@@ -12,14 +12,15 @@ export function usePictureUrl(image: string | undefined): string | undefined {
   const { chat } = useWorkbench();
   const [found, setFound] = useState<{ image: string; url: string | undefined } | undefined>();
   useEffect(() => {
+    if (image === undefined) return;
     let live = true;
-    if (image !== undefined) {
-      void chat.attachments.urlOf(image).then((url) => {
-        if (live) setFound({ image, url });
-      });
-    }
+    void chat.attachments.holdUrl(image).then((url) => {
+      if (live) setFound({ image, url });
+    });
+    // Taken away, sent, another conversation, or the chat closed: the address goes.
     return () => {
       live = false;
+      chat.attachments.releaseUrl(image);
     };
   }, [chat, image]);
   return found !== undefined && found.image === image ? found.url : undefined;

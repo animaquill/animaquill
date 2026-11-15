@@ -650,6 +650,75 @@ test("narrower than 320, the buttons of the box are one menu", async ({ page }) 
   await chat(page).screenshot({ path: test.info().outputPath(`${SHOTS}-C1-menu-300.png`) });
   await menu.getByRole("menuitem", { name: /插入播放头的时间/ }).click();
   await expect(box(page).getByTestId("chat-chip")).toHaveText(["0:00/00"]);
+
+  // From the keyboard, as the other menus: Enter opens it on the first item, ↑ ↓ go round what
+  // can be chosen (nothing is selected, so that one is left out), Esc goes back to the button.
+  const more = chat(page).getByTestId("chat-tools-more");
+  await more.focus();
+  await page.keyboard.press("Enter");
+  const items = menu.getByRole("menuitem");
+  await expect(items.nth(0)).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(items.nth(2)).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(items.nth(0)).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(items.nth(3)).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(more).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(items.nth(0)).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(menu).toBeHidden();
+  await expect(box(page).getByTestId("chat-chip")).toHaveCount(2);
+});
+
+test("an input method: Enter picks a word and sends nothing, a block waits for the word", async ({
+  page,
+}) => {
+  test.setTimeout(60_000);
+  const sent = await pretend(page);
+  await setUp(page);
+  await goTo(page, "0:01/00");
+  await tab(page, "chat").click();
+  await box(page).click();
+  await box(page).pressSequentially("看");
+  const ime = await page.context().newCDPSession(page);
+  await ime.send("Input.imeSetComposition", { text: "ni", selectionStart: 2, selectionEnd: 2 });
+  await expect(box(page)).toHaveText("看ni");
+  // Enter while it composes is the input method's: nothing goes, no history, no shortcut.
+  await box(page).evaluate((element) => {
+    for (const key of ["Enter", "ArrowUp", "Backspace"]) {
+      element.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key,
+          keyCode: 229,
+          isComposing: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }
+  });
+  // The button of the time meanwhile: the block waits for the word.
+  await chat(page).getByTestId("chat-tool-time").click();
+  await expect(box(page).getByTestId("chat-chip")).toHaveCount(0);
+  await ime.send("Input.insertText", { text: "你" });
+  const chips = box(page).getByTestId("chat-chip");
+  await expect(chips).toHaveCount(1);
+  await expect(box(page)).toHaveText("看你 0:01/00 ");
+  expect(sent).toHaveLength(0);
+  // Composing again and taking it back with Ctrl+Z leaves the words and the block as they were.
+  await ime.send("Input.imeSetComposition", { text: "ha", selectionStart: 2, selectionEnd: 2 });
+  await ime.send("Input.insertText", { text: "哈" });
+  await expect(box(page)).toHaveText("看你 0:01/00 哈");
+  await page.keyboard.press("Control+z");
+  await expect(box(page)).toHaveText("看你 0:01/00 ");
+  await expect(chips).toHaveCount(1);
+  await box(page).press("Enter");
+  await expect(chat(page).getByTestId("chat-answer")).toHaveText("好的。");
+  expect(lastUser(sent[0] as Sent)[0]?.text).toBe("看你 [0:01/00](aq://time?timeline=main&t=1) ");
 });
 
 test("a 1080p frame of a scene for the chat takes at most two seconds", async ({ page }) => {
