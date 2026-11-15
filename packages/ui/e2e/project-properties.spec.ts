@@ -144,7 +144,15 @@ test.describe("the project properties of a project folder", () => {
     await props(page).getByRole("textbox", { name: "项目名称" }).press("Enter");
     await page.keyboard.press("Escape");
     await chooseFrom(page, "文件", "关闭项目");
-    await expect(projectCard(page, "换了名字的原子")).toBeVisible();
+    const card = projectCard(page, "换了名字的原子");
+    await expect(card).toBeVisible();
+    // The description shows over the cover while the pointer is on the card.
+    const described = card.locator("[data-card-description]");
+    await expect(described).toHaveText("讲原子的一条片子");
+    await expect(described).toHaveCSS("opacity", "0");
+    await card.hover();
+    await expect(described).toHaveCSS("opacity", "1");
+    await shot(page, "B-start-card-description");
   });
 
   test("change the frame rate once people read what it comes to, and nothing moves", async ({
@@ -176,6 +184,23 @@ test.describe("the project properties of a project folder", () => {
     await page.keyboard.press("Escape");
     await tab(page, "problems").click();
     await expect(content(page, "problems")).toContainText("不在 25 帧的格子上");
+  });
+
+  test("take a colour as soon as it is picked, also when Esc closes them right after", async ({
+    page,
+  }) => {
+    const disk = await example(page);
+    await statusName(page, "原子是什么").click();
+    await goTo(page, "画面和帧率");
+    await props(page).locator('input[type="color"][aria-label="背景色"]').fill("#112233");
+    await page.keyboard.press("Escape");
+    await expect(props(page)).toBeHidden();
+    await expect
+      .poll(() => JSON.parse(text(disk, "timelines/main/timeline.json")).background, {
+        timeout: 10_000,
+      })
+      .toBe("#112233");
+    expect(JSON.parse(text(disk, "timelines/highlight/timeline.json")).background).toBe("#112233");
   });
 
   test("show the frame before and after a master of another shape, and add a format instead", async ({
@@ -361,5 +386,15 @@ test.describe("the project properties of projects of the platform", () => {
     await expect(storage).toContainText("云端项目 · 只在这个浏览器里");
     await expect(storage).toContainText("没有本地文件夹");
     await shot(page, "B-storage-cloud-browser");
+    // Its description goes to the platform, and comes back with its list on the start page.
+    await goTo(page, "常规");
+    const description = props(page).getByRole("textbox", { name: "说明" });
+    await description.fill("云端项目的说明");
+    await description.press("Control+Enter");
+    await page.keyboard.press("Escape");
+    await chooseFrom(page, "文件", "关闭项目");
+    const card = projectCard(page, "片头动画");
+    await card.hover();
+    await expect(card.locator("[data-card-description]")).toHaveText("云端项目的说明");
   });
 });

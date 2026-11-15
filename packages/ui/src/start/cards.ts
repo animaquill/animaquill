@@ -78,6 +78,8 @@ export interface ProjectCard {
    */
   readonly cover:
     { readonly etag: string; readonly at: number; readonly chosen?: true } | null | undefined;
+  /** What it says about itself, cut short, see `ProjectSummary.description`: shown on hovering. */
+  readonly description: string | undefined;
   /** What it came from. */
   readonly source:
     | { readonly kind: "local"; readonly row: LocalRow }
@@ -187,6 +189,7 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
       updatedAt: row.updatedAt,
       durationMs: row.durationMs,
       cover: row.cover,
+      description: row.description,
       source: { kind: "local", row },
     };
   });
@@ -205,6 +208,7 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
       updatedAt: row.updatedAt,
       durationMs: row.durationMs,
       cover: row.cover,
+      description: row.description,
       source: { kind: "cloud", row },
     };
   });
@@ -219,6 +223,7 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
     updatedAt: summary.updatedAt,
     durationMs: undefined,
     cover: undefined,
+    description: summary.description,
     source: { kind: "browser", summary, known: lists.browserKnown },
   }));
   return [...local, ...cloud, ...browser];

@@ -359,6 +359,38 @@ describe("the lists of the start page", () => {
     expect(lists.cloud.map((row) => row.name)).toEqual(["改了名的", "云端的新名字"]);
   });
 
+  it("says what each project says about itself: as noted here, or as the platform's list says", () => {
+    const lists = composeStartList(
+      input({
+        records: [folder("f1", "文件夹的"), folder("f2", "连了云端的")],
+        projects: [
+          kept("f1", "文件夹的", { folder: true, description: "本机记下的" }),
+          kept("f2", "连了云端的", { folder: true }),
+          kept("b1", "浏览器里的", { description: "浏览器里记下的" }),
+          kept("k1", "有改动的", { description: "这里改过的说明" }),
+          kept("k2", "没改动的", { description: "这里旧的说明" }),
+        ],
+        links: [link("f2", "p0"), link("k1", "p1", { pending: 1 }), link("k2", "p2")],
+        listed: [
+          listed("p0", "连了云端的", { description: "平台上的" }),
+          listed("p1", "有改动的", { description: "平台上旧的" }),
+          listed("p2", "没改动的", { description: "平台上新的" }),
+          listed("p3", "只在平台上", { description: "只在平台上的说明" }),
+        ],
+      }),
+    );
+    expect(lists.local.map((row) => [row.name, row.description])).toEqual([
+      ["文件夹的", "本机记下的"],
+      ["连了云端的", "平台上的"],
+    ]);
+    expect(Object.fromEntries(lists.cloud.map((row) => [row.name, row.description]))).toEqual({
+      有改动的: "这里改过的说明",
+      没改动的: "平台上新的",
+      只在平台上: "只在平台上的说明",
+    });
+    expect(lists.browser.map((summary) => summary.description)).toEqual(["浏览器里记下的"]);
+  });
+
   it("hides nothing: a link to nothing says nothing, and a second copy is a project of the browser", () => {
     const lists = composeStartList(
       input({

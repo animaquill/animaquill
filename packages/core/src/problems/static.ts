@@ -3,6 +3,7 @@ import { clipEnd, clipStart, entryOf, type ProjectState } from "../model.ts";
 import { compareProblems, type ProjectProblem } from "./model.ts";
 import { propertyProblems, type PropertyInputs } from "./properties.ts";
 import { referenceProblems } from "./references.ts";
+import { manifestProblems } from "./manifest.ts";
 import { timingProblems } from "./timing.ts";
 import { unsupportedProblems } from "./unsupported.ts";
 
@@ -27,6 +28,7 @@ export function staticProblems(
     ...referenceProblems(state),
     ...unsupportedProblems(state),
     ...timingProblems(state),
+    ...manifestProblems(state),
     ...properties,
   ].toSorted(compareProblems);
 }

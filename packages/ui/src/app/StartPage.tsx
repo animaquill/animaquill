@@ -746,6 +746,12 @@ function CardItem({
       {durationMs !== undefined && display === "cards" && (
         <span className={styles.duration}>{durationText(durationMs)}</span>
       )}
+      {card.description !== undefined && display === "cards" && (
+        // What the project says about itself, over its cover while the pointer is on the card.
+        <span className={styles.description} data-card-description="">
+          {card.description}
+        </span>
+      )}
     </span>
   );
   const name = isRenaming ? (
@@ -835,6 +841,10 @@ function CardItem({
     );
   const linkProps = {
     className: styles.cardLink,
+    // The cover is a picture to the screen reader: the description is said with the card.
+    ...(card.description !== undefined && { "aria-description": card.description }),
+    // In the list there is no cover to show it on.
+    ...(card.description !== undefined && display !== "cards" && { title: card.description }),
     draggable: card.marksKey !== undefined && !isRenaming,
     onDragStart: (event: DragEvent) => {
       event.dataTransfer.setData(CARD_TYPE, card.id);

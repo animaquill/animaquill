@@ -12,7 +12,6 @@ import {
   PropertyValue,
   RETIRED_PROPERTIES,
   ResourceTags,
-  Rate,
   Time,
   Track,
   Transition,
@@ -100,6 +99,7 @@ import {
   FilesRemoved,
   FormatsSet,
   LanguagesSet,
+  LimitedRate,
   setBackground,
   setCover,
   setCredits,
@@ -635,7 +635,7 @@ export const OPERATIONS = [
   define(
     "project.setFrameRate",
     "设置项目的帧率，时间轴的标尺按它数帧。",
-    z.strictObject({ fps: Rate }),
+    z.strictObject({ fps: LimitedRate }),
     (draft, { fps }) => {
       draft.set(["manifest", "fps"], fps);
     },

@@ -20,7 +20,7 @@ export const OPERATION_TEXTS = {
 
   "ops.project.setFrameRate.summary": "sets the frame rate the timeline counts frames by",
   "ops.project.setFrameRate.description":
-    'Sets fps of animaquill.json, the editing frame rate: the ruler counts frames by it and drags land on its frames. Times in the project stay as they are, because they are exact seconds, not frame numbers. Each picture format has an export frame rate of its own, which this leaves as it is. A frame rate is a string, such as "30", "25" or "30000/1001".',
+    'Sets fps of animaquill.json, the editing frame rate: the ruler counts frames by it and drags land on its frames. Times in the project stay as they are, because they are exact seconds, not frame numbers. Each picture format has an export frame rate of its own, which this leaves as it is. A frame rate is a string, such as "30", "25" or "30000/1001", at most 1000.',
   "ops.project.setFrameRate.examples": [
     { title: "25 frames a second", params: { fps: "25" } },
     { title: "The NTSC rate of 29.97", params: { fps: "30000/1001" } },
@@ -28,7 +28,7 @@ export const OPERATION_TEXTS = {
 
   "ops.project.setDescription.summary": "sets the description of the project",
   "ops.project.setDescription.description":
-    "Sets description of animaquill.json: what the project is about, in the words of people. The start page shows it on the card of the project. An empty or blank text takes the description away.",
+    "Sets description of animaquill.json: what the project is about, in the words of people. The start page shows it on the card of the project. An empty or blank text takes the description away. At most 5000 characters; the start page shows the first 300.",
   "ops.project.setDescription.examples": [
     {
       title: "A description",
@@ -38,7 +38,7 @@ export const OPERATION_TEXTS = {
 
   "ops.project.setCredits.summary": "sets the credits of the project",
   "ops.project.setCredits.description":
-    "Sets credits of animaquill.json, as a whole list: each credit has a role (what was done, may be empty) and a name (not empty). The editor only keeps them; no export shows them. An empty list takes them all away.",
+    "Sets credits of animaquill.json, as a whole list: each credit has a role (what was done, may be empty) and a name (not empty). The editor only keeps them; no export shows them. An empty list takes them all away. At most 100 credits, each role and name at most 100 characters.",
   "ops.project.setCredits.fields.credits.role": 'What was done, such as "Music"; may be empty.',
   "ops.project.setCredits.fields.credits.name": "Who did it, not empty.",
   "ops.project.setCredits.examples": [
@@ -55,7 +55,7 @@ export const OPERATION_TEXTS = {
 
   "ops.project.setFormats.summary": "sets the picture formats, the first the master",
   "ops.project.setFormats.description":
-    "Sets formats of animaquill.json, as a whole list of at least one: each has id, name, width and height in pixels, fps (the export frame rate) and may have safeArea (fractions of each side that platforms cover, 0 to 1). The first one is the master: the preview and AI read it, and its aspect ratio decides how wide the stage is (the short side is 1080 world units at any size, so a size of the same ratio changes no position). Positions stay as they are when the ratio changes, so content near the edges can end up outside of the picture. A format left out of the list takes its versions along in the same step (timelines/<id>/overrides/format.<format>.json and version.<language>.<format>.json); the result lists them as filesRemoved, and dry_run lists them without changing anything. Ids of formats are told apart by the format: the same id twice fails.",
+    "Sets formats of animaquill.json, as a whole list of at least one: each has id, name, width and height in pixels, fps (the export frame rate) and may have safeArea (fractions of each side that platforms cover, 0 to 1). The first one is the master: the preview and AI read it, and its aspect ratio decides how wide the stage is (the short side is 1080 world units at any size, so a size of the same ratio changes no position). Positions stay as they are when the ratio changes, so content near the edges can end up outside of the picture. A format left out of the list takes its versions along in the same step (timelines/<id>/overrides/format.<format>.json and version.<language>.<format>.json); the result lists them as filesRemoved, and dry_run lists them without changing anything. A format whose id changes is one taken away and another added: its versions go, so a format keeps its id when it is renamed or resized. The same id twice fails. At most 16 formats, sides of at most 16384 pixels, frame rates of at most 1000, names of at most 100 characters; top and bottom of a safe area together, and left and right, leave some of the picture.",
   "ops.project.setFormats.fields.formats.id": "Id of the format; versions refer to it.",
   "ops.project.setFormats.fields.formats.name": "Name people see.",
   "ops.project.setFormats.fields.formats.width": "Width in pixels, a whole number above 0.",
@@ -98,7 +98,7 @@ export const OPERATION_TEXTS = {
 
   "ops.project.setLanguages.summary": "sets the languages, the first the master",
   "ops.project.setLanguages.description":
-    'Sets languages of animaquill.json, as a whole list of at least one: each has id (a language tag such as "en" or "zh-CN"), name, and may have font (a family of fonts). The first one is the master. A language left out of the list takes its string table (locales/<id>.json) and its versions (language.<id>.json and version.<id>.<format>.json of each timeline) along in the same step; the result lists them as filesRemoved, and dry_run lists them without changing anything. The same id twice fails.',
+    'Sets languages of animaquill.json, as a whole list of at least one: each has id (a language tag such as "en" or "zh-CN"), name, and may have font (a family of fonts). The first one is the master. A language left out of the list takes its string table (locales/<id>.json) and its versions (language.<id>.json and version.<id>.<format>.json of each timeline) along in the same step; the result lists them as filesRemoved, and dry_run lists them without changing anything. A language whose id changes is one taken away and another added: its string table and versions go, so a language keeps its id when it is renamed. The same id twice fails. At most 64 languages, names of at most 100 characters.',
   "ops.project.setLanguages.fields.languages.id":
     'Language tag, such as "en" or "zh-CN"; string tables and versions refer to it.',
   "ops.project.setLanguages.fields.languages.name": "Name people see.",

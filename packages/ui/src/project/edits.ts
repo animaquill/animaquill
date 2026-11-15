@@ -1,9 +1,10 @@
-import type {
-  CommandCall,
-  CommandFailure,
-  CommandResult,
-  ProjectState,
-  ProjectStore,
+import {
+  projectFrameRate,
+  type CommandCall,
+  type CommandFailure,
+  type CommandResult,
+  type ProjectState,
+  type ProjectStore,
 } from "@animaquill/core";
 import { normalizeTime, type ProjectManifest } from "@animaquill/schema";
 import type { TFunction } from "i18next";
@@ -186,7 +187,7 @@ export class ProjectEdits {
    * versions, are asked about first. A master of another shape can go in as a format of its own
    * instead, with the master as it is: what people most likely want.
    */
-  async setFormats(formats: readonly ProjectFormat[]): Promise<boolean> {
+  async setFormats(formats: readonly ProjectFormat[], asked = 0): Promise<boolean> {
     const store = this.#options.store();
     const state = store?.getState();
     if (!store || !state) return false;
@@ -210,9 +211,13 @@ export class ProjectEdits {
       if (answer === "add") chosen = asAnotherFormat(before, formats, now, t);
     } else if (change === "size" && was && now) {
       const larger = now.width * now.height > was.width * was.height;
+      const proxies = this.#options.proxies();
       const sure = await this.#options.dialogs.confirm({
         title: t("projectProps.size.title", { width: now.width, height: now.height }),
-        message: t(larger ? "projectProps.size.larger" : "projectProps.size.smaller"),
+        message: [
+          t(larger ? "projectProps.size.larger" : "projectProps.size.smaller"),
+          ...(proxies > 0 ? [t("projectProps.size.proxies", { count: proxies })] : []),
+        ].join(""),
         confirm: t("projectProps.size.confirm"),
         ...(removed && { details: [this.#removedDetail(removed)] }),
       });
@@ -227,7 +232,22 @@ export class ProjectEdits {
       });
       if (!sure) return false;
     }
-    return this.#ok({ type: "project.setFormats", params: { formats: chosen } });
+    const writing = { type: "project.setFormats", params: { formats: chosen } } as const;
+    // Another window may have changed the project while people read: what goes along is asked
+    // about again where it is not what they saw.
+    if (chosen === formats && asked < 2 && !sameFiles(removed, filesRemovedBy(store, writing)))
+      return this.setFormats(formats, asked + 1);
+    // Without a rate of its own, the project edits at the rate of the master: that stays as it is
+    // when the master or its rate changes, as one step with it.
+    const rate = projectFrameRate(store.getState().manifest);
+    const [master] = chosen;
+    const pin =
+      store.getState().manifest.fps === undefined &&
+      master !== undefined &&
+      !sameRate(master.fps, rate)
+        ? [{ type: "project.setFrameRate", params: { fps: rate } }]
+        : [];
+    return this.#ok([...pin, writing]);
   }
 
   /** What a master of another shape comes to, with the frame before and after it (5.3). */
@@ -249,6 +269,9 @@ export class ProjectEdits {
         message: t("projectProps.ratio.message"),
         notes: [
           t("projectProps.ratio.suggest"),
+          ...(this.#options.proxies() > 0
+            ? [t("projectProps.size.proxies", { count: this.#options.proxies() })]
+            : []),
           ...(removed && removed.length > 0
             ? [t("projectProps.formats.removeMessage", { count: removed.length })]
             : []),
@@ -302,7 +325,7 @@ export class ProjectEdits {
    * The languages as a whole: one that goes takes its strings and versions along, which people see
    * listed first (5.2).
    */
-  async setLanguages(languages: readonly Language[]): Promise<boolean> {
+  async setLanguages(languages: readonly Language[], asked = 0): Promise<boolean> {
     const store = this.#options.store();
     if (!store) return false;
     const t = this.#t;
@@ -330,6 +353,8 @@ export class ProjectEdits {
         ...(removed?.length && { details: [this.#removedDetail(removed)] }),
       });
       if (!sure) return false;
+      if (asked < 2 && !sameFiles(removed, filesRemovedBy(store, call)))
+        return this.setLanguages(languages, asked + 1);
     }
     return this.#ok(call);
   }
@@ -364,6 +389,17 @@ export class ProjectEdits {
     return this.#ok({ type: "project.setCover", params: { cover } });
   }
 }
+
+/** What a command would take along, as a dry run says now. */
+function filesRemovedBy(store: ProjectStore, call: CommandCall): readonly string[] | undefined {
+  const tried = store.execute(call, { dryRun: true });
+  return tried.ok
+    ? (tried.results[0] as { filesRemoved?: readonly string[] } | undefined)?.filesRemoved
+    : undefined;
+}
+
+const sameFiles = (a: readonly string[] | undefined, b: readonly string[] | undefined) =>
+  (a ?? []).join("\n") === (b ?? []).join("\n");
 
 /**
  * The formats with the new shape as a format of its own, and the master as it was: what the dialog

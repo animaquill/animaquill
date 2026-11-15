@@ -1,5 +1,5 @@
 import { projectFrameRate, timingProblems, type ProjectState } from "@animaquill/core";
-import { parseTime, type ProjectManifest } from "@animaquill/schema";
+import { LanguageId, PROJECT_LIMITS, parseTime, type ProjectManifest } from "@animaquill/schema";
 
 type ProjectFormat = ProjectManifest["formats"][number];
 import { formatTimecode, frameRate } from "../timeline/frames.ts";
@@ -11,12 +11,29 @@ import { formatTimecode, frameRate } from "../timeline/frames.ts";
  */
 
 /** Whether a text is a frame rate the format takes: a time above 0. */
+/** Whether a text is a frame rate the project's commands take: above 0, at most the limit. */
 export function isFrameRate(text: string): boolean {
   try {
-    return parseTime(text.trim()).n > 0n;
+    const { n, d } = parseTime(text.trim());
+    return n > 0n && n <= BigInt(PROJECT_LIMITS.fps) * d;
   } catch {
     return false;
   }
+}
+
+/** Whether a text is a side of a format: whole pixels, at most `PROJECT_LIMITS.side`. */
+export const isSize = (text: string): boolean =>
+  /^\d+$/.test(text.trim()) && Number(text) > 0 && Number(text) <= PROJECT_LIMITS.side;
+
+/** Whether a text is a language tag, as the format takes it. */
+export const isLanguageTag = (text: string): boolean => LanguageId.safeParse(text.trim()).success;
+
+/**
+ * Whether a side of a safe area can be this many percent, with the opposite side as it is: the two
+ * leave some of the picture.
+ */
+export function isSafeSide(percent: number, opposite: number): boolean {
+  return Number.isFinite(percent) && percent >= 0 && percent / 100 + opposite < 1;
 }
 
 /** The reduced aspect ratio of a size, such as 16:9. */

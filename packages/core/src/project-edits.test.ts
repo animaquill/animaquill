@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import { loadFixture } from "../../schema/scripts/fixture.ts";
 import type { CommandFailure } from "./failures.ts";
+import { manifestProblems } from "./problems/manifest.ts";
 import { timingProblems } from "./problems/timing.ts";
 import { versionsAbout } from "./project-edits.ts";
 import {
@@ -439,5 +440,150 @@ describe("the frame rate", () => {
     expect(manifest(store).fps).toBeUndefined();
     expect(manifest(store).formats[0]?.fps).toBe("30");
     expect(timingProblems(store.getState())).toEqual(at30);
+  });
+});
+
+describe("what the commands of the project properties write at most", () => {
+  const landscape = { id: "landscape", name: "横屏", width: 1920, height: 1080, fps: "30" };
+  const refused = (call: CommandCall) => {
+    const store = open();
+    const result = store.execute(call);
+    expect(failure(result).code, call.type).toBe("invalid-params");
+  };
+
+  it("refuses sizes, counts and lengths no canvas, list or card takes", () => {
+    refused({ type: "project.setFormats", params: { formats: [{ ...landscape, width: 1e9 }] } });
+    refused({ type: "project.setFormats", params: { formats: [{ ...landscape, fps: "1001" }] } });
+    refused({
+      type: "project.setFormats",
+      params: { formats: [{ ...landscape, name: "名".repeat(101) }] },
+    });
+    refused({
+      type: "project.setFormats",
+      params: {
+        formats: Array.from({ length: 17 }, (_, index) => ({ ...landscape, id: `f${index}` })),
+      },
+    });
+    refused({ type: "project.setFrameRate", params: { fps: "5000" } });
+    refused({ type: "project.setDescription", params: { description: "长".repeat(5001) } });
+    refused({
+      type: "project.setCredits",
+      params: { credits: Array.from({ length: 101 }, () => ({ role: "", name: "人" })) },
+    });
+    refused({
+      type: "project.setLanguages",
+      params: {
+        languages: Array.from({ length: 65 }, (_, index) => ({
+          id: `x${String.fromCharCode(97 + (index % 26))}${String.fromCharCode(97 + Math.floor(index / 26))}`,
+          name: "语",
+        })),
+      },
+    });
+  });
+
+  it("refuses a safe area whose sides cover all of the picture", () => {
+    refused({
+      type: "project.setFormats",
+      params: {
+        formats: [{ ...landscape, safeArea: { top: 0.5, right: 0, bottom: 0.5, left: 0 } }],
+      },
+    });
+    refused({
+      type: "project.setFormats",
+      params: {
+        formats: [{ ...landscape, safeArea: { top: 0, right: 0.6, bottom: 0, left: 0.4 } }],
+      },
+    });
+    const store = open();
+    success(
+      store.execute({
+        type: "project.setFormats",
+        params: {
+          formats: [{ ...landscape, safeArea: { top: 0.1, right: 0.2, bottom: 0.3, left: 0.4 } }],
+        },
+      }),
+    );
+  });
+
+  it("takes as much as the limits", () => {
+    const store = open();
+    success(
+      store.executeBatch([
+        {
+          type: "project.setFormats",
+          params: { formats: [{ ...landscape, width: 16384, fps: "1000" }] },
+        },
+        { type: "project.setDescription", params: { description: "长".repeat(5000) } },
+        {
+          type: "project.setCredits",
+          params: { credits: Array.from({ length: 100 }, () => ({ role: "角", name: "名" })) },
+        },
+      ]),
+    );
+    expect(manifestProblems(store.getState())).toEqual([]);
+  });
+});
+
+describe("what animaquill.json and the files say apart", () => {
+  const codes = (store: ProjectStore) =>
+    manifestProblems(store.getState()).map(({ code, params, file }) => [code, params, file]);
+
+  it("is nothing in the example project", () => {
+    expect(codes(open())).toEqual([]);
+  });
+
+  it("finds versions and strings of what the manifest has no more, and languages without strings", () => {
+    const store = open();
+    const state = store.getState();
+    // As two windows at once can leave it: the manifest has a language whose strings went, and
+    // lost a format whose versions are still there.
+    const apart = {
+      ...state,
+      manifest: {
+        ...state.manifest,
+        formats: state.manifest.formats.slice(0, 1),
+        languages: [...state.manifest.languages, { id: "fr", name: "Français" }],
+      },
+      locales: { ...state.locales, de: {} },
+    };
+    expect(manifestProblems(apart).map(({ code, params, file }) => [code, params, file])).toEqual([
+      [
+        "version-unlisted",
+        { version: "format.vertical", missing: "format:vertical" },
+        "timelines/main/overrides/format.vertical.json",
+      ],
+      [
+        "version-unlisted",
+        { version: "version.en.vertical", missing: "format:vertical" },
+        "timelines/main/overrides/version.en.vertical.json",
+      ],
+      ["strings-unlisted", { language: "de" }, "locales/de.json"],
+      ["language-without-strings", { language: "fr" }, "animaquill.json"],
+    ]);
+  });
+
+  it("says where a hand-written manifest has more than the commands write, and opens it", () => {
+    const written = loadFixture("v1");
+    const wide = JSON.parse(written.get("animaquill.json") as string);
+    delete wide.tags;
+    wide.formats = Array.from({ length: 20 }, (_, index) => ({
+      id: `f${index}`,
+      name: `画幅 ${index}`,
+      width: 20000,
+      height: 1080,
+      fps: "30",
+    }));
+    written.set("animaquill.json", JSON.stringify(wide));
+    for (const name of written.keys()) if (name.includes("vertical")) written.delete(name);
+    const { store } = ProjectStore.open(written);
+    expect(store).toBeDefined();
+    expect(
+      manifestProblems(store!.getState())
+        .filter(({ code }) => code === "manifest-over-limit")
+        .map(({ params }) => params),
+    ).toEqual([
+      { field: "formats", value: 20, limit: 16 },
+      { field: "side", value: 20000, limit: 16384 },
+    ]);
   });
 });

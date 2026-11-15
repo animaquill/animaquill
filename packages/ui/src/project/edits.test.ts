@@ -229,4 +229,55 @@ describe("the changes of the project properties", () => {
       Object.values(store.getState().timelines).map(({ background }) => background),
     ).not.toContain("#112233");
   });
+
+  it("keep the rate of editing of a project without one as the master or its rate changes", async () => {
+    const { store, edits } = setup();
+    // The example writes no fps: it edits at the rate of its master, 30.
+    expect(manifest(store).fps).toBeUndefined();
+    const [master, vertical] = manifest(store).formats;
+    expect(await edits.setFormats([{ ...master!, fps: "60" }, vertical!])).toBe(true);
+    expect(manifest(store).fps).toBe("30");
+    expect(manifest(store).formats[0]?.fps).toBe("60");
+    // Both are one step.
+    store.undo();
+    expect(manifest(store).fps).toBeUndefined();
+    expect(manifest(store).formats[0]?.fps).toBe("30");
+  });
+
+  it("ask again where another window changed what goes along while people read", async () => {
+    const { store, dialogs, edits, asked } = setup();
+    const going = edits.setLanguages([manifest(store).languages[0]!]);
+    const first = await asked();
+    expect(first.kind === "confirm" && first.details?.[0]?.items).toHaveLength(3);
+    // Meanwhile another window took away a version of English.
+    store.execute({
+      type: "project.setFormats",
+      params: { formats: [manifest(store).formats[0]!] },
+    });
+    dialogs.answer(true);
+    await vi.waitFor(() => {
+      const now = dialogs.getSnapshot();
+      expect(now).toBeDefined();
+      expect(now?.id).not.toBe(first.id);
+    });
+    const again = dialogs.getSnapshot()!;
+    expect(again.kind === "confirm" && again.details?.[0]?.items).toEqual([
+      "locales/en.json",
+      "timelines/main/overrides/language.en.json",
+    ]);
+    dialogs.answer(true);
+    expect(await going).toBe(true);
+  });
+
+  it("say that a master of another size has its proxies made again", async () => {
+    const { store, dialogs, edits, asked } = setup(open(), { proxies: 2 });
+    const [master, vertical] = manifest(store).formats;
+    const going = edits.setFormats([{ ...master!, width: 3840, height: 2160 }, vertical!]);
+    const request = await asked();
+    expect(request.kind === "confirm" && request.message).toContain(
+      'projectProps.size.proxies {"count":2}',
+    );
+    dialogs.answer(false);
+    expect(await going).toBe(false);
+  });
 });

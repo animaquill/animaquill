@@ -560,6 +560,8 @@ export interface CloudProjectSummary {
   /** Its id on the platform. */
   readonly id: string;
   readonly name: string;
+  /** What it says about itself, cut short (`DESCRIPTION_MOST`), where it says something. */
+  readonly description?: string;
   /** When it last changed. */
   readonly updatedAt: number;
   readonly createdAt?: number;
@@ -2061,9 +2063,25 @@ export type TrialStore = WindowPlaces;
 export type TrialPlace = WindowPlace;
 export type DraftStore = WindowPlaces;
 
+/**
+ * How much of what a project says about itself (`description` of its animaquill.json) a list of
+ * projects keeps: the start page shows it on the card of the project, cut short there again.
+ */
+export const DESCRIPTION_MOST = 300;
+
+/** A description as lists keep it: at most `DESCRIPTION_MOST` characters, nothing for nothing. */
+export function shortDescription(text: string | undefined): string | undefined {
+  const trimmed = text?.trim() ?? "";
+  if (trimmed === "") return undefined;
+  const chars = [...trimmed];
+  return chars.length > DESCRIPTION_MOST ? chars.slice(0, DESCRIPTION_MOST).join("") : trimmed;
+}
+
 export interface ProjectSummary {
   readonly id: string;
   readonly name: string;
+  /** What it says about itself, see `shortDescription`, as its log last noted, see `describe`. */
+  readonly description?: string;
   /** Milliseconds since 1970. */
   readonly updatedAt: number;
   /**
@@ -2245,6 +2263,12 @@ export interface ProjectLog {
    * when another project comes in with the same id: it is not the one this log belongs to.
    */
   append(update: Uint8Array, name: string, source?: ChangeSource): Promise<void>;
+  /**
+   * Notes what the project says about itself, for the start page: see `ProjectSummary.description`.
+   * The editor does as it opens the project and as the description changes. Hosts that list no
+   * projects need not have it.
+   */
+  describe?(description: string | undefined): Promise<void>;
   /**
    * Replaces all updates with what `merge` makes of them, in one step. Updates that another window
    * writes at the same moment are part of it or stay, so nothing gets lost. `merge` has to be

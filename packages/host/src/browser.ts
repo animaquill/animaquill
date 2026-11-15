@@ -295,6 +295,18 @@ function openLog(
       // oxlint-disable-next-line unicorn/require-post-message-target-origin -- not a window
       channel?.postMessage(update);
     },
+    async describe(description) {
+      const transaction = (await database()).transaction(PROJECTS, "readwrite");
+      const projects = transaction.objectStore(PROJECTS);
+      const read = projects.get(id);
+      read.addEventListener("success", () => {
+        const record = read.result as ProjectRecord | undefined;
+        if (!isOurs(record) || record?.description === description) return;
+        const { description: _, ...rest } = record as ProjectRecord;
+        projects.put(description === undefined ? rest : { ...rest, description });
+      });
+      await committed(transaction);
+    },
     async compact(merge, { through } = {}) {
       const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite");
       const updates = transaction.objectStore(UPDATES);

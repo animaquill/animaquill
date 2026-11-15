@@ -19,6 +19,7 @@ const card = (id: string, more: Partial<ProjectCard> = {}): ProjectCard => ({
   durationMs: undefined,
   cover: undefined,
   source: { kind: "browser", summary: { id, name: id, updatedAt: 1 }, known: true },
+  description: undefined,
   ...more,
 });
 

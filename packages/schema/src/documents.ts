@@ -28,6 +28,25 @@ const SafeArea = z.strictObject({
   left: z.number().min(0).max(1),
 });
 
+/**
+ * How much of each a project's own commands write (the project properties, AI): sizes a canvas can
+ * have, lists people can read. Files are read as they are: what has more is a problem to look at
+ * (`manifest-over-limit`), not a file that cannot be read.
+ */
+export const PROJECT_LIMITS = {
+  /** Pixels on a side of a format: as much as browsers make a canvas. */
+  side: 16384,
+  formats: 16,
+  languages: 64,
+  /** Frames a second, of editing and of a format. */
+  fps: 1000,
+  /** Characters of the description. */
+  description: 5000,
+  credits: 100,
+  /** Characters of a name: of a format, a language, a role or a name of a credit. */
+  name: 100,
+} as const;
+
 /** A size and frame rate the project is made in and exported at, see `ProjectManifest.formats`. */
 export const ProjectFormat = z.strictObject({
   id: Id,

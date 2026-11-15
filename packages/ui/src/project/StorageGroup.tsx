@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 import { CloudPanelBody } from "../app/CloudPanel.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import { cloudOf, storedOf } from "../app/StatusBar.tsx";
-import { cloudPanel, panelInputOf } from "../cloud/panel.ts";
+import { cloudPanel, panelInputOf, type PanelActionId } from "../cloud/panel.ts";
 import settings from "../settings/Settings.module.css";
 import { formatSize } from "../transfer/transfer.ts";
 import { Facts, Group, Heading, Row, Small, length, moment } from "./parts.tsx";
@@ -26,12 +26,16 @@ export type StoredAs =
   | "browser";
 
 /** What the platform says of the open project, once, as the group opens. */
-function useSummary(): CloudProjectSummary | undefined {
+/**
+ * What the platform says of the open project, asked each time the group opens: undefined while it
+ * is being asked, `null` where it could not say.
+ */
+function useSummary(): CloudProjectSummary | null | undefined {
   const { cloud } = useWorkbench();
-  const [summary, setSummary] = useState<CloudProjectSummary>();
+  const [summary, setSummary] = useState<CloudProjectSummary | null>();
   useEffect(() => {
     let live = true;
-    void cloud?.summaryOfOpen().then((found) => live && setSummary(found));
+    void cloud?.summaryOfOpen().then((found) => live && setSummary(found ?? null));
     return () => {
       live = false;
     };
@@ -105,6 +109,16 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
         )
       : undefined;
   const assets = summary?.size?.assets;
+  /** What a fact of the platform says: still being asked, not said, or what it is. */
+  const said = (value: string | undefined): string =>
+    summary === undefined
+      ? t("projectProps.storage.asking")
+      : (value ?? t("projectProps.storage.notSaid"));
+  /** What people press of the panel: what asks something or leaves goes on without the properties. */
+  const run = (id: PanelActionId) => {
+    if (id !== "archiveNow" && id !== "retry" && id !== "recheck") workbench.projectNav.close();
+    workbench.runCloudAction(id);
+  };
   /** Ways out, as the panel of the platform has them: the properties close first. */
   const exit = (id: "saveAsLocal" | "disconnect") => {
     workbench.projectNav.close();
@@ -130,7 +144,7 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
         name={t(`projectProps.storage.kind.${storedAs}`)}
         help={t(`projectProps.storage.kindHelp.${storedAs}`)}
       >
-        {cloud && (
+        {cloud && linked && (
           <Small
             onClick={() => {
               workbench.projectNav.close();
@@ -170,21 +184,29 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
                     ],
                     [
                       t("projectProps.storage.size"),
-                      summary?.size
-                        ? t("projectProps.storage.sizeValue", {
+                      said(
+                        summary?.size &&
+                          t("projectProps.storage.sizeValue", {
                             documents: formatSize(summary.size.documents),
                             assets: assets ? formatSize(assets.bytes) : "—",
                             count: assets?.count ?? 0,
-                          })
-                        : "—",
+                          }),
+                      ),
                     ],
                     [
                       t("projectProps.storage.duration"),
-                      summary?.durationMs !== undefined
-                        ? length(t, summary.durationMs / 1000)
-                        : "—",
+                      said(
+                        summary?.durationMs === undefined
+                          ? undefined
+                          : length(t, summary.durationMs / 1000),
+                      ),
                     ],
-                    [t("projectProps.general.created"), moment(summary?.createdAt)],
+                    [
+                      t("projectProps.general.created"),
+                      said(
+                        summary?.createdAt === undefined ? undefined : moment(summary.createdAt),
+                      ),
+                    ],
                     ...(summary?.repository
                       ? ([
                           [
@@ -247,20 +269,36 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
           )}
         />
       )}
-      {panel && (
+      {panel && linked && (
         <>
           <Heading>{t("projectProps.storage.sync")}</Heading>
           <div className={styles.panel} data-testid="project-storage-panel">
-            <CloudPanelBody
-              panel={panel}
-              run={(id) => {
-                // What asks something or leaves the project goes on without the properties over it.
-                if (id !== "archiveNow" && id !== "retry" && id !== "recheck")
-                  workbench.projectNav.close();
-                workbench.runCloudAction(id);
-              }}
-            />
+            <CloudPanelBody panel={panel} run={run} />
           </div>
+        </>
+      )}
+      {panel && !linked && (
+        // Not syncing: only the ways to it, as buttons, without the panel around them.
+        <>
+          <Heading>{t("projectProps.storage.sync")}</Heading>
+          <Row
+            id="sync"
+            name={t("projectProps.storage.noSync")}
+            help={t("projectProps.storage.noSyncHelp")}
+          >
+            {[...panel.rows.flatMap((row) => row.actions), ...panel.actions]
+              .filter((action, index, all) => all.findIndex(({ id }) => id === action.id) === index)
+              .map((action) => (
+                <Small
+                  key={action.id}
+                  disabled={!action.enabled}
+                  danger={action.kind === "danger"}
+                  onClick={() => run(action.id)}
+                >
+                  {action.label}
+                </Small>
+              ))}
+          </Row>
         </>
       )}
     </Group>

@@ -16,6 +16,7 @@ import {
   type RepositoryStatus,
 } from "@animaquill/host";
 import { MemoryWriters } from "@animaquill/host/memory";
+import { shortDescription } from "@animaquill/host";
 import { createProject } from "@animaquill/schema";
 import { MemoryLines, MemoryPlatform, digestOf } from "../src/cloud/cloud-support.ts";
 
@@ -223,10 +224,15 @@ export function fakeCloud(account: AccountAccess): { cloud: CloudAccess; lab: Cl
       // The list says what a project is called now, as the platform's does.
       list: async () =>
         signedIn(() =>
-          platform.list(USER).map((summary) => ({
-            ...summary,
-            name: platform.workingCopy(summary.id).getState().manifest.name,
-          })),
+          platform.list(USER).map((summary) => {
+            const { manifest } = platform.workingCopy(summary.id).getState();
+            const description = shortDescription(manifest.description);
+            return {
+              ...summary,
+              name: manifest.name,
+              ...(description !== undefined && { description }),
+            };
+          }),
         ),
       remove: async (project, options) => signedIn(() => platform.remove(USER, project, options)),
       links,

@@ -786,3 +786,42 @@ describe("two windows on one project", () => {
     expect(other.session.store?.canUndo).toBe(false);
   });
 });
+
+describe("what a project says about itself, for the start page", () => {
+  const described = (library: MemoryLibrary, id: string) => library.summaries.get(id)?.description;
+
+  it("is noted as it changes, cut short, and goes when it is taken away", async () => {
+    const library = new MemoryLibrary();
+    const { session } = setup(library);
+    await session.create("说明");
+    const id = session.key as string;
+    session.store?.execute({
+      type: "project.setDescription",
+      params: { description: `  ${"长".repeat(400)}  ` },
+    });
+    await settled(session);
+    await vi.waitFor(() => expect(described(library, id)).toBe("长".repeat(300)));
+    session.store?.execute({ type: "project.setDescription", params: { description: "" } });
+    await settled(session);
+    await vi.waitFor(() => expect(library.summaries.get(id)).not.toHaveProperty("description"));
+  });
+
+  it("is noted as the project opens, also for one from before it was", async () => {
+    const library = new MemoryLibrary();
+    const first = setup(library);
+    await first.session.create("旧的");
+    const id = first.session.key as string;
+    first.session.store?.execute({
+      type: "project.setDescription",
+      params: { description: "早就写了的说明" },
+    });
+    await settled(first.session);
+    await first.session.close();
+    // As a log of an editor from before had it: nothing noted.
+    const { description: _, ...before } = library.summaries.get(id)!;
+    library.summaries.set(id, before);
+    const { session } = setup(library);
+    expect(await session.open(id)).toBe(true);
+    await vi.waitFor(() => expect(described(library, id)).toBe("早就写了的说明"));
+  });
+});

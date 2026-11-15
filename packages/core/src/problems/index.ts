@@ -19,3 +19,4 @@ export { ProblemSet, type ProblemSetOptions } from "./set.ts";
 export { outputProblems, staticProblems, type OutputQuery, type StaticInputs } from "./static.ts";
 export { UNSUPPORTED_CODES, unsupportedProblems, type UnsupportedCode } from "./unsupported.ts";
 export { TIMING_CODES, timingProblems } from "./timing.ts";
+export { MANIFEST_CODES, manifestProblems } from "./manifest.ts";

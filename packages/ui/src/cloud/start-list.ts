@@ -105,6 +105,8 @@ export interface LocalRow {
   readonly cover: CloudProjectSummary["cover"] | null;
   /** See `CloudRow.durationMs`. */
   readonly durationMs: number | undefined;
+  /** See `CloudRow.description`: as this browser noted it, or the platform's list says. */
+  readonly description: string | undefined;
 }
 
 /** A project of the platform that has no folder on this computer. */
@@ -158,6 +160,11 @@ export interface CloudRow {
   readonly cover: CloudProjectSummary["cover"] | null;
   /** How long its main timeline is, as the list says. */
   readonly durationMs: number | undefined;
+  /**
+   * What it says about itself, cut short, see `ProjectSummary.description`: as the list says, or
+   * the copy here, where it has changes the platform does not have yet or the list does not say.
+   */
+  readonly description: string | undefined;
 }
 
 export interface StartLists {
@@ -289,6 +296,7 @@ export function composeStartList(input: StartInput): StartLists {
       copy: onPlatform?.copy ?? "live",
       cover: onPlatform ? (onPlatform.cover ?? null) : undefined,
       durationMs: onPlatform?.durationMs,
+      description: keptOf.get(record.id)?.description ?? onPlatform?.description,
     };
   });
 
@@ -346,6 +354,10 @@ export function composeStartList(input: StartInput): StartLists {
         unusable: summary.repository?.unusable,
         cover: summary.cover ?? null,
         durationMs: summary.durationMs,
+        description:
+          (copy && isPending(copy.link) ? copy.summary.description : undefined) ??
+          summary.description ??
+          copy?.summary.description,
       };
     });
   // What this browser has and the list does not: all of it while there is no list.
@@ -372,6 +384,7 @@ export function composeStartList(input: StartInput): StartLists {
       unusable: undefined,
       cover: undefined,
       durationMs: undefined,
+      description: summary.description,
     }));
 
   return {

@@ -6,7 +6,13 @@ import {
   type ProjectState,
   type ProjectStore,
 } from "@animaquill/core";
-import { CURRENT_FORMAT_VERSION, formatTime, parseTime, toSeconds } from "@animaquill/schema";
+import {
+  CURRENT_FORMAT_VERSION,
+  PROJECT_LIMITS,
+  formatTime,
+  parseTime,
+  toSeconds,
+} from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import { Copy, Lock, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
@@ -21,6 +27,9 @@ import {
   formatPresets,
   freeId,
   isFrameRate,
+  isLanguageTag,
+  isSafeSide,
+  isSize,
   rateLabel,
   ratioOf,
   safeAreaChoice,
@@ -156,6 +165,7 @@ export function GeneralGroup({ store, locked }: GroupProps) {
         below={
           <CommitText
             label={t("projectProps.general.description")}
+            maxLength={PROJECT_LIMITS.description}
             value={manifest.description ?? ""}
             multiline
             disabled={disabled}
@@ -239,6 +249,7 @@ function CreditsRow({ credits, disabled }: { credits: readonly Credit[]; disable
             <div key={index} className={styles.listRow}>
               <CommitText
                 label={t("projectProps.general.creditRole", { number: index + 1 })}
+                maxLength={PROJECT_LIMITS.name}
                 value={credit.role}
                 placeholder={t("projectProps.general.rolePlaceholder")}
                 disabled={disabled}
@@ -247,6 +258,7 @@ function CreditsRow({ credits, disabled }: { credits: readonly Credit[]; disable
               />
               <CommitText
                 label={t("projectProps.general.creditName", { number: index + 1 })}
+                maxLength={PROJECT_LIMITS.name}
                 value={credit.name}
                 placeholder={t("projectProps.general.namePlaceholder")}
                 disabled={disabled}
@@ -263,7 +275,10 @@ function CreditsRow({ credits, disabled }: { credits: readonly Credit[]; disable
             </div>
           ))}
           <div>
-            <Small disabled={disabled} onClick={() => setRows([...rows, { role: "", name: "" }])}>
+            <Small
+              disabled={disabled || rows.length >= PROJECT_LIMITS.credits}
+              onClick={() => setRows([...rows, { role: "", name: "" }])}
+            >
               <Plus size={12} aria-hidden /> {t("projectProps.general.addCredit")}
             </Small>
           </div>
@@ -374,8 +389,6 @@ const draftOf = (format: ProjectFormat, index: number | undefined): FormatDraft 
   height: String(format.height),
   fps: format.fps,
 });
-
-const isSize = (text: string) => /^\d+$/.test(text.trim()) && Number(text) > 0;
 
 export function PictureGroup({ store, locked }: GroupProps) {
   const { projectEdits } = useWorkbench();
@@ -546,6 +559,7 @@ function FormatEditor(props: {
     <label className={styles.field}>
       <span>{label}</span>
       <input
+        maxLength={key === "name" ? PROJECT_LIMITS.name : undefined}
         className={styles.text}
         aria-label={label}
         aria-invalid={!valid || undefined}
@@ -704,8 +718,8 @@ function SafeAreaRow({
         width={56}
         onCommit={(text) => {
           const percent = Number(text);
-          if (!Number.isFinite(percent) || percent < 0 || percent > 100 || text.trim() === "")
-            return false;
+          const opposite = { top: "bottom", bottom: "top", left: "right", right: "left" } as const;
+          if (text.trim() === "" || !isSafeSide(percent, area[opposite[key]])) return false;
           write({ ...area, [key]: percent / 100 });
           return true;
         }}
@@ -890,7 +904,7 @@ export function LanguagesGroup({ store, locked }: GroupProps) {
   const versions = Object.entries(state.timelines).flatMap(([id, timeline]) =>
     Object.keys(timeline.overrides).map((name) => ({ timeline: id, name, of: timeline.name })),
   );
-  const validTag = (id: string) => /^[A-Za-z]{2,8}(?:-[A-Za-z0-9]{1,8})*$/.test(id.trim());
+  const validTag = isLanguageTag;
   return (
     <Group title={t("projectProps.groups.languages")}>
       <Row
@@ -905,6 +919,7 @@ export function LanguagesGroup({ store, locked }: GroupProps) {
                 <span className={styles.cellName}>
                   <CommitText
                     label={t("projectProps.languages.nameLabel", { id: language.id })}
+                    maxLength={PROJECT_LIMITS.name}
                     value={language.name}
                     disabled={disabled}
                     width={150}

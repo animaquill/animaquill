@@ -67,6 +67,8 @@ export function CommitText(props: {
   readonly placeholder?: string;
   readonly className?: string | undefined;
   readonly width?: number;
+  /** Characters at most, as the project's commands take them. */
+  readonly maxLength?: number;
 }) {
   const [draft, setDraft] = useState(props.value);
   const [invalid, setInvalid] = useState(false);
@@ -88,6 +90,7 @@ export function CommitText(props: {
     value: draft,
     disabled: props.disabled,
     placeholder: props.placeholder,
+    maxLength: props.maxLength,
     spellCheck: false,
     className: `${styles.text} ${props.className ?? ""}`,
     style: props.width === undefined ? undefined : { width: props.width },
@@ -140,8 +143,15 @@ export function ColorPick(props: {
       aria-label={props.label}
       value={shown.slice(0, 7)}
       disabled={props.disabled}
-      onChange={(event) => setShown(event.target.value)}
-      onBlur={() => shown !== props.value && props.onPick(shown)}
+      // While the picker is open each move is only shown; what it closes on goes in, as one step.
+      onInput={(event) => setShown(event.currentTarget.value)}
+      onChange={() => {}}
+      ref={(element) => {
+        if (!element) return;
+        const take = () => element.value !== props.value.slice(0, 7) && props.onPick(element.value);
+        element.addEventListener("change", take);
+        return () => element.removeEventListener("change", take);
+      }}
     />
   );
 }

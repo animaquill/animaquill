@@ -221,6 +221,12 @@ export class MemoryLibrary implements ProjectLibrary {
         this.updates.get(id)?.push(this.#marked(update, source));
         for (const listener of listeners) if (!own.has(listener)) listener(update);
       },
+      describe: async (description) => {
+        const summary = this.summaries.get(id);
+        if (!summary || !isOurs()) return;
+        const { description: _, ...rest } = summary;
+        this.summaries.set(id, description === undefined ? rest : { ...rest, description });
+      },
       compact: async (merge, { through } = {}) => {
         if (!isOurs()) return;
         this.compactions += 1;

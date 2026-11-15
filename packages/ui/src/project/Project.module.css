@@ -337,3 +337,9 @@ textarea.text {
 .tableRow .cellActions {
   flex-wrap: nowrap;
 }
+
+/* Narrow, the buttons of a row of a table go on a line of their own, at its end. */
+[data-narrow] .tableRow .cellActions {
+  flex-basis: 100%;
+  justify-content: flex-end;
+}

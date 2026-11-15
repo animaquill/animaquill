@@ -105,7 +105,9 @@ assets/                            素材文件
 | `timeline.setBackground` | 一条时间轴的 `background` | `null` 去掉，也就是黑色 |
 | `timeline.setDefault` | `timelines` 的顺序 | 这条排到最前面，其余的顺序不变 |
 
-整份改的命令写入前按本节的规则校验整个 `animaquill.json`，比如画幅和语言的 ID 不能重复，不对就整条拒绝，什么都不写。
+整份改的命令写入前按本节的规则校验整个 `animaquill.json`，比如画幅和语言的 ID 不能重复，不对就整条拒绝，什么都不写。改画幅或语言的 ID 等于删掉再加，它的差异文件和字符串表会一起删掉，所以改名、改尺寸时 ID 不变。
+
+这些命令只写到一定的量为止：画幅最多 16 个，边长最多 16384 像素，帧率（剪辑和导出）最多 1000，语言最多 64 种，说明最多 5000 字，署名最多 100 条，名字最多 100 字；安全区上加下、左加右都要小于 1。手写的文件超过了照样能读，列入问题（`manifest-over-limit`）。开始页的卡片只记说明的前 300 个字。
 
 舞台的短边固定是 1080 个世界单位，所以母版换一个同比例的尺寸，画面里的位置和大小都不变；换比例时画面的宽变了，靠边的内容可能出画或者多出空白。
 
@@ -692,6 +694,8 @@ k = 1080 / min(format.width, format.height)
 - `audio.pan`、`audio.pitch`、`audio.preservePitch` 和 `time.speed` 不生效（`unsupported-audio-property`）；`audio.volume` 有关键帧时只用第一个值（`unsupported-volume-keys`）。
 - `loop` 不生效（`unsupported-loop`）；`draft` 的片段照常显示和导出（`unsupported-draft`）。
 - 语言和画幅的差异不生效，预览和导出都用母版（`unsupported-override`）；导出那个画幅时导出前会停下。
+
+清单和文件对不上时也列入问题，项目照常打开：差异文件属于清单里没有的语言或画幅（`version-unlisted`），字符串表属于清单里没有的语言（`strings-unlisted`），母版以外的语言没有字符串表（`language-without-strings`，它的文字都用母版的）。两个人同时改画幅或语言时可能留下这些。
 
 还有一类问题和做不到无关，只是提醒：时间不落在剪辑帧率（`fps`）的格子上（`time-off-grid`），每个片段一条（它的开头、结尾和关键帧），每条时间轴一条（段落的分界和标记）。多半是换了帧率以后，按原来的帧对齐的时间。播放和导出照常，不会因为它停下。
 

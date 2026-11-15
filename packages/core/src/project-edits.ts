@@ -1,7 +1,10 @@
 import {
   Color,
   Id,
+  PROJECT_LIMITS,
+  ProjectFormat,
   ProjectManifest,
+  Rate,
   Time,
   ZERO,
   compare,
@@ -37,14 +40,52 @@ function setField(draft: Draft, field: string, value: unknown): void {
   } else draft.set(manifestPath(field), value);
 }
 
-export const DescriptionSet = z.strictObject({ description: z.string() });
+export const DescriptionSet = z.strictObject({
+  description: z.string().max(PROJECT_LIMITS.description),
+});
 
 export function setDescription(draft: Draft, { description }: z.output<typeof DescriptionSet>) {
   setField(draft, "description", description.trim() === "" ? undefined : description);
 }
 
-const Credit = z.strictObject({ role: z.string(), name: z.string().trim().min(1) });
-export const CreditsSet = z.strictObject({ credits: z.array(Credit) });
+const Name = z.string().max(PROJECT_LIMITS.name);
+const Credit = z.strictObject({ role: Name, name: Name.trim().min(1) });
+export const CreditsSet = z.strictObject({
+  credits: z.array(Credit).max(PROJECT_LIMITS.credits),
+});
+
+/** A frame rate a project's commands write: above 0 and at most `PROJECT_LIMITS.fps`. */
+export const LimitedRate = Rate.refine((rate) => {
+  try {
+    return compare(parseTime(rate), parseTime(String(PROJECT_LIMITS.fps))) <= 0;
+  } catch {
+    return false;
+  }
+}, `at most ${PROJECT_LIMITS.fps} frames a second`);
+
+const Side = z.number().int().positive().max(PROJECT_LIMITS.side);
+
+/** A format as the commands write it: within `PROJECT_LIMITS`, its safe area less than all. */
+const LimitedFormat = ProjectFormat.extend({
+  name: z.string().min(1).max(PROJECT_LIMITS.name),
+  width: Side,
+  height: Side,
+  fps: LimitedRate,
+}).superRefine(({ safeArea }, context) => {
+  if (!safeArea) return;
+  if (safeArea.top + safeArea.bottom >= 1)
+    context.addIssue({
+      code: "custom",
+      path: ["safeArea"],
+      message: "top and bottom cover it all",
+    });
+  if (safeArea.left + safeArea.right >= 1)
+    context.addIssue({
+      code: "custom",
+      path: ["safeArea"],
+      message: "left and right cover it all",
+    });
+});
 
 export function setCredits(draft: Draft, { credits }: z.output<typeof CreditsSet>) {
   setField(draft, "credits", credits.length === 0 ? undefined : credits);
@@ -107,7 +148,9 @@ const filesRemoved = (files: readonly string[]) =>
 
 export const FilesRemoved = z.strictObject({ filesRemoved: z.array(z.string()).readonly() });
 
-export const FormatsSet = z.strictObject({ formats: ProjectManifest.shape.formats });
+export const FormatsSet = z.strictObject({
+  formats: z.array(LimitedFormat).min(1).max(PROJECT_LIMITS.formats),
+});
 
 /**
  * The formats, the first the master. A format that is no longer there takes the versions about it
@@ -123,7 +166,16 @@ export function setFormats(draft: Draft, { formats }: z.output<typeof FormatsSet
   return filesRemoved(removed);
 }
 
-export const LanguagesSet = z.strictObject({ languages: ProjectManifest.shape.languages });
+export const LanguagesSet = z.strictObject({
+  languages: z
+    .array(
+      ProjectManifest.shape.languages.element.extend({
+        name: z.string().min(1).max(PROJECT_LIMITS.name),
+      }),
+    )
+    .min(1)
+    .max(PROJECT_LIMITS.languages),
+});
 
 /**
  * The languages, the first the master. A language that is no longer there takes its strings and

@@ -15,6 +15,7 @@ import type {
   ProjectSummary,
 } from "@animaquill/host";
 import { CURRENT_FORMAT_VERSION, createProject, type NewProject } from "@animaquill/schema";
+import { shortDescription } from "@animaquill/host";
 import { Emitter } from "./emitter.ts";
 
 /**
@@ -24,6 +25,9 @@ import { Emitter } from "./emitter.ts";
 const COMPACT_AFTER = 200;
 /** How long to wait before trying again when saving failed and nothing else happens. */
 const RETRY_AFTER_MS = 5000;
+
+/** Nothing is known of what the log has noted yet. */
+const UNKNOWN: unique symbol = Symbol("unknown");
 
 export type SaveState = "saved" | "saving" | "failed";
 
@@ -127,6 +131,8 @@ export class ProjectSession {
   readonly #options: SessionOptions;
   #snapshot: SessionSnapshot = { save: "saved" };
   #log: ProjectLog | undefined;
+  /** What the log was last told the project says about itself, see `#describe`. */
+  #described: string | undefined | typeof UNKNOWN = UNKNOWN;
   #stop: (() => void)[] = [];
   /** Writing happens one step at a time, in order. */
   #queue: Promise<void> = Promise.resolve();
@@ -354,6 +360,7 @@ export class ProjectSession {
     if (damaged > 0) this.#messages.damaged();
 
     this.#log = log;
+    this.#described = UNKNOWN;
     keys.set(store, id);
     this.#stop = [
       store.onLocalUpdate((update, origin) => this.#save(update, origin)),
@@ -366,6 +373,7 @@ export class ProjectSession {
     this.#snapshot = { store, key: id, save: "saved" };
     this.#emitter.emit();
     this.#catchUp(store, log);
+    void this.#describe(store, log);
     if (updates.length >= (this.#options.compactAfter ?? COMPACT_AFTER)) {
       this.#enqueue(async () => {
         const allowed = await this.#options.compactThrough?.(id);
@@ -456,10 +464,28 @@ export class ProjectSession {
       this.#unsaved = this.#unsaved.slice(count);
       this.#journalChanged();
     }
+    void this.#describe(store, log);
     clearTimeout(this.#retry);
     const recovered = this.#snapshot.save === "failed";
     this.#setSave(this.#unsaved.length === 0 ? "saved" : "saving");
     if (recovered) this.#messages.saveRecovered();
+  }
+
+  /**
+   * Notes what the project says about itself in its log, for the start page, as it opens and
+   * whenever that changed. What fails is tried again with the next change.
+   */
+  async #describe(store: ProjectStore, log: ProjectLog): Promise<void> {
+    if (!log.describe) return;
+    const description = shortDescription(store.getState().manifest.description);
+    if (description === this.#described) return;
+    this.#described = description;
+    try {
+      await log.describe(description);
+    } catch (error) {
+      if (this.#log === log) this.#described = UNKNOWN;
+      console.warn("The description of the project could not be noted", error);
+    }
   }
 
   #receive(store: ProjectStore, log: ProjectLog, update: Uint8Array): void {
