@@ -297,17 +297,46 @@ describe("asked before a change", () => {
     expect(store.revisionId).toBe(after);
   });
 
-  it("writes nothing when the task stops, or the project closes, while it waits", async () => {
+  it("asks and writes once for the same request_id sent twice at once", async () => {
     const { call, host, store } = await prepared();
+    const asked = asking(host);
+    const change = { ...CHANGES.aq_edit, request_id: "twice" };
+    const first = call("aq_edit", change);
+    const second = call("aq_edit", change);
+    await askedTimes(asked, 1);
+    asked[0]?.answer("once");
+    const [one, two] = await Promise.all([first, second]);
+    expect(one.isError).toBe(false);
+    expect(two.text).toBe(one.text);
+    expect(asked.length).toBe(1);
+    expect(Object.keys(store.getState().timelines.main?.markers ?? {})).toHaveLength(
+      Object.keys(asked[0]?.request.after.timelines.main?.markers ?? {}).length,
+    );
+  });
+
+  it("writes nothing when the task stops, or the project closes, while it waits", async () => {
+    const { call, caller, host, store } = await prepared();
     const asked = asking(host);
     const revision = store.revisionId;
     const stopped = call("aq_edit", CHANGES.aq_edit);
     await askedTimes(asked, 1);
     asked[0]?.answer("stopped");
     expect((await stopped).text).toBe(STOPPED);
-    // A host whose asking failed: as stopped.
+    // Stopped right as people allowed it: nothing is written.
+    let stopping = false;
+    host.stopped = () => stopping;
+    const late = asking(host);
+    const allowedLate = call("aq_edit", CHANGES.aq_edit);
+    await askedTimes(late, 1);
+    stopping = true;
+    late[0]?.answer("once");
+    expect((await allowedLate).text).toBe(STOPPED);
+    stopping = false;
+    // A host whose asking failed: a failure of the editor, which holds back the rest of the answer.
     host.approve = () => Promise.reject(new Error("gone"));
-    expect((await call("aq_edit", CHANGES.aq_edit)).text).toBe(STOPPED);
+    expect(codeOf(await call("aq_edit", CHANGES.aq_edit))).toBe("internal");
+    expect(codeOf(await call("aq_edit", CHANGES.aq_edit))).toBe("not-run");
+    caller.beginAnswer();
     const closing = asking(host);
     const closed = call("aq_edit", CHANGES.aq_edit);
     await askedTimes(closing, 1);

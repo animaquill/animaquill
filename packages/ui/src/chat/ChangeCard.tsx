@@ -283,7 +283,7 @@ function ChangeRow({
     ...(change.timeline !== undefined && { timeline: change.timeline }),
   };
   const there = change.change !== "removed" && isThere(state, ref);
-  const line = changeLine(t, change, state);
+  const line = changeLine(t, change, state, seen !== undefined);
   return (
     <div className={styles.changeRow} data-testid="chat-change">
       <div className={styles.change}>

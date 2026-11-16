@@ -3443,7 +3443,7 @@
       "out-of-range": "时间超出了范围",
       "mix-failed": "混不出来",
       "plan-first": "先出方案开着，没有改项目",
-      "changedWhileAsked": "等你允许的时候，要改的地方被改过了，没有写"
+      "changedWhileAsked": "等你允许的时候，要改的地方被改过了"
     },
     "card": {
       "noChanges": "没有改项目",
@@ -5693,6 +5693,17 @@
       "set": "把{{kind}}{{name}}的{{field}}设为 {{after}}",
       "cleared": "去掉了{{kind}}{{name}}的{{field}}",
       "lines": "改了{{kind}}{{name}}（+{{added}} −{{removed}} 行）",
+      "fieldsMore": "{{line}}等 {{count}} 项"
+    },
+    "changePending": {
+      "added": "新加{{kind}}{{name}}",
+      "removed": "删掉{{kind}}{{name}}",
+      "changed": "改{{kind}}{{name}}",
+      "renamed": "把{{kind}}「{{before}}」改名为「{{after}}」",
+      "from": "把{{kind}}{{name}}的{{field}}从 {{before}} 改成 {{after}}",
+      "set": "把{{kind}}{{name}}的{{field}}设为 {{after}}",
+      "cleared": "去掉{{kind}}{{name}}的{{field}}",
+      "lines": "改{{kind}}{{name}}（+{{added}} −{{removed}} 行）",
       "fieldsMore": "{{line}}等 {{count}} 项"
     }
   },

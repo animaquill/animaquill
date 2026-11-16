@@ -23,6 +23,7 @@ devPageOnly("window.aqExecute and window.aqState");
 
 const chat = (page: Page) => content(page, "chat");
 const asking = (page: Page) => chat(page).getByTestId("chat-approve");
+const box = (page: Page) => chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
 const shoot = (page: Page, name: string) =>
   page.screenshot({ path: test.info().outputPath(`sd4-${name}.png`) });
 
@@ -51,141 +52,136 @@ const fulfil = (route: Route, body: string) =>
     body,
   });
 
+type Calls = Parameters<typeof anthropicCalls>[0];
+/** One answer of the pretend model: calls of tools, or words. */
+type Answer = Calls | string;
+
 const add = (id: string, time: string) => ({
   name: "aq_edit",
   input: { operations: [{ op: "marker.add", timeline: "main", id, time, name: id }] },
 });
+const read = { name: "aq_timeline_read", input: { timeline: "main" } };
+/** Moves the marker people made, and adds one: two places. */
+const moveAndAdd = {
+  name: "aq_edit",
+  input: {
+    summary: "片头标记挪到 2 秒，再加一个",
+    operations: [
+      { op: "marker.update", timeline: "main", marker: "m0", changes: { time: "2" } },
+      { op: "marker.add", timeline: "main", id: "m1", time: "4", name: "m1" },
+    ],
+  },
+};
 
-test("asked before each change: allow, allow the task, not allow, and a conflict", async ({
-  page,
-}) => {
-  test.setTimeout(150_000);
+/**
+ * A model that gives these answers in order, a marker "片头" at 1 s that people made, and the
+ * switch turned on in the settings, as people do: off until then. The chat is open.
+ */
+async function setUp(page: Page, answers: readonly Answer[], shot?: string) {
   await page.setViewportSize({ width: 1440, height: 900 });
   let requests = 0;
   await page.route(ANTHROPIC, (route) => {
     const asked = route.request().postDataJSON() as { max_tokens?: number; tools?: unknown };
     if (asked.max_tokens === 16) return route.fallback();
     if (asked.tools === undefined) return fulfil(route, anthropicSays("标记"));
+    const answer = answers[requests] ?? "好了。";
     requests += 1;
-    const calls = (list: Parameters<typeof anthropicCalls>[0]) =>
-      anthropicCalls(list).replaceAll("toolu_", `toolu_${requests}_`);
-    switch (requests) {
-      // The first message: it reads, changes two places, then one more, which people do not allow.
-      case 1:
-        return fulfil(route, calls([{ name: "aq_timeline_read", input: { timeline: "main" } }]));
-      case 2:
-        return fulfil(
-          route,
-          calls([
-            {
-              name: "aq_edit",
-              input: {
-                summary: "片头标记挪到 2 秒，再加一个",
-                operations: [
-                  {
-                    op: "marker.update",
-                    timeline: "main",
-                    marker: "m0",
-                    changes: { time: "2" },
-                  },
-                  { op: "marker.add", timeline: "main", id: "m1", time: "4", name: "m1" },
-                ],
-              },
-            },
-          ]),
-        );
-      case 3:
-        return fulfil(route, calls([add("m2", "6"), add("m9", "9")]));
-      case 4:
-        return fulfil(route, anthropicSays("那你想怎么改？"));
-      // The second: allowed for the task, the second change goes without asking.
-      case 5:
-        return fulfil(route, calls([add("m3", "8")]));
-      case 6:
-        return fulfil(route, calls([add("m4", "10")]));
-      case 7:
-        return fulfil(route, anthropicSays("加好了。"));
-      // The third: asked again, and people change the same marker meanwhile.
-      case 8:
-        return fulfil(
-          route,
-          calls([
-            {
-              name: "aq_edit",
-              input: {
-                operations: [
-                  { op: "marker.update", timeline: "main", marker: "m0", changes: { name: "AI" } },
-                ],
-              },
-            },
-          ]),
-        );
-      default:
-        return fulfil(route, anthropicSays("你刚改过它，我没动。"));
-    }
+    return fulfil(
+      route,
+      typeof answer === "string"
+        ? anthropicSays(answer)
+        : anthropicCalls(answer).replaceAll("toolu_", `toolu_${requests}_`),
+    );
   });
   await addAnthropic(page, "sk-ant-test-0123456789abcdef", "claude-test");
-
-  // The switch, off until people turn it on.
   await goToSettingsGroup(page, "AI 聊天");
   const toggle = settingsOf(page).getByRole("switch", { name: "AI 改项目前先问我" });
   await expect(toggle).not.toBeChecked();
   await toggle.check();
   await expect(toggle).toBeChecked();
-  await toggle.scrollIntoViewIfNeeded();
-  await shoot(page, "1-setting");
+  if (shot) {
+    await toggle.scrollIntoViewIfNeeded();
+    await shoot(page, shot);
+  }
   await closeSettings(page);
-
-  expect(
-    await execute(page, {
-      type: "marker.add",
-      params: { timeline: "main", id: "m0", time: "1", name: "片头" },
-    }),
-  ).toBe(true);
+  const made = { timeline: "main", id: "m0", time: "1", name: "片头" };
+  expect(await execute(page, { type: "marker.add", params: made })).toBe(true);
   await tab(page, "chat").click();
-  const box = chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
-  await box.fill("片头标记挪一下，再加几个");
-  await box.press("Enter");
+  return { requests: () => requests };
+}
 
-  // The card: what AI said the batch does, each place as on the card of changes, three answers.
+async function send(page: Page, text: string) {
+  await box(page).fill(text);
+  await box(page).press("Enter");
   await expect(asking(page)).toBeVisible({ timeout: 15_000 });
+}
+
+test("allowed: the card shows what would change and opens to before and after; the next is asked again", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await setUp(page, [[read], [moveAndAdd], [add("m2", "6")], "好了。"], "1-setting");
+  await send(page, "片头标记挪一下，再加几个");
+
+  // What AI said the batch does, each place as it would be, not yet done, and three answers.
   await expect(asking(page)).toContainText("要改 2 处");
   await expect(asking(page)).toContainText("片头标记挪到 2 秒，再加一个");
-  await expect(asking(page).getByTestId("chat-change")).toHaveCount(2);
+  const lines = asking(page).getByTestId("chat-change");
+  await expect(lines).toHaveText([/把标记「片头」的时间从 1 改成 2/, /新加标记「m1」/]);
+  await expect(asking(page)).not.toContainText("新加了");
   expect(await markers(page)).toEqual({ m0: "片头@1" });
   await shoot(page, "2-card");
   await chat(page)
     .getByTestId("chat")
-    .screenshot({
-      path: test.info().outputPath("sd4-2-card-chat-330.png"),
-    });
+    .screenshot({ path: test.info().outputPath("sd4-2-card-chat-330.png") });
+
   // A line opens to before and after, as on the card of changes.
-  const moved = asking(page).getByTestId("chat-change").filter({ hasText: "片头" });
+  const moved = lines.filter({ hasText: "片头" });
   await moved.locator("button[aria-expanded]").click();
-  const detail = moved.getByTestId("chat-change-detail");
-  await expect(detail).toBeVisible();
-  await expect(detail.locator('[data-field="time"]')).toContainText("→");
+  const time = moved.getByTestId("chat-change-detail").locator('[data-field="time"]');
+  await expect(time).toContainText("时间");
+  await expect(time).toContainText(/1\s*→\s*2/);
   await shoot(page, "3-card-open");
 
-  // 允许: written as it was shown; the next change is asked again.
+  // Written as it was shown; the next change is asked again, and nothing of it is written yet.
   await asking(page).getByTestId("chat-approve-once").click();
   await expect(asking(page)).toContainText("要改 1 处");
   expect(await markers(page)).toEqual({ m0: "片头@2", m1: "m1@4" });
-  // 不允许: nothing is written, nor the change after it in the same answer; AI asks what instead.
+  await asking(page).getByTestId("chat-approve-once").click();
+  await expect(chat(page).getByText("好了。")).toBeVisible({ timeout: 15_000 });
+  expect(await markers(page)).toEqual({ m0: "片头@2", m1: "m1@4", m2: "m2@6" });
+  // Written, the card of the task says it as done.
+  await expect(chat(page).getByTestId("chat-card")).toContainText("新加了标记「m1」");
+});
+
+test("not allowed: nothing is written, nor the rest of the answer, and AI asks what instead", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const { requests } = await setUp(page, [[add("m2", "6"), add("m9", "9")], "那你想怎么改？"]);
+  await send(page, "加两个标记");
+  await expect(asking(page)).toContainText("要改 1 处");
   await asking(page).getByTestId("chat-approve-no").click();
-  await expect(chat(page).getByText("那你想怎么改？")).toBeVisible({ timeout: 15_000 });
+  await expect(chat(page).getByTestId("chat-answer")).toHaveText("那你想怎么改？", {
+    timeout: 15_000,
+  });
   await expect(asking(page)).toHaveCount(0);
-  expect(await markers(page)).toEqual({ m0: "片头@2", m1: "m1@4" });
-  // The steps say what people answered, and not allowing is no failure.
+  expect(await markers(page)).toEqual({ m0: "片头@1" });
+  expect(requests()).toBe(2);
+  // The steps say what people answered; not allowing is no failure, nor what it held back.
   await chat(page).getByTestId("chat-process").getByRole("button").first().click();
   const tools = chat(page).getByTestId("chat-tool");
-  await expect(tools.filter({ hasText: "允许了 2 处" })).toHaveCount(1);
   await expect(tools.filter({ hasText: "没允许" })).toHaveCount(1);
   await expect(chat(page).locator('[data-testid="chat-tool"][data-state="failed"]')).toHaveCount(0);
   await expect(chat(page).locator('[data-testid="chat-tool"][data-state="held"]')).toHaveCount(2);
   await shoot(page, "4-answered");
+});
 
-  // 这次任务都允许, while the page is in the background: it says so, then asks no more this task.
+test("allowed for the task, from the background: told, then not asked again; the next task asks", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await setUp(page, [[add("m3", "8")], [add("m4", "10")], "加好了。", [add("m5", "12")]]);
   await page.evaluate(() => {
     const seen: string[] = [];
     (window as unknown as { notices: typeof seen }).notices = seen;
@@ -201,9 +197,7 @@ test("asked before each change: allow, allow the task, not allow, and a conflict
     (window as unknown as { Notification: unknown }).Notification = Notice;
     Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
   });
-  await box.fill("都加上");
-  await box.press("Enter");
-  await expect(asking(page)).toBeVisible({ timeout: 15_000 });
+  await send(page, "都加上");
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { notices: unknown }).notices))
     .toEqual(["AI 要改项目，等你允许"]);
@@ -217,26 +211,37 @@ test("asked before each change: allow, allow the task, not allow, and a conflict
   });
   await asking(page).getByTestId("chat-approve-task").click();
   await expect(chat(page).getByText("加好了。")).toBeVisible({ timeout: 15_000 });
-  expect(await markers(page)).toMatchObject({ m3: "m3@8", m4: "m4@10" });
-  expect(requests).toBe(7);
+  expect(await markers(page)).toEqual({ m0: "片头@1", m3: "m3@8", m4: "m4@10" });
+  // Another task: asked again.
+  await send(page, "再加一个");
+  expect(await markers(page)).toEqual({ m0: "片头@1", m3: "m3@8", m4: "m4@10" });
+  await asking(page).getByTestId("chat-approve-once").click();
+  await expect.poll(() => markers(page)).toMatchObject({ m5: "m5@12" });
+});
 
-  // Another task asks again; people change the same marker while it waits: nothing is written.
-  await box.fill("把片头标记改名");
-  await box.press("Enter");
-  await expect(asking(page)).toBeVisible({ timeout: 15_000 });
-  expect(
-    await execute(page, {
-      type: "marker.update",
-      params: { timeline: "main", marker: "m0", changes: { name: "我改的" } },
-    }),
-  ).toBe(true);
+test("people change the same place while asked: nothing is written, and the step says why", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const rename = {
+    name: "aq_edit",
+    input: {
+      operations: [
+        { op: "marker.update", timeline: "main", marker: "m0", changes: { name: "AI" } },
+      ],
+    },
+  };
+  await setUp(page, [[read], [rename], "你刚改过它，我没动。"]);
+  await send(page, "把片头标记改名");
+  const changed = { timeline: "main", marker: "m0", changes: { name: "我改的" } };
+  expect(await execute(page, { type: "marker.update", params: changed })).toBe(true);
   await asking(page).getByTestId("chat-approve-once").click();
   await expect(chat(page).getByText("你刚改过它，我没动。")).toBeVisible({ timeout: 15_000 });
-  expect((await markers(page)).m0).toBe("我改的@2");
+  expect((await markers(page)).m0).toBe("我改的@1");
   const failed = chat(page).locator('[data-testid="chat-tool"][data-state="failed"]');
   await expect(failed).toHaveCount(1);
-  await expect(failed.getByTestId("chat-tool-error")).toContainText(
-    "等你允许的时候，要改的地方被改过了",
+  await expect(failed.getByTestId("chat-tool-error")).toHaveText(
+    "没有成功：等你允许的时候，要改的地方被改过了",
   );
   await failed.scrollIntoViewIfNeeded();
   await shoot(page, "5-conflict");

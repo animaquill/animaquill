@@ -138,12 +138,18 @@ const NOT_RUN_WAITING =
 const NOT_RUN_DECLINED =
   "error not-run: the user did not allow an earlier change in this answer, so this one was not run and not shown to them. Nothing was written.";
 
+/** A request_id that an earlier call of other parameters had. */
+const OTHER_REQUEST = (request: string | undefined) =>
+  `error invalid-params: request_id ${JSON.stringify(request)} was used for a different call in this conversation; a new request_id runs a new call. Nothing was written.`;
+
 /** What a change answers that the user saw and did not allow (S-D4). */
 export const DECLINED =
   "error declined: the user was shown this change and did not allow it. Nothing was written, and no later change of this answer runs.";
 /** What a change answers that waited for the user while the task stopped. */
 export const STOPPED =
   "error stopped: the task stopped while this change waited for the user. Nothing was written.";
+const ASK_FAILED =
+  "error internal: the editor could not ask the user about this change. Nothing was written.";
 const CLOSED =
   "error no-project: the project this change was for is no longer open. Nothing was written.";
 /** The line after an error of a change the user allowed, where the project changed meanwhile. */
@@ -218,7 +224,12 @@ export function makeTool<P>(
     call: Call,
     args: P,
     ask: (request: Parameters<NonNullable<ToolHost["approve"]>>[0]) => Promise<Approval>,
+    kept: { readonly request: string | undefined; readonly key: string },
   ): Promise<{ readonly result: ToolResult; readonly untried?: true }> => {
+    // The same call may have been written while this waited its turn: given back, not asked again.
+    const known = kept.request === undefined ? undefined : caller.resultOf(kept.request, kept.key);
+    if (known === "other") return { result: failed(OTHER_REQUEST(kept.request)), untried: true };
+    if (known) return { result: known, untried: true };
     // What came of the changes asked before it, while it waited its turn.
     const held = heldBack();
     if (held) return { result: held, untried: true };
@@ -253,9 +264,13 @@ export function makeTool<P>(
         revision,
       });
     } catch {
-      answer = "stopped";
+      // The host failed, not people: a failure, which holds back the rest of the answer.
+      return { result: failed(ASK_FAILED) };
     }
-    if (answer === "stopped") return { result: failed(STOPPED), untried: true };
+    // Stopped as people answered, or right after: nothing is written.
+    if (answer === "stopped" || host.stopped?.() === true) {
+      return { result: failed(STOPPED), untried: true };
+    }
     if (answer !== "once" && answer !== "task") {
       caller.hold("declined");
       return { result: withData(failed(DECLINED), { declined: true }), untried: true };
@@ -306,9 +321,7 @@ export function makeTool<P>(
         if (request !== undefined) {
           const known = caller.resultOf(request, key);
           if (known === "other") {
-            return failed(
-              `error invalid-params: request_id ${JSON.stringify(request)} was used for a different call in this conversation; a new request_id runs a new call. Nothing was written.`,
-            );
+            return failed(OTHER_REQUEST(request));
           }
           if (known) return known;
         }
@@ -327,7 +340,7 @@ export function makeTool<P>(
       caller.keepState(at, store.getState());
       const others = othersOf(call);
       const asked = ask
-        ? await approvals.inTurn(() => allowed(call, parsed.value, ask))
+        ? await approvals.inTurn(() => allowed(call, parsed.value, ask, { request, key }))
         : { result: await definition.run(call, parsed.value) };
       const { result } = asked;
       caller.keepState(store.revisionId, store.getState());

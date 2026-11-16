@@ -113,6 +113,11 @@ export interface ToolHost {
    * the task stopped while it waited, and never writes anything itself.
    */
   readonly approve?: ((request: ApproveRequest) => Promise<Approval>) | undefined;
+  /**
+   * Whether the task these calls are of stopped, as people stopping it: a change people allowed is
+   * not written once it did, also where the stop came right after their answer.
+   */
+  stopped?(): boolean;
 }
 
 /**

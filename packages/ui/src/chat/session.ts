@@ -534,6 +534,7 @@ export class ChatSession {
         store: () =>
           project && this.#options.project()?.store === project.store ? project.store : undefined,
         origin: () => aiTask(task),
+        stopped: () => signal.aborted,
         // As the settings say at each call: turned on or off, from the next change on.
         get approve() {
           return settings.getSnapshot().askBeforeEdit === true ? ask : undefined;

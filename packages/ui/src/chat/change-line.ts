@@ -29,30 +29,33 @@ export function changeLine(
   t: TFunction,
   change: TurnChange,
   state: ProjectState | undefined,
+  pending = false,
 ): string {
+  // A change people are asked about (S-D4) is not made yet: "新加标记", not "新加了标记".
+  const words = pending ? "localAi.changePending" : "localAi.change";
   const kind = t(`chat.kinds.${change.kind}`);
   const renamed = change.fields.find(({ path }) => path === "name");
   const was = renamed && !isNone(renamed.before) ? renamed.before : undefined;
   const named = was ?? changeName(t, change, state);
   const name = named === undefined ? "" : `「${named}」`;
   if (change.lines) {
-    return t("localAi.change.lines", { kind, name, ...change.lines, ...asText });
+    return t(`${words}.lines`, { kind, name, ...change.lines, ...asText });
   }
-  if (change.change === "added") return t("localAi.change.added", { kind, name, ...asText });
-  if (change.change === "removed") return t("localAi.change.removed", { kind, name, ...asText });
+  if (change.change === "added") return t(`${words}.added`, { kind, name, ...asText });
+  if (change.change === "removed") return t(`${words}.removed`, { kind, name, ...asText });
   const [first] = change.fields;
-  if (!first) return t("localAi.change.changed", { kind, name, ...asText });
+  if (!first) return t(`${words}.changed`, { kind, name, ...asText });
   const { path, before, after } = first;
   const field = fieldName(t, path);
   const line =
     path === "name" && !isNone(after) && was !== undefined
-      ? t("localAi.change.renamed", { kind, before: was, after, ...asText })
+      ? t(`${words}.renamed`, { kind, before: was, after, ...asText })
       : isNone(after)
-        ? t("localAi.change.cleared", { kind, name, field, ...asText })
+        ? t(`${words}.cleared`, { kind, name, field, ...asText })
         : isNone(before)
-          ? t("localAi.change.set", { kind, name, field, after, ...asText })
-          : t("localAi.change.from", { kind, name, field, before, after, ...asText });
+          ? t(`${words}.set`, { kind, name, field, after, ...asText })
+          : t(`${words}.from`, { kind, name, field, before, after, ...asText });
   return change.fields.length > 1
-    ? t("localAi.change.fieldsMore", { line, count: change.fields.length, ...asText })
+    ? t(`${words}.fieldsMore`, { line, count: change.fields.length, ...asText })
     : line;
 }

@@ -31,6 +31,7 @@ export interface TestHost extends ToolHost {
   plan: boolean;
   /** People want to be asked before a change, see `ToolHost.approve`: unset, they are not. */
   approve: ToolHost["approve"];
+  stopped?: () => boolean;
   open(store: ProjectStore | undefined): void;
 }
 

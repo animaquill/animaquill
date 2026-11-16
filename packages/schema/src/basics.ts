@@ -94,7 +94,9 @@ export function newId(prefix: string): string {
  * Runs something that makes ids, giving it `given` again, in order, where it asks for one of the
  * same kind, and new ones after: the same commands on the same project make the same objects twice,
  * as a change people allowed after they saw a dry run of it (S-D4). Only for what runs at once: the
- * ids of whatever else runs meanwhile would be taken.
+ * ids of whatever else runs meanwhile would be taken. It holds for the part of `executeBatch` that
+ * runs at once, observers of the document included: what listens to changes makes no ids, else it
+ * would take ids meant for the commands (they would then make new ones, and the change be refused).
  */
 export function withIds<T>(
   given: readonly string[],
