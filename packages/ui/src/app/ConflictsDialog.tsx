@@ -122,7 +122,8 @@ function Side({
       : isGitHubKept
         ? conflict.theirs
         : conflict.ours;
-  const at = side === "here" ? conflict.oursAt : conflict.theirsAt;
+  // When that side was written, or else when the conflict was found: every row says a time.
+  const at = (side === "here" ? conflict.oursAt : conflict.theirsAt) ?? conflict.at;
   const isCode = conflict.kind === "lines" || conflict.kind === "file";
   return (
     <div className={styles.side} data-side={side} data-using={using || undefined}>

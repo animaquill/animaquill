@@ -1104,6 +1104,27 @@ describe("merges of what changed on GitHub, as the window takes them in", async 
     expect(operations.getSnapshot()[0]?.source).toBe("other");
   });
 
+  it("says files people chose to take out as their doing, not as a change of GitHub's", async () => {
+    const time = new TestTime();
+    const { platform, a } = await start(time);
+    const { operations, notifications } = watch(a);
+    expect(a.store.execute(writeFile("code/secret.js", "key")).ok).toBe(true);
+    await time.advance(100);
+    platform.mergeFromRepository(
+      CLOUD_ID,
+      [{ type: "file.remove", params: { path: "code/secret.js" } }],
+      "drop",
+    );
+    await time.advance(100);
+    await Promise.resolve();
+    const [operation] = operations.getSnapshot();
+    expect(operation).toMatchObject({ source: "github", dropped: true, count: 1 });
+    expect(operationText(t, operation as Operation)).toBe("按你的选择从项目里去掉了 1 个文件");
+    expect(notifications.getSnapshot().map(({ message }) => message)).toEqual([
+      "按你的选择从项目里去掉了 1 个文件",
+    ]);
+  });
+
   it("says merges that came while the editor was away once, together, as the project opens", async () => {
     const time = new TestTime();
     const { platform, id, first, a } = await start(time);

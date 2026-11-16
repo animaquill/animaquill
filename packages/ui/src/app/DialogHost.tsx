@@ -166,6 +166,8 @@ function Dialog({ request }: { request: QuestionRequest }) {
   }, []);
 
   const isPrompt = request.kind === "prompt";
+  // Choices of a sentence each, one under another; cancelling stays apart, below them.
+  const stacked = request.kind === "choice" && request.stacked === true;
   const isConfirm = request.kind === "confirm";
   const danger = isConfirm && request.danger === true;
   const details = request.kind === "confirm" ? (request.details ?? []) : [];
@@ -247,6 +249,20 @@ function Dialog({ request }: { request: QuestionRequest }) {
           />
         )}
         {isPrompt && request.hint && <p className={styles.hint}>{request.hint}</p>}
+        {stacked && (
+          <div className={styles.stack}>
+            {request.choices.map(({ id, label, kind }) => (
+              <button
+                key={id}
+                type="button"
+                {...(kind ? { className: styles[kind] } : {})}
+                onClick={() => dialogs.answer(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         <div className={styles.buttons}>
           {!(isConfirm && request.noticeOnly) && (
             <button
@@ -258,7 +274,7 @@ function Dialog({ request }: { request: QuestionRequest }) {
               {(isConfirm && request.cancel) || t("dialog.cancel")}
             </button>
           )}
-          {request.kind === "choice" ? (
+          {stacked ? null : request.kind === "choice" ? (
             request.choices.map(({ id, label, kind }) => (
               <button
                 key={id}

@@ -51,6 +51,8 @@ export interface RepoMerge {
   readonly merges: number;
   readonly away: boolean;
   readonly changes: readonly TurnChange[];
+  /** Files people chose to take out, not a change of GitHub's. */
+  readonly dropped?: boolean;
 }
 
 /** What the merges of a note changed, object by object, from what the store recorded. */
@@ -113,17 +115,26 @@ export class RepoChanges {
 
   /** Merges of what changed on GitHub came in, see `CloudBatchNote`. */
   heard(note: CloudBatchNote): void {
-    const repo = note.batches.filter(({ kind }) => kind === "repo");
+    // Files people chose to take out ("drop") are told as what they are, not as GitHub's.
+    const dropped = note.batches.some(({ kind }) => kind === "drop");
+    const repo = note.batches.filter(({ kind }) => kind === "repo" || kind === "drop");
     if (repo.length === 0) return;
     const store = this.#options.store();
     if (!store) return;
-    const merge = repoMergeOf(store, { ...note, batches: repo });
+    const isDrop = dropped && repo.every(({ kind }) => kind === "drop");
+    const merge = { ...repoMergeOf(store, { ...note, batches: repo }), dropped: isDrop };
     const { t, notifications } = this.#options;
-    this.#options.heard({ files: repo.map(({ files }) => files), away: note.away });
+    this.#options.heard({
+      files: repo.map(({ files }) => files),
+      away: note.away,
+      ...(isDrop && { dropped: true }),
+    });
     this.#set({ marked: markedOf(merge) });
-    const message = merge.away
-      ? t("repoMerge.notice.away", { merges: merge.merges, count: merge.files })
-      : t("repoMerge.notice.merged", { count: merge.files });
+    const message = isDrop
+      ? t("repoMerge.notice.dropped", { count: merge.files })
+      : merge.away
+        ? t("repoMerge.notice.away", { merges: merge.merges, count: merge.files })
+        : t("repoMerge.notice.merged", { count: merge.files });
     notifications.push(message, {
       ...(merge.changes.length > 0 && {
         actions: [{ label: t("repoMerge.notice.show"), run: () => void this.show(merge) }],
@@ -138,7 +149,9 @@ export class RepoChanges {
     const state = this.#options.store()?.getState();
     const lines = merge.changes.map((change) => changeLine(t, change, state));
     await dialogs.confirm({
-      title: t("repoMerge.showTitle", { count: merge.files }),
+      title: merge.dropped
+        ? t("repoMerge.notice.dropped", { count: merge.files })
+        : t("repoMerge.showTitle", { count: merge.files }),
       message: "",
       confirm: t("dialog.close"),
       noticeOnly: true,

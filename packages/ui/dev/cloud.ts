@@ -162,7 +162,8 @@ export class LabRepositories implements RepositoryAccess {
     if (kept.state === "paused" && waits && options.replace === undefined)
       return this.status(project);
     if (options.drop && options.drop.length > 0) {
-      const listed = new Set(kept.diverged?.files ?? []);
+      // Only what GitHub took away, as the platform.
+      const listed = new Set(kept.diverged?.deleted ?? []);
       if (!options.drop.every((path) => listed.has(path))) throw new RepositoryRefused("invalid");
       // Taken out of the project before the archive, as the platform does.
       this.#platform.mergeFromRepository(

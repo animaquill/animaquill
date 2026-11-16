@@ -1448,7 +1448,8 @@
       }
     },
     "github": "GitHub 上的改动（{{count}} 个文件）",
-    "githubAway": "你不在时合并了 GitHub 上的改动（{{merges}} 次，{{count}} 个文件）"
+    "githubAway": "你不在时合并了 GitHub 上的改动（{{merges}} 次，{{count}} 个文件）",
+    "dropped": "按你的选择从项目里去掉了 {{count}} 个文件"
   },
   "input": {
     "label": "输入方式",
@@ -5621,7 +5622,8 @@
       "away": "你不在时合并了 GitHub 上的改动（{{merges}} 次，{{count}} 个文件）",
       "show": "查看",
       "conflicts": "GitHub 上的改动和这里有 {{count}} 处冲突",
-      "resolve": "处理…"
+      "resolve": "处理…",
+      "dropped": "按你的选择从项目里去掉了 {{count}} 个文件"
     },
     "showTitle": "GitHub 上的改动（{{count}} 个文件）",
     "changes": "改了什么",
@@ -5673,7 +5675,7 @@
     },
     "compare": {
       "title": "{{file}}：这里 ↔ GitHub 上",
-      "save": "用左边的",
+      "save": "保留这里的",
       "cancel": "取消"
     },
     "blocked": {
@@ -5694,10 +5696,9 @@
     },
     "rewritten": {
       "title": "GitHub 上的历史被改写了",
-      "continue": "以这里的内容接着存",
+      "continue": "以这里的内容接着存（GitHub 上改写后的改动不会进来）",
       "mergeNow": "把 GitHub 上现在的版本并进来",
-      "switch": "换一个仓库…",
-      "restored": "接着存会把 GitHub 上已经去掉的这些文件重新提交"
+      "switch": "换一个仓库…"
     },
     "unmerged": {
       "title": "GitHub 上去掉的文件还在项目里",
@@ -5707,7 +5708,9 @@
       "allDrop": "全部去掉",
       "allKeep": "全部重新提交",
       "confirm": "接着存",
-      "status": "项目里有，GitHub 上已经去掉"
+      "confirmDrop": "去掉 {{count}} 个",
+      "confirmKeep": "重新提交 {{count}} 个",
+      "confirmGo": "{{parts}}，接着存"
     },
     "prefer": {
       "name": "GitHub 上和这里改了同一处时，先用",

@@ -126,7 +126,10 @@ export function OperationStatus() {
                     <span className={styles.name}>{name}</span>
                     <span className={styles.about}>
                       <span className={styles.source} data-source={operation.source}>
-                        {tool ? t("localAi.source") : t(`operations.source.${operation.source}`)}
+                        {tool
+                          ? t("localAi.source")
+                          : // What people chose to take out is their doing, not GitHub's.
+                            t(`operations.source.${operation.dropped ? "you" : operation.source}`)}
                       </span>
                       {tool ? (
                         <time dateTime={new Date(tool.from).toISOString()}>

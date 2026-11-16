@@ -671,7 +671,15 @@ export class MemoryPlatform {
       device: "",
       base: project.head - 1,
       behind: false,
-      by: { batch, kind: "repo", label: `GitHub 上的改动 ${batch}`, files },
+      by: {
+        batch,
+        kind: batch === "drop" ? "drop" : "repo",
+        label:
+          batch === "drop"
+            ? `按你的选择从项目里去掉了 ${files} 个文件`
+            : `GitHub 上的改动 ${batch}`,
+        files,
+      },
     };
     project.updates.push(update);
     for (const side of this.#sides) {

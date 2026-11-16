@@ -498,11 +498,11 @@ test.describe("merges of what changed on GitHub", () => {
     await expect(row(page, "archive")).toContainText("GitHub 上的历史被改写了");
     await row(page, "archive").getByRole("button", { name: "处理…" }).click();
     const asked = page.getByRole("dialog", { name: "GitHub 上的历史被改写了" });
-    // What going on would commit again, as GitHub took it away.
-    await expect(asked).toContainText(
-      "接着存会把 GitHub 上已经去掉的这些文件重新提交：code/secret.js",
-    );
-    await expect(asked.getByRole("button", { name: "以这里的内容接着存" })).toBeVisible();
+    await expect(
+      asked.getByRole("button", { name: "以这里的内容接着存（GitHub 上改写后的改动不会进来）" }),
+    ).toBeVisible();
+    // What going on would commit again is said where people choose that, file by file.
+    await expect(asked).not.toContainText("重新提交");
     await expect(asked.getByRole("button", { name: "换一个仓库…" })).toBeVisible();
     await page.setViewportSize({ width: 1440, height: 900 });
     await shot(page, "g3-rewritten");
@@ -537,8 +537,8 @@ test.describe("merges of what changed on GitHub", () => {
         lab.repositories.pause(project!, "unmerged", {
           diverged: {
             sha: commit,
-            files: ["code/kept.js", "code/secret.js"],
-            deleted: [],
+            files: ["code/changed.js", "code/kept.js", "code/secret.js"],
+            deleted: ["code/kept.js", "code/secret.js"],
             base: "f".repeat(40),
           },
         }),
@@ -551,18 +551,32 @@ test.describe("merges of what changed on GitHub", () => {
     const asked = page.locator("dialog[data-reconcile]");
     await expect(asked).toContainText("接着存会把 GitHub 上已经去掉的这些文件重新提交。");
     await expect(asked.locator('[data-path="code/secret.js"]')).toBeVisible();
+    // Only what GitHub took away is listed; nothing is chosen for people.
+    await expect(asked.locator('[data-path="code/changed.js"]')).toHaveCount(0);
+    await expect(asked.getByRole("radio", { checked: true })).toHaveCount(0);
+    await expect(asked.getByRole("button", { name: "接着存" })).toBeDisabled();
     // One is people's own after all: it goes back; the other goes out of the project first.
     await asked
       .locator('[data-path="code/kept.js"]')
       .getByRole("radio", { name: "重新提交" })
       .check();
+    await expect(asked.getByRole("button", { name: "重新提交 1 个，接着存" })).toBeDisabled();
+    await asked
+      .locator('[data-path="code/secret.js"]')
+      .getByRole("radio", { name: "从项目里去掉" })
+      .check();
     await page.setViewportSize({ width: 1440, height: 900 });
     await shot(page, "g3-unmerged");
-    await asked.getByRole("button", { name: "接着存" }).click();
+    await asked.getByRole("button", { name: "去掉 1 个、重新提交 1 个，接着存" }).click();
     await expect
       .poll(() => withLab(page, (lab) => lab.repositories.asked.at(-1)))
       .toMatchObject({ replace: sha, drop: ["code/secret.js"] });
     await expect.poll(async () => (await stateOf(page)).files["code/secret.js"]).toBeUndefined();
+    // People's own choice, said as such: not a change of GitHub's.
+    await expect(
+      page.locator("[data-notifications]").getByText("按你的选择从项目里去掉了 1 个文件"),
+    ).toBeVisible();
+    await expect(page.locator("[data-notifications]").getByText(/GitHub 上的改动/)).toHaveCount(0);
     expect((await stateOf(page)).files["code/kept.js"]).toBe("k\n");
   });
 

@@ -5,7 +5,7 @@ import type { Dialogs } from "../workbench/dialogs.ts";
 import type { Notifications } from "../workbench/notifications.ts";
 import { ConflictList } from "./conflicts.ts";
 import type { CloudProjectsSnapshot } from "./projects.ts";
-import { divergedOutcome, pathList } from "./repository-text.ts";
+import { divergedOutcome } from "./repository-text.ts";
 import type { CloudSnapshot } from "./session.ts";
 
 /**
@@ -145,11 +145,17 @@ export class RepoMerges {
     if (!access?.useEditor || !linked || !repository || files.length === 0) return;
     const store = this.#options.store();
     const has = new Set(store ? store.exportFiles().files.keys() : []);
+    // The list above names the files: a button names its file only where there are more.
+    const named = (label: string, path: string) =>
+      files.length > 1 ? `${label} · ${path}` : label;
     const choices = files.flatMap(({ path }) => [
-      { id: `open:${path}`, label: `${t("repoMerge.blocked.openOnGitHub")} · ${path}` },
+      { id: `open:${path}`, label: named(`${t("repoMerge.blocked.openOnGitHub")} ↗`, path) },
       {
         id: `use:${path}`,
-        label: `${t(has.has(path) ? "repoMerge.blocked.useHere" : "repoMerge.blocked.deleteOnGitHub")} · ${path}`,
+        label: named(
+          t(has.has(path) ? "repoMerge.blocked.useHere" : "repoMerge.blocked.deleteOnGitHub"),
+          path,
+        ),
       },
     ]);
     const answer = await dialogs.choose({
@@ -160,6 +166,7 @@ export class RepoMerges {
           `${path}：${detail ?? t(`repoMerge.blocked.reason.${reason}`, { defaultValue: reason })}`,
       ),
       choices,
+      stacked: true,
     });
     if (!answer) return;
     const [kind, ...rest] = answer.split(":");
@@ -198,19 +205,18 @@ export class RepoMerges {
     const diverged = status?.reason === "rewritten" ? status.diverged : undefined;
     if (!access || !linked || !diverged) return;
     const restored = this.#restored(diverged);
+    // What going on would commit again is said where people choose it, file by file.
     const answer = await dialogs.choose({
       title: t("repoMerge.rewritten.title"),
       message: "",
-      ...(restored.length > 0 && {
-        notes: [`${t("repoMerge.rewritten.restored")}：${pathList(restored)}`],
-      }),
       choices: [
-        { id: "continue", label: t("repoMerge.rewritten.continue") },
+        { id: "continue", label: t("repoMerge.rewritten.continue"), kind: "primary" },
         ...(diverged.base !== undefined && access.mergeNow
-          ? [{ id: "merge", label: t("repoMerge.rewritten.mergeNow"), kind: "primary" as const }]
+          ? [{ id: "merge", label: t("repoMerge.rewritten.mergeNow") }]
           : []),
         { id: "switch", label: t("repoMerge.rewritten.switch") },
       ],
+      stacked: true,
     });
     if (!answer || this.#linked !== linked) return;
     if (answer === "switch") return this.#options.cloud.switchRepository();
@@ -238,7 +244,8 @@ export class RepoMerges {
     const status = this.#status;
     const diverged = status?.reason === "unmerged" ? status.diverged : undefined;
     if (!diverged) return;
-    await this.#goOn(diverged, this.#inProject(diverged.files));
+    // What GitHub took away and the project has: what it changed and still has goes over it.
+    await this.#goOn(diverged, this.#inProject(diverged.deleted));
   }
 
   /** The files of a list the project has. */
@@ -274,14 +281,15 @@ export class RepoMerges {
       const answer = await dialogs.reconcile({
         title: t("repoMerge.unmerged.title"),
         message: t("repoMerge.unmerged.message"),
+        // Nothing chosen to start with: each file is people's to say, as either way is for good.
         items: restored.map((path) => ({
           path,
-          status: t("repoMerge.unmerged.status"),
+          status: "",
           options: [
             { id: "drop", label: t("repoMerge.unmerged.drop") },
             { id: "keep", label: t("repoMerge.unmerged.keep") },
           ],
-          value: "drop",
+          value: "",
         })),
         all: [
           { id: "drop", label: t("repoMerge.unmerged.allDrop") },
@@ -289,9 +297,27 @@ export class RepoMerges {
         ],
         notes: [],
         confirm: t("repoMerge.unmerged.confirm"),
+        summarize: (values) => {
+          const dropped = restored.filter((path) => values[path] === "drop").length;
+          const kept = restored.filter((path) => values[path] === "keep").length;
+          const parts = [
+            ...(dropped > 0 ? [t("repoMerge.unmerged.confirmDrop", { count: dropped })] : []),
+            ...(kept > 0 ? [t("repoMerge.unmerged.confirmKeep", { count: kept })] : []),
+          ];
+          return {
+            text: "",
+            confirm:
+              parts.length === 0
+                ? t("repoMerge.unmerged.confirm")
+                : t("repoMerge.unmerged.confirmGo", { parts: parts.join("、") }),
+            loud: false,
+            ready: dropped + kept === restored.length,
+          };
+        },
       });
       if (!answer || this.#linked !== linked) return;
-      drop = restored.filter((path) => answer[path] !== "keep");
+      if (restored.some((path) => answer[path] !== "drop" && answer[path] !== "keep")) return;
+      drop = restored.filter((path) => answer[path] === "drop");
     }
     const outcome = await watch.archiveNow({
       replace: diverged.sha,

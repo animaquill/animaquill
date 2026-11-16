@@ -33,6 +33,7 @@ export function operationText(
   }
   if (source === "ai") return t("operations.ai", { count });
   if (source === "folder") return t("operations.folder", { count });
+  if (source === "github" && operation.dropped) return t("operations.dropped", { count });
   if (source === "github")
     return operation.away
       ? t("operations.githubAway", { count, merges: operation.merges ?? 1 })

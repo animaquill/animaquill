@@ -43,6 +43,8 @@ export interface ChoiceOptions {
   readonly notes?: readonly string[];
   /** Pictures side by side under the message, such as before and after a change. */
   readonly pictures?: readonly DialogPicture[];
+  /** The choices are a sentence each: one under another, with cancelling apart below them. */
+  readonly stacked?: boolean;
 }
 
 export interface DialogPicture {
@@ -146,6 +148,8 @@ export interface ReconcileDialogOptions {
     readonly text: string;
     readonly confirm: string;
     readonly loud: boolean;
+    /** Whether the choices can be carried out as they are, as once every file has one. */
+    readonly ready?: boolean;
   };
 }
 

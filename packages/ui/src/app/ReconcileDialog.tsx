@@ -101,7 +101,7 @@ export function ReconcileDialog({ request }: { request: ReconcileRequest }) {
             {error}
           </p>
         )}
-        {summary && (
+        {summary && summary.text && (
           <p className={summary.loud ? own.loud : own.summary} data-summary="">
             {summary.text}
           </p>
@@ -110,7 +110,12 @@ export function ReconcileDialog({ request }: { request: ReconcileRequest }) {
           <button ref={cancel} type="button" onClick={dismiss}>
             {t("dialog.cancel")}
           </button>
-          <button type="button" className={styles.primary} onClick={() => dialogs.answer(values)}>
+          <button
+            type="button"
+            className={styles.primary}
+            disabled={summary?.ready === false}
+            onClick={() => dialogs.answer(values)}
+          >
             {summary?.confirm ?? confirm}
           </button>
         </div>

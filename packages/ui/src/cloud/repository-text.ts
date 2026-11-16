@@ -100,7 +100,17 @@ export function pauseText(
   t: TFunction,
 ): { readonly reason: string; readonly fix: string } {
   const known = knownPause(status.reason);
-  if (known === "diverged" || known === "too-large" || known === "unmerged")
+  // What GitHub took away and the project still has: those are what going on writes back.
+  if (known === "unmerged") {
+    const { files = [], deleted = [] } = status.diverged ?? {};
+    return {
+      reason: t("repository.pause.unmerged", {
+        count: deleted.length > 0 ? deleted.length : files.length,
+      }),
+      fix: t("repository.fix.unmerged"),
+    };
+  }
+  if (known === "diverged" || known === "too-large")
     return {
       reason: t(`repository.pause.${known}`, { count: status.diverged?.files.length ?? 0 }),
       fix: t(`repository.fix.${known}`),

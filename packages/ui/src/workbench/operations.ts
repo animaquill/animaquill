@@ -36,6 +36,11 @@ export interface Operation {
   /** For changes from GitHub: how many merges they were, and whether the editor was away then. */
   readonly merges?: number;
   readonly away?: boolean;
+  /**
+   * Files people chose to take out of the project as they went on with the editor's content, which
+   * the platform did as a batch of its own ("drop"): not a change of GitHub's.
+   */
+  readonly dropped?: boolean;
 }
 
 /** Merges of what changed on GitHub that the project just took in, see `CloudBatchNote`. */
@@ -43,6 +48,8 @@ export interface RepoMergesHeard {
   /** How many files each came from. */
   readonly files: readonly number[];
   readonly away: boolean;
+  /** They are files people chose to take out, see `Operation.dropped`. */
+  readonly dropped?: boolean;
 }
 
 /** Undo logs that came back from before the page was loaded, see `UndoKeeper`. */
@@ -222,7 +229,7 @@ export class OperationLog {
    * tells right after the project took them in): one "GitHub 上的改动" in place of "其他窗口", which
    * says how many files, and, where they came while the editor was away, how many merges.
    */
-  heardRepo({ files, away }: RepoMergesHeard): void {
+  heardRepo({ files, away, dropped }: RepoMergesHeard): void {
     const store = this.#store;
     const last = this.#lastOther;
     if (!store || !last || last.revision !== store.revision || files.length === 0) return;
@@ -234,6 +241,7 @@ export class OperationLog {
       count: files.reduce((sum, each) => sum + each, 0),
       merges: files.length,
       ...(away && { away: true }),
+      ...(dropped && { dropped: true }),
     });
     this.#lastOther = undefined;
     this.#show();
