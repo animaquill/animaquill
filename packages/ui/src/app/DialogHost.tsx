@@ -4,6 +4,7 @@ import type { DialogRequest, FormAnswer, ProgressRequest } from "../workbench/di
 import { useWorkbench } from "./context.ts";
 import { ConnectDialog } from "./ConnectDialog.tsx";
 import { NewProjectDialog } from "./NewProjectDialog.tsx";
+import { ConflictsDialog } from "./ConflictsDialog.tsx";
 import { ReconcileDialog } from "./ReconcileDialog.tsx";
 import styles from "./DialogHost.module.css";
 import { RepositoryDialog } from "./RepositoryDialog.tsx";
@@ -57,6 +58,7 @@ type ReconcileRequest = Extract<DialogRequest, { kind: "reconcile" }>;
 type QuestionRequest = Exclude<
   DialogRequest,
   | Extract<DialogRequest, { kind: "places" }>
+  | Extract<DialogRequest, { kind: "conflicts" }>
   | ProgressRequest
   | FormRequest
   | RepositoryRequest
@@ -296,5 +298,6 @@ export function DialogHost() {
   if (request.kind === "create") return <NewProjectDialog key={request.id} request={request} />;
   if (request.kind === "reconcile") return <ReconcileDialog key={request.id} request={request} />;
   if (request.kind === "places") return <PlacesDialog key={request.id} request={request} />;
+  if (request.kind === "conflicts") return <ConflictsDialog key={request.id} request={request} />;
   return <Dialog key={request.id} request={request} />;
 }

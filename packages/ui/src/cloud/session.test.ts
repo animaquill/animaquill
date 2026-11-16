@@ -5,7 +5,14 @@ import { loadFixture } from "../../../schema/scripts/fixture.ts";
 import { MemoryLibrary, memoryAddress } from "../workbench/memory-library.ts";
 import { ProjectSession, type SessionMessages } from "../workbench/session.ts";
 import { MemoryPlatform, TestCloudBrowser, TestTime } from "./cloud-support.ts";
-import { CloudSession, type CloudTiming } from "./session.ts";
+import { CloudSession, type CloudBatchNote, type CloudTiming } from "./session.ts";
+import { operationText } from "../app/operation-text.ts";
+import { createI18n } from "../i18n/i18n.ts";
+import { Dialogs } from "../workbench/dialogs.ts";
+import { Notifications } from "../workbench/notifications.ts";
+import { OperationLog, type Operation } from "../workbench/operations.ts";
+import { RepoChanges } from "../workbench/repo-changes.ts";
+import type { CloudProjectsSnapshot } from "./projects.ts";
 
 const MESSAGES: SessionMessages = {
   createFailed() {},
@@ -1029,5 +1036,97 @@ describe("a project that is to be made on the platform, or was", () => {
     // Its hello never went: nothing makes the project after whoever stopped it moved on.
     expect(platform.projects.size).toBe(0);
     expect(await a.cloud.whenQuiet(1000)).toBe(true);
+  });
+});
+
+describe("merges of what changed on GitHub, as the window takes them in", async () => {
+  const t = (await createI18n()).t;
+
+  /** What the window makes of them: the list of operations, the marks, the notices. */
+  function watch(window: Window) {
+    const operations = new OperationLog(window.session);
+    const notifications = new Notifications();
+    const changes = new RepoChanges({
+      t,
+      notifications,
+      dialogs: new Dialogs(),
+      cloud: {
+        subscribe: () => () => {},
+        getSnapshot: () =>
+          ({ kind: "linked", session: window.cloud }) as unknown as CloudProjectsSnapshot,
+      },
+      store: () => window.store,
+      heard: (merges) => operations.heardRepo(merges),
+      refresh: () => {},
+    });
+    return { operations, notifications, changes };
+  }
+
+  const clipOf = (store: ProjectStore) =>
+    Object.keys(store.getState().timelines["main"]?.clips ?? {})[0] as string;
+
+  const renameClip = (clip: string, name: string): CommandCall => ({
+    type: "clip.update",
+    params: { timeline: "main", clip, changes: { name } },
+  });
+
+  it("tells each merge as it comes: one operation, the clips it changed, a notice that goes", async () => {
+    const time = new TestTime();
+    const { platform, a } = await start(time);
+    const notes: CloudBatchNote[] = [];
+    a.cloud.watchBatches((note) => notes.push(note));
+    const { operations, notifications, changes } = watch(a);
+    const clip = clipOf(a.store);
+    platform.mergeFromRepository(CLOUD_ID, [renameClip(clip, "GitHub 改的")], "m1", 2);
+    await time.advance(100);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatchObject({
+      batches: [{ batch: "m1", kind: "repo", files: 2 }],
+      away: false,
+    });
+    expect(changes.getSnapshot().marked).toEqual(new Set([clip]));
+    await Promise.resolve();
+    const [operation] = operations.getSnapshot();
+    expect(operation).toMatchObject({ source: "github", count: 2, merges: 1 });
+    expect(operationText(t, operation as Operation)).toBe("GitHub 上的改动（2 个文件）");
+    expect(notifications.getSnapshot().map(({ message }) => message)).toEqual([
+      "合并了 GitHub 上的改动：2 个文件",
+    ]);
+    // A change of another window is still one of another window.
+    const second = new Browser(platform, "ada");
+    await second.fromPlatform(a.session.key as string);
+    const b = await second.open(a.session.key as string, time);
+    opened.push(b);
+    await time.advance(100);
+    expect(b.store.execute(rename("另一个窗口")).ok).toBe(true);
+    await time.advance(100);
+    await Promise.resolve();
+    expect(operations.getSnapshot()[0]?.source).toBe("other");
+  });
+
+  it("says merges that came while the editor was away once, together, as the project opens", async () => {
+    const time = new TestTime();
+    const { platform, id, first, a } = await start(time);
+    const clip = clipOf(a.store);
+    await a.cloud.close();
+    await a.session.close();
+    opened.splice(opened.indexOf(a), 1);
+    platform.mergeFromRepository(CLOUD_ID, [renameClip(clip, "第一次")], "m1", 1);
+    platform.mergeFromRepository(CLOUD_ID, [renameClip(clip, "第二次")], "m2", 3);
+    const again = await first.open(id, time);
+    opened.push(again);
+    const { operations, notifications } = watch(again);
+    await time.advance(200);
+    expect(again.store.getState().timelines["main"]?.clips[clip]?.name).toBe("第二次");
+    await Promise.resolve();
+    expect(operations.getSnapshot()[0]).toMatchObject({
+      source: "github",
+      count: 4,
+      merges: 2,
+      away: true,
+    });
+    expect(notifications.getSnapshot().map(({ message }) => message)).toEqual([
+      "你不在时合并了 GitHub 上的改动（2 次，4 个文件）",
+    ]);
   });
 });

@@ -864,6 +864,9 @@ export function StatusBar() {
   );
   // A project folder says what it has; the log only when it cannot keep changes.
   const folder = open && open.snapshot && store ? open : undefined;
+  // While a project opens, what it takes in from the platform is no saving of people's.
+  const opening = useSyncExternalStore(workbench.opening.subscribe, workbench.opening.getSnapshot);
+  const isOpening = opening.step !== undefined && opening.step !== "live";
 
   const saveText = {
     saved: t("project.saved"),
@@ -910,7 +913,7 @@ export function StatusBar() {
           folder={folder?.record.folder.name}
         >
           {folder && <FolderSaveStatus open={folder} />}
-          {(!folder || save === "failed") && (
+          {(!folder || save === "failed") && !(isOpening && save === "saving") && (
             <span className={save === "failed" ? styles.failed : undefined} role="status">
               {save === "failed" && <CircleAlert size={12} />}
               {saveText}

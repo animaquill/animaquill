@@ -23,6 +23,25 @@ const PAUSES: ReadonlySet<string> = new Set<RepositoryPause>([
   "transferred",
   "manifest",
   "invalid",
+  "conflicts",
+  "blocked",
+  "locked",
+  "rewritten",
+  "too-large",
+  "unmerged",
+]);
+
+/**
+ * Pauses of merging changes on GitHub (docs/design/start-and-cloud.md of AnimaQuill Cloud, 10):
+ * people choose something in a dialog of their own, see `RepoMerges`.
+ */
+export const MERGE_PAUSES: ReadonlySet<string> = new Set<RepositoryPause>([
+  "conflicts",
+  "blocked",
+  "locked",
+  "rewritten",
+  "too-large",
+  "unmerged",
 ]);
 
 /** A reason the editor knows, or undefined for one of a newer platform. */
@@ -77,15 +96,29 @@ export const goneKind = (
 
 /** Why archiving paused, and what helps. */
 export function pauseText(
-  status: Pick<RepositoryStatus, "reason" | "diverged" | "gone">,
+  status: Pick<RepositoryStatus, "reason" | "diverged" | "gone" | "conflicts" | "blocked">,
   t: TFunction,
 ): { readonly reason: string; readonly fix: string } {
   const known = knownPause(status.reason);
-  if (known === "diverged")
+  if (known === "diverged" || known === "too-large" || known === "unmerged")
     return {
-      reason: t("repository.pause.diverged", { count: status.diverged?.files.length ?? 0 }),
-      fix: t("repository.fix.diverged"),
+      reason: t(`repository.pause.${known}`, { count: status.diverged?.files.length ?? 0 }),
+      fix: t(`repository.fix.${known}`),
     };
+  if (known === "conflicts")
+    return {
+      reason: t("repository.pause.conflicts", { count: status.conflicts ?? 0 }),
+      fix: t("repository.fix.conflicts"),
+    };
+  if (known === "blocked") {
+    const paths = (status.blocked ?? [])
+      .filter(({ reason }) => reason !== "locked")
+      .map(({ path }) => path);
+    return {
+      reason: t("repository.pause.blocked", { files: pathList(paths), ...plain }),
+      fix: t("repository.fix.blocked"),
+    };
+  }
   const gone = goneKind(status);
   if (gone === "deleted")
     return { reason: t("repository.pause.goneDeleted"), fix: t("repository.fix.goneDeleted") };

@@ -344,6 +344,49 @@ describe("the status of the platform in a project", () => {
     ).toContain("· GitHub 的原话：Changes must be made through a pull request.");
   });
 
+  it("says what merging changes on GitHub waits for, in few words, and the way to it (the design, 10)", () => {
+    const paused = (reason: string, more: Partial<RepositoryStatus> = {}) =>
+      cloudPanel(linked({ archive: watch(status({ state: "paused", reason, ...more })) }), t);
+    const conflicts = paused("conflicts", { conflicts: 2 });
+    expect(read(conflicts)).toMatchObject({ github: "error 同步失败 · 2 处冲突" });
+    expect(conflicts.github).toMatchObject({ cause: "conflicts", count: 2 });
+    expect(read(conflicts).rows[2]).toBe(
+      "存档  存档先停着：有 2 处和 GitHub 上的改动冲突 · 平台临时存储只保存 7 天，请尽快处理。 [处理…]",
+    );
+    expect(ids(conflicts).rows["archive"]).toEqual(["resolveMerge"]);
+    const blocked = paused("blocked", {
+      blocked: [{ path: "timelines/main/timeline.json", reason: "invalid", detail: "第 12 行" }],
+    });
+    expect(read(blocked).rows[2]).toBe(
+      "存档  存档先停着：GitHub 上的 timelines/main/timeline.json 没有并进来 · 平台临时存储只保存 7 天，请尽快处理。 [查看…]",
+    );
+    expect(blocked.github).toMatchObject({ cause: "blocked" });
+    const diverged = {
+      sha: "b".repeat(40),
+      files: ["code/secret.js"],
+      deleted: ["code/secret.js"],
+    };
+    expect(ids(paused("rewritten", { diverged })).rows["archive"]).toEqual(["resolveMerge"]);
+    expect(read(paused("unmerged", { diverged })).rows[2]).toContain(
+      "GitHub 上去掉的 1 个文件还在项目里",
+    );
+    expect(ids(paused("unmerged", { diverged })).rows["archive"]).toEqual(["resolveMerge"]);
+    expect(ids(paused("too-large", { diverged })).rows["archive"]).toEqual(["continueWithEditor"]);
+    // Locked: unlocking is the way, which is in the project's properties.
+    expect(read(paused("locked")).rows[2]).toContain(
+      "项目锁着，GitHub 上的改动没有并进来 · 解锁以后会自动再合并。",
+    );
+    expect(ids(paused("locked")).rows["archive"]).toEqual([]);
+    // A merge lately says so first, while it goes on as ever.
+    const merged = cloudPanel(
+      linked({
+        archive: watch(status({ merge: { at: NOW - 5 * MINUTE, sha: "c", files: 2, url: "" } })),
+      }),
+      t,
+    );
+    expect(rowOf(merged, "archive").text).toBe("合并了 GitHub 上的改动（2 个文件），14:05 存过");
+  });
+
   it("says how archiving goes, and lets people archive now unless one is on its way", () => {
     const row = (said: RepositoryStatus, more: Partial<RepositoryWatchSnapshot> = {}) =>
       read(cloudPanel(linked({ archive: watch(said, more) }), t)).rows[2];

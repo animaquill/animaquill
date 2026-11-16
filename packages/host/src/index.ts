@@ -87,6 +87,7 @@ export {
   readSyncClientMessage,
   readSyncServerMessage,
   unpackChecked,
+  type SyncBatch,
   type SyncClientMessage,
   type SyncKind,
   type SyncRejection,
@@ -1309,7 +1310,25 @@ export type RepositoryPause =
   /** animaquill.json is not what the format says. */
   | "manifest"
   /** What would be saved does not read as a project. */
-  | "invalid";
+  | "invalid"
+  /**
+   * Merging changes on GitHub (docs/design/start-and-cloud.md of AnimaQuill Cloud, 10): conflicts
+   * wait for people, see `RepositoryStatus.conflicts`.
+   */
+  | "conflicts"
+  /** Files on GitHub that the merge could not take in wait, see `RepositoryStatus.blocked`. */
+  | "blocked"
+  /** ...as the project is locked: merged again once it is not. */
+  | "locked"
+  /** The history of the branch on GitHub was rewritten: nothing is merged until people choose. */
+  | "rewritten"
+  /** More changed on GitHub than one merge takes. */
+  | "too-large"
+  /**
+   * After a rewritten history: what it took away cannot be told apart from the project, see
+   * `RepositoryStatus.diverged`: those files were taken away on GitHub, and would be written back.
+   */
+  | "unmerged";
 
 /**
  * The repository of a project cannot be used: deleted, taken out of what the platform may touch,
@@ -1388,7 +1407,27 @@ export interface RepositoryStatus {
     readonly sha: string;
     readonly files: readonly string[];
     readonly deleted: readonly string[];
+    /** Those of `files` that are pointers of the platform's large files, not files of the project. */
+    readonly pointers?: readonly string[];
+    /** For "rewritten" and "unmerged": the last commit both histories have. */
+    readonly base?: string;
   };
+  /** The last merge of changes on GitHub into the project: when, which commit, how many files. */
+  readonly merge?: {
+    readonly at: number;
+    readonly sha: string;
+    readonly files: number;
+    readonly url: string;
+  };
+  /** Conflicts with changes on GitHub that wait for people, see `RepositoryAccess.conflicts`. */
+  readonly conflicts?: number;
+  /** Files on GitHub that the merge did not take in: which, why, and what was wrong. */
+  readonly blocked?: readonly RepositoryBlocked[];
+  /**
+   * Which side a merge keeps first where both changed the same place (the project's properties,
+   * 存放和同步): the editor's, or GitHub's. The other goes into the list of conflicts either way.
+   */
+  readonly prefer?: "editor" | "github";
   /** The update of the project the platform has, and the one the repository has. */
   readonly head: number;
   readonly archivedSeq: number;
@@ -1436,7 +1475,42 @@ export interface RepositoryAccess {
    * Archives now. Also goes on after a pause; for "diverged" only with `replace`, the commit people
    * saw the changed files on, which the archive then writes over (never forced: it goes on top).
    */
-  archiveNow(project: string, options?: { readonly replace?: string }): Promise<RepositoryStatus>;
+  archiveNow(
+    project: string,
+    options?: {
+      readonly replace?: string;
+      /**
+       * With `replace`: files of `diverged.files` the platform takes out of the project before the
+       * archive, as GitHub took them away (a rewritten history), so that they are not written back.
+       */
+      readonly drop?: readonly string[];
+    },
+  ): Promise<RepositoryStatus>;
+  /**
+   * The conflicts of a project with changes on GitHub, those that wait first. Missing where the
+   * platform merges nothing.
+   */
+  conflicts?(project: string): Promise<readonly RepositoryConflict[]>;
+  /** One conflict whole, for one whose values were too large for the list (`large`). */
+  conflict?(project: string, id: string): Promise<RepositoryConflict>;
+  /**
+   * People chose for conflicts: "ours" keeps what the project has, "theirs" says the editor took
+   * GitHub's side already, as the update `seq`, which the platform has to have first ("behind").
+   */
+  resolve?(
+    project: string,
+    choice: {
+      readonly ids: readonly string[];
+      readonly keep: "ours" | "theirs";
+      readonly seq?: number;
+    },
+  ): Promise<RepositoryStatus>;
+  /** "用这里的内容覆盖" a file on GitHub that the merge did not take in ("notBlocked" otherwise). */
+  useEditor?(project: string, path: string): Promise<RepositoryStatus>;
+  /** "把 GitHub 上现在的版本并进来" after a rewritten history, `sha` the commit people saw. */
+  mergeNow?(project: string, sha: string): Promise<RepositoryStatus>;
+  /** Which side merges keep first, see `RepositoryStatus.prefer`: only people change it. */
+  prefer?(project: string, prefer: "editor" | "github"): Promise<RepositoryStatus>;
   /**
    * "Check again": the platform asks GitHub now whether the repository of a project can be used,
    * see `RepositoryStatus.unusable`; where it can, the project can be edited again. Resolves to the
@@ -1457,6 +1531,44 @@ export interface RepositoryAccess {
     readonly existing: { readonly id: number };
     readonly confirmPublic?: boolean;
   }): Promise<RepositoryRestored>;
+}
+
+/** A file on GitHub that a merge did not take in, see `RepositoryStatus.blocked`. */
+export interface RepositoryBlocked {
+  readonly path: string;
+  /** "unreadable": not text, too large, a link; "invalid": not as the format says; "locked". */
+  readonly reason: string;
+  /** What was wrong, in the platform's words. */
+  readonly detail?: string;
+}
+
+/**
+ * A place both the project and GitHub changed, see `MergeConflict` of @animaquill/core: what it is
+ * about (`kind`, `label`), the two values (`ours`, what the project has; `theirs`, what went), whose
+ * side went (`lost`: "batch", GitHub's; "change", the editor's), the commit of GitHub's, and what
+ * people chose (`state`: "open", "ours", "theirs", or "stale" once that place changed again).
+ */
+export interface RepositoryConflict {
+  readonly id: string;
+  readonly file: string;
+  readonly path: readonly string[];
+  readonly label: string;
+  readonly kind: string;
+  readonly lines?: { readonly from: number; readonly to: number };
+  readonly around?: { readonly before?: string; readonly after?: string };
+  readonly ours?: unknown;
+  readonly theirs?: unknown;
+  /** Its values are too large for the list: `RepositoryAccess.conflict` has them. */
+  readonly large?: boolean;
+  readonly lost: string;
+  readonly oursBy?: string;
+  readonly oursAt?: number;
+  readonly theirsSha?: string;
+  readonly theirsUrl?: string;
+  readonly theirsAt?: number;
+  readonly state: string;
+  readonly at: number;
+  readonly resolvedAt?: number;
 }
 
 /** A project made from a repository, see `RepositoryAccess.restore`. */
@@ -1490,7 +1602,14 @@ export type RepositoryRefusal =
   /** ...of a newer format than the platform knows. */
   | "tooNew"
   /** ...the person keeps as many projects, or bytes, as they may. */
-  | "quota";
+  | "quota"
+  /** The platform does not have the update a choice for conflicts goes with yet. */
+  | "behind"
+  /** The file does not wait any more, see `RepositoryAccess.useEditor`. */
+  | "notBlocked"
+  /** The history on GitHub is not rewritten (any more), see `RepositoryAccess.mergeNow`. */
+  | "notRewritten"
+  | "noCommonBase";
 
 /**
  * The platform did not do what was asked: always one of the codes of `RepositoryRefusal`, also where

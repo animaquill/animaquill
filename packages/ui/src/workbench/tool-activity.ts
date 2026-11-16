@@ -75,7 +75,7 @@ export function toolName(t: TFunction, client: ToolClient | undefined): string {
   return client?.name ?? t("localAi.tools.unknown");
 }
 
-const asTurnChange = (change: ObjectChange): TurnChange => ({
+export const asTurnChange = (change: ObjectChange): TurnChange => ({
   key: objectKey({
     kind: change.kind,
     id: change.id,
@@ -101,9 +101,9 @@ function valueText(value: unknown): string {
  * The fields of the project itself that a merge changed, such as its name: the tools tell only
  * that the project changed, as its fields are not under an id.
  */
-function withProjectFields(
+export function withProjectFields(
   change: TurnChange,
-  merge: FolderMerge,
+  merge: Pick<FolderMerge, "paths" | "before">,
   after: ProjectState,
 ): TurnChange {
   if (change.kind !== "project" || change.fields.length > 0) return change;

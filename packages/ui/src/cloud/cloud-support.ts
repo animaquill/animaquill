@@ -35,6 +35,7 @@ import {
   type CloudRemoveOptions,
   type RepositoryStatus,
   type RepositoryUnusable,
+  type SyncBatch,
   type SyncClientMessage,
   type SyncRejection,
   type SyncServerMessage,
@@ -51,6 +52,8 @@ export interface PlatformUpdate {
   readonly device: string;
   readonly base: number;
   readonly behind: boolean;
+  /** A batch the platform wrote itself, as a merge from GitHub, see `SyncBatch`. */
+  readonly by?: SyncBatch;
 }
 
 interface PlatformProject {
@@ -634,7 +637,12 @@ export class MemoryPlatform {
    * platform (`writeAsPlatform`), with the origin of a batch of the repository, and sent to every
    * window that has the project open, as to those that come later.
    */
-  mergeFromRepository(id: string, commands: readonly CommandCall[], batch = "1"): void {
+  mergeFromRepository(
+    id: string,
+    commands: readonly CommandCall[],
+    batch = "1",
+    files = commands.length,
+  ): void {
     const project = this.projects.get(id);
     if (!project) throw new Error(`no project ${id}`);
     const store = this.workingCopy(id);
@@ -663,6 +671,7 @@ export class MemoryPlatform {
       device: "",
       base: project.head - 1,
       behind: false,
+      by: { batch, kind: "repo", label: `GitHub 上的改动 ${batch}`, files },
     };
     project.updates.push(update);
     for (const side of this.#sides) {
@@ -673,6 +682,7 @@ export class MemoryPlatform {
         digest: update.digest,
         kind: update.kind,
         at: 0,
+        ...(update.by && { by: update.by }),
         payload: delta,
       });
     }
@@ -899,6 +909,7 @@ export class MemoryPlatform {
           digest: update.digest,
           kind: update.kind,
           at: 0,
+          ...(update.by && { by: update.by }),
           payload: update.data,
         });
       }

@@ -95,9 +95,28 @@ describe("how saving to GitHub reads", () => {
       expect(said).toBe(words);
       expect(fix.length).toBeGreaterThan(4);
     }
+    // Merging changes on GitHub: the state alone, as the panel has the way to what helps.
+    const merges = {
+      conflicts: ["有 3 处和 GitHub 上的改动冲突", ""],
+      blocked: ["GitHub 上的 a.json 没有并进来", ""],
+      locked: ["项目锁着，GitHub 上的改动没有并进来", "解锁以后会自动再合并。"],
+      rewritten: ["GitHub 上的历史被改写了", ""],
+      "too-large": ["GitHub 上改了 2 个文件，一次并不进来", ""],
+      unmerged: ["GitHub 上去掉的 2 个文件还在项目里", ""],
+    };
+    for (const [reason, [words, fix]] of Object.entries(merges)) {
+      const paused = status({
+        state: "paused",
+        reason,
+        conflicts: 3,
+        blocked: [{ path: "a.json", reason: "invalid" }],
+        diverged: { sha: "b", files: ["a", "b"], deleted: [] },
+      });
+      expect(pauseText(paused, t)).toEqual({ reason: words, fix });
+    }
     // One of a newer platform says what it is.
-    expect(pauseText(status({ state: "paused", reason: "conflicts" }), t)).toEqual({
-      reason: "conflicts",
+    expect(pauseText(status({ state: "paused", reason: "somethingNew" }), t)).toEqual({
+      reason: "somethingNew",
       fix: "可以点“现在存档”再试，或者换一个仓库。",
     });
   });

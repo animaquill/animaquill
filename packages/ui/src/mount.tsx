@@ -32,6 +32,8 @@ export interface EditorOptions {
   readonly soundLimitMs?: number;
   /** For tests: how long making a proxy waits after each frame, to see one on its way. */
   readonly proxyFrameMs?: number;
+  /** For tests: how long opening a project waits for the platform, see `OpeningTiming`. */
+  readonly catchUpMs?: number;
   /** For tests: what the editor waits for before it gets ready, to drop something meanwhile. */
   readonly holdLoad?: () => Promise<void>;
   /** Panels the host adds to the built-in ones. */
@@ -127,6 +129,7 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     sceneOrigins: options.sceneOrigins ?? [],
     ...(options.sceneStage && { sceneStage: options.sceneStage }),
     ...(options.soundLimitMs !== undefined && { soundLimitMs: options.soundLimitMs }),
+    ...(options.catchUpMs !== undefined && { openingTiming: { catchUpMs: options.catchUpMs } }),
     // A large video takes a while to hash, and the page goes on meanwhile.
     hasher: workerHasher(),
     // The same for making smaller copies of large videos for the preview.

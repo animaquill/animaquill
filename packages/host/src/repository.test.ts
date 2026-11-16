@@ -372,4 +372,67 @@ describe("repositories through the platform", () => {
     expect(signals).toHaveLength(5);
     expect(signals.every((signal) => signal?.aborted)).toBe(true);
   });
+
+  test("merges of changes on GitHub: the status says them, and what people choose goes to the platform", async () => {
+    const merging = {
+      ...STATUS,
+      reason: "unmerged",
+      diverged: {
+        ...STATUS.diverged,
+        base: "c".repeat(40),
+        pointers: ["assets/x.bin", "not/listed"],
+      },
+      merge: { at: 5, sha: "d".repeat(40), files: 2, url: "m" },
+      conflicts: 3,
+      blocked: [{ path: "a.json", reason: "invalid", detail: "第 12 行" }, { nothing: true }],
+      prefer: "github",
+    };
+    const conflict = {
+      id: "k1",
+      file: "code/a.js",
+      path: ["files", "code/a.js"],
+      label: "code/a.js 第 1 行",
+      kind: "lines",
+      lines: { from: 0, to: 1 },
+      ours: "a\n",
+      theirs: "b\n",
+      lost: "batch",
+      state: "open",
+      at: 9,
+    };
+    const { access, sent } = platform(({ url }) =>
+      url.endsWith("/conflicts")
+        ? Response.json({ conflicts: [conflict, { id: "broken" }] })
+        : url.endsWith("/conflicts/resolve")
+          ? Response.json({ resolved: 1, status: merging })
+          : Response.json(merging),
+    );
+    const status = await access.status("p1");
+    expect(status).toMatchObject({
+      reason: "unmerged",
+      diverged: { base: "c".repeat(40) },
+      merge: { at: 5, files: 2 },
+      conflicts: 3,
+      blocked: [{ path: "a.json", reason: "invalid", detail: "第 12 行" }],
+      prefer: "github",
+    });
+    // Only what is among the files.
+    expect(status.diverged?.pointers).toBeUndefined();
+    expect(await access.conflicts?.("p1")).toEqual([conflict]);
+    expect(await access.resolve?.("p1", { ids: ["k1"], keep: "theirs", seq: 4 })).toMatchObject({
+      conflicts: 3,
+    });
+    await access.archiveNow("p1", { replace: "b".repeat(40), drop: ["code/gone.js"] });
+    await access.useEditor?.("p1", "a.json");
+    await access.mergeNow?.("p1", "b".repeat(40));
+    await access.prefer?.("p1", "editor");
+    expect(sent.slice(1).map(({ method, url, body }) => [method, url.slice(28), body])).toEqual([
+      ["GET", "/projects/p1/conflicts", undefined],
+      ["POST", "/projects/p1/conflicts/resolve", { ids: ["k1"], keep: "theirs", seq: 4 }],
+      ["POST", "/projects/p1/archive", { replace: "b".repeat(40), drop: ["code/gone.js"] }],
+      ["POST", "/projects/p1/repository/blocked", { path: "a.json", use: "editor" }],
+      ["POST", "/projects/p1/repository/merge-now", { sha: "b".repeat(40) }],
+      ["POST", "/projects/p1/repository/prefer", { prefer: "editor" }],
+    ]);
+  });
 });

@@ -61,6 +61,8 @@ const soundLimit = new URLSearchParams(location.search).get("soundLimit");
 
 /** A small video is made a proxy of in a moment, which a test of what happens meanwhile cannot catch. */
 const proxyFrameMs = new URLSearchParams(location.search).get("proxyFrameMs");
+/** For the tests of opening a project: how long it waits for the platform. */
+const catchUpMs = new URLSearchParams(location.search).get("catchUpMs");
 
 /**
  * The editor gets ready only once a test says so, `aqLoad()`, for what people drop on the page
@@ -121,6 +123,7 @@ if (root)
     ...(sceneStage && { sceneStage: "plain" }),
     ...(soundLimit !== null && { soundLimitMs: Number(soundLimit) }),
     ...(proxyFrameMs !== null && { proxyFrameMs: Number(proxyFrameMs) }),
+    ...(catchUpMs !== null && { catchUpMs: Number(catchUpMs) }),
     ...(!strict && { strict: false }),
     ...(holdLoad && { holdLoad }),
     panels: [crashTest, frameTest],

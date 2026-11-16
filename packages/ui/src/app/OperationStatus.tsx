@@ -60,6 +60,9 @@ export function OperationStatus() {
     switch (operation.source) {
       case "other":
         return { why: t("operations.why.other") };
+      // Taking a merge of GitHub's back as a whole comes with the persistent undo of batches (2E).
+      case "github":
+        return {};
       case "ai":
       case "folder": {
         if (operation.origin === undefined) return { why: t("operations.why.originGone") };

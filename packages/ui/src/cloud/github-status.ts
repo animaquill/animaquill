@@ -56,6 +56,8 @@ export type GitHubCause =
 export interface GitHubState {
   readonly kind: GitHubKind;
   readonly cause: GitHubCause;
+  /** For "conflicts": how many wait, where the platform said. */
+  readonly count?: number;
   /** For an error: why, in words, and what helps. */
   readonly reason?: string;
   readonly fix?: string;
@@ -117,6 +119,11 @@ export function githubOfStatus(input: StatusInput, t: TFunction): GitHubState {
   if (status.state === "paused") {
     const { reason, fix } = pauseText(status, t);
     const detail = pauseDetail(status, t);
+    // Merges of changes on GitHub wait for people: a word of their own, with how many.
+    if (status.reason === "conflicts")
+      return { ...error("conflicts", reason, fix), count: status.conflicts ?? 0 };
+    if (status.reason === "blocked" || status.reason === "locked")
+      return error("blocked", reason, fix);
     return error("paused", detail ? `${reason}（${detail}）` : reason, fix);
   }
   if (isFailingLong(status.failingSince, now))
@@ -179,6 +186,8 @@ export function githubOfListed(summary: ListedArchive, now: number, t: TFunction
 export function githubText(state: GitHubState, t: TFunction): string {
   if (state.cause === "unusable" || state.cause === "noRepository" || state.cause === "unfinished")
     return state.reason ?? t("github.text.error");
+  if (state.cause === "conflicts" && state.count !== undefined && state.count > 0)
+    return t("github.text.conflicts", { count: state.count });
   return t(`github.text.${state.kind}`);
 }
 

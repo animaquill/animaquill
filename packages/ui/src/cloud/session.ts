@@ -3,7 +3,9 @@ import {
   hasDeletionsOf,
   isAhead,
   mergeUpdates,
+  type ProjectState,
   type ProjectStore,
+  type RevisionId,
 } from "@animaquill/core";
 import {
   Reassembler,
@@ -18,6 +20,7 @@ import {
   type CloudLine,
   type CloudLink,
   type LogEntry,
+  type SyncBatch,
   type SyncClientMessage,
   type SyncKind,
   type SyncRejection,
@@ -208,6 +211,19 @@ export interface CloudSnapshot {
   readonly restoring?: "restoring" | "released" | undefined;
 }
 
+/**
+ * Batches the platform wrote itself, such as merges of what changed on GitHub (`SyncBatch`), as the
+ * project took them in: which (one each, in order), what the project was right before, and its
+ * revision then, for what they changed (`ProjectStore.changesSince`). `away`: they came as the
+ * project caught up when it opened, so they happened while the editor was not there.
+ */
+export interface CloudBatchNote {
+  readonly batches: readonly SyncBatch[];
+  readonly before: ProjectState | undefined;
+  readonly revision: RevisionId;
+  readonly away: boolean;
+}
+
 export interface CloudSessionOptions {
   readonly store: ProjectStore;
   readonly journal: Journal;
@@ -331,6 +347,9 @@ export class CloudSession {
   readonly #onSeq: ((seq: number) => void) | undefined;
   #create: CloudSessionOptions["create"];
   readonly #emitter = new Emitter();
+  readonly #batchListeners = new Set<(note: CloudBatchNote) => void>();
+  /** The project was in step with the platform once in this session: what comes after is live. */
+  #everSynced = false;
   readonly #line: CloudLine | undefined;
   #snapshot: CloudSnapshot;
   #closed = false;
@@ -468,6 +487,48 @@ export class CloudSession {
 
   subscribe = this.#emitter.subscribe;
   getSnapshot = (): CloudSnapshot => this.#snapshot;
+
+  /** Hears batches the platform wrote itself, see `CloudBatchNote`. Returns how to stop. */
+  watchBatches(listener: (note: CloudBatchNote) => void): () => void {
+    this.#batchListeners.add(listener);
+    return () => this.#batchListeners.delete(listener);
+  }
+
+  /**
+   * Takes in updates of the platform, and tells who listens of the batches among them: what the
+   * project was before is read only where there are any.
+   */
+  #applyCloud(updates: readonly Extract<SyncServerMessage, { t: "update" }>[]): boolean {
+    const last = updates.at(-1);
+    if (!last) return true;
+    const seen = new Set<string>();
+    const batches: SyncBatch[] = [];
+    for (const { by } of updates)
+      if (by && !seen.has(by.batch)) {
+        seen.add(by.batch);
+        batches.push(by);
+      }
+    const told = batches.length > 0 && this.#batchListeners.size > 0;
+    const before = told ? this.#store.getState() : undefined;
+    const revision = this.#store.revisionId;
+    const away = this.#phase === "catching-up" && !this.#everSynced;
+    if (
+      !this.#store.applyCloud(
+        updates.map((update) => update.payload),
+        last.seq,
+      )
+    )
+      return false;
+    if (told)
+      for (const listener of this.#batchListeners) {
+        try {
+          listener({ batches, before, revision, away });
+        } catch {
+          // Only telling: syncing goes on whatever a listener does.
+        }
+      }
+    return true;
+  }
 
   /** The key of the project in this browser, see `CloudLink.key`. */
   get key(): string {
@@ -1145,7 +1206,7 @@ export class CloudSession {
           }
           return;
         }
-        if (!this.#store.applyCloud([message.payload], message.seq)) {
+        if (!this.#applyCloud([message])) {
           // Not read: nothing says the project has it, and the next connection gets all of it.
           this.#end?.({ kind: "resync" });
           return;
@@ -1171,6 +1232,7 @@ export class CloudSession {
             return;
           }
         }
+        this.#everSynced = true;
         this.#set({ state: "online", retryAt: undefined, problem: undefined });
         this.#noteSoon();
         // What the platform lacks goes first where a change needed it, see `#repairFirst`.
@@ -1308,12 +1370,7 @@ export class CloudSession {
     this.#caught = [];
     this.#caughtBytes = 0;
     if (!last) return true;
-    if (
-      !this.#store.applyCloud(
-        caught.map((update) => update.payload),
-        last.seq,
-      )
-    ) {
+    if (!this.#applyCloud(caught)) {
       // Not read: nothing says the project has them, and the next connection gets all of it.
       this.#end?.({ kind: "resync" });
       return false;

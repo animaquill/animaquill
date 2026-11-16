@@ -13,6 +13,7 @@ import type {
   MediaStore,
   ProjectLibrary,
   RepositoryAccess,
+  RepositoryConflict,
   SignInOutcome,
   StoragePersistence,
   WindowMemory,
@@ -84,6 +85,9 @@ import { CloudChats } from "../chat/cloud-chats.ts";
 import { SETTINGS_GROUPS, SettingsNav, type SettingsPlace } from "./settings-nav.ts";
 import { SwitchSetting } from "./switch-setting.ts";
 import { ToolActivity, toolName } from "./tool-activity.ts";
+import { RepoChanges } from "./repo-changes.ts";
+import { RepoMerges } from "../cloud/repo-merges.ts";
+import { objectOfConflict } from "../cloud/conflicts.ts";
 import { ProjectOpening, type OpeningTiming } from "./opening.ts";
 import { placeText } from "./undo-text.ts";
 import { CodeDocuments, type CodePlace } from "../code/documents.ts";
@@ -424,6 +428,10 @@ export class Workbench {
   readonly listens: SoundListens;
   /** What AI tools on this computer do through the folder of the open project. */
   readonly tools: ToolActivity;
+  /** What merges of changes on GitHub did to the open project, see `RepoChanges`. */
+  readonly repoChanges: RepoChanges;
+  /** What people do where merging changes on GitHub waits for them, see `RepoMerges`. */
+  readonly repoMerges: RepoMerges | undefined;
   /**
    * The steps of opening a project, one after the other, see `ProjectOpening`: its log, what the
    * platform has, its folder, and then both as they change.
@@ -1139,6 +1147,42 @@ export class Workbench {
       describe: (origin) => this.#describeUndo(origin),
     });
     this.operations = new OperationLog(this.session, this.undo);
+    // A platform that did not answer while the project opened: it opened all the same, which
+    // people hear once it is open, as the steps of opening are not there any more (screen G4).
+    let slowTold: string | undefined;
+    this.opening.subscribe(() => {
+      const { key, step, cloud: caught } = this.opening.getSnapshot();
+      if (step !== "live" || caught !== "timeout" || key === slowTold) return;
+      slowTold = key;
+      this.notifications.push(t("repoMerge.opening.slow"));
+    });
+    // Merges of what changed on GitHub, as they come in, and what waits for people of them.
+    const cloudProjects = this.cloud;
+    this.repoChanges = new RepoChanges({
+      t,
+      notifications: this.notifications,
+      dialogs: this.dialogs,
+      cloud: cloudProjects,
+      store: () => this.session.store,
+      heard: (merges) => this.operations.heardRepo(merges),
+      refresh: () => void cloudProjects?.repository?.refresh(),
+    });
+    this.repoChanges.subscribe(() =>
+      this.timeline.setRepoMarked(this.repoChanges.getSnapshot().marked),
+    );
+    this.repoMerges =
+      cloudProjects &&
+      new RepoMerges({
+        t,
+        dialogs: this.dialogs,
+        notifications: this.notifications,
+        access: cloud?.repository,
+        cloud: cloudProjects,
+        store: () => this.session.store,
+        locate: (conflict) => this.#locateConflict(conflict),
+        openFile: (path) => void this.showCode(path),
+        open: (url) => void window.open(url, "_blank", "noopener,noreferrer"),
+      });
     this.properties = new PropertyWriter(this.session, this.timeline, this.trials, {
       commandFailed: (failure) => this.notifications.push(commandFailedText(t, failure)),
       comparing: () => this.notifications.push(t("notice.comparing")),
@@ -1656,6 +1700,19 @@ export class Workbench {
       const made = this.sounds.stateOf(clip)?.state;
       return made === "ready" || made === "failed";
     });
+  }
+
+  /**
+   * Goes to what a conflict with GitHub is about, from the list of them: the lines of code, the
+   * file, the clip on the timeline, the scene.
+   */
+  #locateConflict(conflict: RepositoryConflict): void {
+    if (conflict.kind === "lines" && conflict.lines) {
+      this.showCode(conflict.file, { line: conflict.lines.from + 1 });
+      return;
+    }
+    const object = objectOfConflict(conflict);
+    if (object) this.goToObject(object);
   }
 
   /** Resolves to whether the project has that file. */
@@ -2306,6 +2363,12 @@ export class Workbench {
         break;
       case "continueWithEditor":
         void cloud.continueWithEditor();
+        break;
+      case "resolveMerge":
+        void this.repoMerges?.resolve();
+        break;
+      case "showBlocked":
+        void this.repoMerges?.blocked();
         break;
       case "resolveStuck":
         void cloud.resolveStuck();

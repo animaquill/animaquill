@@ -10,6 +10,7 @@ import {
   type RepositoryAccess,
   type RepositoryCheck,
   type RepositoryChoice,
+  type RepositoryConflict,
   type RepositoryLink,
   type RepositoryList,
   type RepositoryRefusal,
@@ -51,6 +52,12 @@ export class LabRepositories implements RepositoryAccess {
   archiveMs = 600;
   /** What the next try to make or link a repository is refused with, once. */
   refuseLink: RepositoryRefusal | undefined;
+  /** The conflicts of each project with changes on GitHub, as the platform keeps them. */
+  readonly conflictsOf = new Map<string, RepositoryConflict[]>();
+  /** What "archive now" was asked with, the latest last. */
+  readonly asked: { project: string; replace?: string; drop?: readonly string[] }[] = [];
+  /** What people chose for conflicts, as the platform heard it. */
+  readonly resolved: { ids: readonly string[]; keep: string; seq?: number }[] = [];
   #nextId = 100;
   readonly #platform: MemoryPlatform;
 
@@ -111,6 +118,7 @@ export class LabRepositories implements RepositoryAccess {
       },
       state: "ready",
       archiving: true,
+      prefer: "editor",
       head: this.#head(project),
       archivedSeq: 0,
     };
@@ -142,9 +150,27 @@ export class LabRepositories implements RepositoryAccess {
     return this.status(project);
   }
 
-  async archiveNow(project: string): Promise<RepositoryStatus> {
+  async archiveNow(
+    project: string,
+    options: { readonly replace?: string; readonly drop?: readonly string[] } = {},
+  ): Promise<RepositoryStatus> {
     const kept = this.statuses.get(project);
     if (!kept?.repository) throw new RepositoryRefused("notFound");
+    this.asked.push({ project, ...options });
+    // As the platform: what waits for people of merges stays without `replace`.
+    const waits = ["conflicts", "blocked", "locked"].includes(kept.reason ?? "");
+    if (kept.state === "paused" && waits && options.replace === undefined)
+      return this.status(project);
+    if (options.drop && options.drop.length > 0) {
+      const listed = new Set(kept.diverged?.files ?? []);
+      if (!options.drop.every((path) => listed.has(path))) throw new RepositoryRefused("invalid");
+      // Taken out of the project before the archive, as the platform does.
+      this.#platform.mergeFromRepository(
+        project,
+        options.drop.map((path) => ({ type: "file.remove", params: { path } })),
+        "drop",
+      );
+    }
     const { reason: _, detail: __, diverged: ___, ...rest } = kept;
     this.statuses.set(project, { ...rest, state: "ready", archiving: true });
     if (this.archiveMs >= 0) setTimeout(() => this.archived(project), this.archiveMs);
@@ -172,6 +198,78 @@ export class LabRepositories implements RepositoryAccess {
         url: "",
       },
     });
+  }
+
+  async conflicts(project: string): Promise<readonly RepositoryConflict[]> {
+    const list = this.conflictsOf.get(project) ?? [];
+    return list.toSorted((a, b) => Number(b.state === "open") - Number(a.state === "open"));
+  }
+
+  async conflict(project: string, id: string): Promise<RepositoryConflict> {
+    const found = this.conflictsOf.get(project)?.find((each) => each.id === id);
+    if (!found) throw new RepositoryRefused("notFound");
+    return found;
+  }
+
+  async resolve(
+    project: string,
+    choice: {
+      readonly ids: readonly string[];
+      readonly keep: "ours" | "theirs";
+      readonly seq?: number;
+    },
+  ): Promise<RepositoryStatus> {
+    if (choice.seq !== undefined && choice.seq > this.#head(project))
+      throw new RepositoryRefused("behind");
+    this.resolved.push(choice);
+    const ids = new Set(choice.ids);
+    const list = (this.conflictsOf.get(project) ?? []).map((each) =>
+      ids.has(each.id) && each.state === "open"
+        ? { ...each, state: choice.keep, resolvedAt: Date.now() }
+        : each,
+    );
+    this.conflictsOf.set(project, list);
+    const open = list.filter(({ state }) => state === "open").length;
+    const kept = this.statuses.get(project);
+    if (kept) {
+      if (open === 0 && kept.reason === "conflicts") {
+        const { reason: _, ...rest } = kept;
+        this.statuses.set(project, { ...rest, state: "ready", archiving: true, conflicts: 0 });
+        if (this.archiveMs >= 0) setTimeout(() => this.archived(project), this.archiveMs);
+      } else this.statuses.set(project, { ...kept, conflicts: open });
+    }
+    return this.status(project);
+  }
+
+  async useEditor(project: string, path: string): Promise<RepositoryStatus> {
+    const kept = this.statuses.get(project);
+    if (!kept?.blocked?.some((file) => file.path === path))
+      throw new RepositoryRefused("notBlocked");
+    const blocked = kept.blocked.filter((file) => file.path !== path);
+    if (blocked.length === 0) {
+      const { reason: _, ...rest } = kept;
+      this.statuses.set(project, { ...rest, blocked, state: "ready", archiving: true });
+      if (this.archiveMs >= 0) setTimeout(() => this.archived(project), this.archiveMs);
+    } else this.statuses.set(project, { ...kept, blocked });
+    return this.status(project);
+  }
+
+  async mergeNow(project: string, sha: string): Promise<RepositoryStatus> {
+    const kept = this.statuses.get(project);
+    if (kept?.reason !== "rewritten") throw new RepositoryRefused("notRewritten");
+    if (kept.diverged?.sha !== sha) throw new RepositoryRefused("diverged");
+    const { reason: _, diverged: __, ...rest } = kept;
+    this.asked.push({ project, replace: `merge-now:${sha}` });
+    this.statuses.set(project, { ...rest, state: "ready", archiving: true });
+    if (this.archiveMs >= 0) setTimeout(() => this.archived(project), this.archiveMs);
+    return this.status(project);
+  }
+
+  async prefer(project: string, prefer: "editor" | "github"): Promise<RepositoryStatus> {
+    const kept = this.statuses.get(project);
+    if (!kept?.repository) throw new RepositoryRefused("notLinked");
+    this.statuses.set(project, { ...kept, prefer });
+    return this.status(project);
   }
 
   /** Archiving a project pauses, as the platform says it. */
@@ -298,6 +396,7 @@ export function fakeCloud(account: AccountAccess): { cloud: CloudAccess; lab: Cl
             },
             state: "ready",
             archiving: false,
+            prefer: "editor",
             head: 1,
             archivedSeq: 1,
             lastArchive: {

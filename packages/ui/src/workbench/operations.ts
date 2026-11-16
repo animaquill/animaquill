@@ -3,7 +3,7 @@ import { Emitter } from "./emitter.ts";
 import type { RestoredUndo } from "./undo-keeper.ts";
 
 /** Who an operation comes from, as this window sees it. */
-export type OperationSource = "you" | "ai" | "folder" | "other";
+export type OperationSource = "you" | "ai" | "folder" | "github" | "other";
 
 /** One thing that changed the project, as the list of what happened shows it. */
 export interface Operation {
@@ -33,6 +33,16 @@ export interface Operation {
   readonly tool?: string;
   /** When a batch from before the page was loaded began, where it took a while. */
   readonly from?: number;
+  /** For changes from GitHub: how many merges they were, and whether the editor was away then. */
+  readonly merges?: number;
+  readonly away?: boolean;
+}
+
+/** Merges of what changed on GitHub that the project just took in, see `CloudBatchNote`. */
+export interface RepoMergesHeard {
+  /** How many files each came from. */
+  readonly files: readonly number[];
+  readonly away: boolean;
 }
 
 /** Undo logs that came back from before the page was loaded, see `UndoKeeper`. */
@@ -90,6 +100,8 @@ export class OperationLog {
   #operations: Operation[] = [];
   #snapshot: readonly Operation[] = [];
   #pending = false;
+  /** What another window or the platform did last, and the revision of the store then. */
+  #lastOther: { readonly id: number; readonly revision: number } | undefined;
 
   readonly #restored: RestoredSource | undefined;
 
@@ -154,6 +166,7 @@ export class OperationLog {
     const { change } = store;
     if (!change) {
       this.#add({ source: "other", origin: undefined, commands: [], properties: [], count: 1 });
+      this.#lastOther = { id: this.#next - 1, revision: store.revision };
       return;
     }
     const { origin, takesBack, step, back } = change;
@@ -202,6 +215,28 @@ export class OperationLog {
         this.#add({ source, origin, commands, properties, count });
       }
     });
+  }
+
+  /**
+   * What came from the platform just now was merges of what changed on GitHub (`CloudSession`
+   * tells right after the project took them in): one "GitHub 上的改动" in place of "其他窗口", which
+   * says how many files, and, where they came while the editor was away, how many merges.
+   */
+  heardRepo({ files, away }: RepoMergesHeard): void {
+    const store = this.#store;
+    const last = this.#lastOther;
+    if (!store || !last || last.revision !== store.revision || files.length === 0) return;
+    const operation = this.#operations.find(({ id }) => id === last.id);
+    if (!operation) return;
+    this.#replace(operation, {
+      ...operation,
+      source: "github",
+      count: files.reduce((sum, each) => sum + each, 0),
+      merges: files.length,
+      ...(away && { away: true }),
+    });
+    this.#lastOther = undefined;
+    this.#show();
   }
 
   /** After the store has finished writing down the change it tells about. */

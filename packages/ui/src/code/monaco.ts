@@ -286,3 +286,51 @@ export class CodeView {
     }
   }
 }
+
+/**
+ * Two versions of a file side by side, as Monaco compares them: the left one (`original`) is the
+ * project's, which people can change, and the right one GitHub's, which they read. For choosing
+ * by hand what of each stays, see the list of conflicts with GitHub.
+ */
+export class DiffView {
+  readonly #editor: monaco.editor.IStandaloneDiffEditor;
+  readonly #models: readonly monaco.editor.ITextModel[];
+
+  constructor(
+    host: HTMLElement,
+    {
+      path,
+      ours,
+      theirs,
+    }: { readonly path: string; readonly ours: string; readonly theirs: string },
+  ) {
+    configure();
+    const language = languageOf(path);
+    const original = monaco.editor.createModel(ours, language);
+    const modified = monaco.editor.createModel(theirs, language);
+    this.#models = [original, modified];
+    this.#editor = monaco.editor.createDiffEditor(host, {
+      theme: THEME,
+      automaticLayout: true,
+      originalEditable: true,
+      readOnly: true,
+      renderSideBySide: true,
+      editContext: false,
+      minimap: { enabled: false },
+      fontSize: 13,
+      fontFamily: "Consolas, 'Cascadia Mono', Menlo, 'DejaVu Sans Mono', monospace",
+      scrollBeyondLastLine: false,
+    });
+    this.#editor.setModel({ original, modified });
+  }
+
+  /** What the left side has now, as people changed it. */
+  get ours(): string {
+    return this.#models[0]!.getValue();
+  }
+
+  dispose(): void {
+    this.#editor.dispose();
+    for (const model of this.#models) model.dispose();
+  }
+}

@@ -476,6 +476,7 @@ export class TimelineEditor implements TouchTarget {
   #rememberTimer: ReturnType<typeof setTimeout> | undefined;
   #extras: RowExtras | undefined;
   #marked: ReadonlySet<string> = new Set();
+  #repoMarked: ReadonlySet<string> = new Set();
   #roomBelow = NO_ROOM_BELOW;
   #effectContext:
     | {
@@ -583,6 +584,20 @@ export class TimelineEditor implements TouchTarget {
   /** The clips that the last turn of AI changed or made: they have a mark in a corner. */
   get marked(): ReadonlySet<string> {
     return this.#marked;
+  }
+
+  /** The clips that the latest merge of what changed on GitHub changed or made. */
+  get repoMarked(): ReadonlySet<string> {
+    return this.#repoMarked;
+  }
+
+  setRepoMarked(clips: ReadonlySet<string>): void {
+    const same =
+      clips.size === this.#repoMarked.size &&
+      [...clips].every((clip) => this.#repoMarked.has(clip));
+    if (same) return;
+    this.#repoMarked = clips;
+    this.redraw();
   }
 
   setMarked(clips: ReadonlySet<string>): void {

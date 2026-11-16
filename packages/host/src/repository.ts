@@ -15,7 +15,9 @@ import {
   CloudSignedOut,
   RepositoryRefused,
   type RepositoryAccess,
+  type RepositoryBlocked,
   type RepositoryCheck,
+  type RepositoryConflict,
   type RepositoryChoice,
   type RepositoryList,
   type RepositoryRefusal,
@@ -33,7 +35,11 @@ import {
  *   could look, with a `RepositoryCheck`
  * - `POST <api>/projects/<project>/repository` with a `RepositoryLink`
  * - `GET  <api>/projects/<project>/repository`
- * - `POST <api>/projects/<project>/archive`, with `{ replace }` or nothing
+ * - `POST <api>/projects/<project>/archive`, with `{ replace, drop? }` or nothing
+ * - `GET  <api>/projects/<project>/conflicts`, `GET .../conflicts/<id>`,
+ *   `POST .../conflicts/resolve` with `{ ids, keep, seq? }`, `POST .../repository/blocked` with
+ *   `{ path, use: "editor" }`, `POST .../repository/merge-now` with `{ sha }`,
+ *   `POST .../repository/prefer` with `{ prefer }`: merging changes on GitHub
  * - `POST <api>/projects/restore` with `{ existing: { id }, confirmPublic? }`: 201 or 202 with
  *   `{ project: { id, name }, copy }`
  *
@@ -98,7 +104,78 @@ const divergedOf = (value: unknown): RepositoryStatus["diverged"] => {
   const files = texts(value.files) ?? [];
   // Only what is among the files: an older platform says nothing about it.
   const deleted = (texts(value.deleted) ?? []).filter((path) => files.includes(path));
-  return { sha, files, deleted };
+  const pointers = (texts(value.pointers) ?? []).filter((path) => files.includes(path));
+  return {
+    sha,
+    files,
+    deleted,
+    ...(pointers.length > 0 && { pointers }),
+    ...optional("base", text(value.base)),
+  };
+};
+
+const mergeOf = (value: unknown): RepositoryStatus["merge"] => {
+  if (!isObject(value)) return undefined;
+  const sha = text(value.sha);
+  const at = count(value.at);
+  if (sha === undefined || at === undefined) return undefined;
+  return { at, sha, files: count(value.files) ?? 0, url: text(value.url) ?? "" };
+};
+
+const blockedOf = (value: unknown): readonly RepositoryBlocked[] | undefined => {
+  if (!Array.isArray(value)) return undefined;
+  return value.flatMap((item) => {
+    if (!isObject(item)) return [];
+    const path = text(item.path);
+    if (path === undefined) return [];
+    return [
+      { path, reason: text(item.reason) ?? "unreadable", ...optional("detail", text(item.detail)) },
+    ];
+  });
+};
+
+const preferOf = (value: unknown): "editor" | "github" | undefined =>
+  value === "github" || value === "editor" ? value : undefined;
+
+/** A conflict as the platform said it, or undefined for what is none. */
+export const conflictOf = (value: unknown): RepositoryConflict | undefined => {
+  if (!isObject(value)) return undefined;
+  const id = text(value.id);
+  const file = text(value.file);
+  const kind = text(value.kind);
+  const path = texts(value.path);
+  if (id === undefined || file === undefined || kind === undefined || path === undefined)
+    return undefined;
+  const lines = isObject(value.lines) ? value.lines : undefined;
+  const from = count(lines?.from);
+  const to = count(lines?.to);
+  const around = isObject(value.around) ? value.around : undefined;
+  return {
+    id,
+    file,
+    path,
+    label: text(value.label) ?? file,
+    kind,
+    ...(from !== undefined && to !== undefined && { lines: { from, to } }),
+    ...(around && {
+      around: {
+        ...optional("before", text(around.before)),
+        ...optional("after", text(around.after)),
+      },
+    }),
+    ...("ours" in value && { ours: value.ours }),
+    ...("theirs" in value && { theirs: value.theirs }),
+    ...(value.large === true && { large: true }),
+    lost: text(value.lost) ?? "batch",
+    ...optional("oursBy", text(value.oursBy)),
+    ...optional("oursAt", count(value.oursAt)),
+    ...optional("theirsSha", text(value.theirsSha)),
+    ...optional("theirsUrl", text(value.theirsUrl)),
+    ...optional("theirsAt", count(value.theirsAt)),
+    state: text(value.state) ?? "open",
+    at: count(value.at) ?? 0,
+    ...optional("resolvedAt", count(value.resolvedAt)),
+  };
 };
 
 /** How a repository is gone, only where the platform can tell, and in the words the editor knows. */
@@ -156,6 +233,10 @@ export const statusOf = (value: unknown): RepositoryStatus => {
     ...optional("retryAt", count(value.retryAt)),
     ...optional("failures", count(value.failures)),
     ...optional("diverged", divergedOf(value.diverged)),
+    ...optional("merge", mergeOf(value.merge)),
+    ...optional("conflicts", count(value.conflicts)),
+    ...optional("blocked", blockedOf(value.blocked)),
+    ...optional("prefer", preferOf(value.prefer)),
     head: count(value.head) ?? 0,
     archivedSeq: count(value.archivedSeq) ?? 0,
     ...optional("copy", text(value.copy)),
@@ -204,6 +285,10 @@ const CODES: ReadonlySet<string> = new Set<RepositoryRefusal>([
   "tooLarge",
   "tooNew",
   "quota",
+  "behind",
+  "notBlocked",
+  "notRewritten",
+  "noCommonBase",
 ]);
 
 /**
@@ -308,10 +393,53 @@ export function browserRepository(options: BrowserRepositoryOptions): Repository
         await call(
           "POST",
           projectPath(project, "archive"),
-          archive.replace === undefined ? {} : { replace: archive.replace },
+          archive.replace === undefined
+            ? {}
+            : {
+                replace: archive.replace,
+                ...(archive.drop && archive.drop.length > 0 && { drop: archive.drop }),
+              },
           changeMs,
         ),
       );
+    },
+    async conflicts(project) {
+      const answer = await call("GET", projectPath(project, "conflicts"));
+      const list = isObject(answer) && Array.isArray(answer.conflicts) ? answer.conflicts : [];
+      return list.flatMap((item) => conflictOf(item) ?? []);
+    },
+    async conflict(project, id) {
+      const said = conflictOf(
+        await call("GET", projectPath(project, `conflicts/${encodeURIComponent(id)}`)),
+      );
+      if (!said) throw new RepositoryRefused("unavailable");
+      return said;
+    },
+    async resolve(project, choice) {
+      const answer = await call(
+        "POST",
+        projectPath(project, "conflicts/resolve"),
+        {
+          ids: choice.ids,
+          keep: choice.keep,
+          ...(choice.seq !== undefined && { seq: choice.seq }),
+        },
+        changeMs,
+      );
+      return statusOf(isObject(answer) ? answer.status : undefined);
+    },
+    async useEditor(project, path) {
+      return statusOf(
+        await call("POST", projectPath(project, "repository/blocked"), { path, use: "editor" }),
+      );
+    },
+    async mergeNow(project, sha) {
+      return statusOf(
+        await call("POST", projectPath(project, "repository/merge-now"), { sha }, changeMs),
+      );
+    },
+    async prefer(project, prefer) {
+      return statusOf(await call("POST", projectPath(project, "repository/prefer"), { prefer }));
     },
   };
 }

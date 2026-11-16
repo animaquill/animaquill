@@ -640,6 +640,7 @@ function ClipList({ editor }: { editor: TimelineEditor }) {
           data-download={downloadMark(workbench.downloadOfClip(box.clip))}
           data-flash={editor.flashesOn(box.id) || undefined}
           data-ai-changed={editor.marked.has(box.id) || undefined}
+          data-repo-changed={editor.repoMarked.has(box.id) || undefined}
           style={{ left, top, width, height }}
         />
       ))}

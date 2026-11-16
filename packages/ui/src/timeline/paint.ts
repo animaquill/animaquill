@@ -402,8 +402,10 @@ export class TimelinePainter extends StagePainter {
     }
 
     // What AI just changed: a corner, out of the way of the name and the transitions.
-    if (editor.marked.has(box.id) && width >= AI_MARK * 2) {
-      context.fillStyle = this.#theme.selected;
+    // What came from GitHub lately: the same corner, in a colour of its own.
+    const isRepo = editor.repoMarked.has(box.id);
+    if ((isRepo || editor.marked.has(box.id)) && width >= AI_MARK * 2) {
+      context.fillStyle = isRepo ? this.#theme.repo : this.#theme.selected;
       context.beginPath();
       context.moveTo(right - AI_MARK - 1, top + 1);
       context.lineTo(right - 1, top + 1);

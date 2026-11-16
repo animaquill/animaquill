@@ -3,6 +3,7 @@ import { I18nextProvider } from "react-i18next";
 import type { i18n } from "i18next";
 import { ErrorPrompt } from "../diagnostics/ErrorPrompt.tsx";
 import promptStyles from "../diagnostics/ErrorPrompt.module.css";
+import { OpeningView } from "./OpeningView.tsx";
 import { DockArea } from "../dock/DockArea.tsx";
 import { PlaybackClock } from "../timeline/PlaybackClock.tsx";
 import type { Workbench } from "../workbench/workbench.ts";
@@ -86,6 +87,7 @@ function Content() {
       <ReadOnlyBar />
       <main className={styles.dock}>
         <DockArea />
+        <OpeningView />
       </main>
     </div>
   );

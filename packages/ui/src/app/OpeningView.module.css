@@ -1,0 +1,75 @@
+/* Over the editor while a project opens, where that takes a while. */
+.page {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 18vh;
+  background: var(--aq-bg-panel);
+  /* Most openings are over at once: it shows only where one takes a moment. */
+  visibility: hidden;
+  animation: shown 0s 400ms forwards;
+}
+
+@keyframes shown {
+  to {
+    visibility: visible;
+  }
+}
+
+.box h2 {
+  margin: 0 0 14px;
+  color: var(--aq-text-strong);
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.steps {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.steps li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--aq-text);
+}
+
+.steps li[data-state="waiting"] {
+  color: var(--aq-text-muted);
+}
+
+.done {
+  color: var(--aq-success);
+}
+
+.running {
+  color: var(--aq-accent);
+  animation: spin 1s linear infinite;
+}
+
+.waiting {
+  color: var(--aq-text-muted);
+}
+
+.word {
+  color: var(--aq-warning);
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .running {
+    animation: none;
+  }
+}

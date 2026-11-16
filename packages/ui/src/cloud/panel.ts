@@ -81,6 +81,13 @@ export type PanelActionId =
   /** Takes the project away on the platform. */
   | "deleteCloud"
   | "continueWithEditor"
+  /**
+   * What merging changes on GitHub waits for: the conflicts, a rewritten history, files that
+   * would be written back, see `RepoMerges`.
+   */
+  | "resolveMerge"
+  /** Files on GitHub that the merge did not take in, and the ways out. */
+  | "showBlocked"
   | "installApp"
   | "signIn"
   | "reload"
@@ -241,12 +248,21 @@ export function panelInputOf(
 
 const plain = { interpolation: { escapeValue: false } } as const;
 
+/** How long the line about archiving says that changes on GitHub were merged. */
+const MERGE_SHOWN_MS = 24 * 60 * 60_000;
+
 /**
  * What helps with a pause of archiving, the most likely first. Another repository is always
  * there, at the end of the panel, unless it is what helps most.
  */
 const PAUSE_ACTIONS: Readonly<Record<string, readonly PanelActionId[]>> = {
   diverged: ["continueWithEditor"],
+  conflicts: ["resolveMerge"],
+  blocked: ["showBlocked"],
+  locked: [],
+  rewritten: ["resolveMerge"],
+  "too-large": ["continueWithEditor"],
+  unmerged: ["resolveMerge"],
   gone: ["archiveNow"],
   uninstalled: ["installApp"],
   suspended: ["archiveNow"],
@@ -586,7 +602,12 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
           : (PAUSE_ACTIONS[knownPause(status.reason) ?? ""] ?? ["archiveNow"]);
       rows.push(
         row("archive", t("cloud.panel.archive.paused", { reason, ...plain }), {
-          notes: [fix, ...(detail ? [detail] : []), ...(kept ? [kept] : []), ...week],
+          notes: [
+            ...(fix ? [fix] : []),
+            ...(detail ? [detail] : []),
+            ...(kept ? [kept] : []),
+            ...week,
+          ],
           tone: "attention",
           actions: actions(helps),
         }),
@@ -596,8 +617,18 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
       const isBusy = status.archiving || watch.archiveAt !== undefined;
       const detail = isFailing ? pauseDetail(status, t) : undefined;
       const isError = github?.kind === "error";
+      const archived = archiveText(status, watch.archiveAt, now, t);
+      // A merge of what changed on GitHub lately says so first (the design, 10).
+      const merged =
+        status.merge && now - status.merge.at < MERGE_SHOWN_MS
+          ? t("cloud.panel.archive.merged", {
+              count: status.merge.files,
+              archive: archived,
+              ...plain,
+            })
+          : archived;
       rows.push(
-        row("archive", archiveText(status, watch.archiveAt, now, t), {
+        row("archive", merged, {
           notes: [
             ...(isError && github.cause === "failingLong" && github.reason ? [github.reason] : []),
             ...(isError && github.fix && github.cause !== "kept" ? [github.fix] : []),

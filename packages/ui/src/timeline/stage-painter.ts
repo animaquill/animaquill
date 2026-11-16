@@ -28,6 +28,8 @@ export interface Theme {
   readonly effect: string;
   /** The outline of what was just added, for a moment. */
   readonly flash: string;
+  /** The mark of what came from GitHub lately, see `TimelineEditor.repoMarked`. */
+  readonly repo: string;
 }
 
 export function readTheme(element: Element): Theme {
@@ -60,6 +62,7 @@ export function readTheme(element: Element): Theme {
     warning: style.getPropertyValue("--aq-warning").trim(),
     effect: color("effect"),
     flash: color("flash"),
+    repo: color("repo"),
   };
 }
 

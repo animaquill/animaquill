@@ -33,6 +33,10 @@ export function operationText(
   }
   if (source === "ai") return t("operations.ai", { count });
   if (source === "folder") return t("operations.folder", { count });
+  if (source === "github")
+    return operation.away
+      ? t("operations.githubAway", { count, merges: operation.merges ?? 1 })
+      : t("operations.github", { count });
   if (source === "other") return t("operations.other");
   if (commands.some((command) => PROPERTY_COMMANDS.has(command))) {
     const [only] = properties;

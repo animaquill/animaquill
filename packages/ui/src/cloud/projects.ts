@@ -1864,7 +1864,9 @@ export class CloudProjects {
     const status = repository?.status;
     const store = session.store;
     const diverged =
-      status?.state === "paused" && status.reason === "diverged" ? status.diverged : undefined;
+      status?.state === "paused" && (status.reason === "diverged" || status.reason === "too-large")
+        ? status.diverged
+        : undefined;
     if (!repository || !diverged || !store) return;
     const { files } = store.exportFiles();
     const { overwritten, removed, restored } = divergedOutcome(diverged, (path) => files.has(path));

@@ -1,0 +1,286 @@
+/* The list of conflicts with GitHub: wide, as both values stand side by side. */
+.dialog {
+  width: min(1140px, calc(100vw - 32px));
+  max-height: calc(100dvh - 64px);
+  margin-top: 32px;
+  display: flex;
+  flex-direction: column;
+}
+
+.dialog[open] {
+  display: flex;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.head h2 {
+  margin: 0;
+  color: var(--aq-text-strong);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.close {
+  padding: 0 6px;
+  color: var(--aq-text-muted);
+  font-size: 18px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.body {
+  overflow: auto;
+  padding: 0 0 12px;
+}
+
+.state,
+.done {
+  margin: 12px 16px;
+  color: var(--aq-text-muted);
+}
+
+.done {
+  color: var(--aq-success);
+}
+
+.all {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 10px 16px;
+}
+
+.all button,
+.choices button {
+  padding: 3px 10px;
+  color: var(--aq-text);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.all button:disabled,
+.choices button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.group {
+  border-top: 1px solid var(--aq-border);
+}
+
+.groupHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--aq-bg-raised);
+}
+
+.groupTitle {
+  overflow: hidden;
+  color: var(--aq-text-strong);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.link {
+  padding: 0;
+  color: var(--aq-match);
+  font: inherit;
+  font-size: 12px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+/* The part, both sides, and the choices; one under another in a narrow window. */
+.row {
+  display: grid;
+  grid-template-columns: minmax(80px, 160px) minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px 10px;
+  padding: 8px 16px;
+}
+
+.row + .row {
+  border-top: 1px solid var(--aq-border);
+}
+
+@media (max-width: 720px) {
+  .row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .choices {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
+
+/* What only people can settle takes the place of both sides. */
+.only {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  grid-column: span 2;
+  padding: 6px 8px;
+  color: var(--aq-text);
+}
+
+@media (max-width: 720px) {
+  .only {
+    grid-column: auto;
+  }
+}
+
+.part {
+  padding-top: 6px;
+  color: var(--aq-text);
+}
+
+.side {
+  min-width: 0;
+  padding: 6px 8px;
+  background: var(--aq-bg-panel);
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.side[data-using] {
+  border-color: var(--aq-accent);
+}
+
+.whose {
+  margin-bottom: 4px;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+}
+
+.whose .link {
+  margin-left: 6px;
+  font-size: 11px;
+}
+
+.dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  background: var(--aq-text-muted);
+  border-radius: 50%;
+}
+
+.text {
+  color: var(--aq-text-strong);
+  overflow-wrap: anywhere;
+}
+
+.none {
+  color: var(--aq-text-muted);
+}
+
+.json {
+  overflow-wrap: anywhere;
+}
+
+.color {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swatch {
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--aq-border);
+  border-radius: 2px;
+}
+
+.code {
+  max-height: 180px;
+  margin: 0;
+  overflow: auto;
+  font-family: Consolas, "Cascadia Mono", Menlo, "DejaVu Sans Mono", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.side[data-side="here"] .code [data-changed] {
+  background: #c72e2e33;
+}
+
+.side[data-side="github"] .code [data-changed] {
+  background: #4cc38a33;
+}
+
+.choices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.failed {
+  color: var(--aq-danger-text);
+  font-size: 12px;
+}
+
+.handled {
+  margin: 0;
+  padding: 8px 16px;
+  border-top: 1px solid var(--aq-border);
+}
+
+.handled summary {
+  color: var(--aq-text-muted);
+  cursor: pointer;
+}
+
+.handled ul {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.handled li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+.muted {
+  color: var(--aq-text-muted);
+  white-space: nowrap;
+}
+
+.compare {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 16px 12px;
+}
+
+.compareHead {
+  padding: 8px 0;
+  color: var(--aq-text-muted);
+}
+
+.diff {
+  height: min(560px, calc(100dvh - 220px));
+  border: 1px solid var(--aq-border);
+}

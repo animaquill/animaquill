@@ -9,7 +9,7 @@ import { cloudPanel, panelInputOf, type PanelActionId } from "../cloud/panel.ts"
 import settings from "../settings/Settings.module.css";
 import { formatSize } from "../transfer/transfer.ts";
 import { Facts, Group, Heading, Row, Small, length, moment } from "./parts.tsx";
-import { Toggle } from "../settings/parts.tsx";
+import { Segmented, Toggle } from "../settings/parts.tsx";
 import { placeRows, placeSummary } from "../storage/place-choice.ts";
 import styles from "./Project.module.css";
 
@@ -230,6 +230,9 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
           />
         </>
       )}
+      {linked && workbench.repoMerges && repository?.status?.repository && (
+        <PreferRow prefer={repository.status.prefer} />
+      )}
       <Heading>{t("projectProps.storage.local")}</Heading>
       {folder !== undefined ? (
         <>
@@ -305,6 +308,41 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
         </>
       )}
     </Group>
+  );
+}
+
+/**
+ * Which side a merge of changes on GitHub keeps first where both changed the same place (the
+ * design of the start page, 10, screen G3 right): per project, kept by the platform, as merges run
+ * there with no editor open. Only people change it: it is no command, and no AI tool has it.
+ */
+function PreferRow({ prefer }: { readonly prefer: "editor" | "github" | undefined }) {
+  const workbench = useWorkbench();
+  const { t } = useTranslation();
+  const [chosen, setChosen] = useState<"editor" | "github">();
+  const [busy, setBusy] = useState(false);
+  const value = chosen ?? prefer ?? "editor";
+  const change = async (next: "editor" | "github") => {
+    setChosen(next);
+    setBusy(true);
+    const done = (await workbench.repoMerges?.setPrefer(next)) === true;
+    setBusy(false);
+    setChosen(undefined);
+    if (!done) workbench.notifications.push(t("repoMerge.prefer.failed"));
+  };
+  return (
+    <Row id="prefer" name={t("repoMerge.prefer.name")}>
+      <Segmented
+        label={t("repoMerge.prefer.name")}
+        value={value}
+        disabled={busy || prefer === undefined}
+        options={[
+          { value: "editor", label: t("repoMerge.prefer.editor") },
+          { value: "github", label: t("repoMerge.prefer.github") },
+        ]}
+        onChange={(next) => void change(next)}
+      />
+    </Row>
   );
 }
 

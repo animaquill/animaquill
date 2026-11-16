@@ -1,3 +1,5 @@
+import type { RepositoryConflict } from "@animaquill/host";
+import type { ConflictList } from "../cloud/conflicts.ts";
 import type { CloudConnect } from "../cloud/connect.ts";
 import type { CloudCreate } from "../cloud/create.ts";
 import type { RepositoryPicker } from "../cloud/repository-picker.ts";
@@ -182,6 +184,19 @@ export type ProgressRequest = {
   ProgressState;
 
 /** Which assets of the open project go into the large file storage, see `PlacesDialog`. */
+/** The places both the project and GitHub changed, see `ConflictList`. */
+export interface ConflictsDialogOptions {
+  readonly title: string;
+  readonly list: ConflictList;
+  /** An archive is on its way, as the status says. */
+  readonly archiving: () => boolean;
+  /** Goes to what a conflict is about, without closing the dialog. */
+  readonly locate: (conflict: RepositoryConflict) => void;
+  readonly openFile: (path: string) => void;
+  /** Opens an address in a new tab, as a commit on GitHub. */
+  readonly open: (url: string) => void;
+}
+
 export interface PlacesDialogOptions {
   readonly title: string;
   /** Chosen to start with, in place of those the project uses. */
@@ -198,6 +213,7 @@ export type DialogRequest =
   | ({ readonly kind: "create"; readonly id: number } & CreateDialogOptions)
   | ({ readonly kind: "reconcile"; readonly id: number } & ReconcileDialogOptions)
   | ({ readonly kind: "places"; readonly id: number } & PlacesDialogOptions)
+  | ({ readonly kind: "conflicts"; readonly id: number } & ConflictsDialogOptions)
   | ProgressRequest;
 
 type DialogValue = string | boolean | FormAnswer | undefined;
@@ -247,6 +263,11 @@ export class Dialogs {
   /** Resolves to whether people started to send files, or to false when they cancelled. */
   async places(options: PlacesDialogOptions): Promise<boolean> {
     return (await this.#ask({ kind: "places", id: this.#nextId++, ...options })) === true;
+  }
+
+  /** Stays until people close it, or another dialog takes its place. */
+  async conflicts(options: ConflictsDialogOptions): Promise<void> {
+    await this.#ask({ kind: "conflicts", id: this.#nextId++, ...options });
   }
 
   /**

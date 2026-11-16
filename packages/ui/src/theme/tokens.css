@@ -69,6 +69,8 @@
   --aq-timeline-curve: #2aaaff;
   --aq-timeline-handle: #c8c8c8;
   --aq-timeline-effect: #9a5ce6;
+  /** What came from GitHub lately, as AI's changes have the colour of selection. */
+  --aq-timeline-repo: #b07cff;
   --aq-timeline-flash: #2aaaff;
 
   /* What the preview draws over the picture: it has to stand out on any picture. */

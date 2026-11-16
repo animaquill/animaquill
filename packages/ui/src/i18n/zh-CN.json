@@ -1337,7 +1337,8 @@
       "you": "你",
       "ai": "AI",
       "folder": "外部文件",
-      "other": "其他窗口"
+      "other": "其他窗口",
+      "github": "GitHub"
     },
     "ai": "AI：改了 {{count}} 处",
     "aiLabel": "AI：“{{label}}”改了 {{count}} 处",
@@ -1445,7 +1446,9 @@
         "update": "改标记",
         "remove": "删除标记"
       }
-    }
+    },
+    "github": "GitHub 上的改动（{{count}} 个文件）",
+    "githubAway": "你不在时合并了 GitHub 上的改动（{{merges}} 次，{{count}} 个文件）"
   },
   "input": {
     "label": "输入方式",
@@ -2500,7 +2503,8 @@
     "text": {
       "synced": "已同步",
       "pending": "待同步",
-      "error": "同步失败"
+      "error": "同步失败",
+      "conflicts": "同步失败 · {{count}} 处冲突"
     },
     "reason": {
       "failingLong": "已经连续 {{hours}} 个多小时没能存进去（GitHub 暂时连不上、限流，或者平台出了错）",
@@ -4418,7 +4422,8 @@
         "retry": "上次没存成，{{time}} 再试",
         "paused": "存档先停着：{{reason}}",
         "archiveAt": "1 分钟内只能存一次档，{{count}} 秒后自动存",
-        "notSent": "还有改动没发到云端，发过去以后才会存。"
+        "notSent": "还有改动没发到云端，发过去以后才会存。",
+        "merged": "合并了 GitHub 上的改动（{{count}} 个文件），{{archive}}"
       },
       "local": {
         "browser": "没有文件夹，项目放在这个浏览器里",
@@ -4456,7 +4461,9 @@
         "saveAsLocal": "另存为本地项目…",
         "deleteCloud": "删除云端项目…",
         "takeBack": "接回",
-        "wakeAsItIs": "我已在 GitHub 上修好，按现在的样子取回"
+        "wakeAsItIs": "我已在 GitHub 上修好，按现在的样子取回",
+        "resolveMerge": "处理…",
+        "showBlocked": "查看…"
       }
     },
     "onlyHere": {
@@ -4687,7 +4694,13 @@
       "transferred": "仓库已经转到别的账号下",
       "manifest": "项目信息文件 animaquill.json 不合格式",
       "invalid": "要存的文件读出来不是一个完整的项目",
-      "other": "{{reason}}"
+      "other": "{{reason}}",
+      "conflicts": "有 {{count}} 处和 GitHub 上的改动冲突",
+      "blocked": "GitHub 上的 {{files}} 没有并进来",
+      "locked": "项目锁着，GitHub 上的改动没有并进来",
+      "rewritten": "GitHub 上的历史被改写了",
+      "too-large": "GitHub 上改了 {{count}} 个文件，一次并不进来",
+      "unmerged": "GitHub 上去掉的 {{count}} 个文件还在项目里"
     },
     "fix": {
       "diverged": "为了不盖掉这些改动，存档先停下。可以以编辑器的内容接着存，GitHub 上的那一版会留在存档历史里；也可以换一个仓库。",
@@ -4701,7 +4714,13 @@
       "transferred": "换一个仓库，原来那个仓库里的存档留在那里。",
       "manifest": "在编辑器里改好以后会自动接着存。",
       "invalid": "在编辑器里改好以后会自动接着存。",
-      "other": "可以点“现在存档”再试，或者换一个仓库。"
+      "other": "可以点“现在存档”再试，或者换一个仓库。",
+      "conflicts": "",
+      "blocked": "",
+      "locked": "解锁以后会自动再合并。",
+      "rewritten": "",
+      "too-large": "",
+      "unmerged": ""
     },
     "replaceTitle": "以编辑器的内容接着存？",
     "replaceMessage": "存档会接在 GitHub 上的这一版后面，用编辑器的内容写项目的文件。GitHub 上的那一版留在存档历史里，可以找回。项目以外的文件不会动。",
@@ -5594,6 +5613,117 @@
       "cleared": "去掉了{{kind}}{{name}}的{{field}}",
       "lines": "改了{{kind}}{{name}}（+{{added}} −{{removed}} 行）",
       "fieldsMore": "{{line}}等 {{count}} 项"
+    }
+  },
+  "repoMerge": {
+    "notice": {
+      "merged": "合并了 GitHub 上的改动：{{count}} 个文件",
+      "away": "你不在时合并了 GitHub 上的改动（{{merges}} 次，{{count}} 个文件）",
+      "show": "查看",
+      "conflicts": "GitHub 上的改动和这里有 {{count}} 处冲突",
+      "resolve": "处理…"
+    },
+    "showTitle": "GitHub 上的改动（{{count}} 个文件）",
+    "changes": "改了什么",
+    "list": {
+      "title": "和 GitHub 上的改动冲突的地方（{{count}} 处）",
+      "titleDone": "和 GitHub 上的改动冲突的地方",
+      "keepAll": "全部保留这里的",
+      "takeAll": "全部换成 GitHub 的",
+      "here": "这里",
+      "github": "GitHub 上",
+      "using": "现在用",
+      "take": "换成 GitHub 的",
+      "keep": "保留这里的",
+      "deleteToo": "也删掉",
+      "locate": "定位",
+      "compare": "在代码编辑器里对比",
+      "openFile": "打开文件",
+      "seen": "看过了",
+      "handled": "已处理 {{count}} 处",
+      "stale": "后来又改过",
+      "tookTheirs": "换成了 GitHub 的",
+      "keptOurs": "保留了这里的",
+      "done": "都处理好了",
+      "archiving": "正在存进 GitHub…",
+      "loading": "正在读…",
+      "failed": "读不出来",
+      "retry": "重试",
+      "removed": "删掉了",
+      "wholeFile": "整个文件",
+      "lines": "第 {{from}}–{{to}} 行",
+      "keyframes": "{{count}} 个关键帧",
+      "duplicate": "可能重复了一段",
+      "assetFile": "素材的文件",
+      "removedLink": "引用的东西这里删掉了",
+      "large": "内容太长，点开看",
+      "notTaken": "换不了：这一处后来又改过",
+      "notTakenOther": "换不了",
+      "busy": "没能存下选择，请再试一次",
+      "you": "你",
+      "editor": "编辑器",
+      "close": "关闭",
+      "takeHere": "换成这里的",
+      "keepGithub": "保留 GitHub 的",
+      "tookHere": "换成了这里的",
+      "keptGithub": "保留了 GitHub 的",
+      "commit": "存档 {{sha}}",
+      "project": "项目",
+      "line": "第 {{line}} 行"
+    },
+    "compare": {
+      "title": "{{file}}：这里 ↔ GitHub 上",
+      "save": "用左边的",
+      "cancel": "取消"
+    },
+    "blocked": {
+      "title": "GitHub 上有文件没有并进来",
+      "openOnGitHub": "在 GitHub 上打开",
+      "useHere": "用这里的覆盖…",
+      "deleteOnGitHub": "从 GitHub 上删掉…",
+      "useHereTitle": "用这里的内容覆盖 GitHub 上的 {{path}}？",
+      "deleteTitle": "从 GitHub 上删掉 {{path}}？",
+      "useHereMessage": "GitHub 上这次对这个文件的改动不会进来，GitHub 的历史里还在。",
+      "confirmUse": "覆盖",
+      "confirmDelete": "删掉",
+      "reason": {
+        "unreadable": "不是能读的文本，或者太大",
+        "invalid": "格式不对",
+        "locked": "项目锁着"
+      }
+    },
+    "rewritten": {
+      "title": "GitHub 上的历史被改写了",
+      "continue": "以这里的内容接着存",
+      "mergeNow": "把 GitHub 上现在的版本并进来",
+      "switch": "换一个仓库…",
+      "restored": "接着存会把 GitHub 上已经去掉的这些文件重新提交"
+    },
+    "unmerged": {
+      "title": "GitHub 上去掉的文件还在项目里",
+      "message": "接着存会把 GitHub 上已经去掉的这些文件重新提交。",
+      "drop": "从项目里去掉",
+      "keep": "重新提交",
+      "allDrop": "全部去掉",
+      "allKeep": "全部重新提交",
+      "confirm": "接着存",
+      "status": "项目里有，GitHub 上已经去掉"
+    },
+    "prefer": {
+      "name": "GitHub 上和这里改了同一处时，先用",
+      "editor": "这里的",
+      "github": "GitHub 上的",
+      "failed": "没能改，请再试一次"
+    },
+    "opening": {
+      "title": "正在打开「{{name}}」",
+      "log": "读这台电脑上的记录",
+      "cloud": "从云端取最新的改动",
+      "folder": "和文件夹对比",
+      "offline": "离线",
+      "slow": "云端响应慢，先打开了",
+      "failed": "没连上，先打开了",
+      "seconds": "（{{count}} 秒）"
     }
   }
 }
