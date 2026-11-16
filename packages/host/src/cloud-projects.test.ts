@@ -42,8 +42,11 @@ const hanging = (_sent: Sent, signal: AbortSignal | undefined) =>
 const FULL = {
   id: "p1",
   name: "原子是什么",
+  description: "一个讲原子的短片",
   createdAt: 100,
   updatedAt: 200,
+  openedAt: 190,
+  releaseAt: 190 + 7 * 86_400_000,
   copy: "live",
   size: { documents: 4096, assets: { count: 3, bytes: 900, elsewhere: 1 } },
   repository: {
@@ -67,6 +70,21 @@ describe("the list of projects of the platform", () => {
     expect(projectSummaryOf({ ...FULL, somethingNew: true })).toEqual(FULL);
   });
 
+  test("reads when the copy is let go of, and when it was", () => {
+    expect(
+      projectSummaryOf({ id: "p1", name: "a", updatedAt: 5, releaseAt: 99, openedAt: 7 }),
+    ).toEqual({
+      id: "p1",
+      name: "a",
+      updatedAt: 5,
+      releaseAt: 99,
+      openedAt: 7,
+    });
+    expect(
+      projectSummaryOf({ id: "p1", name: "a", updatedAt: 5, copy: "released", releasedAt: 42 }),
+    ).toEqual({ id: "p1", name: "a", updatedAt: 5, copy: "released", releasedAt: 42 });
+  });
+
   test("takes a platform that says only what it always said", () => {
     expect(projectSummaryOf({ id: "p1", name: "原子", updatedAt: 5 })).toEqual({
       id: "p1",
@@ -82,6 +100,10 @@ describe("the list of projects of the platform", () => {
         name: "原子",
         updatedAt: 5,
         createdAt: "yesterday",
+        description: 3,
+        openedAt: "today",
+        releaseAt: "soon",
+        releasedAt: null,
         copy: 3,
         size: { documents: "big" },
         repository: { id: "7", owner: "ada", name: "atom" },
