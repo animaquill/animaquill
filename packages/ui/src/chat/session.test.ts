@@ -263,6 +263,56 @@ describe("the chat", () => {
     expect(markers()).toHaveLength(2);
   });
 
+  it("goes back to before a turn: that one and every later one, and does them again", async () => {
+    const { chat, fake, markers, first } = setup();
+    fake({ fake: [{ calls: [addMarker("1")] }, { text: "一" }] });
+    const one = (await chat.send("第一轮"))?.task as string;
+    fake({ fake: [{ calls: [addMarker("2"), addMarker("3")] }, { text: "二" }] });
+    const two = (await chat.send("第二轮"))?.task as string;
+    // Another conversation's change and people's own stay.
+    first.execute(
+      { type: "marker.add", params: { timeline: "main", time: "4", name: "别的" } },
+      { origin: "ai:elsewhere" },
+    );
+    expect(markers()).toHaveLength(4);
+    expect(chat.canGoBack(one)).toBe(true);
+    const plan = chat.backPlan(one);
+    expect(plan).toMatchObject({
+      from: one,
+      places: 3,
+      kept: 0,
+      rows: [
+        { task: one, places: 1, kept: 0 },
+        { task: two, places: 2, kept: 0 },
+      ],
+    });
+    const outcome = await chat.backTo(plan as NonNullable<typeof plan>);
+    expect(outcome).toEqual({ done: true, places: 3, taken: [two, one] });
+    expect(markers().map(({ name }) => name)).toEqual(["别的"]);
+    expect(chat.canGoBack(one)).toBe(false);
+    expect([chat.undoState(one), chat.undoState(two)]).toEqual(["redo", "redo"]);
+    await chat.redoBack(outcome?.done ? outcome.taken : []);
+    expect(markers()).toHaveLength(4);
+  });
+
+  it("goes back to before a turn only as the list said", async () => {
+    const { chat, fake, markers, first } = setup();
+    fake({ fake: [{ calls: [addMarker("1")] }, { text: "一" }] });
+    const one = (await chat.send("第一轮"))?.task as string;
+    const plan = chat.backPlan(one) as NonNullable<ReturnType<typeof chat.backPlan>>;
+    // People take away what the turn added while the list is open.
+    const [marker] = markers();
+    first.execute({
+      type: "marker.remove",
+      params: { timeline: "main", marker: (marker as { id: string }).id },
+    });
+    const outcome = await chat.backTo(plan);
+    expect(outcome).toMatchObject({
+      done: false,
+      plan: { places: 0, rows: [{ task: one, whyNot: "changed" }] },
+    });
+  });
+
   it("keeps conversations by project, and comes back to the last one", async () => {
     const { chat, chats, fake, open, first } = setup();
     fake({ fake: [{ text: "第一个项目的回答" }] });

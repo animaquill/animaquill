@@ -53,7 +53,7 @@ const rename = (store: ProjectStore, name: string, options: ExecuteOptions = {})
 
 /** Everything a store would keep of its undo logs, through JSON as a host could keep it. */
 const saved = (store: ProjectStore): unknown[] =>
-  store.undoOrigins.map((origin) => JSON.parse(JSON.stringify(store.saveUndo(origin))));
+  store.loggedOrigins.map((origin) => JSON.parse(JSON.stringify(store.saveUndo(origin))));
 
 /** The project closed and opened again, with what was saved of its undo logs at some time. */
 function reopened(store: ProjectStore | Uint8Array, records: readonly unknown[]): ProjectStore {
@@ -282,7 +282,7 @@ describe("undo logs saved and read again", () => {
     const store = open();
     rename(store, "AI 改的", { origin: AI });
     store.forgetUndo(AI);
-    expect(store.undoOrigins).toEqual([]);
+    expect(store.loggedOrigins).toEqual([]);
     expect(store.saveUndo(AI)).toBeUndefined();
   });
 

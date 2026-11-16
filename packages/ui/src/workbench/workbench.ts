@@ -816,6 +816,9 @@ export class Workbench {
       }),
       undone: (result) => this.tellUndo(result),
       takeBack: (task, direction) => this.takeBackOrigin(aiTask(task), direction),
+      takeBackMany: (tasks, direction, expected) =>
+        this.undo.takeBackMany(tasks.map(aiTask), direction, expected),
+      undoStateOf: (task) => this.undo.stateOf(aiTask(task)),
       memory: host.windowMemory,
       // Pictures of the account's conversations come here as they are read.
       images:

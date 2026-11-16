@@ -26,6 +26,8 @@ export interface SavedStep {
 export interface SavedEntry {
   readonly steps: readonly SavedStep[];
   readonly facts: readonly ClipFact[] | null;
+  /** When it was made, see `UndoEntry.made`. Records saved before 2026-11-16 do not say. */
+  readonly made?: number;
   readonly danglingBefore: readonly string[];
   readonly danglingAfter: readonly string[];
 }
@@ -114,6 +116,7 @@ const isEntry = (value: unknown): value is SavedEntry =>
   Array.isArray(value.steps) &&
   value.steps.every(isStep) &&
   (value.facts === null || Array.isArray(value.facts)) &&
+  (value.made === undefined || Number.isFinite(value.made)) &&
   isStrings(value.danglingBefore) &&
   isStrings(value.danglingAfter);
 

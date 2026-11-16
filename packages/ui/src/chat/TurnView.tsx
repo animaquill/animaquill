@@ -1,6 +1,14 @@
 import type { AttachedImage, Conversation, RunningTask, TaskOutcome } from "@animaquill/agent";
 import { failureOf, promptOf } from "@animaquill/agent";
-import { ChevronDown, ChevronRight, Copy, GitBranchPlus, Lightbulb, RotateCcw } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  GitBranchPlus,
+  History,
+  Lightbulb,
+  RotateCcw,
+} from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { ChatImageHeld } from "@animaquill/host";
 import { useTranslation } from "react-i18next";
@@ -10,6 +18,7 @@ import styles from "./ChatPanel.module.css";
 import { useNow } from "./clock.ts";
 import { useOpened } from "./expanded.ts";
 import { failureText } from "./failure.ts";
+import { GoBack, type GoingBack } from "./GoBack.tsx";
 import { LargePicture, usePicture } from "./AttachmentsView.tsx";
 import { Markdown } from "./markdown/Markdown.tsx";
 import { RefChip, RefText } from "./RefChip.tsx";
@@ -126,10 +135,15 @@ function UserView(props: {
   readonly busy: boolean;
   readonly onForked: () => void;
 }) {
-  const { chat, notifications } = useWorkbench();
+  const workbench = useWorkbench();
+  const { chat, notifications } = workbench;
   const { t } = useTranslation();
   const [asking, setAsking] = useState(false);
+  const [going, setGoing] = useState<GoingBack>();
   const { turn } = props;
+  // What can be taken back changes with the project, and with what other windows did.
+  useSyncExternalStore(workbench.undo.subscribe, workbench.undo.getSnapshot);
+  const canGoBack = chat.canGoBack(turn.task);
   const changed = summaryOf(turn.entries).changes.length;
   const resend = () => {
     if (changed > 0 && chat.undoState(turn.task) === "undo") setAsking(true);
@@ -169,6 +183,24 @@ function UserView(props: {
             <RotateCcw size={12} aria-hidden />
           </button>
         )}
+        {canGoBack && (
+          <button
+            type="button"
+            className={styles.icon}
+            aria-label={t("chat.user.back")}
+            title={t("chat.user.back")}
+            aria-expanded={going !== undefined && !("outcome" in going)}
+            disabled={props.busy}
+            data-testid="chat-user-back"
+            onClick={() => {
+              const plan = chat.backPlan(turn.task);
+              setAsking(false);
+              setGoing(plan && { plan });
+            }}
+          >
+            <History size={12} aria-hidden />
+          </button>
+        )}
         <button
           type="button"
           className={styles.icon}
@@ -183,6 +215,14 @@ function UserView(props: {
           <GitBranchPlus size={12} aria-hidden />
         </button>
       </div>
+      {going && (
+        <GoBack
+          going={going}
+          running={props.busy}
+          onChange={setGoing}
+          onClose={() => setGoing(undefined)}
+        />
+      )}
       {asking && (
         <div className={styles.confirm} data-testid="chat-resend-confirm">
           <p>{t("chat.user.resendAsk", { count: changed })}</p>

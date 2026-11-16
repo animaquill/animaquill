@@ -2594,8 +2594,11 @@ export interface UndoStore {
   forget(project: string): Promise<void>;
   /** Hears what other windows save or take away. Returns how to stop. */
   listen(listener: (project: string, origin: string) => void): () => void;
-  /** Runs `run` while no other window does the same for this origin, as a Web Lock. */
-  exclusive<T>(project: string, origin: string, run: () => Promise<T> | T): Promise<T>;
+  /**
+   * Runs `run` while no other window does the same for this project, as a Web Lock. One lock for the
+   * whole project: taking back several origins at once and one at a time cannot pass each other.
+   */
+  exclusive<T>(project: string, run: () => Promise<T> | T): Promise<T>;
 }
 
 export type TrialStore = WindowPlaces;

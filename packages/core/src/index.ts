@@ -449,6 +449,7 @@ export {
   type UndoOutlook,
   type WrittenKey,
   type UndoResult,
+  type ManyUndoResult,
   type Origin,
 } from "./store.ts";
 export { UNDO_FORMAT, isUndoRecord, type UndoRecord } from "./undo-record.ts";

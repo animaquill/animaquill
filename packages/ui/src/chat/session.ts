@@ -22,11 +22,16 @@ import {
 } from "@animaquill/agent";
 import {
   aiTask,
+  objectKey,
+  objectOfPath,
   type ClipDescription,
   type ClipState,
+  type CommandFailure,
   type ProblemSet,
   type ProjectState,
   type ProjectStore,
+  type ManyUndoResult,
+  type Path,
   type StaticInputs,
   type UndoResult,
 } from "@animaquill/core";
@@ -60,6 +65,12 @@ import {
 } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
 import {
+  planKey,
+  type ManyTakeBack,
+  type UndoState,
+  type UndoWhyNot,
+} from "../workbench/undo-keeper.ts";
+import {
   askingIn,
   changesIn,
   cleanTitle,
@@ -73,6 +84,7 @@ import { DEFAULT_IMAGE_BYTES, DEFAULT_SHOT_SIZE, type ShotSize } from "./shots.t
 import type { ModelPacks } from "./packs.ts";
 import type { AiSettingsStore } from "./settings.ts";
 import { clipsOf, summaryOf } from "./summary.ts";
+import { groupsOf } from "./turns.ts";
 
 /**
  * Why a message cannot go out yet, before any service is asked. Through the relay of the platform:
@@ -194,6 +206,17 @@ export interface ChatSessionOptions {
    * `UndoKeeper`. Without it the store does it right away, and `undone` says what came of it.
    */
   readonly takeBack?: (task: string, direction: "undo" | "redo") => Promise<unknown>;
+  /**
+   * Takes back several tasks at once, or does them again, one window at a time, see
+   * `UndoKeeper.takeBackMany`. Without it the store does it right away.
+   */
+  readonly takeBackMany?: (
+    tasks: readonly string[],
+    direction: "undo" | "redo",
+    expected?: string,
+  ) => Promise<ManyTakeBack | undefined>;
+  /** Whether a task can be taken back here, and why not, see `UndoKeeper.stateOf`. */
+  readonly undoStateOf?: (task: string) => UndoState;
   /** For tests: a service that answers from a script, instead of the one people chose. */
   readonly fake?: () => FakeEndpoint | undefined;
   /** The memory of this window, where drafts and the conversation open are kept. */
@@ -1123,6 +1146,137 @@ export class ChatSession {
     return undefined;
   }
 
+  /** The tasks of the open conversation from this one on, the oldest first. */
+  #tasksFrom(task: string): readonly string[] {
+    const tasks = this.#snapshot.conversation?.tasks ?? [];
+    const at = tasks.indexOf(task);
+    return at < 0 ? [] : tasks.slice(at);
+  }
+
+  /**
+   * Whether going back to before this turn would take something back: of this turn or a later
+   * one of this conversation. Nothing else is ever taken back by it.
+   */
+  canGoBack(task: string): boolean {
+    const store = this.#project?.store;
+    return (
+      store !== undefined && this.#tasksFrom(task).some((each) => store.canUndoOrigin(aiTask(each)))
+    );
+  }
+
+  /**
+   * What going back to before this turn would take back now: this turn and every later one of the
+   * open conversation, the AI's changes only. Turns that cannot go back are listed with why, where
+   * they changed something; those already taken back, or that changed nothing, are not.
+   */
+  backPlan(task: string): BackPlan | undefined {
+    const store = this.#project?.store;
+    const tasks = this.#tasksFrom(task);
+    if (!store || tasks.length === 0) return undefined;
+    const plan = store.undoOrigins(tasks.map(aiTask), { dryRun: true });
+    return this.#backPlanOf(task, tasks, plan);
+  }
+
+  #backPlanOf(from: string, tasks: readonly string[], plan: ManyUndoResult): BackPlan {
+    const of = new Map(plan.ok ? plan.each.map(({ origin, result }) => [origin, result]) : []);
+    const entries = this.#snapshot.conversation?.getSnapshot().entries ?? [];
+    const rows: BackRow[] = [];
+    for (const task of tasks) {
+      const result = of.get(aiTask(task));
+      if (result?.ok) {
+        rows.push({
+          task,
+          places: objectsIn(result.patches.map(({ path }) => path)),
+          kept: objectsIn(result.kept),
+        });
+        continue;
+      }
+      const group = groupsOf(entries).find(({ user }) => user.task === task);
+      const changed = group ? summaryOf(group.entries).changes.length : 0;
+      if (result?.error.code === "undo-blocked") {
+        const whyNot = result.error.obstacle ?? "changed";
+        rows.push({
+          task,
+          places: changed || objectsIn(result.error.conflicts ?? []),
+          kept: 0,
+          whyNot,
+        });
+        continue;
+      }
+      // No log of it here: gone, or made on another device; or taken back already.
+      const state = this.#options.undoStateOf?.(task);
+      if (changed > 0 && state?.direction === undefined && state?.whyNot !== undefined) {
+        rows.push({ task, places: changed, kept: 0, whyNot: state.whyNot });
+      }
+    }
+    const going = rows.filter((row) => row.whyNot === undefined);
+    return {
+      from,
+      rows,
+      places: going.reduce((sum, row) => sum + row.places, 0),
+      kept: going.reduce((sum, row) => sum + row.kept, 0),
+      key: planKey(plan),
+    };
+  }
+
+  /**
+   * Goes back to before a turn as `plan` said: takes back that turn and every later one of this
+   * conversation, the newest first, each as its card would. Where what would go back now is not
+   * what the plan said, nothing goes back and the outcome says what would now. The messages stay.
+   */
+  async backTo(plan: BackPlan): Promise<BackOutcome | undefined> {
+    const store = this.#project?.store;
+    const tasks = this.#tasksFrom(plan.from);
+    if (!store || tasks.length === 0) return undefined;
+    const origins = tasks.map(aiTask);
+    const many: ManyTakeBack | undefined = this.#options.takeBackMany
+      ? await this.#options.takeBackMany(tasks, "undo", plan.key)
+      : (() => {
+          const now = store.undoOrigins(origins, { dryRun: true });
+          if (planKey(now) !== plan.key) return { done: false, plan: now } as const;
+          const going = now.ok
+            ? now.each.filter(({ result }) => result.ok).map(({ origin }) => origin)
+            : [];
+          return { done: true, result: store.undoOrigins(going) } as const;
+        })();
+    this.#set({ undoTick: this.#snapshot.undoTick + 1 });
+    if (!many) return undefined;
+    if (!many.done) return { done: false, plan: this.#backPlanOf(plan.from, tasks, many.plan) };
+    const each = many.result.ok ? many.result.each : [];
+    const taken: string[] = [];
+    let places = 0;
+    let failed: { task: string; error: CommandFailure } | undefined;
+    for (const { origin, result } of each) {
+      const task = origin.slice("ai:".length);
+      if (result.ok) {
+        taken.push(task);
+        places += objectsIn(result.patches.map(({ path }) => path));
+      } else {
+        failed ??= { task, error: result.error };
+      }
+    }
+    if (!many.result.ok) failed = { task: plan.from, error: many.result.error };
+    const last = this.#lastTask();
+    if (last !== undefined && taken.includes(last)) {
+      this.#unmarked = last;
+      this.#mark(this.#snapshot.conversation?.getSnapshot().entries ?? []);
+    }
+    return { done: true, places, taken, ...(failed && { failed }) };
+  }
+
+  /** Does again what going back to before a turn took back, the oldest first. */
+  async redoBack(taken: readonly string[]): Promise<void> {
+    const store = this.#project?.store;
+    if (!store || taken.length === 0) return;
+    if (this.#options.takeBackMany) await this.#options.takeBackMany(taken, "redo");
+    else store.redoOrigins(taken.map(aiTask));
+    if (this.#unmarked !== undefined && taken.includes(this.#unmarked)) {
+      this.#unmarked = undefined;
+      this.#mark(this.#snapshot.conversation?.getSnapshot().entries ?? []);
+    }
+    this.#set({ undoTick: this.#snapshot.undoTick + 1 });
+  }
+
   /** What people asked for in a task of the open conversation, on one line. */
   labelOf(task: string): string | undefined {
     const entries = this.#snapshot.conversation?.getSnapshot().entries ?? [];
@@ -1161,6 +1315,46 @@ export class ChatSession {
     this.#set({ undoTick: this.#snapshot.undoTick + 1 });
   }
 }
+
+/** A turn in the list of "back to before this turn": what of it goes back, or why nothing can. */
+export interface BackRow {
+  readonly task: string;
+  /** How many objects go back; or for one that cannot, how many it changed. */
+  readonly places: number;
+  /** How many objects of it stay, because they were changed since. */
+  readonly kept: number;
+  readonly whyNot?: UndoWhyNot;
+}
+
+/** What "back to before this turn" would do now, see `ChatSession.backPlan`. */
+export interface BackPlan {
+  /** The turn it goes back to before. */
+  readonly from: string;
+  /** Each turn from that one on that has something to say, the oldest first. */
+  readonly rows: readonly BackRow[];
+  readonly places: number;
+  readonly kept: number;
+  /** What it was worked out from, see `planKey`. */
+  readonly key: string;
+}
+
+/** What came of going back to before a turn, see `ChatSession.backTo`. */
+export type BackOutcome =
+  /** The project changed since the list was shown: nothing went back, and this is what would now. */
+  | { readonly done: false; readonly plan: BackPlan }
+  | {
+      readonly done: true;
+      /** How many objects went back. */
+      readonly places: number;
+      /** The turns that went back, to do them again. */
+      readonly taken: readonly string[];
+      /** The first turn that did not go back although it should have, and why. */
+      readonly failed?: { readonly task: string; readonly error: CommandFailure };
+    };
+
+/** How many objects these paths are of. */
+const objectsIn = (paths: readonly Path[]): number =>
+  new Set(paths.map((path) => objectKey(objectOfPath(path)))).size;
 
 const REASONING_LEVELS: ReadonlySet<string> = new Set(REASONING);
 

@@ -3721,7 +3721,18 @@
       "fork": "从这里开新对话",
       "resendAsk": "这一轮的 {{count}} 处改动要先撤销吗？",
       "undoThenResend": "撤销后重发",
-      "keepResend": "保留改动重发"
+      "keepResend": "保留改动重发",
+      "back": "回到这一轮之前"
+    },
+    "back": {
+      "title": "撤掉 {{turns}} 轮的 {{count}} 处改动",
+      "nothing": "这几轮的改动都撤不了",
+      "places": "{{count}} 处",
+      "kept": "后来改过的 {{count}} 处保留",
+      "go": "撤掉",
+      "done": "撤掉了 {{count}} 处",
+      "donePartly": "撤掉了 {{count}} 处，第 {{turn}} 轮没撤成",
+      "redo": "重做"
     },
     "onboard": {
       "title": "用你自己的 AI 服务",

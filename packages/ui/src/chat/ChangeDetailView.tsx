@@ -235,9 +235,6 @@ function CodeDiff({ origin, code }: { origin: Origin; code: CodeDetail }) {
       ).hunks;
   return (
     <div className={styles.code}>
-      <div className={styles.codePath} title={path}>
-        {path}
-      </div>
       {shown.length > 0 && (
         <div className={styles.codeLines} data-testid="chat-change-code">
           {shown.map((hunk, index) => (

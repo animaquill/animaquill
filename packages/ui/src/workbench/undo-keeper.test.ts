@@ -4,7 +4,7 @@ import { createProject } from "@animaquill/schema";
 import { describe, expect, it, vi } from "vitest";
 import { Emitter } from "./emitter.ts";
 import { OperationLog } from "./operations.ts";
-import { UndoKeeper } from "./undo-keeper.ts";
+import { UndoKeeper, planKey } from "./undo-keeper.ts";
 
 const KEY = "project-1";
 const TASK = aiTask("t1");
@@ -149,6 +149,90 @@ describe("undo logs that last across reloads", () => {
     });
     expect((await two.keeper.takeBack(TASK, "redo"))?.ok).toBe(true);
     await vi.waitFor(() => expect(store.getState().timelines["main"]?.clips["c1"]).toBeDefined());
+  });
+
+  it("take back several tasks only once when two windows ask at the same time", async () => {
+    const place = new MemoryUndoPlace();
+    const { store, add } = opened();
+    const twin = reopened(store);
+    sync(store, twin);
+    const one = window(store, slow(memoryUndo(place)));
+    const two = window(twin, slow(memoryUndo(place)));
+    const second = aiTask("t2");
+    add(store, "c1", TASK);
+    add(store, "c2", second, "1");
+    await one.keeper.flush();
+    await vi.waitFor(() => expect(twin.canUndoOrigin(second)).toBe(true), { timeout: 2000 });
+    // Both show people the same list.
+    const shown = planKey(one.keeper.planMany([TASK, second], "undo") as never);
+    expect(planKey(two.keeper.planMany([TASK, second], "undo") as never)).toBe(shown);
+    const results = await Promise.all([
+      one.keeper.takeBackMany([TASK, second], "undo", shown),
+      two.keeper.takeBackMany([TASK, second], "undo", shown),
+    ]);
+    // The second sees in its turn that nothing is as it was shown, and leaves it.
+    expect(results.map((result) => result?.done)).toEqual([true, false]);
+    await vi.waitFor(() => expect(store.getState()).toEqual(twin.getState()));
+    expect(store.getState().timelines["main"]?.clips["c1"]).toBeUndefined();
+    expect(store.getState().timelines["main"]?.clips["c2"]).toBeUndefined();
+    // Done again as a whole in the other window, as the first saved.
+    await vi.waitFor(() => expect(two.keeper.stateOf(TASK)).toEqual({ direction: "redo" }), {
+      timeout: 2000,
+    });
+    const again = await two.keeper.takeBackMany([TASK, second], "redo");
+    expect(
+      again?.done && again.result.ok && again.result.each.map(({ result }) => result.ok),
+    ).toEqual([true, true]);
+    await vi.waitFor(() => expect(store.getState().timelines["main"]?.clips["c2"]).toBeDefined());
+  });
+
+  it("take back once when one window takes back a task and another all of them", async () => {
+    const place = new MemoryUndoPlace();
+    const { store, add } = opened();
+    const twin = reopened(store);
+    sync(store, twin);
+    const one = window(store, slow(memoryUndo(place)));
+    const two = window(twin, slow(memoryUndo(place)));
+    const second = aiTask("t2");
+    add(store, "c1", TASK);
+    add(store, "c2", second, "1");
+    await one.keeper.flush();
+    await vi.waitFor(() => expect(twin.canUndoOrigin(second)).toBe(true), { timeout: 2000 });
+    const shown = planKey(two.keeper.planMany([TASK, second], "undo") as never);
+    const [single, many] = await Promise.all([
+      one.keeper.takeBack(second, "undo"),
+      two.keeper.takeBackMany([TASK, second], "undo", shown),
+    ]);
+    expect(single?.ok).toBe(true);
+    // What it showed is not what would go now: the second task went already.
+    expect(many?.done).toBe(false);
+    await vi.waitFor(() => expect(store.getState()).toEqual(twin.getState()));
+    expect(store.getState().timelines["main"]?.clips["c1"]).toBeDefined();
+    expect(store.getState().timelines["main"]?.clips["c2"]).toBeUndefined();
+  });
+
+  it("take back nothing of several when the project changed since people saw the list", async () => {
+    const place = new MemoryUndoPlace();
+    const { store, add } = opened();
+    const here = window(store, memoryUndo(place));
+    const second = aiTask("t2");
+    add(store, "c1", TASK);
+    add(store, "c2", second, "1");
+    const shown = planKey(here.keeper.planMany([TASK, second], "undo") as never);
+    // People change what the second task added while the list is open.
+    const moved = store.execute({
+      type: "clip.update",
+      params: { timeline: "main", clip: "c2", changes: { start: "2" } },
+    });
+    expect(moved.ok).toBe(true);
+    const outcome = await here.keeper.takeBackMany([TASK, second], "undo", shown);
+    expect(outcome?.done).toBe(false);
+    expect(store.getState().timelines["main"]?.clips["c1"]).toBeDefined();
+    expect(store.canUndoOrigin(TASK)).toBe(true);
+    // What would go now is what it says, and that goes.
+    const now = outcome && !outcome.done ? planKey(outcome.plan) : "";
+    expect((await here.keeper.takeBackMany([TASK, second], "undo", now))?.done).toBe(true);
+    expect(store.getState().timelines["main"]?.clips["c1"]).toBeUndefined();
   });
 
   it("say why a task cannot be taken back here", async () => {

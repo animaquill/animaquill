@@ -96,7 +96,7 @@ describe("windows that share undo logs", () => {
     // Both ask at once: the second runs once the first is done, and sees what it did.
     let taken = 0;
     const undo = (store: UndoStore) =>
-      store.exclusive("p", "a", async () => {
+      store.exclusive("p", async () => {
         const seen = taken;
         await new Promise((resolve) => setTimeout(resolve, 5));
         if (seen === 0) taken += 1;

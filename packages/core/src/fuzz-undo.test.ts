@@ -128,7 +128,7 @@ describe.each(Array.from({ length: 12 }, (_, i) => i + 1))(
       const origins = new Set<Origin>();
       /** Saves as the editor does: what changed, or everything after something was taken back. */
       const save = (...only: Origin[]) => {
-        for (const origin of only.length > 0 ? only : again.undoOrigins) {
+        for (const origin of only.length > 0 ? only : again.loggedOrigins) {
           const record = again.saveUndo(origin);
           records.delete(origin);
           if (record) records.set(origin, JSON.parse(JSON.stringify(record)));
@@ -250,7 +250,7 @@ describe.each(Array.from({ length: 12 }, (_, i) => i + 1))(
           // In any order: a record saved before another one takes nothing from it.
           again = reopen(again, shuffled([...records.values()], random));
           // Everything as it was the moment it closed.
-          const known = live.undoOrigins.map((origin) => live.saveUndo(origin)).filter(Boolean);
+          const known = live.loggedOrigins.map((origin) => live.saveUndo(origin)).filter(Boolean);
           live = reopen(live, JSON.parse(JSON.stringify(known)) as unknown[]);
           counts.reloads += 1;
           expect(again.getState(), where).toEqual(live.getState());

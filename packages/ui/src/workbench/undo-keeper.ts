@@ -2,6 +2,7 @@ import {
   STORAGE,
   USER,
   isFileBatch,
+  type ManyUndoResult,
   type Origin,
   type ProjectStore,
   type UndoObstacle,
@@ -70,6 +71,30 @@ const SAVE_AFTER_MS = 400;
 const EMIT_AFTER_MS = 250;
 
 const EMPTY: UndoKeeperSnapshot = { restored: [], tick: 0 };
+
+/**
+ * What came of taking back several origins at once, see `UndoKeeper.takeBackMany`: done, with what
+ * each came to; or nothing, because what would go back is not what people were shown any more, with
+ * what would go back now.
+ */
+export type ManyTakeBack =
+  | { readonly done: true; readonly result: ManyUndoResult }
+  | { readonly done: false; readonly plan: ManyUndoResult };
+
+/**
+ * What a dry run of `undoOrigins` comes to, as text that is the same where the same would go back
+ * and stay: what people were shown is compared with it before anything goes back.
+ */
+export function planKey(plan: ManyUndoResult): string {
+  if (!plan.ok) return JSON.stringify({ error: plan.error.code });
+  return JSON.stringify(
+    plan.each.map(({ origin, result }) =>
+      result.ok
+        ? [origin, result.patches, result.kept, result.obstacle ?? null]
+        : [origin, result.error.code, result.error.conflicts ?? [], result.error.obstacle ?? null],
+    ),
+  );
+}
 
 const kindOf = (origin: Origin): UndoAbout["kind"] => (isFileBatch(origin) ? "folder" : "ai");
 
@@ -232,7 +257,7 @@ export class UndoKeeper {
       this.#pending.add(origin);
     } else if (takesBack) {
       // What people took back of their own can hand a place back to an AI task.
-      for (const each of store.undoOrigins) this.#pending.add(each);
+      for (const each of store.loggedOrigins) this.#pending.add(each);
     }
     if (this.#pending.size > 0) this.#later();
     this.#emitSoon();
@@ -351,7 +376,7 @@ export class UndoKeeper {
     if (!host || !store || key === undefined) return;
     try {
       // In turn with taking it back here: a log read before that would put back what it changed.
-      await host.exclusive(key, origin, () => this.#takeUp(host, store, key, origin));
+      await host.exclusive(key, () => this.#takeUp(host, store, key, origin));
     } catch (error) {
       console.warn("An undo log of another window could not be read", error);
     }
@@ -400,7 +425,7 @@ export class UndoKeeper {
     const go = () => (direction === "undo" ? store.undoOrigin(origin) : store.redoOrigin(origin));
     const host = this.#options.host;
     if (!host || key === undefined) return go();
-    return host.exclusive(key, origin, async () => {
+    return host.exclusive(key, async () => {
       if (this.#store !== store) return undefined;
       // Saves of this window first, so that what is read is the newest of all windows.
       await this.flush();
@@ -419,11 +444,92 @@ export class UndoKeeper {
         await this.#queueSave(store, key, [origin]);
       }
       if (result.ok) {
-        for (const each of store.undoOrigins) if (each !== origin) this.#pending.add(each);
+        for (const each of store.loggedOrigins) if (each !== origin) this.#pending.add(each);
         this.#later();
       }
       this.#emit();
       return result;
+    });
+  }
+
+  /**
+   * What taking back these origins at once, or doing them again, would come to now, see
+   * `ProjectStore.undoOrigins`. Undefined where there is no project.
+   */
+  planMany(origins: readonly Origin[], direction: "undo" | "redo"): ManyUndoResult | undefined {
+    const store = this.#store;
+    if (!store) return undefined;
+    return direction === "undo"
+      ? store.undoOrigins(origins, { dryRun: true })
+      : store.redoOrigins(origins, { dryRun: true });
+  }
+
+  /**
+   * Takes back several origins at once, the newest first, or does them again, in one turn of the
+   * lock of the project, as `takeBack` does one: first what other windows saved of them, then this.
+   * With `expected` (see `planKey`), it works it out again in that turn first, and where that is
+   * not what people were shown, nothing goes back: it says what would now. Only those that have
+   * something to take back go, so that one that cannot keeps its log. Resolves to undefined where
+   * there was no project, or it changed meanwhile.
+   */
+  async takeBackMany(
+    origins: readonly Origin[],
+    direction: "undo" | "redo",
+    expected?: string,
+  ): Promise<ManyTakeBack | undefined> {
+    const store = this.#store;
+    const key = this.#key;
+    if (!store) return undefined;
+    const host = this.#options.host;
+    const go = (): ManyTakeBack => {
+      const plan =
+        direction === "undo"
+          ? store.undoOrigins(origins, { dryRun: true })
+          : store.redoOrigins(origins, { dryRun: true });
+      if (expected !== undefined && planKey(plan) !== expected) return { done: false, plan };
+      if (!plan.ok) return { done: true, result: plan };
+      const going = plan.each.filter(({ result }) => result.ok).map(({ origin }) => origin);
+      const result = direction === "undo" ? store.undoOrigins(going) : store.redoOrigins(going);
+      return { done: true, result };
+    };
+    if (!host || key === undefined) return go();
+    return host.exclusive(key, async () => {
+      if (this.#store !== store) return undefined;
+      // Saves of this window first, so that what is read is the newest of all windows.
+      await this.flush();
+      const records: unknown[] = [];
+      for (const origin of new Set(origins)) {
+        const saved = await host.get(key, origin).catch(() => undefined);
+        if (saved && saved.window !== host.window) records.push(saved.record);
+      }
+      if (this.#store !== store) return undefined;
+      if (records.length > 0) {
+        for (const origin of store.restoreUndo(records, { replace: true })) {
+          this.#foreign.add(origin);
+        }
+      }
+      const outcome = go();
+      if (!outcome.done || !outcome.result.ok) {
+        this.#emit();
+        return outcome;
+      }
+      // As `takeBack` does for each of them, see there.
+      const saving: Origin[] = [];
+      let any = false;
+      for (const { origin, result } of outcome.result.each) {
+        if (result.ok) any = true;
+        if (result.ok || !this.#foreign.has(origin)) {
+          this.#pending.delete(origin);
+          saving.push(origin);
+        }
+      }
+      if (saving.length > 0) await this.#queueSave(store, key, saving);
+      if (any) {
+        for (const each of store.loggedOrigins) if (!saving.includes(each)) this.#pending.add(each);
+        this.#later();
+      }
+      this.#emit();
+      return outcome;
     });
   }
 
@@ -470,7 +576,7 @@ export class UndoKeeper {
     await this.flush();
     await host.clear();
     const store = this.#store;
-    for (const origin of store?.undoOrigins ?? []) store?.forgetUndo(origin);
+    for (const origin of store?.loggedOrigins ?? []) store?.forgetUndo(origin);
     this.#pending.clear();
     this.#gone = new Map();
     this.#emit({ restored: [] });

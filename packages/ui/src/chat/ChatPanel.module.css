@@ -701,14 +701,6 @@
   user-select: none;
 }
 
-.codePath {
-  overflow: hidden;
-  color: var(--aq-text-muted);
-  font-size: 11px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
 .codeLine {
   display: flex;
   min-width: max-content;
@@ -2293,4 +2285,82 @@ span.sentPicture {
 .cardHead button[aria-disabled="true"] {
   cursor: default;
   opacity: 0.5;
+}
+
+/* Back to before a turn: what goes, under the message, as the card of a task looks. */
+.goBack,
+.goBackDone {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--aq-border);
+  background: var(--aq-bg-panel);
+  border-radius: 4px;
+}
+
+.goBackDone {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.goBackTitle {
+  margin: 0;
+  color: var(--aq-text-strong);
+}
+
+.goBackRows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.goBackRows li {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.goBackLabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.goBackCount {
+  flex: none;
+  color: var(--aq-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.goBackOff {
+  color: var(--aq-text-muted);
+}
+
+.goBackWhy {
+  display: inline-flex;
+  flex: none;
+  color: var(--aq-text-muted);
+  cursor: help;
+}
+
+.goBackKept {
+  margin: 0;
+  color: var(--aq-text-muted);
+}
+
+.goBackActions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
 }

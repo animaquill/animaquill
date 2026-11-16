@@ -14,7 +14,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 /** How many of what went each project remembers, to say why. */
 const GONE_KEPT = 500;
 const CHANNEL = "animaquill-undo";
-const LOCK_PREFIX = "animaquill-undo:";
+/** One lock for each project, see `UndoStore.exclusive`. */
+const LOCK_PREFIX = "animaquill-undo-project:";
 
 interface Row extends SavedUndo {
   readonly bytes: number;
@@ -186,10 +187,10 @@ export function browserUndo(
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    async exclusive(project, origin, run) {
+    async exclusive(project, run) {
       const manager = locks();
       if (!manager) return run();
-      return manager.request(`${LOCK_PREFIX}${project}:${origin}`, () => run());
+      return manager.request(`${LOCK_PREFIX}${project}`, () => run());
     },
   };
 }
@@ -265,7 +266,7 @@ export function memoryUndo(
       for (const [at, row] of shared.rows) if (row.project === project) shared.rows.delete(at);
     },
     listen: (listener) => shared.listen(window, listener),
-    exclusive: (project, origin, run) => shared.exclusive(key(project, origin), run),
+    exclusive: (project, run) => shared.exclusive(JSON.stringify([project]), run),
   };
 }
 

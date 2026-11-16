@@ -249,6 +249,18 @@ export type UndoResult =
     }
   | { readonly ok: false; readonly error: CommandFailure };
 
+/**
+ * What came of taking back, or doing again, several AI tasks or batches at once, see `undoOrigins`:
+ * what each of them came to, in the order they went, as `undoOrigin` or `redoOrigin` would have
+ * said one after the other. For a dry run, what each would come to, and nothing is written.
+ */
+export type ManyUndoResult =
+  | {
+      readonly ok: true;
+      readonly each: readonly { readonly origin: Origin; readonly result: UndoResult }[];
+    }
+  | { readonly ok: false; readonly error: CommandFailure };
+
 /** A change that is being made here, which knows more about itself than the document does. */
 export interface LocalChange {
   readonly origin: Origin;
@@ -304,6 +316,12 @@ interface Write {
 interface UndoEntry {
   /** Counts up with every entry, so it says what came later whatever the log has forgotten. */
   readonly serial: number;
+  /**
+   * When it was made, in milliseconds since 1970, later than every entry this store knew then. It
+   * lasts across a reload and comes along from other windows, which serials do not: see
+   * `undoOrigins`, which goes by it to take back the newest first.
+   */
+  readonly made: number;
   readonly steps: readonly Step[];
   /** What the change did to clips, if that is known. */
   readonly facts: readonly ClipFact[] | undefined;
@@ -527,6 +545,19 @@ const NOTHING_TO_UNDO = plain("nothing-to-undo");
 /** What keeps no undo log only writes down where files are, see `STORAGE`. */
 const STORAGE_ONLY = plain("storage-only");
 const ONE_BY_ONE = plain("undo-one-by-one");
+const NOTHING_DONE: UndoResult = { ok: false, error: NOTHING_TO_UNDO };
+
+/** Nothing of it can go back, and why. */
+const blockedBy = ({
+  kept,
+  obstacle,
+}: {
+  readonly kept: readonly Path[];
+  readonly obstacle: UndoObstacle;
+}): UndoResult => ({
+  ok: false,
+  error: { code: "undo-blocked", params: {}, conflicts: [...kept], obstacle },
+});
 
 /** How many characters the epoch of a revision has, see `RevisionId`. */
 const EPOCH_LENGTH = 4;
@@ -581,6 +612,8 @@ export class ProjectStore {
   #change: LocalChange | undefined;
   /** The last number an undo entry got. */
   #serial = 0;
+  /** When the last undo entry this store knows was made, see `UndoEntry.made`. */
+  #made = 0;
   /** Whoever brings updates has said that what is missing is not coming. See catchUp(). */
   #isSettled = true;
   /** See `readOnly`. */
@@ -1152,6 +1185,86 @@ export class ProjectStore {
   }
 
   /**
+   * Takes back everything several AI tasks or batches did, each in one step as undoOrigin() does,
+   * the newest first, whatever order they come in: what one of them took back can hand a place back
+   * to the one before it, which can then take it back too. It comes to the same as undoOrigin() for
+   * each of them, one after the other, the newest first, and each is a change of its own. With
+   * `dryRun`, it works out what each of them would come to, on top of what the ones before it would
+   * have done, and writes nothing: the same steps go back as without it.
+   */
+  undoOrigins(
+    origins: readonly Origin[],
+    options: { readonly dryRun?: boolean } = {},
+  ): ManyUndoResult {
+    return this.#many(origins, "undo", options.dryRun === true);
+  }
+
+  /**
+   * Does again what undoOrigins() took back, the one taken back last first, which is the oldest:
+   * the same as redoOrigin() for each, one after the other.
+   */
+  redoOrigins(
+    origins: readonly Origin[],
+    options: { readonly dryRun?: boolean } = {},
+  ): ManyUndoResult {
+    return this.#many(origins, "redo", options.dryRun === true);
+  }
+
+  #many(origins: readonly Origin[], direction: "undo" | "redo", dryRun: boolean): ManyUndoResult {
+    if (origins.includes(USER)) return { ok: false, error: ONE_BY_ONE };
+    const refusal = this.#whyNotNow;
+    if (refusal) return { ok: false, error: refusal };
+    const order = this.#newestFirst(origins, direction);
+    if (!dryRun) {
+      const go = (origin: Origin) =>
+        direction === "undo" ? this.undoOrigin(origin) : this.redoOrigin(origin);
+      return { ok: true, each: order.map((origin) => ({ origin, result: go(origin) })) };
+    }
+    // As the store would be after each of them, without writing it: see #takeBack.
+    let state = this.#state;
+    let written = this.#written;
+    const each = order.map((origin) => {
+      const log = this.#undo.get(origin);
+      const entries = (direction === "undo" ? log?.done : log?.undone.slice(-1)) ?? [];
+      if (entries.length === 0) return { origin, result: NOTHING_DONE };
+      const plan = this.#planBack(entries, origin, state, written);
+      if (plan.back.size === 0) return { origin, result: blockedBy(plan) };
+      const draft = new Draft(state, origin, written);
+      for (const step of plan.back) draft.takeBack(step);
+      state = draft.state;
+      written = draft.written;
+      const result: UndoResult = {
+        ok: true,
+        revision: this.#revision,
+        patches: draft.steps.map((step) => step.patch),
+        kept: plan.kept,
+        ...(plan.kept.length > 0 ? { obstacle: plan.obstacle } : {}),
+      };
+      return { origin, result };
+    });
+    return { ok: true, each };
+  }
+
+  /**
+   * The origins with something to take back, or do again, the one whose last change of that came
+   * last first. Each one only once, and those with nothing at the end.
+   */
+  #newestFirst(origins: readonly Origin[], direction: "undo" | "redo"): readonly Origin[] {
+    const lastOf = (origin: Origin) => {
+      const log = this.#undo.get(origin);
+      return (direction === "undo" ? log?.done : log?.undone)?.at(-1);
+    };
+    const unique = [...new Set(origins)];
+    const some = unique.filter((origin) => lastOf(origin) !== undefined);
+    some.sort((a, b) => {
+      const one = lastOf(a) as UndoEntry;
+      const other = lastOf(b) as UndoEntry;
+      return other.made - one.made || other.serial - one.serial;
+    });
+    return [...some, ...unique.filter((origin) => lastOf(origin) === undefined)];
+  }
+
+  /**
    * Whether an AI task or a batch can be taken back now, or done again, and whether all of it would
    * stay where it is, because everything it wrote was changed since or is in use. It works that out
    * as undoOrigin() would, so it is only for one that people look at.
@@ -1198,7 +1311,7 @@ export class ProjectStore {
   }
 
   /** The AI tasks and batches whose changes can be taken back or done again as a whole. */
-  get undoOrigins(): readonly Origin[] {
+  get loggedOrigins(): readonly Origin[] {
     return [...this.#undo.keys()].filter((origin) => origin !== USER);
   }
 
@@ -1234,6 +1347,7 @@ export class ProjectStore {
         };
       }),
       facts: entry.facts ?? null,
+      made: entry.made,
       danglingBefore: entry.danglingBefore,
       danglingAfter: entry.danglingAfter,
     });
@@ -1302,6 +1416,8 @@ export class ProjectStore {
         const serial = this.#serial;
         const toEntry = (saved: SavedEntry, index: number): UndoEntry => ({
           serial: serial + index + 1,
+          // A record from before entries said when they were made: when it was saved.
+          made: saved.made ?? record.at,
           steps: saved.steps.map((step) => ({
             patch: step.patch,
             inverse: step.inverse,
@@ -1314,6 +1430,7 @@ export class ProjectStore {
         });
         const all = [...record.done, ...record.undone].map(toEntry);
         this.#serial += all.length;
+        for (const { made } of all) this.#made = Math.max(this.#made, made);
         const log: UndoLog = {
           done: all.slice(0, record.done.length),
           undone: all.slice(record.done.length),
@@ -1610,9 +1727,12 @@ export class ProjectStore {
     const { steps } = draft;
     this.#serial += 1;
     const serial = this.#serial;
+    this.#made = Math.max(Date.now(), this.#made + 1);
+    const made = this.#made;
     if (takesBack) {
       return {
         serial,
+        made,
         steps,
         facts: takesBack.facts,
         danglingBefore: takesBack.entries.flatMap((entry) => entry.danglingAfter),
@@ -1623,6 +1743,7 @@ export class ProjectStore {
       steps.flatMap((step) => danglingAt(state, step.patch.path));
     return {
       serial,
+      made,
       steps,
       facts: draft.facts,
       danglingBefore: danglingIn(this.#state),
@@ -1657,16 +1778,31 @@ export class ProjectStore {
    * back before the thing it points at. When that keeps a step here, others can depend on it, so it
    * takes another look.
    */
-  #planBack(entries: readonly UndoEntry[], origin: Origin) {
+  #planBack(
+    entries: readonly UndoEntry[],
+    origin: Origin,
+    state: ProjectState = this.#state,
+    written: Written = this.#written,
+  ) {
     const steps = entries.toReversed().flatMap((entry) => entry.steps.toReversed());
     const known = new Set(entries.flatMap((entry) => entry.danglingBefore));
     const stuck = new Set<Step>();
+    // What stays, in the order it was written.
+    const keptOf = (back: ReadonlySet<Step>): readonly Path[] => {
+      const kept = new Map<string, Path>();
+      for (const entry of entries) {
+        for (const step of entry.steps) {
+          if (!back.has(step)) kept.set(keyOf(step.patch.path), step.patch.path);
+        }
+      }
+      return [...kept.values()];
+    };
     for (;;) {
-      const draft = new Draft(this.#state, origin, this.#written);
+      const draft = new Draft(state, origin, written);
       const obstacle: UndoObstacle = stuck.size > 0 ? "inUse" : "changed";
       const back = steps.filter((step) => !stuck.has(step) && draft.takeBack(step));
       const dangling = back.filter(({ patch }) => {
-        const already = danglingAt(this.#state, patch.path);
+        const already = danglingAt(state, patch.path);
         return danglingAt(draft.state, patch.path).some(
           (link) => !known.has(link) && !already.includes(link),
         );
@@ -1674,10 +1810,12 @@ export class ProjectStore {
       if (dangling.length === 0) {
         // What stays can be what the rest needs to be a valid document: then nothing goes back.
         const isPartly = back.length < steps.length;
-        if (isPartly && breaksDocuments(this.#state, draft.state)) {
-          return { back: new Set<Step>(), obstacle };
+        if (isPartly && breaksDocuments(state, draft.state)) {
+          const none = new Set<Step>();
+          return { back: none, obstacle, kept: keptOf(none) };
         }
-        return { back: new Set(back), obstacle };
+        const all = new Set(back);
+        return { back: all, obstacle, kept: keptOf(all) };
       }
       for (const step of dangling) stuck.add(step);
     }
@@ -1694,17 +1832,9 @@ export class ProjectStore {
     origin: Origin,
     direction: "undo" | "redo",
   ): UndoResult {
-    const { back, obstacle } = this.#planBack(entries, origin);
-    const kept = new Map<string, Path>();
-    for (const { steps } of entries) {
-      for (const step of steps) {
-        if (!back.has(step)) kept.set(keyOf(step.patch.path), step.patch.path);
-      }
-    }
-    const paths = [...kept.values()];
-    if (back.size === 0) {
-      return { ok: false, error: { code: "undo-blocked", params: {}, conflicts: paths, obstacle } };
-    }
+    const plan = this.#planBack(entries, origin);
+    const { back, obstacle, kept: paths } = plan;
+    if (back.size === 0) return blockedBy(plan);
     const facts = paths.length === 0 ? factsOf(entries) : undefined;
     const takesBack = { entries, to, facts, direction };
     const result = this.#commit(["undo"], origin, { takesBack }, (draft) => {

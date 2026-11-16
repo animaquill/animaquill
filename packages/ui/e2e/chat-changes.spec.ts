@@ -232,9 +232,9 @@ test("each line opens to before and after: a value, keys, code, the picture", as
     "25export const n25 = 250;",
   ]);
   await expect(lines).toHaveCount(2 * (2 + 2 + 2));
-  // Between the two pieces, a line that says lines were left out; over them, the file.
+  // Between the two pieces, a line that says lines were left out. The line says which file it is.
   await expect(file.getByTestId("chat-change-code")).toContainText("⋯");
-  await expect(file.getByTitle("code/helper.js")).toHaveText("code/helper.js");
+  await expect(file.getByTitle("code/helper.js")).toHaveCount(0);
   await file.scrollIntoViewIfNeeded();
   await shoot(page, "code");
   await file.getByRole("button", { name: "打开对比" }).click();

@@ -1,15 +1,7 @@
-import type { Page, Route } from "@playwright/test";
-import {
-  ANTHROPIC,
-  addAnthropic,
-  anthropicCalls,
-  anthropicSays,
-  closeSettings,
-  goToSettingsGroup,
-  openSettingsPage,
-  settingsOf,
-} from "./ai-support.ts";
-import { content, devPageOnly, expect, tab, test } from "./support.ts";
+import type { Page } from "@playwright/test";
+import { closeSettings, goToSettingsGroup, openSettingsPage, settingsOf } from "./ai-support.ts";
+import { content, devPageOnly, expect, test } from "./support.ts";
+import { aiAdds, execute, markers, reload, send } from "./undo-support.ts";
 
 /**
  * AI tasks taken back as a whole after the page was loaded again (the design of AI collaboration,
@@ -28,84 +20,6 @@ const bubble = (page: Page) => page.getByRole("dialog", { name: "最近的操作
 
 const shot = (page: Page, name: string) =>
   page.screenshot({ path: test.info().outputPath(`${name}.png`) });
-
-interface Marker {
-  readonly name: string;
-}
-
-const markers = (page: Page) =>
-  page.evaluate(() => {
-    const state = (
-      window as unknown as { aqState: () => { timelines: Record<string, unknown> } }
-    ).aqState();
-    const main = state.timelines["main"] as { markers?: Record<string, Marker> };
-    return Object.fromEntries(
-      Object.entries(main.markers ?? {}).map(([id, { name }]) => [id, name]),
-    );
-  });
-
-const execute = (page: Page, call: object) =>
-  page.evaluate((given) => {
-    const run = (window as unknown as { aqExecute: (call: unknown) => { ok: boolean } }).aqExecute;
-    return run(given).ok;
-  }, call);
-
-/** Keeps what changed and its undo logs, as a page that goes away a moment later does. */
-const reload = async (page: Page) => {
-  await page.evaluate(async () => {
-    const hooks = window as unknown as {
-      aqSave: () => Promise<unknown>;
-      aqUndoSaved: () => Promise<unknown>;
-    };
-    await hooks.aqSave();
-    await hooks.aqUndoSaved();
-  });
-  await page.reload();
-  await tab(page, "chat").click();
-};
-
-/** AI answers each message with one task that adds these markers, then says it is done. */
-async function aiAdds(page: Page, tasks: readonly (readonly [string, string])[][]) {
-  let round = 0;
-  await page.route(ANTHROPIC, (route: Route) => {
-    const task = tasks[Math.floor(round / 2)] ?? [];
-    const body =
-      round % 2 === 0
-        ? anthropicCalls([
-            {
-              name: "aq_edit",
-              input: {
-                summary: "加标记",
-                operations: task.map(([id, name], index) => ({
-                  op: "marker.add",
-                  timeline: "main",
-                  id,
-                  time: String(index + 1),
-                  name,
-                })),
-              },
-            },
-          ])
-        : anthropicSays("加好了。");
-    round += 1;
-    return route.fulfill({
-      status: 200,
-      headers: { "content-type": "text/event-stream", "access-control-allow-origin": "*" },
-      body,
-    });
-  });
-  await addAnthropic(page, "sk-ant-test-0123456789abcdef", "claude-test");
-  await closeSettings(page);
-  await tab(page, "chat").click();
-}
-
-async function send(page: Page, text: string) {
-  const done = await chat(page).getByText("加好了。").count();
-  const box = chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
-  await box.fill(text);
-  await box.press("Enter");
-  await expect(chat(page).getByText("加好了。")).toHaveCount(done + 1, { timeout: 15_000 });
-}
 
 test("a task of AI goes back from its card after a reload, and comes again", async ({ page }) => {
   test.setTimeout(90_000);
