@@ -190,6 +190,14 @@ export function ChatGroup() {
         />
         <span className={styles.unit}>{t("ai.times")}</span>
       </SettingRow>
+      <SettingRow id="chat.askBeforeEdit">
+        <Toggle
+          label={t("settings.items.chat.askBeforeEdit.name")}
+          checked={settings.askBeforeEdit === true}
+          disabled={held}
+          onChange={(on) => ai.setAskBeforeEdit(on)}
+        />
+      </SettingRow>
       <SettingRow id="chat.autoTitle">
         <Toggle
           label={t("settings.items.chat.autoTitle.name")}

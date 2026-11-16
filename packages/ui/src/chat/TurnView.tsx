@@ -13,6 +13,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { ChatImageHeld } from "@animaquill/host";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
+import { TaskApproval } from "./ApprovalCard.tsx";
 import { ChangeCard } from "./ChangeCard.tsx";
 import styles from "./ChatPanel.module.css";
 import { useNow } from "./clock.ts";
@@ -29,7 +30,7 @@ import { summaryOf } from "./summary.ts";
 import { ListenRow } from "./ListenRow.tsx";
 import { LookRow } from "./LookRow.tsx";
 import { ToolRow } from "./ToolRow.tsx";
-import { isHeldForPlan, type Names, type Say } from "./toolSummary.ts";
+import { isHeld, type Names, type Say } from "./toolSummary.ts";
 import { durationText, type Step, type Turn } from "./turns.ts";
 import { dollars, tokens, usageOf } from "./usage.ts";
 import { liveText, liveThinking, liveThinkingSince, useLive } from "./useLive.ts";
@@ -101,6 +102,7 @@ export function TurnView({
             <StepView key={step.id} step={step} running={running} names={names} />
           ))}
           <LiveView conversation={conversation} />
+          <TaskApproval task={turn.task} />
         </>
       ) : (
         turn.steps.length > 0 && <ProcessView turn={turn} names={names} />
@@ -276,7 +278,7 @@ function ProcessView({ turn, names }: { readonly turn: Turn; readonly names: Nam
     (step) =>
       step.kind === "tool" &&
       step.result &&
-      ((!step.result.ok && !isHeldForPlan(step.result)) ||
+      ((!step.result.ok && !isHeld(step.result)) ||
         (step.call.name === LOOK_TOOL && (step.result.images?.length ?? 0) > 0) ||
         step.call.name === LISTEN_TOOL),
   );

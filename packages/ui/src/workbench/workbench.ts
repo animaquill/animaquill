@@ -3866,6 +3866,14 @@ export class Workbench {
     };
     this.chat.subscribe(follow);
     follow();
+    // A change that waits for people to allow it (S-D4): each new one is told, as a question is.
+    let waiting = new Set(this.chat.getSnapshot().approvals.map(({ id }) => id));
+    this.chat.subscribe(() => {
+      const now = this.chat.getSnapshot().approvals;
+      const added = now.some(({ id }) => !waiting.has(id));
+      waiting = new Set(now.map(({ id }) => id));
+      if (added && document.visibilityState === "hidden") this.#notice("approve");
+    });
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") this.attention.set(false);
     });
@@ -3874,7 +3882,7 @@ export class Workbench {
   /** Whether the chat has something for people that they have not seen: "●" before the title. */
   readonly attention = new Flag();
 
-  #notice(what: "done" | "asking" | "plan" | "failed"): void {
+  #notice(what: "done" | "asking" | "plan" | "failed" | "approve"): void {
     this.attention.set(true);
     if (typeof Notification === "undefined" || Notification.permission === "denied") return;
     // The browser is asked the first time there is something to tell, not before.
@@ -3890,7 +3898,7 @@ export class Workbench {
     this.#showNotice(what);
   }
 
-  #showNotice(what: "done" | "asking" | "plan" | "failed"): void {
+  #showNotice(what: "done" | "asking" | "plan" | "failed" | "approve"): void {
     const name = this.session.store?.getState().manifest.name ?? "AnimaQuill";
     try {
       const notice = new Notification(this.t(`chat.notify.${what}`), {

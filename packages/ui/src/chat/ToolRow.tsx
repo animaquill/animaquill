@@ -6,8 +6,9 @@ import styles from "./ChatPanel.module.css";
 import { useNow } from "./clock.ts";
 import { useOpened } from "./expanded.ts";
 import {
+  approvalText,
   argFields,
-  isHeldForPlan,
+  heldWhy,
   toolErrorCode,
   toolSummary,
   type Names,
@@ -19,6 +20,14 @@ import { durationText } from "./turns.ts";
 const RESULT_LINES = 12;
 /** A call quicker than this says nothing of how long it took. */
 const SHOWN_MS = 100;
+
+/** What a change that did not happen says of why, opened, see `heldWhy`. */
+const HELD_TEXT = {
+  plan: "chat.toolText.held",
+  declined: "chat.toolText.heldDeclined",
+  afterDeclined: "chat.toolText.heldAfterDeclined",
+  stopped: "chat.toolText.heldStopped",
+} as const;
 
 /** A command by its type, as people know it from the command system: the tools before these. */
 const commandOf = (tool: string) => tool.replaceAll("_", ".");
@@ -42,12 +51,16 @@ export function ToolRow({
 }) {
   const { t } = useTranslation();
   const say = t as unknown as Say;
-  const held = isHeldForPlan(result);
+  const held = heldWhy(result) !== undefined;
   const failed = result !== undefined && !result.ok && !held;
   const [open, setOpen] = useOpened(call.id, failed);
   const now = useNow(running !== undefined);
   const label = say(`chat.tool.${call.name}`, { defaultValue: commandOf(call.name) });
-  const summary = toolSummary(say, call, result, names);
+  // What people answered, where they were asked, before the rest of the line.
+  const answered = approvalText(say, result);
+  const summary = [answered, toolSummary(say, call, result, names)]
+    .filter((part) => part !== undefined && part !== "")
+    .join(" · ");
   const state =
     result === undefined
       ? running !== undefined
@@ -108,6 +121,9 @@ function ToolBody({
   const [all, setAll] = useState(false);
   const fields = argFields(call.args);
   const code = result && toolErrorCode(result);
+  const why = heldWhy(result);
+  // People changed the project while they were asked about this change (S-D4).
+  const changedWhileAsked = result?.data?.changedWhileAsked === true;
   const lines = result?.text.split("\n") ?? [];
   const shown = all ? lines : lines.slice(0, RESULT_LINES);
   return (
@@ -126,19 +142,22 @@ function ToolBody({
           ))}
         </dl>
       )}
-      {isHeldForPlan(result) && (
+      {why && (
         <p className={styles.muted} data-testid="chat-tool-held">
-          {t("chat.toolText.held")}
+          {t(HELD_TEXT[why])}
         </p>
       )}
-      {result && !result.ok && !isHeldForPlan(result) && (
+      {result && !result.ok && !why && (
         <>
           <p className={styles.toolError} data-testid="chat-tool-error">
             {t("chat.toolText.failed", {
-              reason: say(`chat.toolErrors.${code ?? "other"}`, {
-                defaultValue: say("chat.toolErrors.other", { code: code ?? "?" }),
-                code: code ?? "?",
-              }),
+              reason: say(
+                `chat.toolErrors.${changedWhileAsked ? "changedWhileAsked" : (code ?? "other")}`,
+                {
+                  defaultValue: say("chat.toolErrors.other", { code: code ?? "?" }),
+                  code: code ?? "?",
+                },
+              ),
             })}
           </p>
           <details className={styles.raw}>

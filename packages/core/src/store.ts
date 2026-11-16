@@ -126,6 +126,12 @@ export interface ExecuteOptions {
   readonly isOwn?: (origin: Origin) => boolean;
   /** Runs every check and writes nothing. */
   readonly dryRun?: boolean;
+  /**
+   * A last check of what the change writes, after every other check and before anything is written:
+   * a failure stops it. For a change people allowed after they saw a dry run of it, which has to
+   * write exactly what they saw (S-D4).
+   */
+  readonly expect?: (patches: readonly Patch[]) => CommandFailure | undefined;
 }
 
 /**
@@ -1674,6 +1680,8 @@ export class ProjectStore {
       const conflict = this.#findConflicts(patches, origin, options.baseRevision, options.isOwn);
       if (conflict) return { ok: false, error: conflict };
     }
+    const unexpected = options.expect?.(patches);
+    if (unexpected) return { ok: false, error: unexpected };
     if (options.dryRun || patches.length === 0) {
       return { ok: true, revision: this.#revision, results, patches, state: draft.state };
     }

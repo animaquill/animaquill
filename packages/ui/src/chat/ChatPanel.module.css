@@ -2544,6 +2544,18 @@ span.sentPicture {
   color: var(--aq-text-muted);
 }
 
+/* A change that waits for people (S-D4): the card of changes, with the answers under it. */
+.approve {
+  border-color: var(--aq-accent);
+}
+
+.approveActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
 .goBackActions {
   display: flex;
   gap: 6px;

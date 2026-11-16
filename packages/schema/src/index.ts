@@ -9,6 +9,7 @@ export {
   RelativePath,
   Time,
   newId,
+  withIds,
 } from "./basics.ts";
 export { checkProject } from "./check.ts";
 export * from "./effects.ts";

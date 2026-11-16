@@ -8,6 +8,7 @@ import type {
   ProjectStore,
   StaticInputs,
 } from "@animaquill/core";
+import type { Approval, ApproveRequest } from "./approve.ts";
 
 /** A JSON Schema, as tools describe their parameters and results. */
 export type JsonSchema = Readonly<Record<string, unknown>>;
@@ -103,6 +104,15 @@ export interface ToolHost {
    * the MCP of a folder, whose clients have plan modes of their own.
    */
   planFirst?(): boolean;
+  /**
+   * People want to be asked before AI changes the project ("AI 改项目前先问我", S-D4): every tool that
+   * changes it previews the change, gives it here, and writes it only once this answers "once" or
+   * "task", exactly as previewed and against the project as it was then, see `makeTool`. Read at
+   * each call: a host gives it only while people want to be asked, and leaves it out otherwise, as
+   * the MCP of a folder always does, whose clients ask in their own way. It answers "stopped" where
+   * the task stopped while it waited, and never writes anything itself.
+   */
+  readonly approve?: ((request: ApproveRequest) => Promise<Approval>) | undefined;
 }
 
 /**

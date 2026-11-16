@@ -67,12 +67,47 @@ export const Duration = anyTime.refine(isPositive, "时长要大于 0");
 const ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz";
 const ID_LENGTH = 10;
 
+/** The ids that `withIds` gives again, and those made while it runs. */
+let replaying:
+  { readonly given: readonly string[]; next: number; readonly made: string[] } | undefined;
+
 /** A new id such as clip_x7k2m9q4ab. Long enough for many people and AI tasks working at once. */
 export function newId(prefix: string): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(ID_LENGTH));
-  let suffix = "";
-  for (const byte of bytes) suffix += ID_ALPHABET[byte % ID_ALPHABET.length];
-  return `${prefix}_${suffix}`;
+  const wanted = replaying?.given[replaying.next];
+  let id: string;
+  if (replaying && wanted !== undefined && wanted.startsWith(`${prefix}_`)) {
+    replaying.next += 1;
+    id = wanted;
+  } else {
+    // Once one does not fit, none after it is given again: they would land on other objects.
+    if (replaying) replaying.next = replaying.given.length;
+    const bytes = crypto.getRandomValues(new Uint8Array(ID_LENGTH));
+    let suffix = "";
+    for (const byte of bytes) suffix += ID_ALPHABET[byte % ID_ALPHABET.length];
+    id = `${prefix}_${suffix}`;
+  }
+  replaying?.made.push(id);
+  return id;
+}
+
+/**
+ * Runs something that makes ids, giving it `given` again, in order, where it asks for one of the
+ * same kind, and new ones after: the same commands on the same project make the same objects twice,
+ * as a change people allowed after they saw a dry run of it (S-D4). Only for what runs at once: the
+ * ids of whatever else runs meanwhile would be taken.
+ */
+export function withIds<T>(
+  given: readonly string[],
+  run: () => T,
+): { readonly value: T; readonly ids: readonly string[] } {
+  const outer = replaying;
+  const now = { given, next: 0, made: [] as string[] };
+  replaying = now;
+  try {
+    return { value: run(), ids: now.made };
+  } finally {
+    replaying = outer;
+  }
 }
 
 /** Things in time order, which is how people and AI tools read them. */

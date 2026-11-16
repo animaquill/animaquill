@@ -29,6 +29,8 @@ export interface TestHost extends ToolHost {
   selected: SelectionFacts | undefined;
   /** People asked for a plan first, see `ToolHost.planFirst`. */
   plan: boolean;
+  /** People want to be asked before a change, see `ToolHost.approve`: unset, they are not. */
+  approve: ToolHost["approve"];
   open(store: ProjectStore | undefined): void;
 }
 
@@ -40,6 +42,7 @@ export function testHost(store: ProjectStore | undefined = openSample(), task = 
     selected: undefined,
     plan: false,
     planFirst: () => host.plan,
+    approve: undefined,
     store: () => open,
     origin: () => aiTask(host.task),
     selection: () => host.selected,

@@ -81,6 +81,8 @@ export class FolderTools {
 
   constructor(options: FolderToolsOptions) {
     this.#options = options;
+    // No `planFirst`, no `approve`: the AI tool has a plan mode of its own, and asks people before
+    // a change in its own way (S-D3, S-D4 of the design of changes and gates of AnimaQuill Cloud).
     const host: ToolHost = {
       store: () => this.#project?.store,
       // Everything of one connection is one task of the AI tool.

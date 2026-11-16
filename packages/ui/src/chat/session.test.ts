@@ -439,6 +439,112 @@ describe("the chat", () => {
   });
 });
 
+describe("asking before a change of the project (S-D4)", () => {
+  /** Waits until so many changes wait for people, or fails. */
+  const waiting = async (chat: ChatSession, count: number) => {
+    for (let tries = 0; tries < 200; tries += 1) {
+      if (chat.getSnapshot().approvals.length === count) return chat.getSnapshot().approvals;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    throw new Error(`${chat.getSnapshot().approvals.length} changes wait, not ${count}`);
+  };
+
+  it("asks for each change while the setting is on, and writes only once allowed", async () => {
+    const { ai, chat, fake, markers } = setup();
+    ai.setAskBeforeEdit(true);
+    fake({ fake: [{ calls: [addMarker("1")] }, { calls: [addMarker("2")] }, { text: "好了" }] });
+    const sent = chat.send("加两个标记");
+    const [first] = await waiting(chat, 1);
+    expect(first?.request.tool).toBe("aq_edit");
+    expect(first?.request.changes).toHaveLength(1);
+    expect(markers()).toHaveLength(0);
+    chat.answerApproval(first?.id ?? "", "once");
+    // The next change is asked again.
+    const [second] = await waiting(chat, 1);
+    expect(second?.id).not.toBe(first?.id);
+    expect(markers()).toHaveLength(1);
+    chat.answerApproval(second?.id ?? "", "once");
+    expect((await sent)?.end).toBe("done");
+    expect(markers()).toHaveLength(2);
+    expect(chat.getSnapshot().approvals).toEqual([]);
+    const results = chat.getSnapshot().conversation?.getSnapshot().entries ?? [];
+    expect(
+      results.filter((entry) => entry.role === "tool").map((entry) => entry.data?.approved),
+    ).toEqual(["once", "once"]);
+  });
+
+  it("allows the rest of the task with 'task', and asks again in the next one", async () => {
+    const { ai, chat, fake, markers } = setup();
+    ai.setAskBeforeEdit(true);
+    fake({ fake: [{ calls: [addMarker("1")] }, { calls: [addMarker("2")] }, { text: "好了" }] });
+    const sent = chat.send("加两个标记");
+    const [first] = await waiting(chat, 1);
+    chat.answerApproval(first?.id ?? "", "task");
+    expect((await sent)?.end).toBe("done");
+    expect(markers()).toHaveLength(2);
+    fake({ fake: [{ calls: [addMarker("3")] }, { text: "好了" }] });
+    const next = chat.send("再加一个");
+    const [again] = await waiting(chat, 1);
+    expect(markers()).toHaveLength(2);
+    chat.answerApproval(again?.id ?? "", "no");
+    expect((await next)?.end).toBe("done");
+    expect(markers()).toHaveLength(2);
+  });
+
+  it("writes nothing when people say no, nor the rest of that answer", async () => {
+    const { ai, chat, fake, markers } = setup();
+    ai.setAskBeforeEdit(true);
+    fake({ fake: [{ calls: [addMarker("1"), addMarker("2")] }, { text: "那你想怎么改？" }] });
+    const sent = chat.send("加两个标记");
+    const [first] = await waiting(chat, 1);
+    chat.answerApproval(first?.id ?? "", "no");
+    expect((await sent)?.end).toBe("done");
+    expect(markers()).toHaveLength(0);
+    const tools = (chat.getSnapshot().conversation?.getSnapshot().entries ?? []).filter(
+      (entry) => entry.role === "tool",
+    );
+    expect(tools.map((entry) => entry.role === "tool" && entry.data)).toEqual([
+      { declined: true },
+      { afterDeclined: true },
+    ]);
+  });
+
+  it("writes nothing of what waits when the task stops", async () => {
+    const { ai, chat, fake, markers } = setup();
+    ai.setAskBeforeEdit(true);
+    fake({ fake: [{ calls: [addMarker("1")] }, { text: "好了" }] });
+    const sent = chat.send("加一个标记");
+    const [first] = await waiting(chat, 1);
+    chat.stop();
+    expect((await sent)?.end).toBe("stopped");
+    expect(chat.getSnapshot().approvals).toEqual([]);
+    // Clicked after it stopped: nothing.
+    chat.answerApproval(first?.id ?? "", "once");
+    expect(markers()).toHaveLength(0);
+  });
+
+  it("asks from the next change on once turned on during a task, and stops asking once off", async () => {
+    const { ai, chat, fake, markers } = setup();
+    fake({
+      fake: [
+        { calls: [addMarker("1")] },
+        () => {
+          ai.setAskBeforeEdit(true);
+          return { calls: [addMarker("2")] };
+        },
+        { text: "好了" },
+      ],
+    });
+    const sent = chat.send("加两个标记");
+    const [asked] = await waiting(chat, 1);
+    expect(markers()).toHaveLength(1);
+    ai.setAskBeforeEdit(false);
+    chat.answerApproval(asked?.id ?? "", "once");
+    expect((await sent)?.end).toBe("done");
+    expect(markers()).toHaveLength(2);
+  });
+});
+
 describe("a conversation of its own", () => {
   /** A service that answers every request with its model's name, and the requests it got. */
   function stubService() {

@@ -72,8 +72,13 @@ describe("replayed calls", () => {
   /** What every call of every scenario gave back, for the check of words below. */
   const said: string[] = [];
 
-  it.each(scenarios)("%s", async (_, scenario) => {
+  /**
+   * Plays a scenario back. Where people want to be asked before a change (S-D4) and allow each one,
+   * every call gives what it gives without asking, and the project ends the same.
+   */
+  const play = async (scenario: Scenario, allowing = false) => {
     const host = testHost();
+    if (allowing) host.approve = async () => "once";
     let tools = toolsOn(host);
     let last: ToolResult | undefined;
     for (const [index, step] of scenario.steps.entries()) {
@@ -144,6 +149,47 @@ describe("replayed calls", () => {
       expect(store.undoOrigin(origin).ok).toBe(true);
       expect(store.canUndoOrigin(origin)).toBe(false);
     }
+  };
+
+  it.each(scenarios)("%s", async (_, scenario) => play(scenario));
+
+  it.each(scenarios)("%s, people asked and allowing each change", async (_, scenario) =>
+    play(scenario, true),
+  );
+
+  // People are asked and allow nothing: the same calls, and none of them changes the project.
+  it.each(scenarios)("%s, people asked and allowing nothing", async (_, scenario) => {
+    const host = testHost();
+    host.approve = async () => "no";
+    let tools = toolsOn(host);
+    for (const [index, step] of scenario.steps.entries()) {
+      const store = host.store() as ProjectStore;
+      if ("user" in step) {
+        store.executeBatch(step.user, { origin: USER });
+        continue;
+      }
+      if ("window" in step || "undoTask" in step) continue;
+      if ("message" in step) {
+        if (step.task !== undefined) host.task = step.task;
+        tools.caller.beginAnswer();
+        continue;
+      }
+      if ("reopen" in step) {
+        host.open(ProjectStore.fromUpdates([store.encodeState()]).store);
+        if (step.newCaller) tools = toolsOn(host);
+        continue;
+      }
+      if (!step.sameAnswer) tools.caller.beginAnswer();
+      const before = store.revisionId;
+      const result = await tools.call(step.tool, step.args ?? {});
+      said.push(`${step.tool}: ${result.text}`);
+      expect(store.revisionId, `step ${index} (${step.tool})`).toBe(before);
+      // A dry run, and a change that changes nothing, are no change to ask about.
+      if (WRITE_TOOLS.has(step.tool) && !result.isError) {
+        expect(result.text, `step ${index}`).toMatch(/dry run|which changed nothing/);
+      }
+    }
+    expect((host.store() as ProjectStore).canUndoOrigin(host.origin())).toBe(false);
   });
 
   // People asked for a plan first: the same calls, and none of them changes the project.

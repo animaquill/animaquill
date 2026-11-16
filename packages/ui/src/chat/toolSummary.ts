@@ -228,8 +228,29 @@ export const toolErrorCode = (result: ToolEntry): string | undefined =>
   result.ok ? undefined : (/^error ([a-z][a-z-]*)/.exec(result.text)?.[1] ?? undefined);
 
 /**
- * A change kept from the project because people asked for a plan first (`plan-first`): no failure,
- * nothing went wrong, so it shows as any other call.
+ * Why a change did not happen that is no failure, as people chose it: they asked for a plan first
+ * (`plan-first`), they did not allow it, or one before it in the same answer (S-D4), or the task
+ * stopped while it waited for them. It shows as any other call, not red.
  */
-export const isHeldForPlan = (result: ToolEntry | undefined): boolean =>
-  result !== undefined && toolErrorCode(result) === "plan-first";
+export function heldWhy(
+  result: ToolEntry | undefined,
+): "plan" | "declined" | "afterDeclined" | "stopped" | undefined {
+  if (result === undefined || result.ok) return undefined;
+  const code = toolErrorCode(result);
+  if (code === "plan-first") return "plan";
+  if (result.data?.declined === true) return "declined";
+  if (result.data?.afterDeclined === true) return "afterDeclined";
+  if (code === "stopped") return "stopped";
+  return undefined;
+}
+
+export const isHeld = (result: ToolEntry | undefined): boolean => heldWhy(result) !== undefined;
+
+/** What people answered to a change they were asked about, as its line says it. */
+export function approvalText(say: Say, result: ToolEntry | undefined): string | undefined {
+  if (heldWhy(result) === "declined") return say("chat.approve.declined");
+  const approved = result?.ok ? result.data?.approved : undefined;
+  if (approved !== "once" && approved !== "task") return undefined;
+  const changes = Array.isArray(result?.data?.changes) ? result.data.changes : [];
+  return say("chat.approve.allowed", { count: changes.length });
+}

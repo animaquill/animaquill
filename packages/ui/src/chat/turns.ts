@@ -5,7 +5,7 @@ import type {
   ToolEntry,
   UserEntry,
 } from "@animaquill/agent";
-import { isHeldForPlan } from "./toolSummary.ts";
+import { isHeld } from "./toolSummary.ts";
 
 /**
  * A conversation by turns, as the chat shows it: what people said, the process of AI (thinking,
@@ -83,7 +83,7 @@ export function turnOf(user: UserEntry, entries: readonly ChatEntry[], running =
     for (const call of entry.calls) {
       const result = results.get(call.id);
       tools += 1;
-      if (result && !result.ok && !isHeldForPlan(result)) failed += 1;
+      if (result && !result.ok && !isHeld(result)) failed += 1;
       steps.push({ kind: "tool", id: call.id, call, result });
     }
   });

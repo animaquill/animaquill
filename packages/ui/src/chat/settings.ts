@@ -613,6 +613,7 @@ export class AiSettingsStore {
       lookSize,
       lookWhilePlaying,
       autoCompact,
+      askBeforeEdit,
       kept,
     } = this.#snapshot;
     return {
@@ -629,6 +630,7 @@ export class AiSettingsStore {
       ...(lookSize !== undefined && { lookSize }),
       ...(lookWhilePlaying && { lookWhilePlaying }),
       ...(autoCompact === false && { autoCompact }),
+      ...(askBeforeEdit && { askBeforeEdit }),
       ...(kept && { kept }),
     };
   }
@@ -1275,6 +1277,12 @@ export class AiSettingsStore {
   setAutoCompact(on: boolean): void {
     const { autoCompact: _was, ...now } = this.#settingsNow();
     this.#save({ ...now, ...(!on && { autoCompact: false as const }) });
+  }
+
+  /** Whether AI asks before each change of the project, see `AiSettings.askBeforeEdit`. */
+  setAskBeforeEdit(on: boolean): void {
+    const { askBeforeEdit: _was, ...now } = this.#settingsNow();
+    this.#save({ ...now, ...(on && { askBeforeEdit: true as const }) });
   }
 
   /** Whether AI waits for people to stop playing before it renders frames. */

@@ -892,6 +892,10 @@
           "name": "AI 看画面时等你停下播放",
           "keywords": "look playback wait 看画面 播放 等待 排队"
         },
+        "askBeforeEdit": {
+          "name": "AI 改项目前先问我",
+          "keywords": "approve ask permission confirm 批准 允许 询问 确认 权限 改项目 先问"
+        },
         "autoCompact": {
           "name": "上下文快满时自动压缩",
           "keywords": "compact context summary 压缩 上下文 摘要 token 用量"
@@ -3353,6 +3357,7 @@
       "writing": "正在写回答…",
       "tool": "正在{{name}}…",
       "toolOps": "正在{{name}}（{{count}} 个操作）…",
+      "approve": "等你允许改项目",
       "retry": "{{reason}}，正在重试 {{attempt}}/{{of}} · {{seconds}} 秒后",
       "quiet": "模型 {{seconds}} 秒没有回应",
       "keepWaiting": "继续等",
@@ -3401,7 +3406,10 @@
       "showAll": "显示全部（{{count}} 行）",
       "showLess": "收起",
       "failed": "没有成功：{{reason}}",
-      "held": "先出方案开着，这一步没有改项目。"
+      "held": "先出方案开着，这一步没有改项目。",
+      "heldDeclined": "你没允许，这一步没有改项目。",
+      "heldAfterDeclined": "前面的改动你没允许，这一步没有执行。",
+      "heldStopped": "任务停了，这一步没有改项目。"
     },
     "toolErrors": {
       "conflict": "你或别处在 AI 读过之后改了这些内容，AI 要重新读一遍",
@@ -3434,7 +3442,8 @@
       "not-available": "这里不能做这件事",
       "out-of-range": "时间超出了范围",
       "mix-failed": "混不出来",
-      "plan-first": "先出方案开着，没有改项目"
+      "plan-first": "先出方案开着，没有改项目",
+      "changedWhileAsked": "等你允许的时候，要改的地方被改过了，没有写"
     },
     "card": {
       "noChanges": "没有改项目",
@@ -3493,7 +3502,15 @@
     "running": "正在运行",
     "toolOk": "成功",
     "toolFailed": "出错",
-    "toolHeld": "没有改（先出方案）",
+    "toolHeld": "没有改",
+    "approve": {
+      "title": "要改 {{count}} 处",
+      "once": "允许",
+      "task": "这次任务都允许",
+      "no": "不允许",
+      "allowed": "允许了 {{count}} 处",
+      "declined": "没允许"
+    },
     "result": "结果",
     "undoTask": "撤销这次任务",
     "redoTask": "重做这次任务",
@@ -3836,7 +3853,8 @@
       "asking": "AI 在等你回答",
       "failed": "AI 的任务出错了",
       "look": "AI 要看画面，请回到 AnimaQuill",
-      "plan": "AI 的方案好了"
+      "plan": "AI 的方案好了",
+      "approve": "AI 要改项目，等你允许"
     },
     "action": {
       "insertTime": "AI 聊天：插入播放头的时间",

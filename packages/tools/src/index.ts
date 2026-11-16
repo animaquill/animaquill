@@ -10,6 +10,7 @@ export {
   withoutAddresses,
   type Address,
 } from "./address.ts";
+export { Approvals, type Approval, type ApproveRequest } from "./approve.ts";
 export { CallerState } from "./caller.ts";
 export { describeChanges, type ObjectChange } from "./changes.ts";
 export type { OtherChange, OtherWho } from "./context.ts";

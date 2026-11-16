@@ -914,3 +914,14 @@ describe("summing up the earlier conversation by itself", () => {
     expect(readAiSettings({ ...off, autoCompact: true }).settings.autoCompact).toBeUndefined();
   });
 });
+
+describe("asking before a change of the project", () => {
+  it("is off unless people turned it on, which is what is kept", () => {
+    expect(writeAiSettings(EMPTY_AI_SETTINGS).askBeforeEdit).toBeUndefined();
+    const on = writeAiSettings({ ...EMPTY_AI_SETTINGS, askBeforeEdit: true });
+    expect(on.askBeforeEdit).toBe(true);
+    expect(readAiSettings(on).settings.askBeforeEdit).toBe(true);
+    expect(readAiSettings({ ...on, askBeforeEdit: "yes" }).settings.askBeforeEdit).toBeUndefined();
+    expect(readAiSettings({ ...on, askBeforeEdit: false }).settings.askBeforeEdit).toBeUndefined();
+  });
+});

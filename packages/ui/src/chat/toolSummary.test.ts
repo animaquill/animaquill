@@ -2,7 +2,9 @@ import type { ToolCallEntry, ToolEntry } from "@animaquill/agent";
 import { describe, expect, it } from "vitest";
 import { plainTranslate } from "../i18n/failures.ts";
 import {
+  approvalText,
   argFields,
+  heldWhy,
   timeText,
   toolErrorCode,
   toolSummary,
@@ -115,5 +117,26 @@ describe("the line of a call of a tool", () => {
       "conflict",
     );
     expect(toolErrorCode(result({}, true, "error conflict"))).toBeUndefined();
+  });
+
+  it("says what people answered to a change they were asked about, and that no is no failure", () => {
+    const changes = [
+      { kind: "clip", id: "a" },
+      { kind: "marker", id: "b" },
+    ];
+    expect(approvalText(say, result({ changes, approved: "once" }))).toBe("允许了 2 处");
+    expect(approvalText(say, result({ changes, approved: "task" }))).toBe("允许了 2 处");
+    // Allowed before, for the whole task: nothing to say on each.
+    expect(approvalText(say, result({ changes, approved: "earlier" }))).toBeUndefined();
+    const declined = result({ declined: true }, false, "error declined: the user was shown");
+    expect(approvalText(say, declined)).toBe("没允许");
+    expect(heldWhy(declined)).toBe("declined");
+    expect(heldWhy(result({ afterDeclined: true }, false, "error not-run: x"))).toBe(
+      "afterDeclined",
+    );
+    expect(heldWhy(result({}, false, "error stopped: x"))).toBe("stopped");
+    expect(heldWhy(result({}, false, "error plan-first: x"))).toBe("plan");
+    expect(heldWhy(result({}, false, "error conflict: x"))).toBeUndefined();
+    expect(heldWhy(result({ declined: true }, true, "done"))).toBeUndefined();
   });
 });

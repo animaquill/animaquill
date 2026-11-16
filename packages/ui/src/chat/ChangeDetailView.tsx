@@ -66,11 +66,15 @@ export function ChangeDetailView({
   );
 }
 
-/** Works out what a line shows, or undefined: see `detailOf`. */
+/**
+ * Works out what a line shows, or undefined: see `detailOf`. From the undo log of the task, or from
+ * the project before and after a change that has not happened yet (`given`, S-D4).
+ */
 export function useDetail(
   origin: Origin,
   change: TurnChange,
   wanted: boolean,
+  given?: BeforeAfter,
 ): { readonly detail: ChangeDetail; readonly seen: BeforeAfter } | undefined {
   const workbench = useWorkbench();
   const { store } = useSession();
@@ -79,10 +83,10 @@ export function useDetail(
   const shown = workbench.timeline.model?.id;
   return useMemo(() => {
     if (!wanted || !store || !state) return undefined;
-    const seen = store.beforeAfterOf(origin);
+    const seen = given ?? store.beforeAfterOf(origin);
     const detail = seen && detailOf(change, seen, shown);
     return seen && detail ? { detail, seen } : undefined;
-  }, [wanted, store, state, origin, change, shown]);
+  }, [wanted, store, state, origin, change, shown, given]);
 }
 
 function timeText(seconds: number, rate: FrameRate): string {

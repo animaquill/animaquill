@@ -555,16 +555,18 @@ export const edit: ToolDefinition<EditArgs> = {
     const missing = missingAsset(call, args, before);
     if (missing) return missing;
     const bases = basesOf(call, args, before);
+    // A preview for people to allow writes nothing, and counts as nothing written, as a dry run.
+    const dry = args.dry_run === true || call.preview === true;
     const result = store.executeBatch(calls, {
       origin: host.origin(),
       baseRevision: bases.of,
       isOwn: isOwnOf(call),
-      ...(args.dry_run && { dryRun: true }),
+      ...(dry && { dryRun: true }),
     });
     if (!result.ok) return failureOf(call, args, result.error, bases);
     const paths = result.patches.map(({ path }) => path);
     const changes = describeChanges(before, result.state, paths);
-    if (!args.dry_run) {
+    if (!dry) {
       afterWrite(call, paths, changes);
       for (const change of changes)
         if (change.kind === "file") call.caller.changedCode.add(change.id);

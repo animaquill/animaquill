@@ -1,3 +1,4 @@
+import { Approvals } from "./approve.ts";
 import { CallerState } from "./caller.ts";
 import { DEFAULT_TEXTS, hashOfTexts, type TextTable, type TextsUsed } from "./texts/index.ts";
 import { DETAIL_LIMITS, filledTexts, type Detail } from "./packs/detail.ts";
@@ -88,6 +89,12 @@ export function textsAt(texts: TextTable, detail: Detail = "standard"): TextTabl
 export interface ToolsetOptions {
   /** How much results give, see `DETAILS`: what the model pack says, standard by default. */
   readonly results?: Detail;
+  /**
+   * What people allowed in this run of a task, where they want to be asked before AI changes the
+   * project (`ToolHost.approve`): a host that makes the tools more than once for one run gives the
+   * same one each time. New with the toolset where not given: nothing allowed yet.
+   */
+  readonly approvals?: Approvals;
 }
 
 /**
@@ -107,5 +114,8 @@ export function createToolset(
   const detail = options.results ?? "standard";
   const words = textsAt(texts, detail);
   const limits = DETAIL_LIMITS[detail];
-  return DEFINITIONS.map((definition) => makeTool(definition, host, caller, words, limits));
+  const approvals = options.approvals ?? new Approvals();
+  return DEFINITIONS.map((definition) =>
+    makeTool(definition, host, caller, words, limits, approvals),
+  );
 }

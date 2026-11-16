@@ -2,6 +2,7 @@ import type { ChatEntry, ToolEntry } from "@animaquill/agent";
 import {
   aiTask,
   pathOfObject,
+  type BeforeAfter,
   type ObjectRef,
   type Origin,
   type ProjectState,
@@ -191,16 +192,22 @@ function otherText(say: Say, row: OtherRow): string {
 /**
  * What the batches of a turn did, as AI said it, and the objects they changed. A line opens to what
  * it changed before and after where this device has the undo log of the task, see
- * `ChangeDetailView`; without the log, or with nothing more to show, it does not.
+ * `ChangeDetailView`; without the log, or with nothing more to show, it does not. A change that
+ * waits for people to allow it (S-D4) gives its own before and after (`seen`), and `origin` to tell
+ * it from what the task did.
  */
-function ChangesView({
+export function ChangesView({
   task,
   said,
   changes,
+  seen,
+  origin: given,
 }: {
   readonly task: string;
   readonly said: readonly string[];
   readonly changes: readonly TurnChange[];
+  readonly seen?: BeforeAfter;
+  readonly origin?: Origin;
 }) {
   const workbench = useWorkbench();
   const { t } = useTranslation();
@@ -209,10 +216,11 @@ function ChangesView({
   const [open, setOpen] = useState(false);
   const lines = open ? changes : changes.slice(0, SHOWN_CHANGES);
   const sentences = open ? said : said.slice(0, SHOWN_SAID);
-  const origin = aiTask(task);
+  const origin = given ?? aiTask(task);
   // The card follows what can be taken back, which follows the undo logs, see `ChangeCard`.
   const hasLog =
-    store !== undefined && (store.canUndoOrigin(origin) || store.canRedoOrigin(origin));
+    seen !== undefined ||
+    (store !== undefined && (store.canUndoOrigin(origin) || store.canRedoOrigin(origin)));
   const indent = hasLog && lines.some((change) => mayOpen(change) !== "never");
   return (
     <div className={styles.changes} data-testid="chat-changes">
@@ -230,6 +238,7 @@ function ChangesView({
           indent={indent}
           state={state}
           workbench={workbench}
+          {...(seen && { seen })}
         />
       ))}
       {(changes.length > SHOWN_CHANGES || said.length > SHOWN_SAID) && (
@@ -253,6 +262,7 @@ function ChangeRow({
   indent,
   state,
   workbench,
+  seen,
 }: {
   readonly origin: Origin;
   readonly change: TurnChange;
@@ -260,11 +270,12 @@ function ChangeRow({
   readonly indent: boolean;
   readonly state: ProjectState | undefined;
   readonly workbench: ReturnType<typeof useWorkbench>;
+  readonly seen?: BeforeAfter;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const may = hasLog ? mayOpen(change) : "never";
-  const found = useDetail(origin, change, may !== "never" && (open || may === "maybe"));
+  const found = useDetail(origin, change, may !== "never" && (open || may === "maybe"), seen);
   const opens = may === "surely" || (may === "maybe" && found !== undefined);
   const ref: ObjectRef = {
     kind: change.kind,

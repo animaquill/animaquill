@@ -30,8 +30,11 @@ export function RunState({
   const say = t as unknown as Say;
   const now = useNow(true);
   const phase = useLive(conversation.live, livePhase);
-  const { looks } = useWorkbench();
+  const { looks, chat } = useWorkbench();
   const look = useSyncExternalStore(looks.subscribe, looks.getSnapshot);
+  // A change waits for people to allow it (S-D4): that is what the task waits for.
+  const { approvals } = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
+  const approving = approvals.some(({ task }) => task === running.task);
   const [waitedOn, setWaitedOn] = useState(0);
   const { tool, retry } = running;
   // Looking at frames waits for people, which it says: they can stop playing, or come back.
@@ -51,6 +54,8 @@ export function RunState({
       of: retry.of,
       seconds: Math.max(0, Math.ceil((retry.at - now) / 1000)),
     });
+  } else if (approving) {
+    label = t("chat.phase.approve");
   } else if (tool?.name === "aq_render_frames") {
     label =
       look.kind === "rendering"

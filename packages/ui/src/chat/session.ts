@@ -34,6 +34,7 @@ import {
   type UndoResult,
 } from "@animaquill/core";
 import {
+  Approvals,
   CallerState,
   DEFAULT_PACK,
   REASONING,
@@ -48,6 +49,8 @@ import {
   type LookRequest,
   type ModelPack,
   type PackUse,
+  type Approval,
+  type ApproveRequest,
   type SelectionFacts,
   type ToolHost,
 } from "@animaquill/tools";
@@ -157,7 +160,23 @@ export interface ChatSnapshot {
    * `UserEntry.plan`. Each conversation has its own; a new one starts without.
    */
   readonly planFirst: boolean;
+  /**
+   * Changes AI wants to make that wait for people to allow them ("AI 改项目前先问我", S-D4), oldest
+   * first: the first of a task is the card under it. Never kept: after a reload the task stopped.
+   */
+  readonly approvals: readonly PendingApproval[];
 }
+
+/** A change that waits for people to allow it, see `ChatSnapshot.approvals`. */
+export interface PendingApproval {
+  readonly id: string;
+  /** The task that wants to make it. */
+  readonly task: string;
+  readonly request: ApproveRequest;
+}
+
+/** What people answer to a change that waits for them. */
+export type ApprovalAnswer = Exclude<Approval, "stopped">;
 
 /** A message that waits for the task that runs, with its pictures. */
 export interface Queued {
@@ -294,6 +313,7 @@ export class ChatSession {
     repick: [],
     queued: [],
     planFirst: false,
+    approvals: [],
   };
   /** What people wrote and did not send yet, by conversation. */
   readonly drafts: Drafts;
@@ -313,6 +333,11 @@ export class ChatSession {
   #taking: { readonly model: string; readonly answers: number } | undefined;
   /** The project as each of the latest tasks started, for AI to compare with (`taskStart`). */
   readonly #started = new Map<string, ProjectState>();
+  /** What people allowed in each run of a task, by what stops the run: only for as long as it. */
+  readonly #allowed = new WeakMap<AbortSignal, Approvals>();
+  /** How each change that waits for people is answered, by its id. */
+  readonly #answers = new Map<string, (answer: Approval) => void>();
+  #askedCount = 0;
 
   constructor(options: ChatSessionOptions) {
     this.#options = options;
@@ -497,11 +522,22 @@ export class ChatSession {
         this.#started.delete(old);
       }
     }
+    const settings = this.#options.ai;
+    const ask = (request: ApproveRequest) => this.#ask(task, request, signal);
+    let approvals = this.#allowed.get(signal);
+    if (!approvals) {
+      approvals = new Approvals();
+      this.#allowed.set(signal, approvals);
+    }
     const tools = createToolset(
       {
         store: () =>
           project && this.#options.project()?.store === project.store ? project.store : undefined,
         origin: () => aiTask(task),
+        // As the settings say at each call: turned on or off, from the next change on.
+        get approve() {
+          return settings.getSnapshot().askBeforeEdit === true ? ask : undefined;
+        },
         // As the message the task started with asked, not as the switch is now.
         planFirst: () =>
           conversation
@@ -529,9 +565,37 @@ export class ChatSession {
       },
       caller,
       use.texts,
-      { results: use.results },
+      { results: use.results, approvals },
     );
     return toolSpecsOf(tools);
+  }
+
+  /**
+   * Shows a change AI wants to make to people, and waits for their answer: "stopped" once the task
+   * stops meanwhile, whatever they click after, and right away for a task that stopped already.
+   */
+  #ask(task: string, request: ApproveRequest, signal: AbortSignal): Promise<Approval> {
+    if (signal.aborted) return Promise.resolve("stopped");
+    this.#askedCount += 1;
+    const id = `${task}#${this.#askedCount}`;
+    return new Promise((resolve) => {
+      const done = (answer: Approval) => {
+        if (!this.#answers.has(id)) return;
+        this.#answers.delete(id);
+        signal.removeEventListener("abort", stop);
+        this.#set({ approvals: this.#snapshot.approvals.filter((each) => each.id !== id) });
+        resolve(signal.aborted ? "stopped" : answer);
+      };
+      const stop = () => done("stopped");
+      signal.addEventListener("abort", stop, { once: true });
+      this.#answers.set(id, done);
+      this.#set({ approvals: [...this.#snapshot.approvals, { id, task, request }] });
+    });
+  }
+
+  /** People's answer to a change that waits for them, see `ChatSnapshot.approvals`. */
+  answerApproval(id: string, answer: ApprovalAnswer): void {
+    this.#answers.get(id)?.(answer);
   }
 
   #saveSoon(id: string, entries: readonly ChatEntry[]): void {

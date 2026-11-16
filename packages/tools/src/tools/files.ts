@@ -35,19 +35,27 @@ const missing = (state: ProjectState, path: string): ToolResult => {
 
 const linesWord = (count: number) => `${count} line${count === 1 ? "" : "s"}`;
 
-/** Writes a file as one step, and what the result says about it. */
+/**
+ * Writes a file as one step: the project after it, or what the result says about why not. A preview
+ * for people to allow (`Call.preview`) writes nothing and counts as nothing written.
+ */
 function write(
   call: Call,
   path: string,
   text: string,
   options: { readonly base?: string | undefined; readonly whole: boolean },
-): ToolResult | undefined {
+): { readonly after: ProjectState } | { readonly refused: ToolResult } {
   const { base, whole } = options;
   const { store, host } = call;
   const result = store.execute(
     { type: "file.write", params: { path, text } },
-    { origin: host.origin(), ...(base !== undefined && { baseRevision: base }) },
+    {
+      origin: host.origin(),
+      ...(base !== undefined && { baseRevision: base }),
+      ...(call.preview && { dryRun: true }),
+    },
   );
+  if (result.ok && call.preview) return { after: result.state };
   if (result.ok) {
     call.caller.changedCode.add(path);
     // What the caller wrote all of, it knows all of; what it changed parts of, as it knew it before.
@@ -60,9 +68,9 @@ function write(
       whole ? [1, lines] : undefined,
     );
     call.caller.saw({ kind: "file", id: path }, store.revisionId);
-    return undefined;
+    return { after: result.state };
   }
-  return failed(`error ${failureText(result.error)} Nothing was written.`);
+  return { refused: failed(`error ${failureText(result.error)} Nothing was written.`) };
 }
 
 /** The lines that changed, with some around them, numbered as aq_file_read numbers them. */
@@ -183,11 +191,11 @@ export const fileEdit: ToolDefinition<z.output<typeof FileEditParams>> = {
     if (crlf) text = text.replaceAll("\n", "\r\n");
     const seen = call.caller.files.get(args.path);
     const lines = before.split("\n").length;
-    const refused = write(call, args.path, text, {
+    const written = write(call, args.path, text, {
       whole: readWhole(seen, textHash(before), lines),
     });
-    if (refused) return refused;
-    const changes = describeChanges(state, call.store.getState(), [["files", args.path]]);
+    if ("refused" in written) return written.refused;
+    const changes = describeChanges(state, written.after, [["files", args.path]]);
     return answer(
       call,
       [
@@ -271,14 +279,14 @@ export const fileWrite: ToolDefinition<z.output<typeof FileWriteParams>> = {
         );
       }
     }
-    const failedWrite = write(call, path, text, { base: args.base_revision, whole: true });
-    if (failedWrite) return failedWrite;
+    const written = write(call, path, text, { base: args.base_revision, whole: true });
+    if ("refused" in written) return written.refused;
     const lines = text.split("\n").length;
     const what =
       before === undefined
         ? `new, ${linesWord(lines)}`
         : `replaced, ${before.split("\n").length} → ${linesWord(lines)}`;
-    const changes = describeChanges(state, call.store.getState(), [["files", path]]);
+    const changes = describeChanges(state, written.after, [["files", path]]);
     return answer(
       call,
       [`wrote ${path} (${what})`, `syntax: ${await syntaxOf(path, text)}`, RUNTIME],

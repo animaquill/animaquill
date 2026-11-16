@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { CallerState } from "./caller.ts";
 import { withoutAddresses } from "./address.ts";
+import { Approvals, allowedStore, previewStore, type Approval } from "./approve.ts";
 import { failed, othersOf, type Call } from "./context.ts";
 import { issueLine } from "./issues.ts";
 import type { DetailLimits } from "./packs/detail.ts";
@@ -134,6 +135,20 @@ const NOT_RUN_FAILED =
   "error not-run: an earlier change in this answer failed, so this one was not run; the same call in a later answer runs. Nothing was written.";
 const NOT_RUN_WAITING =
   "error not-run: this answer asked the user a question, so this change was not run; the turn is waiting for the user.";
+const NOT_RUN_DECLINED =
+  "error not-run: the user did not allow an earlier change in this answer, so this one was not run and not shown to them. Nothing was written.";
+
+/** What a change answers that the user saw and did not allow (S-D4). */
+export const DECLINED =
+  "error declined: the user was shown this change and did not allow it. Nothing was written, and no later change of this answer runs.";
+/** What a change answers that waited for the user while the task stopped. */
+export const STOPPED =
+  "error stopped: the task stopped while this change waited for the user. Nothing was written.";
+const CLOSED =
+  "error no-project: the project this change was for is no longer open. Nothing was written.";
+/** The line after an error of a change the user allowed, where the project changed meanwhile. */
+const CHANGED_MEANWHILE =
+  "the project changed while this change waited for the user, and the change was checked again against what the user saw.";
 
 /**
  * What every tool that changes the project answers while people asked for a plan first, whatever
@@ -142,13 +157,26 @@ const NOT_RUN_WAITING =
 export const PLAN_FIRST =
   'error plan-first: the user asked for a plan first, so nothing in this turn changes the project. Nothing was written. Reading and looking work as always; the plan goes to the user with aq_propose kind "plan".';
 
-/** A tool as hosts use it: parameters checked, the project there, the line about others added. */
+/** A result with more data for people, which never goes to the model. */
+const withData = (result: ToolResult, data: Readonly<Record<string, unknown>>): ToolResult => ({
+  ...result,
+  data: { ...result.data, ...data },
+});
+
+/**
+ * A tool as hosts use it: parameters checked, the project there, the line about others added. For a
+ * tool that writes, the gates, in this order: "先出方案" (`ToolHost.planFirst`), before anything;
+ * parameters; a result kept by `request_id`; what holds back changes in this answer; and where people
+ * want to be asked (`ToolHost.approve`), a preview, their answer, and only then the write, of what
+ * they saw, against the project as it was then. `approvals` is what people allowed in this run.
+ */
 export function makeTool<P>(
   definition: ToolDefinition<P>,
   host: ToolHost,
   caller: CallerState,
   texts: TextTable,
   limits: DetailLimits,
+  approvals: Approvals = new Approvals(),
 ): Tool {
   const { name, title, params, writes = false } = definition;
   const description = definition.describe?.(texts) ?? textOf(texts, `tools.${name}.description`);
@@ -173,6 +201,73 @@ export function makeTool<P>(
   // anything that writes. Changes are kept from the project, not from the list of tools.
   const blocked = (): ToolResult | undefined =>
     writes && host.planFirst?.() === true ? failed(PLAN_FIRST) : undefined;
+  /** What holds back a change in this answer: a question asked, a change not allowed or failed. */
+  const heldBack = (): ToolResult | undefined => {
+    if (caller.answer.proposed) return failed(NOT_RUN_WAITING);
+    if (caller.answer.declined) return withData(failed(NOT_RUN_DECLINED), { afterDeclined: true });
+    if (caller.answer.failedWrite) return failed(NOT_RUN_FAILED);
+    return undefined;
+  };
+  /**
+   * A change people are asked about (S-D4), once those asked before it are done: the preview, on a
+   * store that writes nothing; people's answer; and the write, on a store that writes only what the
+   * preview found, against its revision. `untried`: nothing was tried, as people did not allow it,
+   * never answered, or it was held back or had no project: no failure, and no result to give again.
+   */
+  const allowed = async (
+    call: Call,
+    args: P,
+    ask: (request: Parameters<NonNullable<ToolHost["approve"]>>[0]) => Promise<Approval>,
+  ): Promise<{ readonly result: ToolResult; readonly untried?: true }> => {
+    // What came of the changes asked before it, while it waited its turn.
+    const held = heldBack();
+    if (held) return { result: held, untried: true };
+    const { store } = call;
+    if (host.store() !== store) return { result: failed(CLOSED), untried: true };
+    if (approvals.all) {
+      const result = await definition.run(call, args);
+      return { result: result.isError ? result : withData(result, { approved: "earlier" }) };
+    }
+    const revision = store.revisionId;
+    const before = store.getState();
+    const preview = previewStore(store);
+    const tried = await definition.run({ ...call, store: preview.store, preview: true }, args);
+    // What fails as a preview fails written too: people are not asked about it.
+    if (tried.isError) return { result: tried };
+    const allowedHere = { ...call, store: allowedStore(store, revision, preview.found) };
+    const last = preview.found.at(-1);
+    // Nothing to change: nothing to ask, and what is written is still nothing, or it fails.
+    if (last === undefined || preview.found.every(({ patches }) => patches.length === 0)) {
+      return { result: await definition.run(allowedHere, args) };
+    }
+    const summary = (args as { readonly summary?: unknown }).summary;
+    const changes = Array.isArray(tried.data?.changes) ? tried.data.changes : [];
+    let answer: Approval;
+    try {
+      answer = await ask({
+        tool: name,
+        ...(typeof summary === "string" && summary.trim() !== "" && { summary: summary.trim() }),
+        changes,
+        before,
+        after: last.state,
+        revision,
+      });
+    } catch {
+      answer = "stopped";
+    }
+    if (answer === "stopped") return { result: failed(STOPPED), untried: true };
+    if (answer !== "once" && answer !== "task") {
+      caller.hold("declined");
+      return { result: withData(failed(DECLINED), { declined: true }), untried: true };
+    }
+    if (host.store() !== store) return { result: failed(CLOSED), untried: true };
+    if (answer === "task") approvals.allowAll();
+    const result = await definition.run(allowedHere, args);
+    if (!result.isError) return { result: withData(result, { approved: answer }) };
+    if (store.revisionId === revision) return { result };
+    const told = { ...result, text: `${result.text}\n${CHANGED_MEANWHILE}` };
+    return { result: withData(told, { changedWhileAsked: true }) };
+  };
   return {
     name,
     title,
@@ -217,11 +312,13 @@ export function makeTool<P>(
           }
           if (known) return known;
         }
-        if (caller.answer.proposed) return failed(NOT_RUN_WAITING);
-        if (caller.answer.failedWrite) return failed(NOT_RUN_FAILED);
+        const held = heldBack();
+        if (held) return held;
       }
       if (writes) caller.own.add(host.origin());
       const call: Call = { host, caller, store, texts, tool: name, limits };
+      // Read once for the call: people may turn it on or off meanwhile, for the next call.
+      const ask = writes && rest.dry_run !== true ? host.approve : undefined;
       // What others did is told up to the revision it was told at, not the one after the call: a
       // change that lands while a call waits, or while other calls run beside it, as read-only
       // calls may, is told by the next call instead of never. Of calls that end in another order
@@ -229,19 +326,25 @@ export function makeTool<P>(
       const at = store.revisionId;
       caller.keepState(at, store.getState());
       const others = othersOf(call);
-      const result = await definition.run(call, parsed.value);
+      const asked = ask
+        ? await approvals.inTurn(() => allowed(call, parsed.value, ask))
+        : { result: await definition.run(call, parsed.value) };
+      const { result } = asked;
       caller.keepState(store.revisionId, store.getState());
       const last = caller.lastCall === undefined ? undefined : store.revisionOf(caller.lastCall);
       const now = store.revisionOf(at);
       if (last === undefined || now === undefined || now >= last) caller.lastCall = at;
-      if (writes && result.isError) caller.hold("failed");
+      if (writes && result.isError && !asked.untried) caller.hold("failed");
       // What others changed goes to the model as a line, and to people as data with the result.
       const told = others.line ? { ...result, text: `${result.text}\n${others.line}` } : result;
       const done =
         others.changes.length > 0
           ? { ...told, data: { ...told.data, others: others.changes } }
           : told;
-      if (writes && request !== undefined) caller.keepResult(request, key, done);
+      // What people did not allow, or never answered, is no result to give again: nothing was tried.
+      if (writes && request !== undefined && !asked.untried) {
+        caller.keepResult(request, key, done);
+      }
       return done;
     },
   };

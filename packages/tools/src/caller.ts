@@ -129,7 +129,7 @@ export class CallerState {
   /** The project at the revisions results told of, for as long as the page: never kept with it. */
   readonly #states = new Map<RevisionId, ProjectState>();
   /** What happened so far in the answer of the model that is running, see `beginAnswer`. */
-  answer = { failedWrite: false, proposed: false };
+  answer = { failedWrite: false, proposed: false, declined: false };
   /** Which answer `answer` is of, as the host numbers them, see `answerIs`. */
   #answerId: string | undefined;
   /** When what holds back changes happened, see `answerIs`. */
@@ -200,7 +200,7 @@ export class CallerState {
    * conversation: the calls of one answer run right after each other.
    */
   beginAnswer(): void {
-    this.answer = { failedWrite: false, proposed: false };
+    this.answer = { failedWrite: false, proposed: false, declined: false };
   }
 
   /** The answer a call is of, by the host's id of it, before the call: another one begins anew. */
@@ -210,14 +210,18 @@ export class CallerState {
       this.#answerId = id;
       return;
     }
-    const held = this.answer.failedWrite || this.answer.proposed;
+    const held = this.answer.failedWrite || this.answer.proposed || this.answer.declined;
     if (held && this.#now() - this.#heldAt > HOLD_MS) this.beginAnswer();
   }
 
-  /** Holds back the changes after this one in the same answer: it failed, or it asked the user. */
-  hold(why: "failed" | "asked"): void {
+  /**
+   * Holds back the changes after this one in the same answer: it failed, it asked the user, or the
+   * user did not allow it (S-D4).
+   */
+  hold(why: "failed" | "asked" | "declined"): void {
     this.#heldAt = this.#now();
     if (why === "failed") this.answer.failedWrite = true;
+    else if (why === "declined") this.answer.declined = true;
     else this.answer.proposed = true;
   }
 

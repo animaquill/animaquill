@@ -235,6 +235,11 @@ export interface AiSettings {
    * said not to (`false`).
    */
   readonly autoCompact?: false;
+  /**
+   * AI asks before each change of the project, and changes it only once people allow it ("AI 改项目
+   * 前先问我", S-D4): off unless people turned it on. Only people change it: no tool does.
+   */
+  readonly askBeforeEdit?: true;
   readonly kept?: KeptSettings;
 }
 
@@ -336,6 +341,7 @@ const TOP_FIELDS = new Set([
   "lookSize",
   "lookWhilePlaying",
   "autoCompact",
+  "askBeforeEdit",
 ]);
 const SERVICE_FIELDS = new Set([
   "id",
@@ -815,6 +821,7 @@ export function readAiSettings(value: unknown): AiSettingsReading {
     }),
     ...(value.lookWhilePlaying === true && { lookWhilePlaying: true as const }),
     ...(value.autoCompact === false && { autoCompact: false as const }),
+    ...(value.askBeforeEdit === true && { askBeforeEdit: true as const }),
     ...(Object.keys(kept).length > 0 && { kept }),
   };
   // Set while the services were read, which control flow does not see.
@@ -957,6 +964,7 @@ export function writeAiSettings(settings: AiSettings): Record<string, unknown> {
     ...(settings.lookSize !== undefined && { lookSize: settings.lookSize }),
     ...(settings.lookWhilePlaying && { lookWhilePlaying: true }),
     ...(settings.autoCompact === false && { autoCompact: false }),
+    ...(settings.askBeforeEdit && { askBeforeEdit: true }),
   };
 }
 

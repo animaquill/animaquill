@@ -126,6 +126,11 @@ export interface Call {
   readonly tool: string;
   /** How much results give, as the model pack has it. */
   readonly limits: DetailLimits;
+  /**
+   * The tool only works out what it would change, for people to allow (S-D4): the store writes
+   * nothing, and what the caller read or wrote stays as it was, as for a dry run.
+   */
+  readonly preview?: true;
 }
 
 /**
