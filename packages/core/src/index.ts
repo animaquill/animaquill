@@ -390,7 +390,7 @@ export {
   type JoinTransition,
   type TrackState,
 } from "./model.ts";
-export type { Patch } from "./patch.ts";
+export { getIn, type Patch } from "./patch.ts";
 export { Place } from "./places.ts";
 export {
   VALUE_LIMIT,
@@ -412,6 +412,8 @@ export {
   isAhead,
   isEmptyUpdate,
   PLATFORM_CLIENT,
+  platformClockOf,
+  platformFromOf,
   sourceKindOf,
   stateVectorOfUpdate,
   type SourceKind,

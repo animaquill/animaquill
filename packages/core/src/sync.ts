@@ -47,6 +47,13 @@ export const sourceKindOf = (origin: Origin): SourceKind => {
  */
 export const PLATFORM_CLIENT = 0;
 
+/** Where what an update has of `PLATFORM_CLIENT` begins: undefined where it has none. */
+export const platformFromOf = (update: Uint8Array): number | undefined =>
+  Y.parseUpdateMeta(update).from.get(PLATFORM_CLIENT);
+
+/** How far a document has what `PLATFORM_CLIENT` wrote: where the platform writes next. */
+export const platformClockOf = (doc: Y.Doc): number => Y.getState(doc.store, PLATFORM_CLIENT);
+
 /** What a copy of a project has, as Yjs counts it: compare it with `isAhead`. */
 export const stateVectorOfUpdate = (update: Uint8Array): Uint8Array =>
   Y.encodeStateVectorFromUpdate(update);
