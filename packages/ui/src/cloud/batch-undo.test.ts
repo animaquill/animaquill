@@ -145,7 +145,7 @@ describe("taking merges of GitHub back as a whole", () => {
     await yes;
     expect(undone).toEqual(["m1"]);
     expect(notifications.getSnapshot().map(({ message }) => message)).toEqual([
-      "这次的改动已经不能撤销了",
+      "这次的文件后来按你的选择从项目里去掉了，重做会把它们带回来",
     ]);
   });
 });

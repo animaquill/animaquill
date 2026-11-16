@@ -50,6 +50,7 @@ const BATCH_WHYS = [
   "locked",
   "unusable",
   "history",
+  "drop",
 ] as const;
 
 /** The key of the words for a `why`, see `operations.why`. */
