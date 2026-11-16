@@ -170,9 +170,10 @@ export const MAX_PACK_BYTES = 256 * 1024;
 export const MAX_SYSTEM = 12_000;
 /**
  * How long the list of tools may be with a pack, in characters of JSON: names, descriptions and
- * schemas. The default one takes about 52 000; this leaves a pack room for about 3 000 tokens more.
+ * schemas. The default one takes about 64 300 (toolset 2026.9); this leaves a pack room for about
+ * 3 000 tokens more.
  */
-export const MAX_LIST = 64_000;
+export const MAX_LIST = 76_000;
 /** How long one tool's description may be: what Claude Code loads of one. */
 export const MAX_DESCRIPTION = 4_000;
 /** How many examples one group may have, and how long one may be as JSON. */

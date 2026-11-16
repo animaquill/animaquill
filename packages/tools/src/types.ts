@@ -96,6 +96,13 @@ export interface ToolHost {
    * editor can: see `aq_audio_analyze`.
    */
   listen?(request: ListenRequest): Promise<ListenAnswer>;
+  /**
+   * People asked for a plan first ("先出方案"): every tool that changes the project answers
+   * `plan-first` and writes nothing, whatever its parameters, see `makeTool`. As the message the task
+   * started with says, not as the switch is now. Hosts that leave it out never ask for one, such as
+   * the MCP of a folder, whose clients have plan modes of their own.
+   */
+  planFirst?(): boolean;
 }
 
 /**

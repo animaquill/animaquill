@@ -149,7 +149,9 @@ export function toolSummary(
     }
     case "aq_propose": {
       const question = text(args.question);
-      return question ? firstSentence(question) : "";
+      if (question) return firstSentence(question);
+      const title = args.kind === "plan" ? text(args.title) : undefined;
+      return title ? cut(title) : "";
     }
     case "aq_guide": {
       const topic = text(args.topic) ?? text(args.query);
@@ -224,3 +226,10 @@ export function argFields(args: Readonly<Record<string, unknown>>): readonly Arg
 /** The code of the error a tool gave, from the first words of its result. */
 export const toolErrorCode = (result: ToolEntry): string | undefined =>
   result.ok ? undefined : (/^error ([a-z][a-z-]*)/.exec(result.text)?.[1] ?? undefined);
+
+/**
+ * A change kept from the project because people asked for a plan first (`plan-first`): no failure,
+ * nothing went wrong, so it shows as any other call.
+ */
+export const isHeldForPlan = (result: ToolEntry | undefined): boolean =>
+  result !== undefined && toolErrorCode(result) === "plan-first";

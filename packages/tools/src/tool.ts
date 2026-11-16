@@ -135,6 +135,13 @@ const NOT_RUN_FAILED =
 const NOT_RUN_WAITING =
   "error not-run: this answer asked the user a question, so this change was not run; the turn is waiting for the user.";
 
+/**
+ * What every tool that changes the project answers while people asked for a plan first, whatever
+ * its parameters: nothing was written, and it is no failure (nothing after it is held back).
+ */
+export const PLAN_FIRST =
+  'error plan-first: the user asked for a plan first, so nothing in this turn changes the project. Nothing was written. Reading and looking work as always; the plan goes to the user with aq_propose kind "plan".';
+
 /** A tool as hosts use it: parameters checked, the project there, the line about others added. */
 export function makeTool<P>(
   definition: ToolDefinition<P>,
@@ -162,6 +169,10 @@ export function makeTool<P>(
     const extra = definition.check?.(parsed.data, texts);
     return extra ? { ok: false, error: extra } : { ok: true, value: parsed.data };
   };
+  // The one gate of "plan first": before parameters, before results kept by request_id, before
+  // anything that writes. Changes are kept from the project, not from the list of tools.
+  const blocked = (): ToolResult | undefined =>
+    writes && host.planFirst?.() === true ? failed(PLAN_FIRST) : undefined;
   return {
     name,
     title,
@@ -170,6 +181,8 @@ export function makeTool<P>(
     annotations,
     validate: (args) => {
       caller.answerIs(host.answer?.());
+      const gate = blocked();
+      if (gate) return gate;
       const parsed = parse(args);
       if (parsed.ok) return undefined;
       // The call came from the model and goes no further: a failed change holds back the rest.
@@ -178,6 +191,8 @@ export function makeTool<P>(
     },
     run: async (args) => {
       caller.answerIs(host.answer?.());
+      const gate = blocked();
+      if (gate) return gate;
       const parsed = parse(args);
       if (!parsed.ok) {
         if (writes) caller.hold("failed");

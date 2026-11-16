@@ -27,6 +27,8 @@ export interface TestHost extends ToolHost {
   /** The task the changes are made as: in the browser, each message is one. */
   task: string;
   selected: SelectionFacts | undefined;
+  /** People asked for a plan first, see `ToolHost.planFirst`. */
+  plan: boolean;
   open(store: ProjectStore | undefined): void;
 }
 
@@ -36,6 +38,8 @@ export function testHost(store: ProjectStore | undefined = openSample(), task = 
   const host: TestHost = {
     task,
     selected: undefined,
+    plan: false,
+    planFirst: () => host.plan,
     store: () => open,
     origin: () => aiTask(host.task),
     selection: () => host.selected,

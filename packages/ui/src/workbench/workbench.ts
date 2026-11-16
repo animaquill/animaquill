@@ -74,7 +74,7 @@ import { StartList } from "../cloud/start-list.ts";
 import { ChatSession } from "../chat/session.ts";
 import type { FrameShot } from "../chat/attachments.ts";
 import { ChatPointing } from "../chat/pointing.ts";
-import { askingIn } from "../chat/conversations.ts";
+import { proposedIn } from "../chat/conversations.ts";
 import { parseAddress } from "@animaquill/tools";
 import { ModelPacks } from "../chat/packs.ts";
 import { AiSettingsStore } from "../chat/settings.ts";
@@ -3857,8 +3857,10 @@ export class Workbench {
         // People who stopped it know it is over.
         if (!now || now.end === "stopped" || document.visibilityState !== "hidden") return;
         const entries = conversation.getSnapshot().entries;
-        const asking = askingIn(entries);
-        this.#notice(asking ? "asking" : now.end === "failed" ? "failed" : "done");
+        const handed = proposedIn(entries);
+        this.#notice(
+          handed === "plan" ? "plan" : handed ? "asking" : now.end === "failed" ? "failed" : "done",
+        );
       });
       watched = { conversation, stop };
     };
@@ -3872,7 +3874,7 @@ export class Workbench {
   /** Whether the chat has something for people that they have not seen: "●" before the title. */
   readonly attention = new Flag();
 
-  #notice(what: "done" | "asking" | "failed"): void {
+  #notice(what: "done" | "asking" | "plan" | "failed"): void {
     this.attention.set(true);
     if (typeof Notification === "undefined" || Notification.permission === "denied") return;
     // The browser is asked the first time there is something to tell, not before.
@@ -3888,7 +3890,7 @@ export class Workbench {
     this.#showNotice(what);
   }
 
-  #showNotice(what: "done" | "asking" | "failed"): void {
+  #showNotice(what: "done" | "asking" | "plan" | "failed"): void {
     const name = this.session.store?.getState().manifest.name ?? "AnimaQuill";
     try {
       const notice = new Notification(this.t(`chat.notify.${what}`), {

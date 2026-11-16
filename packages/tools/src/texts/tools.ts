@@ -86,14 +86,22 @@ export const TOOL_TEXTS = {
   "tools.aq_file_write.params.request_id":
     "Any string of yours: a call sent again with the same one is not run again and gets the same result.",
   "tools.aq_propose.description":
-    'Hands a decision to the user: kind "question" shows the question with 2 to 6 short options, and the user can also answer in their own words. The turn ends with this call: changes later in the same answer are not run, and the answer arrives as the user\'s next message.',
-  "tools.aq_propose.params.kind": '"question": a choice for the user to make.',
+    'Hands the user a decision and ends the turn: kind "question" shows 2 to 6 short options, and the user can also answer in their own words; kind "plan" shows a plan of the work as a card the user can change before accepting it. Changes later in the same answer are not run; the answer, or the plan as accepted, arrives as the user\'s next message.',
+  "tools.aq_propose.params.kind":
+    '"question": a choice for the user to make. "plan": the plan of the work, before any change.',
   "tools.aq_propose.params.question": "The question, in one sentence, in the language of the user.",
   "tools.aq_propose.params.options": "2 to 6 concrete answers.",
   "tools.aq_propose.params.options.label": "A short answer the user can pick.",
   "tools.aq_propose.params.options.detail": "What picking it means, in a few words.",
   "tools.aq_propose.params.allow_other":
     "false when the user must pick one of the options; by default they can also answer in their own words.",
+  "tools.aq_propose.params.title": "The plan in a few words, in the language of the user.",
+  "tools.aq_propose.params.steps": "The steps of the plan, in order, 1 to {max}.",
+  "tools.aq_propose.params.steps.text": "What the step does, in one line.",
+  "tools.aq_propose.params.steps.from": 'Where it starts, seconds as a string such as "4".',
+  "tools.aq_propose.params.steps.to": "Where it ends, seconds as a string.",
+  "tools.aq_propose.params.length": "How long the result is, seconds as a string.",
+  "tools.aq_propose.params.style": "The look and feel, in a few words.",
   "tools.aq_render_frames.description":
     'Renders frames of a timeline as the export renders them. The pictures come first in the result, and after them what is on each frame: every clip that shows, back to front, with its id and name, what it shows, its box in world units, the share of the picture it covers, its opacity, how far it goes past the edges of the picture, whether its media is cut to its box, and which small clips overlap; and the text elements of HTML scenes with their text and box. A frame that cannot be rendered whole, as when the file of an asset is not on this computer or a scene does not run, gives an error with the reason, and no picture: a picture is only ever what the export would render.\n\ntimes gives a picture of each moment. range with count is an overview: count frames evenly spread over the range in one picture, each with its time printed on it. region is a part of the picture rendered at the full size of a picture: scenes are laid out again at that resolution, so their text stays sharp, while videos and images are scaled up. annotate draws on the picture a box with the id and name of each clip (true) or of the clips given, red where one goes past an edge. compare gives, for each time, the frame before, the frame now and a picture where the changed pixels are red, with the share of pixels that changed and the box around them: "task_start" is the project as this task started, and a revision is the project as an earlier result of this conversation started (its rev line). size small, medium or large is 512, 1024 or 1568 pixels on the longer side; a 1024×576 picture costs about 790 tokens; without size, the size the user set. Each frame is the one the export renders at that moment. A model that cannot see pictures gets the text only. Rendering waits while the user plays or exports, and while the editor page is in the background, as the browser draws nothing then; that wait is part of the call and no failure.',
   "tools.aq_render_frames.params.times":

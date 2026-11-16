@@ -19,6 +19,7 @@ import {
   type SmallAsk,
   type TaskOutcome,
   type TaskTarget,
+  type UserEntry,
 } from "@animaquill/agent";
 import {
   aiTask,
@@ -77,6 +78,7 @@ import {
 } from "./conversations.ts";
 import { ChatAttachments, type FrameShot } from "./attachments.ts";
 import { Drafts } from "./drafts.ts";
+import { PlanDrafts } from "./plan.ts";
 import { DEFAULT_IMAGE_BYTES, DEFAULT_SHOT_SIZE, type ShotSize } from "./shots.ts";
 import type { ModelPacks } from "./packs.ts";
 import type { AiSettingsStore } from "./settings.ts";
@@ -150,6 +152,11 @@ export interface ChatSnapshot {
   readonly repick: readonly string[];
   /** Messages that go once the task that runs is done, oldest first. */
   readonly queued: readonly Queued[];
+  /**
+   * The switch "先出方案" of the conversation open: its next message asks for a plan first, see
+   * `UserEntry.plan`. Each conversation has its own; a new one starts without.
+   */
+  readonly planFirst: boolean;
 }
 
 /** A message that waits for the task that runs, with its pictures. */
@@ -158,6 +165,8 @@ export interface Queued {
   readonly images?: readonly AttachedImage[];
   /** What the editor showed as people sent it, which goes with it: not what it shows once it goes. */
   readonly selection?: SelectionFacts;
+  /** It asks for a plan first, as the switch was when people sent it. */
+  readonly plan?: true;
 }
 
 /** What `ChatSession.packOptions` gives for a model. */
@@ -284,11 +293,14 @@ export class ChatSession {
     forkedFrom: undefined,
     repick: [],
     queued: [],
+    planFirst: false,
   };
   /** What people wrote and did not send yet, by conversation. */
   readonly drafts: Drafts;
   /** The pictures of those drafts. */
   readonly attachments: ChatAttachments;
+  /** Plans as people changed them, see `PlanDrafts`. */
+  readonly planDrafts: PlanDrafts;
   /** The last task, once people took back what it did: its clips are no longer marked. */
   #unmarked: string | undefined;
   #project: { readonly store: ProjectStore; readonly key: string } | undefined;
@@ -306,6 +318,7 @@ export class ChatSession {
     this.#options = options;
     this.#chats = options.chats ?? memoryChats();
     this.drafts = new Drafts(options.memory);
+    this.planDrafts = new PlanDrafts(options.memory);
     this.attachments = new ChatAttachments({
       memory: options.memory,
       images: options.images,
@@ -378,7 +391,10 @@ export class ChatSession {
     id: string | undefined,
     caller: unknown,
     kept: Partial<
-      Pick<SavedChat, "title" | "titleBy" | "model" | "reasoning" | "forkedFrom" | "repick">
+      Pick<
+        SavedChat,
+        "title" | "titleBy" | "model" | "reasoning" | "forkedFrom" | "repick" | "planFirst"
+      >
     > = {},
   ): void {
     this.#stopWatching?.();
@@ -418,6 +434,7 @@ export class ChatSession {
       forkedFrom: kept.forkedFrom,
       repick: kept.repick ?? [],
       queued: [],
+      planFirst: kept.planFirst === true,
     });
     const project = this.#project?.key;
     if (project !== undefined) this.#options.memory?.write(openKey(project), chatId);
@@ -485,6 +502,11 @@ export class ChatSession {
         store: () =>
           project && this.#options.project()?.store === project.store ? project.store : undefined,
         origin: () => aiTask(task),
+        // As the message the task started with asked, not as the switch is now.
+        planFirst: () =>
+          conversation
+            .getSnapshot()
+            .entries.some((entry) => entry.role === "user" && entry.task === task && entry.plan),
         selection,
         // What the editor showed as each message of the conversation was sent, for "sent".
         sent: () =>
@@ -515,7 +537,15 @@ export class ChatSession {
   #saveSoon(id: string, entries: readonly ChatEntry[]): void {
     const project = this.#project?.key;
     if (project === undefined || entries.length === 0 || id !== this.#snapshot.id) return;
-    const { title: named, titleBy, model, reasoning, forkedFrom, repick } = this.#snapshot;
+    const {
+      title: named,
+      titleBy,
+      model,
+      reasoning,
+      forkedFrom,
+      repick,
+      planFirst,
+    } = this.#snapshot;
     const title = titleBy !== undefined && named ? named : firstWords(entries, TITLE_LENGTH);
     const changes = changesIn(entries);
     const caller = this.#caller;
@@ -534,6 +564,7 @@ export class ChatSession {
         ...(reasoning !== undefined && { reasoning }),
         ...(forkedFrom && { forkedFrom }),
         ...(repick.length > 0 && { repick }),
+        ...(planFirst && { planFirst: true as const }),
       };
       try {
         await this.#chats.save(chat);
@@ -545,6 +576,7 @@ export class ChatSession {
           model: _model,
           reasoning: _reasoning,
           repick: _repick,
+          planFirst: _planFirst,
           ...summary
         } = chat;
         this.#set({ saved: [summary, ...others] });
@@ -614,6 +646,7 @@ export class ChatSession {
       ...(Array.isArray(saved.repick) && {
         repick: saved.repick.filter((model): model is string => typeof model === "string"),
       }),
+      ...(saved.planFirst === true && { planFirst: true }),
     });
   }
 
@@ -631,6 +664,35 @@ export class ChatSession {
   chooseModel(ref: ModelRef | undefined): void {
     this.#set({ model: ref, hold: undefined });
     this.#keep();
+  }
+
+  /**
+   * The switch "先出方案" of the conversation open, from its next message on: a task that runs
+   * goes on as its message asked.
+   */
+  setPlanFirst(on: boolean): void {
+    if (this.#snapshot.planFirst === on) return;
+    this.#set({ planFirst: on });
+    this.#keep();
+  }
+
+  /**
+   * People accepted a plan ("按这个做"), as they changed it: it goes as their message, and the
+   * switch goes off, so that AI does it.
+   */
+  async acceptPlan(call: string, text: string): Promise<TaskOutcome | undefined> {
+    const project = this.#project?.key;
+    const { id } = this.#snapshot;
+    if (this.running || !text.trim() || project === undefined || id === undefined) return undefined;
+    this.setPlanFirst(false);
+    const conversation = this.#snapshot.conversation;
+    const outcome = await this.send(text, [], undefined, { fromPlan: call });
+    // It went as people changed it: that is in the conversation now, and the draft goes.
+    const went = conversation
+      ?.getSnapshot()
+      .entries.some((entry) => entry.role === "user" && entry.fromPlan === call);
+    if (went) this.planDrafts.write(project, id, call, undefined);
+    return outcome;
   }
 
   /** How hard the model of the conversation open reasons; nothing leaves it to the settings. */
@@ -750,8 +812,12 @@ export class ChatSession {
   queue(text: string, images: readonly AttachedImage[] = []): void {
     if (!text.trim() && images.length === 0) return;
     const selection = this.#shown();
+    const plan = this.#snapshot.planFirst;
     this.#set({
-      queued: [...this.#snapshot.queued, { text, ...(images.length > 0 && { images }), selection }],
+      queued: [
+        ...this.#snapshot.queued,
+        { text, ...(images.length > 0 && { images }), selection, ...(plan && { plan: true }) },
+      ],
     });
   }
 
@@ -780,7 +846,7 @@ export class ChatSession {
     const [next, ...rest] = this.#snapshot.queued;
     if (next === undefined || outcome.end !== "done") return;
     this.#set({ queued: rest });
-    void this.send(next.text, next.images, next.selection);
+    void this.sendQueued(next);
   }
 
   /**
@@ -956,9 +1022,11 @@ export class ChatSession {
     text: string,
     images: readonly AttachedImage[] = [],
     selection?: SelectionFacts,
+    marks?: Pick<UserEntry, "plan" | "fromPlan">,
   ): Promise<TaskOutcome | undefined> {
-    // Before anything waits: people may select something else meanwhile.
+    // Before anything waits: people may select something else meanwhile, or switch "先出方案".
     const shown = selection ?? this.#shown();
+    const marked = marks ?? (this.#snapshot.planFirst ? { plan: true as const } : {});
     const conversation = this.#snapshot.conversation;
     if (!conversation || conversation.running || (!text.trim() && images.length === 0))
       return undefined;
@@ -985,7 +1053,7 @@ export class ChatSession {
       const now = this.modelNow();
       if (now) this.#set({ model: now.ref });
     }
-    const outcome = await conversation.send(text, target, images, shown);
+    const outcome = await conversation.send(text, target, images, shown, marked);
     if (outcome?.end === "failed" && project !== undefined && id !== undefined) {
       const entries = conversation.getSnapshot().entries;
       const turn = entries.slice(entries.findLastIndex((entry) => entry.role === "user") + 1);
@@ -998,15 +1066,24 @@ export class ChatSession {
     return outcome;
   }
 
+  /** A queued message, as it was when people sent it: also whether it asked for a plan first. */
+  sendQueued(queued: Queued): Promise<TaskOutcome | undefined> {
+    return this.send(queued.text, queued.images, queued.selection, {
+      ...(queued.plan && { plan: true }),
+    });
+  }
+
   /**
    * The last turn once more, as a new turn with the same words. What it changed stays, unless
-   * people took it back first (`undoTask`).
+   * people took it back first (`undoTask`). It asks for a plan first as it did.
    */
   async resend(): Promise<TaskOutcome | undefined> {
     const last = this.#snapshot.conversation
       ?.getSnapshot()
       .entries.findLast((entry) => entry.role === "user");
-    return last?.role === "user" ? this.send(last.text, last.images, last.selection) : undefined;
+    return last?.role === "user"
+      ? this.send(last.text, last.images, last.selection, { ...(last.plan && { plan: true }) })
+      : undefined;
   }
 
   /** The last turn once more without its pictures, where its model or service took none. */
@@ -1014,7 +1091,9 @@ export class ChatSession {
     const last = this.#snapshot.conversation
       ?.getSnapshot()
       .entries.findLast((entry) => entry.role === "user");
-    return last?.role === "user" ? this.send(last.text, [], last.selection) : undefined;
+    return last?.role === "user"
+      ? this.send(last.text, [], last.selection, { ...(last.plan && { plan: true }) })
+      : undefined;
   }
 
   /**
@@ -1097,7 +1176,7 @@ export class ChatSession {
     const [next, ...rest] = this.#snapshot.queued;
     if (next !== undefined && this.#snapshot.conversation === conversation) {
       this.#set({ queued: rest });
-      void this.send(next.text, next.images, next.selection);
+      void this.sendQueued(next);
     }
     return made;
   }

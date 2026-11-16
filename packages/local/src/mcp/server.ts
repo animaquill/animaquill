@@ -99,6 +99,14 @@ function propose(tools: FolderTools, server: Server, args: unknown, ctx: ServerC
   const tool = tools.tools.find(({ name }) => name === "aq_propose");
   const invalid = tool?.validate(args);
   if (invalid) return asResult(invalid);
+  // A plan is for the chat of the editor, which asks for one ("先出方案"); AI tools have plan
+  // modes of their own, and a form has no room for one.
+  if ((args as { readonly kind?: unknown }).kind === "plan") {
+    return asResult({
+      text: "This client shows no plan card here: the plan reaches the user only in your reply, and their answer comes as their next message.",
+      isError: false,
+    });
+  }
   const question = args as Question;
   if (!asksWithForms(clientOf(server, ctx).capabilities)) {
     return asResult({

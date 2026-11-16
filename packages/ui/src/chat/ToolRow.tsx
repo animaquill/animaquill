@@ -1,11 +1,18 @@
 import type { ToolCallEntry, ToolEntry } from "@animaquill/agent";
-import { Check, ChevronDown, ChevronRight, LoaderCircle, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, LoaderCircle, Minus, X } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import styles from "./ChatPanel.module.css";
 import { useNow } from "./clock.ts";
 import { useOpened } from "./expanded.ts";
-import { argFields, toolErrorCode, toolSummary, type Names, type Say } from "./toolSummary.ts";
+import {
+  argFields,
+  isHeldForPlan,
+  toolErrorCode,
+  toolSummary,
+  type Names,
+  type Say,
+} from "./toolSummary.ts";
 import { durationText } from "./turns.ts";
 
 /** How many lines of a result show before "show all". */
@@ -35,7 +42,8 @@ export function ToolRow({
 }) {
   const { t } = useTranslation();
   const say = t as unknown as Say;
-  const failed = result !== undefined && !result.ok;
+  const held = isHeldForPlan(result);
+  const failed = result !== undefined && !result.ok && !held;
   const [open, setOpen] = useOpened(call.id, failed);
   const now = useNow(running !== undefined);
   const label = say(`chat.tool.${call.name}`, { defaultValue: commandOf(call.name) });
@@ -47,7 +55,9 @@ export function ToolRow({
         : "waiting"
       : result.ok
         ? "ok"
-        : "failed";
+        : held
+          ? "held"
+          : "failed";
   const ms =
     result?.startedAt !== undefined
       ? result.at - result.startedAt
@@ -65,6 +75,7 @@ export function ToolRow({
         <span className={styles.toolIcon}>
           {state === "ok" && <Check size={12} aria-label={t("chat.toolOk")} />}
           {state === "failed" && <X size={12} aria-label={t("chat.toolFailed")} />}
+          {state === "held" && <Minus size={12} aria-label={t("chat.toolHeld")} />}
           {(state === "running" || state === "waiting") && (
             <LoaderCircle size={12} className={styles.spin} aria-label={t("chat.running")} />
           )}
@@ -115,7 +126,12 @@ function ToolBody({
           ))}
         </dl>
       )}
-      {result && !result.ok && (
+      {isHeldForPlan(result) && (
+        <p className={styles.muted} data-testid="chat-tool-held">
+          {t("chat.toolText.held")}
+        </p>
+      )}
+      {result && !result.ok && !isHeldForPlan(result) && (
         <>
           <p className={styles.toolError} data-testid="chat-tool-error">
             {t("chat.toolText.failed", {

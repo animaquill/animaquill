@@ -3400,7 +3400,8 @@
       "forAi": "给 AI 的原文",
       "showAll": "显示全部（{{count}} 行）",
       "showLess": "收起",
-      "failed": "没有成功：{{reason}}"
+      "failed": "没有成功：{{reason}}",
+      "held": "先出方案开着，这一步没有改项目。"
     },
     "toolErrors": {
       "conflict": "你或别处在 AI 读过之后改了这些内容，AI 要重新读一遍",
@@ -3432,7 +3433,8 @@
       "render-failed": "画不出来",
       "not-available": "这里不能做这件事",
       "out-of-range": "时间超出了范围",
-      "mix-failed": "混不出来"
+      "mix-failed": "混不出来",
+      "plan-first": "先出方案开着，没有改项目"
     },
     "card": {
       "noChanges": "没有改项目",
@@ -3491,6 +3493,7 @@
     "running": "正在运行",
     "toolOk": "成功",
     "toolFailed": "出错",
+    "toolHeld": "没有改（先出方案）",
     "result": "结果",
     "undoTask": "撤销这次任务",
     "redoTask": "重做这次任务",
@@ -3713,7 +3716,8 @@
       "shootHelp": "按导出的样子渲染这一帧（原片、不带选中框），作为图片附件",
       "addPicture": "添加图片",
       "addPictureHelp": "选本机的图片；也可以直接粘贴或拖进输入框",
-      "more": "插入和附件"
+      "more": "插入和附件",
+      "planFirst": "先出方案"
     },
     "user": {
       "copy": "复制",
@@ -3831,7 +3835,8 @@
       "done": "AI 做完了",
       "asking": "AI 在等你回答",
       "failed": "AI 的任务出错了",
-      "look": "AI 要看画面，请回到 AnimaQuill"
+      "look": "AI 要看画面，请回到 AnimaQuill",
+      "plan": "AI 的方案好了"
     },
     "action": {
       "insertTime": "AI 聊天：插入播放头的时间",
@@ -3945,6 +3950,17 @@
       "openCompare": "打开对比",
       "on": "开",
       "off": "关"
+    },
+    "plan": {
+      "short": "方案",
+      "accept": "按这个做",
+      "accepted": "已按这个做",
+      "edit": "改这一行",
+      "remove": "删掉这一行",
+      "add": "加一行",
+      "length": "时长",
+      "style": "风格",
+      "message": "按这个做："
     }
   },
   "account": {

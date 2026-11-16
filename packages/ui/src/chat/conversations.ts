@@ -42,13 +42,23 @@ export function changesIn(entries: readonly ChatEntry[]): number {
   return groupsOf(entries).reduce((sum, turn) => sum + summaryOf(turn.entries).changes.length, 0);
 }
 
-/** AI asked a question in the last turn (`aq_propose`), which nobody answered yet. */
-export function askingIn(entries: readonly ChatEntry[]): boolean {
+/**
+ * What AI handed people in the last turn (`aq_propose`), which waits for them: a question, or the
+ * plan they asked for first.
+ */
+export function proposedIn(entries: readonly ChatEntry[]): "question" | "plan" | undefined {
   const start = entries.findLastIndex((entry) => entry.role === "user");
-  if (start < 0) return false;
-  return entries
+  if (start < 0) return undefined;
+  const handed = entries
     .slice(start + 1)
-    .some((entry) => entry.role === "tool" && entry.name === "aq_propose" && entry.ok);
+    .findLast((entry) => entry.role === "tool" && entry.name === "aq_propose" && entry.ok);
+  if (handed?.role !== "tool") return undefined;
+  return handed.data?.plan !== undefined ? "plan" : "question";
+}
+
+/** AI asked a question or gave a plan in the last turn (`aq_propose`), which waits for people. */
+export function askingIn(entries: readonly ChatEntry[]): boolean {
+  return proposedIn(entries) !== undefined;
 }
 
 /** The first words of a conversation, for its title until it gets another. */

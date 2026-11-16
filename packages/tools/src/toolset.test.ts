@@ -30,9 +30,10 @@ import type { Tool } from "./types.ts";
  * aq_selection_read at and messages_back, to read what the editor showed as a message was sent, and
  * took 56 248 (2026-11-15); 2026.7 added aq_render_frames, which renders frames and says what is on
  * them, and took 60 635 (2026-11-15); 2026.8 added aq_audio_analyze, which mixes and measures the sound, and
- * took 63 245 (2026-11-15). It is a ceiling, so that the list does not grow unnoticed.
+ * took 63 245 (2026-11-15); 2026.9 gave aq_propose kind "plan", the plan the user asked for first, and
+ * took 64 308 (2026-11-16). It is a ceiling, so that the list does not grow unnoticed.
  */
-const MOST_CHARACTERS = 63_500;
+const MOST_CHARACTERS = 64_500;
 
 const listOf = (tools: Iterable<Tool>) =>
   [...tools].map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));

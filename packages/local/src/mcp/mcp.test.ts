@@ -509,6 +509,10 @@ describe("animaquill mcp", { timeout: 60_000 }, () => {
       return textOf(result);
     };
     expect(await call("aq_timeline_read", { timeline: "main" })).toMatch(/clip_/);
+    // The AI tool has its own plan mode: a plan goes in its reply, and nothing here holds changes.
+    expect(
+      await call("aq_propose", { kind: "plan", title: "片头", steps: [{ text: "淡入" }] }),
+    ).toMatch(/no plan card/);
     await call("aq_edit", {
       operations: [
         {

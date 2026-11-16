@@ -1056,6 +1056,26 @@
   border-radius: 7px;
 }
 
+/* "先出方案": lit while it is on. */
+.panel .planFirst {
+  flex: none;
+  gap: 3px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* Its name next to it where the chat has room; else the icon alone, as the buttons before it. */
+@container (max-width: 400px) {
+  .planFirstName {
+    display: none;
+  }
+}
+
+.panel .planFirst[aria-pressed="true"] {
+  color: var(--aq-accent);
+  background: color-mix(in srgb, var(--aq-accent) 16%, transparent);
+}
+
 .toolsSep {
   width: 1px;
   height: 14px;
@@ -1938,6 +1958,128 @@ span.sentPicture {
   gap: 4px;
 }
 
+/* The plan people asked for first: lines to change, take out and add to, and "按这个做". */
+.plan {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--aq-border);
+  border-left: 2px solid var(--aq-accent);
+  border-radius: 4px;
+}
+
+.plan[data-state="accepted"],
+.plan[data-state="replaced"] {
+  border-left-color: var(--aq-border);
+}
+
+.planHead,
+.panel .planHead {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  color: var(--aq-text-strong);
+  text-align: left;
+  background: none;
+}
+
+.planTitle {
+  overflow: hidden;
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.planSteps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.planStep {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.planNumber {
+  flex: none;
+  min-width: 14px;
+  color: var(--aq-text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.planTimes {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  align-items: baseline;
+  color: var(--aq-text-muted);
+}
+
+.planText,
+.panel .planText {
+  flex: 1 1 8em;
+  min-width: 0;
+  padding: 0 2px;
+  color: var(--aq-text);
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: none;
+  border-radius: 3px;
+}
+
+.panel .planText:hover {
+  background: var(--aq-bg-hover);
+}
+
+.planInput {
+  flex: 1 1 8em;
+  min-width: 0;
+  font: inherit;
+}
+
+.panel .planRemove {
+  flex: none;
+  align-self: center;
+  min-width: 18px;
+  padding: 1px;
+  visibility: hidden;
+}
+
+.planStep:hover .planRemove,
+.planRemove:focus-visible {
+  visibility: visible;
+}
+
+.panel .planAdd {
+  align-self: flex-start;
+  margin-left: 16px;
+}
+
+.planFoot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.planFoot > p {
+  flex: 1 1 10em;
+  min-width: 0;
+}
+
 /* 300–400 wide: the bar keeps the share of the context, a turn its tokens and time. */
 @container (max-width: 400px) {
   .bubble {
@@ -2363,4 +2505,11 @@ span.sentPicture {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
+}
+
+/* Without a pointer that hovers, the × of each line of a plan shows. */
+@media (hover: none) {
+  .panel .planRemove {
+    visibility: visible;
+  }
 }

@@ -3106,22 +3106,26 @@
  },
  {
   "name": "aq_propose",
-  "description": "Hand a decision to the user and stop this turn to wait for it. Use kind \"question\" when you cannot go on without the user's choice — which of two clips they meant, which of a few styles they want, whether to replace or keep something — and give 2 to 6 short, concrete options; the user can also answer in their own words. Do not ask about what you can find out by reading the project, and ask one question at a time. After calling it, end your turn without further tools: the answer arrives as the user's next message.",
+  "description": "Hand a decision to the user and stop this turn to wait for it. Use kind \"question\" when you cannot go on without the user's choice — which of two clips they meant, which of a few styles they want, whether to replace or keep something — and give 2 to 6 short, concrete options; the user can also answer in their own words. Do not ask about what you can find out by reading the project, and ask one question at a time. Use kind \"plan\" when the user asked for a plan first: give the steps with their times, and the user changes or accepts it. After calling it, end your turn without further tools: the answer arrives as the user's next message.",
   "inputSchema": {
    "type": "object",
    "properties": {
     "kind": {
      "type": "string",
-     "const": "question",
-     "description": "\"question\": a choice for the user to make."
+     "enum": [
+      "question",
+      "plan"
+     ],
+     "description": "\"question\": a choice for the user to make. \"plan\": the plan of the work, before any change."
     },
     "question": {
+     "description": "The question, in one sentence, in the language of the user.",
      "type": "string",
      "minLength": 1,
-     "maxLength": 300,
-     "description": "The question, in one sentence, in the language of the user."
+     "maxLength": 300
     },
     "options": {
+     "description": "2 to 6 concrete answers.",
      "minItems": 2,
      "maxItems": 6,
      "type": "array",
@@ -3144,18 +3148,62 @@
        "label"
       ],
       "additionalProperties": false
-     },
-     "description": "2 to 6 concrete answers."
+     }
     },
     "allow_other": {
      "description": "false when the user must pick one of the options; by default they can also answer in their own words.",
      "type": "boolean"
+    },
+    "title": {
+     "description": "The plan in a few words, in the language of the user.",
+     "type": "string",
+     "minLength": 1,
+     "maxLength": 80
+    },
+    "steps": {
+     "description": "The steps of the plan, in order, 1 to 20.",
+     "minItems": 1,
+     "maxItems": 20,
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "text": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300,
+        "description": "What the step does, in one line."
+       },
+       "from": {
+        "description": "Where it starts, seconds as a string such as \"4\".",
+        "type": "string",
+        "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$"
+       },
+       "to": {
+        "description": "Where it ends, seconds as a string.",
+        "type": "string",
+        "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$"
+       }
+      },
+      "required": [
+       "text"
+      ],
+      "additionalProperties": false
+     }
+    },
+    "length": {
+     "description": "How long the result is, seconds as a string.",
+     "type": "string",
+     "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$"
+    },
+    "style": {
+     "description": "The look and feel, in a few words.",
+     "type": "string",
+     "maxLength": 200
     }
    },
    "required": [
-    "kind",
-    "question",
-    "options"
+    "kind"
    ],
    "additionalProperties": false
   }

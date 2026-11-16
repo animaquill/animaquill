@@ -22,6 +22,7 @@ export {
 } from "./conversation.ts";
 export {
   NOT_ATTACHED,
+  PLAN_FIRST_LINE,
   entriesToKeep,
   latestSummary,
   readEntries,

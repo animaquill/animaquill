@@ -22,12 +22,14 @@ import { GoBack, type GoingBack } from "./GoBack.tsx";
 import { LargePicture, usePicture } from "./AttachmentsView.tsx";
 import { Markdown } from "./markdown/Markdown.tsx";
 import { RefChip, RefText } from "./RefChip.tsx";
+import { planOf, plansIn } from "./plan.ts";
+import { PlanCard } from "./PlanCard.tsx";
 import { piecesOf, plainOf } from "./refs.ts";
 import { summaryOf } from "./summary.ts";
 import { ListenRow } from "./ListenRow.tsx";
 import { LookRow } from "./LookRow.tsx";
 import { ToolRow } from "./ToolRow.tsx";
-import type { Names, Say } from "./toolSummary.ts";
+import { isHeldForPlan, type Names, type Say } from "./toolSummary.ts";
 import { durationText, type Step, type Turn } from "./turns.ts";
 import { dollars, tokens, usageOf } from "./usage.ts";
 import { liveText, liveThinking, liveThinkingSince, useLive } from "./useLive.ts";
@@ -119,6 +121,7 @@ export function TurnView({
         />
       )}
       {question && <QuestionView question={question} />}
+      <TurnPlan turn={turn} conversation={conversation} busy={busy} running={running} />
       <ChangeCard task={turn.task} entries={turn.entries} running={running !== undefined} />
       {!running && <UsageLine turn={turn} modelName={modelName} />}
     </div>
@@ -273,7 +276,7 @@ function ProcessView({ turn, names }: { readonly turn: Turn; readonly names: Nam
     (step) =>
       step.kind === "tool" &&
       step.result &&
-      (!step.result.ok ||
+      ((!step.result.ok && !isHeldForPlan(step.result)) ||
         (step.call.name === LOOK_TOOL && (step.result.images?.length ?? 0) > 0) ||
         step.call.name === LISTEN_TOOL),
   );
@@ -667,6 +670,32 @@ function OutcomeView({
     default:
       return null;
   }
+}
+
+/** The plan of a turn, where AI gave one (`aq_propose` kind "plan"), see `PlanCard`. */
+function TurnPlan(props: {
+  readonly turn: Turn;
+  readonly conversation: Conversation;
+  readonly busy: boolean;
+  readonly running: RunningTask | undefined;
+}) {
+  const { turn } = props;
+  const given = turn.entries.findLast(
+    (entry) => entry.role === "tool" && planOf(entry) !== undefined,
+  );
+  if (given?.role !== "tool" || props.running) return null;
+  const plan = planOf(given);
+  const state = plansIn(props.conversation.getSnapshot().entries).get(given.call);
+  if (!plan || !state) return null;
+  return (
+    <PlanCard
+      call={given.call}
+      plan={plan}
+      state={state}
+      timeline={turn.user.selection?.timeline}
+      busy={props.busy}
+    />
+  );
 }
 
 /** A question AI asked with aq_propose, which the newest task can still have answered. */

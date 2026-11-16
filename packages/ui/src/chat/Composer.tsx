@@ -3,6 +3,7 @@ import {
   Camera,
   Clock,
   CornerUpLeft,
+  ListChecks,
   Paperclip,
   Plus,
   SendHorizontal,
@@ -305,7 +306,7 @@ export function Composer(props: {
                     const next = chat.unqueue(0);
                     if (next !== undefined) {
                       props.onSent();
-                      void chat.send(next.text, next.images, next.selection);
+                      void chat.sendQueued(next);
                     }
                   }}
                 >
@@ -424,9 +425,23 @@ export function Composer(props: {
                 </button>
               </Tip>
             ))}
-            <span className={styles.toolsSep} aria-hidden />
           </div>
         )}
+        <Tip name={t("chat.compose.planFirst")} usage="">
+          <button
+            type="button"
+            className={`${styles.icon} ${styles.planFirst}`}
+            aria-label={t("chat.compose.planFirst")}
+            aria-pressed={snapshot.planFirst}
+            data-testid="chat-plan-first"
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => chat.setPlanFirst(!snapshot.planFirst)}
+          >
+            <ListChecks size={13} aria-hidden />
+            <span className={styles.planFirstName}>{t("chat.plan.short")}</span>
+          </button>
+        </Tip>
+        {!narrow && <span className={styles.toolsSep} aria-hidden />}
         <ModelPicker request={picking} />
         <ReasoningPicker />
         <span className={styles.grow} />

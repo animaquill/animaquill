@@ -64,7 +64,19 @@ export interface UserEntry {
    * before this was kept have none.
    */
   readonly selection?: SelectionFacts;
+  /**
+   * People asked for a plan first as they sent it ("先出方案"): its task only reads and looks, and
+   * ends with a plan (`aq_propose` kind "plan"). Kept with the message, so that switching it while
+   * the task runs counts from the next message on.
+   */
+  readonly plan?: true;
+  /** It is the plan of that call of `aq_propose`, as people accepted it ("按这个做"). */
+  readonly fromPlan?: string;
 }
+
+/** What a message that asked for a plan first says to the model, after the words of people. */
+export const PLAN_FIRST_LINE =
+  '(Plan first: only read and look; finish with aq_propose kind "plan". Nothing may change the project in this turn.)';
 
 /** One call of a tool, as AI asked for it. */
 export interface ToolCallEntry {
@@ -386,7 +398,7 @@ export function readToolPicture(value: unknown): ToolPicture | undefined {
  * picture that does not go with it says so in its line, and why (`missing`).
  */
 export function promptOf(
-  entry: Pick<UserEntry, "text" | "images">,
+  entry: Pick<UserEntry, "text" | "images" | "plan">,
   missing: (image: AttachedImage, index: number) => string | undefined = () => undefined,
 ): string {
   const notes = (entry.images ?? []).map((image, index) => {
@@ -396,7 +408,8 @@ export function promptOf(
       ? `${image.note.slice(0, -1)} — not attached: ${why}]`
       : `${image.note} (not attached: ${why})`;
   });
-  return notes.length === 0 ? entry.text : `${entry.text}\n\n${notes.join("\n")}`;
+  const text = entry.plan ? `${entry.text}\n\n${PLAN_FIRST_LINE}` : entry.text;
+  return notes.length === 0 ? text : `${text}\n\n${notes.join("\n")}`;
 }
 
 /** Why a picture of a message does not go to the model with it, in English as all words to AI. */
@@ -425,6 +438,8 @@ export function readEntry(value: unknown): ChatEntry | undefined {
       task,
       ...(images.length > 0 && { images }),
       ...(selection && { selection }),
+      ...(value.plan === true && { plan: true as const }),
+      ...(typeof value.fromPlan === "string" && { fromPlan: value.fromPlan }),
     };
   }
   if (role === "tool") {

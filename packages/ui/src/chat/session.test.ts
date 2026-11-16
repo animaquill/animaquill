@@ -529,6 +529,136 @@ describe("a conversation of its own", () => {
     expect(again.chat.drafts.read("p1", id)).toBe("先发的\n\n又打了几个字");
   });
 
+  describe("先出方案", () => {
+    const plan = (title = "片头") => ({
+      calls: [
+        {
+          name: "aq_propose",
+          args: {
+            kind: "plan",
+            title,
+            steps: [
+              { text: "黑底淡入 logo", from: "0", to: "4" },
+              { text: "标题逐字弹出", from: "4", to: "12" },
+            ],
+          },
+        },
+      ],
+    });
+    const users = (chat: ChatSession) =>
+      (chat.getSnapshot().conversation?.getSnapshot().entries ?? []).flatMap((entry) =>
+        entry.role === "user" ? [entry] : [],
+      );
+    const results = (chat: ChatSession, name: string) =>
+      (chat.getSnapshot().conversation?.getSnapshot().entries ?? []).flatMap((entry) =>
+        entry.role === "tool" && entry.name === name ? [entry] : [],
+      );
+
+    it("keeps the project as it is while on: every change, even sent again, is held, and AI hands a plan", async () => {
+      const { chat, fake, markers } = setup();
+      chat.setPlanFirst(true);
+      fake({
+        fake: [
+          {
+            calls: [
+              addMarker("1"),
+              { name: "aq_edit", args: { ...addMarker("1").args, dry_run: true } },
+              { name: "aq_edit", args: { ...addMarker("1").args, request_id: "r" } },
+              { name: "aq_file_write", args: { path: "code/a.js", text: "x" } },
+              { name: "aq_file_edit", args: { path: "code/a.js", edits: [] } },
+            ],
+          },
+          { calls: [{ name: "aq_edit", args: { ...addMarker("1").args, request_id: "r" } }] },
+          plan(),
+        ],
+      });
+      await chat.send("做个片头");
+      expect(markers()).toHaveLength(0);
+      expect(users(chat)[0]?.plan).toBe(true);
+      const held = [
+        ...results(chat, "aq_edit"),
+        ...results(chat, "aq_file_write"),
+        ...results(chat, "aq_file_edit"),
+      ];
+      expect(held).toHaveLength(6);
+      for (const entry of held) expect(entry.text).toMatch(/^error plan-first/);
+      expect(results(chat, "aq_propose")[0]?.data?.plan).toMatchObject({ title: "片头" });
+    });
+
+    it("counts from the next message: switched while a task runs, that task goes on as it began", async () => {
+      const { chat, fake, markers } = setup();
+      fake({
+        fake: [{ calls: [addMarker("1")] }, { text: "加好了，标记在第一秒。" }, plan()],
+        charactersPerSecond: 40,
+      });
+      const first = chat.send("加个标记");
+      await vi.waitFor(() => expect(chat.running).toBe(true));
+      chat.setPlanFirst(true);
+      chat.queue("再出个方案");
+      expect(chat.getSnapshot().queued[0]?.plan).toBe(true);
+      await first;
+      expect(markers()).toHaveLength(1);
+      expect(users(chat)[0]?.plan).toBeUndefined();
+      await vi.waitFor(() => expect(users(chat)).toHaveLength(2));
+      expect(users(chat)[1]?.plan).toBe(true);
+      await vi.waitFor(() => expect(chat.running).toBe(false), { timeout: 10_000 });
+    });
+
+    it("the other way round: switched off while a task runs, that task still writes nothing", async () => {
+      const { chat, fake, markers } = setup();
+      chat.setPlanFirst(true);
+      fake({
+        fake: [{ text: "我先看看" }, { calls: [addMarker("1")] }, plan()],
+        charactersPerSecond: 5,
+      });
+      const first = chat.send("做个片头");
+      await vi.waitFor(() => expect(chat.running).toBe(true));
+      chat.setPlanFirst(false);
+      await first;
+      expect(markers()).toHaveLength(0);
+    });
+
+    it("按这个做 sends the plan as people's message, switches it off, and the next turn changes the project", async () => {
+      const memory = windowMemory();
+      const { chat, fake, markers } = setup({ memory });
+      chat.setPlanFirst(true);
+      fake({ fake: [plan()] });
+      await chat.send("做个片头");
+      const call = results(chat, "aq_propose")[0]?.call as string;
+      const project = chat.projectKey as string;
+      const id = chat.getSnapshot().id as string;
+      chat.planDrafts.write(project, id, call, [{ text: "改过的一行", from: "0", to: "4" }]);
+      fake({ fake: [{ calls: [addMarker("1")] }, { text: "做好了" }] });
+      await chat.acceptPlan(call, "按这个做：片头\n1. 改过的一行");
+      expect(chat.getSnapshot().planFirst).toBe(false);
+      expect(users(chat)[1]).toMatchObject({
+        text: "按这个做：片头\n1. 改过的一行",
+        fromPlan: call,
+      });
+      expect(users(chat)[1]?.plan).toBeUndefined();
+      expect(markers()).toHaveLength(1);
+      expect(chat.planDrafts.read(project, id, call)).toBeUndefined();
+    });
+
+    it("goes with its conversation: kept, read back, off in a new one", async () => {
+      const { chat, chats, fake } = setup();
+      fake({ fake: [{ text: "好" }] });
+      await chat.send("你好");
+      chat.setPlanFirst(true);
+      await chat.flush();
+      const id = chat.getSnapshot().id as string;
+      expect((await chats.load("p1", id))?.planFirst).toBe(true);
+      expect((await chats.list("p1"))[0]).not.toHaveProperty("planFirst");
+      chat.newConversation();
+      expect(chat.getSnapshot().planFirst).toBe(false);
+      await chat.open(id);
+      expect(chat.getSnapshot().planFirst).toBe(true);
+      chat.setPlanFirst(false);
+      await chat.flush();
+      expect((await chats.load("p1", id))?.planFirst).toBeUndefined();
+    });
+  });
+
   it("queues messages while a task runs, and sends them once it is done", async () => {
     const { chat, fake } = setup();
     fake({ fake: [{ text: "一" }, { text: "二" }, { text: "三" }], charactersPerSecond: 20 });

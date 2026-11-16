@@ -274,6 +274,8 @@ export interface RunOptions {
   readonly prompt?: string;
   /** The pictures that go with the prompt, whose lines go after its words. */
   readonly images?: readonly AttachedImage[];
+  /** The prompt asked for a plan first: its line goes after its words, see `PLAN_FIRST_LINE`. */
+  readonly plan?: true;
   /** Whether pictures go to the model, see `Pictures`; without it, only their lines. */
   readonly pictures?: Pictures;
   readonly signal: AbortSignal;
@@ -865,7 +867,10 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
             ? NOT_ATTACHED.missing
             : undefined;
   /** What people said in a message, with the pictures that go, and the lines of those that do not. */
-  const said = (entry: Pick<UserEntry, "text" | "images">, at: number): UserMessage["content"] => {
+  const said = (
+    entry: Pick<UserEntry, "text" | "images" | "plan">,
+    at: number,
+  ): UserMessage["content"] => {
     const text = promptOf(entry, why(at));
     const images = (entry.images ?? []).flatMap((image, index) => {
       const content = why(at)(image, index) === undefined ? loaded.get(image.image) : undefined;
@@ -1095,7 +1100,10 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
     if (signal.aborted) return { end: "stopped" };
     if (options.prompt === undefined) await agent.continue();
     else {
-      const content = said({ text: options.prompt, images: options.images ?? [] }, -1);
+      const content = said(
+        { text: options.prompt, images: options.images ?? [], ...(options.plan && { plan: true }) },
+        -1,
+      );
       await agent.prompt({ role: "user", content, timestamp: Date.now() } as AgentMessage);
     }
   } catch (error) {

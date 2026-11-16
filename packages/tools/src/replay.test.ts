@@ -2,6 +2,8 @@ import { readFileSync, readdirSync } from "node:fs";
 import { ProjectStore, USER, type CommandCall } from "@animaquill/core";
 import { describe, expect, it } from "vitest";
 import { ADVICE, COMMAND, testHost, toolsOn } from "./test-support.ts";
+import { PLAN_FIRST } from "./tool.ts";
+import { WRITE_TOOLS } from "./toolset.ts";
 import type { ToolResult } from "./types.ts";
 
 /**
@@ -106,7 +108,10 @@ describe("replayed calls", () => {
         continue;
       }
       if (!step.sameAnswer) tools.caller.beginAnswer();
+      const before = store.revisionId;
       const result = await tools.call(step.tool, step.args ?? {});
+      // A tool that changed the project is one that says so: "plan first" keeps it out by that.
+      if (store.revisionId !== before) expect(WRITE_TOOLS, `step ${index}`).toContain(step.tool);
       said.push(`${step.tool}: ${result.text}`);
       const where = `step ${index} (${step.tool}):\n${result.text}`;
       const { expect: wanted } = step;
@@ -139,6 +144,38 @@ describe("replayed calls", () => {
       expect(store.undoOrigin(origin).ok).toBe(true);
       expect(store.canUndoOrigin(origin)).toBe(false);
     }
+  });
+
+  // People asked for a plan first: the same calls, and none of them changes the project.
+  it.each(scenarios)("%s, with a plan first", async (_, scenario) => {
+    const host = testHost();
+    host.plan = true;
+    let tools = toolsOn(host);
+    for (const [index, step] of scenario.steps.entries()) {
+      const store = host.store() as ProjectStore;
+      if ("user" in step) {
+        store.executeBatch(step.user, { origin: USER });
+        continue;
+      }
+      if ("window" in step || "undoTask" in step) continue;
+      if ("message" in step) {
+        if (step.task !== undefined) host.task = step.task;
+        tools.caller.beginAnswer();
+        continue;
+      }
+      if ("reopen" in step) {
+        host.open(ProjectStore.fromUpdates([store.encodeState()]).store);
+        if (step.newCaller) tools = toolsOn(host);
+        continue;
+      }
+      if (!step.sameAnswer) tools.caller.beginAnswer();
+      const before = store.revisionId;
+      const result = await tools.call(step.tool, step.args ?? {});
+      expect(store.revisionId, `step ${index} (${step.tool})`).toBe(before);
+      if (WRITE_TOOLS.has(step.tool)) expect(result.text, `step ${index}`).toBe(PLAN_FIRST);
+      else expect(codeOf(result), `step ${index}`).not.toBe("plan-first");
+    }
+    expect((host.store() as ProjectStore).canUndoOrigin(host.origin())).toBe(false);
   });
 
   it("gave back only what is so: no advice, no commands", () => {

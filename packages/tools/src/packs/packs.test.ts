@@ -327,7 +327,7 @@ describe("checkPack refuses", () => {
     );
     expect(codes(small({ params }))).toEqual(["too-large tools"]);
     expect(MAX_SYSTEM).toBe(12_000);
-    expect(MAX_LIST).toBe(64_000);
+    expect(MAX_LIST).toBe(76_000);
   });
 
   it("examples that do not fit their operation, or that only people may write", () => {

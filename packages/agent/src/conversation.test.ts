@@ -4,6 +4,7 @@ import { CallerState, createToolset } from "@animaquill/tools";
 import { toolSpecsOf } from "./assistant.ts";
 import { describe, expect, it } from "vitest";
 import { Conversation, type TaskTarget } from "./conversation.ts";
+import { PLAN_FIRST_LINE, promptOf, readEntry } from "./entries.ts";
 import type { FakeEndpoint } from "./pi.ts";
 
 function setup(fake: FakeEndpoint["fake"], maxToolCalls = 50) {
@@ -40,6 +41,72 @@ function setup(fake: FakeEndpoint["fake"], maxToolCalls = 50) {
 const addMarker = (time: string) => ({
   name: "aq_edit",
   args: { operations: [{ op: "marker.add", timeline: "main", time }] },
+});
+
+describe("a message that asks for a plan first", () => {
+  it("goes to the model with the line that says so, is kept with it, and its task writes nothing", async () => {
+    const heard: unknown[][] = [];
+    const store = ProjectStore.create(createProject({ name: "方案" }));
+    const caller = new CallerState();
+    const conversation = new Conversation({
+      newTask: () => "t1",
+      onAnswer: () => caller.beginAnswer(),
+    });
+    const entries = () => conversation.getSnapshot().entries;
+    // As the chat does: by the message the task started with.
+    const plan = (task: string) =>
+      entries().some((entry) => entry.role === "user" && entry.task === task && entry.plan);
+    const target: TaskTarget = {
+      endpoint: {
+        fake: [
+          { calls: [addMarker("1")] },
+          {
+            calls: [
+              {
+                name: "aq_propose",
+                args: {
+                  kind: "plan",
+                  title: "片头",
+                  steps: [{ text: "淡入", from: "0", to: "4" }],
+                },
+              },
+            ],
+          },
+        ],
+        heard: (messages) => heard.push([...messages]),
+      },
+      key: async () => undefined,
+      maxToolCalls: 50,
+      system: "test",
+      tools: (task) =>
+        toolSpecsOf(
+          createToolset(
+            {
+              store: () => store,
+              origin: () => aiTask(task),
+              problems: () => new ProblemSet(),
+              planFirst: () => plan(task),
+            },
+            caller,
+          ),
+        ),
+    };
+    await conversation.send("做个片头", target, [], undefined, { plan: true });
+    expect(JSON.stringify(heard[0]?.at(-1))).toContain(
+      JSON.stringify(PLAN_FIRST_LINE).slice(1, -1),
+    );
+    const [user, , blocked] = entries();
+    expect(user).toMatchObject({ role: "user", text: "做个片头", plan: true });
+    expect(blocked).toMatchObject({ role: "tool", name: "aq_edit", ok: false });
+    expect(store.getState().timelines.main?.markers ?? {}).toEqual({});
+    expect(entries().at(-1)).toMatchObject({ role: "tool", name: "aq_propose", ok: true });
+    // Read back as it was kept.
+    expect(readEntry(JSON.parse(JSON.stringify(user)))).toEqual(user);
+    const accepted = { ...(user as object), plan: undefined, fromPlan: "call-1" };
+    expect(readEntry(JSON.parse(JSON.stringify(accepted)))).toMatchObject({ fromPlan: "call-1" });
+    expect(readEntry(JSON.parse(JSON.stringify(accepted)))).not.toHaveProperty("plan");
+    expect(promptOf({ text: "做个片头" })).toBe("做个片头");
+  });
 });
 
 describe("a conversation", () => {

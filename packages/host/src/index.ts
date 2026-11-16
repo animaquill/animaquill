@@ -2380,6 +2380,11 @@ export interface SavedChat extends SavedChatSummary {
    */
   readonly repick?: readonly string[];
   /**
+   * People asked for a plan first ("先出方案"): what its next message goes with. Each message keeps
+   * whether it did, so that this is only the switch as it is now.
+   */
+  readonly planFirst?: true;
+  /**
    * For a conversation of a project of the platform kept in this browser: the revision the account
    * has of it, as last written or read here, see `ChatSyncAccess`. Missing where the account never
    * had it from here.

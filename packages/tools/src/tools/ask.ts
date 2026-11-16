@@ -5,16 +5,29 @@ import {
   type ProjectProblem,
   type ProjectState,
 } from "@animaquill/core";
+import { Time, compare, parseTime } from "@animaquill/schema";
 import { z } from "zod";
 import { answer, failed } from "../context.ts";
 import { offsetOf, paged } from "../page.ts";
 import { problemLines } from "../problems-en.ts";
 import { PARAM } from "../texts/index.ts";
 import type { ToolDefinition } from "../tool.ts";
+import type { ToolResult } from "../types.ts";
 
+/** How many steps a plan has at most. */
+export const MOST_PLAN_STEPS = 20;
+
+const PlanStep = z.strictObject({
+  text: z.string().min(1).max(300).describe(PARAM),
+  from: Time.optional().describe(PARAM),
+  to: Time.optional().describe(PARAM),
+});
+
+// One object for every kind, not a union of them: some services take no union at the top of a
+// schema. Which fields go with which kind is checked in `check`.
 const ProposeParams = z.strictObject({
-  kind: z.literal("question").describe(PARAM),
-  question: z.string().min(1).max(300).describe(PARAM),
+  kind: z.enum(["question", "plan"]).describe(PARAM),
+  question: z.string().min(1).max(300).optional().describe(PARAM),
   options: z
     .array(
       z.strictObject({
@@ -24,28 +37,120 @@ const ProposeParams = z.strictObject({
     )
     .min(2)
     .max(6)
+    .optional()
     .describe(PARAM),
   allow_other: z.boolean().optional().describe(PARAM),
+  title: z.string().min(1).max(80).optional().describe(PARAM),
+  steps: z.array(PlanStep).min(1).max(MOST_PLAN_STEPS).optional().describe(PARAM),
+  length: Time.optional().describe(PARAM),
+  style: z.string().max(200).optional().describe(PARAM),
 });
 
-export const propose: ToolDefinition<z.output<typeof ProposeParams>> = {
+type ProposeArgs = z.output<typeof ProposeParams>;
+
+/** The fields of each kind: those it needs, and those it may have. */
+const FIELDS = {
+  question: { needs: ["question", "options"], may: ["allow_other"] },
+  plan: { needs: ["title", "steps"], may: ["length", "style"] },
+} as const;
+
+/** A question to the user, as the chat shows it (`data.question`). */
+export interface ProposedQuestion {
+  readonly kind: "question";
+  readonly question: string;
+  readonly options: readonly { readonly label: string; readonly detail?: string }[];
+  readonly allow_other?: boolean;
+}
+
+/** A plan for the user to change or accept before anything changes (`data.plan`). */
+export interface ProposedPlan {
+  readonly kind: "plan";
+  readonly title: string;
+  readonly steps: readonly {
+    readonly text: string;
+    readonly from?: string;
+    readonly to?: string;
+  }[];
+  readonly length?: string;
+  readonly style?: string;
+}
+
+function checkPropose(args: ProposeArgs): ToolResult | undefined {
+  const lines: string[] = [];
+  const given = (field: string) => (args as Record<string, unknown>)[field] !== undefined;
+  for (const field of FIELDS[args.kind].needs) {
+    if (!given(field)) lines.push(`${field}: required with kind "${args.kind}"`);
+  }
+  for (const [kind, fields] of Object.entries(FIELDS)) {
+    if (kind === args.kind) continue;
+    for (const field of [...fields.needs, ...fields.may]) {
+      if (given(field)) lines.push(`${field}: goes only with kind "${kind}"`);
+    }
+  }
+  if (args.kind === "plan") {
+    for (const [index, step] of (args.steps ?? []).entries()) {
+      if (step.from !== undefined && step.to !== undefined) {
+        if (compare(parseTime(step.from), parseTime(step.to)) > 0)
+          lines.push(`steps.${index}: from has to be before to`);
+      }
+    }
+  }
+  return lines.length === 0
+    ? undefined
+    : failed(
+        ["error invalid-params", ...lines.map((line) => `  ${line}`), "nothing was shown"].join(
+          "\n",
+        ),
+      );
+}
+
+export const propose: ToolDefinition<ProposeArgs> = {
   name: "aq_propose",
   title: "Ask the user",
   params: ProposeParams,
+  check: checkPropose,
   run: (call, args) => {
     const { caller } = call;
     if (caller.answer.proposed) {
       return failed(
-        "error one-at-a-time: this answer already asks the user a question; one question per answer.",
+        "error one-at-a-time: this answer already hands the user a question or a plan; one per answer.",
       );
     }
     caller.hold("asked");
+    if (args.kind === "plan") {
+      const plan: ProposedPlan = {
+        kind: "plan",
+        title: args.title ?? "",
+        steps: (args.steps ?? []).map((step) => ({
+          text: step.text,
+          ...(step.from !== undefined && { from: step.from }),
+          ...(step.to !== undefined && { to: step.to }),
+        })),
+        ...(args.length !== undefined && { length: args.length }),
+        ...(args.style !== undefined && { style: args.style }),
+      };
+      const result = answer(
+        call,
+        [
+          "The plan is shown to the user, who can change it. Their answer, or the plan as they accept it, comes as the next user message.",
+        ],
+        { plan },
+      );
+      return { ...result, terminate: true };
+    }
+    const question: ProposedQuestion = {
+      kind: "question",
+      question: args.question ?? "",
+      options: (args.options ?? []).map(({ label, detail }) => ({
+        label,
+        ...(detail !== undefined && { detail }),
+      })),
+      ...(args.allow_other !== undefined && { allow_other: args.allow_other }),
+    };
     const result = answer(
       call,
       ["The question is shown to the user. Their answer comes as the next user message."],
-      {
-        question: args,
-      },
+      { question },
     );
     return { ...result, terminate: true };
   },
