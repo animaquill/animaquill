@@ -21,6 +21,11 @@ export interface MenuItem {
   readonly selected?: boolean;
   /** Something on or off on its own. */
   readonly checked?: boolean;
+  /**
+   * A tick that only says how things are, such as a panel being open, in words that screen readers
+   * read after the label. Choosing the item does not take it away, so it is no checkbox.
+   */
+  readonly ticked?: string;
   readonly shortcut?: string;
   readonly disabled?: boolean;
   /** It takes something away, which shows. */
@@ -113,6 +118,7 @@ const MenuList = forwardRef<HTMLDivElement, MenuListProps>(function MenuList(
               {...((item.selected ?? item.checked) === undefined
                 ? {}
                 : { "aria-checked": item.selected ?? item.checked })}
+              {...(item.ticked !== undefined && { "aria-description": item.ticked })}
               {...(item.shortcut ? { "aria-keyshortcuts": item.shortcut } : {})}
               tabIndex={-1}
               disabled={item.disabled === true}
@@ -139,7 +145,9 @@ const MenuList = forwardRef<HTMLDivElement, MenuListProps>(function MenuList(
               }}
             >
               <span className={styles.mark}>
-                {(item.selected ?? item.checked) && <Check size={14} />}
+                {(item.selected ?? item.checked ?? item.ticked !== undefined) && (
+                  <Check size={14} />
+                )}
               </span>
               <span className={styles.label}>{item.label}</span>
               {item.note && <span className={styles.note}>{item.note}</span>}

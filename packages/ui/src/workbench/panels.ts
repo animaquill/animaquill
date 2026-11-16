@@ -5,12 +5,35 @@ import type { KeyCombo } from "./keys.ts";
 /** Where a panel opens when no layout says otherwise. */
 export type PanelArea = "left" | "center" | "right" | "bottom";
 
+/**
+ * What room a panel is made for: a large area (`large`, such as the preview or code), height
+ * (`tall`, a column of things) or width (`wide`, things along time). A new panel goes into a group
+ * of the same kind, see `dock/placement.ts`.
+ */
+export type PanelSize = "large" | "tall" | "wide";
+
+/** The order kinds are tried in, whatever order a panel names them in. */
+export const SIZE_ORDER: readonly PanelSize[] = ["large", "tall", "wide"];
+
+const AREA_SIZES: Record<PanelArea, readonly PanelSize[]> = {
+  center: ["large"],
+  left: ["tall"],
+  right: ["tall"],
+  bottom: ["wide"],
+};
+
+/** The kinds of room a panel is made for: what it says, or else what its area suggests. */
+export const sizesOf = (panel: Pick<PanelDefinition, "sizes" | "area">): readonly PanelSize[] =>
+  panel.sizes && panel.sizes.length > 0 ? panel.sizes : AREA_SIZES[panel.area];
+
 export interface PanelDefinition {
   /** Saved layouts refer to this name, so it must never change. */
   readonly type: string;
   readonly title: (t: TFunction) => string;
   readonly icon: ComponentType<{ size?: number; className?: string | undefined }>;
   readonly area: PanelArea;
+  /** What room it is made for. Left out, it follows from the area. */
+  readonly sizes?: readonly PanelSize[];
   readonly component: ComponentType;
   /**
    * The real content comes later, and the panel only says so. Layouts keep its place without

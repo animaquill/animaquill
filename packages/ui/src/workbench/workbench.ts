@@ -4286,7 +4286,11 @@ export class Workbench {
       title: (t) => t("settings.title"),
       run: () => this.openSettings(),
       keys: ["mod+,"],
-      menu: { name: "file", group: "settings", title: (t) => t("settings.menu") },
+      menu: [
+        { name: "file", group: "settings", title: (t) => t("settings.menu") },
+        // The settings and their keys were panels once: the end of the view menu, as they were.
+        { name: "view", group: "settings", title: (t) => t("settings.menu"), last: true },
+      ],
     });
     for (const group of SETTINGS_GROUPS) {
       this.actions.register({
@@ -4294,6 +4298,14 @@ export class Workbench {
         title: (t) => t("settings.openGroup", { group: t(`settings.groups.${group}`) }),
         run: () => this.openSettings({ group, depth: 1 }),
         visible: () => this.#hasSettingsGroup(group),
+        ...(group === "keys" && {
+          menu: {
+            name: "view",
+            group: "settings",
+            title: (t) => t("settings.keysMenu"),
+            last: true,
+          },
+        }),
       });
     }
   }
@@ -4613,9 +4625,11 @@ export class Workbench {
       this.actions.register({
         id: `view.open.${panel.type}`,
         title: (t) => t("action.openPanel", { panel: panel.title(t) }),
-        run: () => this.layout.openPanel(panel.type),
+        // Always shows it, also when it is open behind another tab: closing is for the tab.
+        run: () => this.layout.openPanel(panel.type, { focus: true }),
         ...(panel.keys ? { keys: panel.keys } : {}),
         menu: { name: "view", group: `panels.${panel.area}`, title: panel.title },
+        ticked: () => isOpen() && this.layout.getSnapshot().open.has(panel.type),
         enabled: isOpen,
       });
     }

@@ -244,9 +244,10 @@ test("the tab menu closes other tabs", async ({ page }) => {
   await expect(tab(page, "timeline")).toBeVisible();
 });
 
-test("a panel opens next to the panels of its area", async ({ page }) => {
+test("a panel opens in a group of the kind of room it is made for", async ({ page }) => {
+  // Tall and large: large comes first, and the preview is the large group.
   await chooseFromView(page, "经验库");
-  await expect(group(page, "properties").locator('[data-tab="notes"]')).toBeVisible();
+  await expect(group(page, "preview").locator('[data-tab="notes"]')).toBeVisible();
   await expect(content(page, "notes")).toBeVisible();
 });
 
@@ -411,14 +412,16 @@ test("panels of every area find their place in an empty dock", async ({ page }) 
   }
   await chooseFromView(page, "时间轴");
   await chooseFromView(page, "属性");
+  // Tall, as properties are: into their group.
   await chooseFromView(page, "文件");
+  await expect(group(page, "properties").locator('[data-tab="files"]')).toHaveCount(1);
   await chooseFromView(page, "预览");
-  for (const type of ["timeline", "properties", "files", "preview"]) {
+  for (const type of ["timeline", "files", "preview"]) {
     await expect(content(page, type)).toBeVisible();
   }
-  const files = await box(group(page, "files"));
+  const side = await box(group(page, "files"));
   const preview = await box(group(page, "preview"));
-  expect(preview.x).toBeGreaterThanOrEqual(files.x + files.width - 1);
+  expect(side.x).toBeGreaterThanOrEqual(preview.x + preview.width - 1);
 });
 
 test("opening a page changes nothing in the saved layout", async ({ page }) => {
@@ -583,12 +586,18 @@ test("the active tab stays in view when the strip first runs out of room", async
   await expectTabInView(page, "recording");
 });
 
-/** Panels that open down the right side, enough to fill its strip in a low window. */
-const MORE_ON_THE_RIGHT = ["经验库", "历史记录", "批注", "聊天"];
+/** Tall panels, which go down the right side once it was used last, enough to fill its strip in a low window. */
+const MORE_ON_THE_RIGHT = ["历史记录", "批注", "导出", "聊天"];
+
+async function fillTheRight(page: Page) {
+  await tab(page, "properties").click();
+  for (const name of MORE_ON_THE_RIGHT) await chooseFromView(page, name);
+  await expect(group(page, "properties").locator("[data-tab]")).toHaveCount(5);
+}
 
 test("the active tab of a full strip down a side is in view", async ({ page }) => {
   await page.setViewportSize({ width: 1100, height: 360 });
-  for (const name of MORE_ON_THE_RIGHT) await chooseFromView(page, name);
+  await fillTheRight(page);
   await expectTabInView(page, "chat");
   await chooseFromView(page, "属性");
   await expectTabInView(page, "properties");
@@ -619,8 +628,8 @@ test("the wheel scrolls a tab strip that is full", async ({ page }) => {
 
 test("a tab strip that is full shows no scrollbar", async ({ page }) => {
   await page.setViewportSize({ width: 760, height: 320 });
-  for (const name of [...MORE_IN_THE_MIDDLE, ...MORE_ON_THE_RIGHT])
-    await chooseFromView(page, name);
+  for (const name of MORE_IN_THE_MIDDLE) await chooseFromView(page, name);
+  await fillTheRight(page);
   const across = group(page, "preview").locator(".dv-tabs-container");
   const down = group(page, "properties").locator(".dv-tabs-container");
   expect(await across.evaluate((element: HTMLElement) => element.scrollWidth)).toBeGreaterThan(

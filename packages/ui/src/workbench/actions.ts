@@ -1,6 +1,19 @@
 import type { TFunction } from "i18next";
 import type { KeyCombo } from "./keys.ts";
 
+/** Where an action is in a menu. */
+export interface ActionMenu {
+  readonly name: string;
+  readonly group: string;
+  /** A shorter name, because the menu already gives the context. */
+  readonly title?: (t: TFunction) => string;
+  /** Its group comes at the end of the menu, whatever was registered after it. */
+  readonly last?: true;
+}
+
+/** An action as one menu has it: with only the place it has there. */
+export type MenuAction = Action & { readonly menu: ActionMenu };
+
 /**
  * Something the interface can do, such as opening a panel. Menus use these, and the command
  * palette and key bindings will too. Changes to the project are not actions: those go through
@@ -13,15 +26,18 @@ export interface Action {
   readonly run: () => void;
   /** Default keys. People can change them, so ask KeybindingService for the current ones. */
   readonly keys?: readonly KeyCombo[];
-  /** Items of the same group stay together in the menu, in the order they were registered. */
-  readonly menu?: {
-    readonly name: string;
-    readonly group: string;
-    /** A shorter name, because the menu already gives the context. */
-    readonly title?: (t: TFunction) => string;
-  };
+  /**
+   * Items of the same group stay together in the menu, in the order they were registered. Several
+   * when people look for it in more than one menu, such as the settings.
+   */
+  readonly menu?: ActionMenu | readonly ActionMenu[];
   /** Marks one choice among several, such as the current layout. */
   readonly selected?: () => boolean;
+  /**
+   * Marks how things are, such as a panel being in the layout, without choosing the action
+   * changing it: menus tick it and screen readers hear it, but it is no on and off.
+   */
+  readonly ticked?: () => boolean;
   /** False for actions that make no sense from the command palette. */
   readonly palette?: false;
   /** Whether it can run right now. Menus grey it out, the palette leaves it out. */
@@ -92,14 +108,23 @@ export class ActionRegistry {
   }
 
   /** The groups of a menu, in the order they first appeared, without what has no place now. */
-  menu(name: string): readonly (readonly Action[])[] {
-    const groups = new Map<string, Action[]>();
+  menu(name: string): readonly (readonly MenuAction[])[] {
+    const groups = new Map<string, MenuAction[]>();
+    const last = new Set<string>();
     for (const action of this.list()) {
-      if (action.menu?.name !== name || action.visible?.() === false) continue;
-      const group = groups.get(action.menu.group);
-      if (group) group.push(action);
-      else groups.set(action.menu.group, [action]);
+      if (!action.menu || action.visible?.() === false) continue;
+      const places: readonly ActionMenu[] = "name" in action.menu ? [action.menu] : action.menu;
+      const place = places.find((menu) => menu.name === name);
+      if (!place) continue;
+      const item = { ...action, menu: place };
+      if (place.last) last.add(place.group);
+      const group = groups.get(place.group);
+      if (group) group.push(item);
+      else groups.set(place.group, [item]);
     }
-    return [...groups.values()];
+    const order = [...groups.keys()];
+    return [...order.filter((key) => !last.has(key)), ...order.filter((key) => last.has(key))].map(
+      (key) => groups.get(key) ?? [],
+    );
   }
 }

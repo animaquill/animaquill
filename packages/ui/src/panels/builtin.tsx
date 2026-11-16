@@ -29,7 +29,7 @@ import { CodePanel } from "../code/CodePanel.tsx";
 import { FilesPanel } from "../code/FilesPanel.tsx";
 import { ProblemsPanel } from "../problems/ProblemsPanel.tsx";
 import { TimelinePanel } from "../timeline/TimelinePanel.tsx";
-import type { PanelArea, PanelDefinition } from "../workbench/panels.ts";
+import type { PanelArea, PanelDefinition, PanelSize } from "../workbench/panels.ts";
 import type zhCN from "../i18n/zh-CN.json";
 import { DiagnosticsPanel } from "../diagnostics/DiagnosticsPanel.tsx";
 import { ExportsPanel } from "../export/ExportsPanel.tsx";
@@ -47,6 +47,10 @@ type Type = {
 }[keyof typeof zhCN.panel];
 
 type Extra = Pick<PanelDefinition, "keepAlive" | "keys">;
+
+const LARGE: readonly PanelSize[] = ["large"];
+const TALL: readonly PanelSize[] = ["tall"];
+const WIDE: readonly PanelSize[] = ["wide"];
 
 /** A panel whose real content comes in a later stage. */
 function planned(
@@ -69,6 +73,7 @@ function planned(
     | "chat"
   >,
   area: PanelArea,
+  sizes: readonly PanelSize[],
   icon: PanelDefinition["icon"],
   extra: Extra = {},
 ): PanelDefinition {
@@ -88,6 +93,7 @@ function planned(
     title: (t) => t(`panel.${type}.title`),
     icon,
     area,
+    sizes,
     component: Placeholder,
     planned: true,
     ...extra,
@@ -100,6 +106,7 @@ export const builtinPanels: readonly PanelDefinition[] = [
     title: (t) => t("panel.files.title"),
     icon: Files,
     area: "left",
+    sizes: TALL,
     component: FilesPanel,
     keys: ["mod+shift+e"],
   },
@@ -108,6 +115,7 @@ export const builtinPanels: readonly PanelDefinition[] = [
     title: (t) => t("panel.explorer.title"),
     icon: FolderTree,
     area: "left",
+    sizes: TALL,
     component: ExplorerPanel,
   },
   {
@@ -115,6 +123,7 @@ export const builtinPanels: readonly PanelDefinition[] = [
     title: (t) => t("panel.assets.title"),
     icon: Images,
     area: "left",
+    sizes: ["tall", "large"],
     component: AssetsPanel,
   },
   {
@@ -122,6 +131,7 @@ export const builtinPanels: readonly PanelDefinition[] = [
     title: (t) => t("panel.transitions.title"),
     icon: Blend,
     area: "left",
+    sizes: ["tall", "large"],
     component: TransitionsPanel,
   },
   {
@@ -129,6 +139,7 @@ export const builtinPanels: readonly PanelDefinition[] = [
     title: (t) => t("panel.effects.title"),
     icon: FxIcon,
     area: "left",
+    sizes: ["tall", "large"],
     component: EffectsPanel,
   },
   {
@@ -136,6 +147,7 @@ export const builtinPanels: readonly PanelDefinition[] = [
     title: (t) => t("panel.preview.title"),
     icon: MonitorPlay,
     area: "center",
+    sizes: LARGE,
     component: PreviewPanel,
     keepAlive: true,
   },
@@ -144,18 +156,20 @@ export const builtinPanels: readonly PanelDefinition[] = [
     title: (t) => t("panel.code.title"),
     icon: CodeXml,
     area: "center",
+    sizes: LARGE,
     component: CodePanel,
     keepAlive: true,
     beside: "preview",
   },
-  planned("music", "center", Music),
-  planned("recording", "center", Mic),
-  planned("versions", "center", Grid3x3),
+  planned("music", "center", ["large", "tall"], Music),
+  planned("recording", "center", LARGE, Mic),
+  planned("versions", "center", LARGE, Grid3x3),
   {
     type: "properties",
     title: (t) => t("panel.properties.title"),
     icon: SlidersHorizontal,
     area: "right",
+    sizes: TALL,
     component: PropertiesPanel,
   },
   {
@@ -163,17 +177,19 @@ export const builtinPanels: readonly PanelDefinition[] = [
     title: (t) => t("panel.chat.title"),
     icon: MessagesSquare,
     area: "right",
+    sizes: TALL,
     component: ChatPanel,
     keepAlive: true,
   },
-  planned("history", "right", History),
-  planned("notes", "right", BookOpen),
-  planned("annotations", "right", MessageSquareText),
+  planned("history", "right", TALL, History),
+  planned("notes", "right", ["tall", "large"], BookOpen),
+  planned("annotations", "right", TALL, MessageSquareText),
   {
     type: "timeline",
     title: (t) => t("panel.timeline.title"),
     icon: Rows3,
     area: "bottom",
+    sizes: WIDE,
     component: TimelinePanel,
   },
   {
@@ -181,14 +197,16 @@ export const builtinPanels: readonly PanelDefinition[] = [
     title: (t) => t("panel.keyframes.title"),
     icon: Diamond,
     area: "bottom",
+    sizes: WIDE,
     component: KeyframesPanel,
   },
-  planned("differences", "bottom", Diff),
+  planned("differences", "bottom", WIDE, Diff),
   {
     type: "problems",
     title: (t) => t("panel.problems.title"),
     icon: TriangleAlert,
     area: "bottom",
+    sizes: ["wide", "tall"],
     component: ProblemsPanel,
     keys: ["mod+shift+m"],
   },
@@ -197,15 +215,20 @@ export const builtinPanels: readonly PanelDefinition[] = [
     title: (t) => t("panel.exports.title"),
     icon: Download,
     area: "bottom",
+    sizes: ["wide", "tall"],
     component: ExportsPanel,
   },
-  planned("terminal", "bottom", SquareTerminal, { keepAlive: true, keys: ["mod+`"] }),
-  planned("cache", "bottom", HardDrive),
+  planned("terminal", "bottom", ["wide", "large"], SquareTerminal, {
+    keepAlive: true,
+    keys: ["mod+`"],
+  }),
+  planned("cache", "bottom", ["wide", "tall"], HardDrive),
   {
     type: "performance",
     title: (t) => t("panel.performance.title"),
     icon: Gauge,
     area: "bottom",
+    sizes: WIDE,
     component: DiagnosticsPanel,
   },
 ];

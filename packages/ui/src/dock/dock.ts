@@ -6,13 +6,15 @@ import type {
   SerializedDockview,
 } from "dockview-react";
 import type { TFunction } from "i18next";
-import type { Dock, LayoutNode, PanelNeighbours } from "../workbench/layout.ts";
+import type { Dock, LayoutNode, PanelNeighbours, PanelOpening } from "../workbench/layout.ts";
 import {
   RETIRED_PANELS,
+  sizesOf,
   type PanelArea,
   type PanelDefinition,
   type PanelRegistry,
 } from "../workbench/panels.ts";
+import { placePanel, type Placement, type PlacementGroup } from "./placement.ts";
 import { parseLooks, type TabStrips } from "./strips.ts";
 import {
   PANEL_COMPONENT,
@@ -63,10 +65,8 @@ export function createDock(
   const groupOf = (area: PanelArea): DockviewGroupPanel | undefined =>
     api.panels.find((panel) => panels.get(typeOf(panel))?.area === area)?.group;
 
-  /** Next to the panels of the same area, or else in the place that area has in a new layout. */
-  const placement = (area: PanelArea): Partial<AddPanelOptions> => {
-    const neighbour = groupOf(area);
-    if (neighbour) return { position: { referenceGroup: neighbour } };
+  /** Where an area is in a new layout, in a group of its own. */
+  const areaPlace = (area: PanelArea): Partial<AddPanelOptions> => {
     switch (area) {
       case "left":
         return { position: { direction: "left" }, initialWidth: SIDE_WIDTH };
@@ -75,10 +75,12 @@ export function createDock(
       case "bottom":
         return { position: { direction: "below" }, initialHeight: BOTTOM_HEIGHT };
       case "center": {
-        const left = groupOf("left");
-        if (left) return { position: { referenceGroup: left, direction: "right" } };
+        // The right column first: a left one may have taken panels of the right by now, as tall
+        // panels go to any tall group.
         const right = groupOf("right");
         if (right) return { position: { referenceGroup: right, direction: "left" } };
+        const left = groupOf("left");
+        if (left) return { position: { referenceGroup: left, direction: "right" } };
         const bottom = groupOf("bottom");
         if (bottom) return { position: { referenceGroup: bottom, direction: "above" } };
         return {};
@@ -86,9 +88,51 @@ export function createDock(
     }
   };
 
-  const besideOf = ({ beside }: PanelDefinition): Partial<AddPanelOptions> | undefined => {
-    const panel = beside === undefined ? undefined : api.getPanel(beside);
-    return panel && { position: { referenceGroup: panel.group, direction: "right" } };
+  /** The groups as `placePanel` sees them, in the order of the layout: by rows, then columns. */
+  const groupsFor = (used: (type: string) => number | undefined): PlacementGroup[] => {
+    const boxes = api.groups.map((group) => ({
+      group,
+      box: group.element.getBoundingClientRect(),
+    }));
+    boxes.sort((a, b) => a.box.top - b.box.top || a.box.left - b.box.left);
+    return boxes.map(({ group }, order) => {
+      const types = group.panels.map(typeOf);
+      const times = types.flatMap((type) => used(type) ?? []);
+      return {
+        id: group.id,
+        panels: types,
+        used: times.length > 0 ? Math.max(...times) : undefined,
+        width: group.width,
+        height: group.height,
+        order,
+      };
+    });
+  };
+
+  /** At the end of the tabs of a group, in a column of its own next to it, or in its area. */
+  const optionsFor = (where: Placement, area: PanelArea): Partial<AddPanelOptions> => {
+    const group =
+      where.kind === "new" ? undefined : api.groups.find(({ id }) => id === where.group);
+    if (!group) return areaPlace(area);
+    return where.kind === "beside"
+      ? { position: { referenceGroup: group, direction: "right" } }
+      : { position: { referenceGroup: group } };
+  };
+
+  /**
+   * Puts the keyboard in a panel: in what it marks with `data-panel-focus`, such as the box of the
+   * chat, or else in the panel itself. A new panel is on the page a frame or two later.
+   */
+  const focus = (type: string, tries = 10) => {
+    requestAnimationFrame(() => {
+      const content = document.querySelector<HTMLElement>(`[data-panel="${type}"]`);
+      if (!content) {
+        if (tries > 0) focus(type, tries - 1);
+        return;
+      }
+      const target = content.querySelector<HTMLElement>("[data-panel-focus]") ?? content;
+      target.focus({ preventScroll: true });
+    });
   };
 
   /** Between the nearest neighbour that is there, in its group. */
@@ -150,20 +194,27 @@ export function createDock(
       dockview: api.toJSON(),
       strips: strips.looksOf(api.groups),
     }),
-    open(type) {
+    open(type, { used, focus: focusing }: PanelOpening) {
       const existing = api.getPanel(type);
-      if (existing) {
-        existing.api.setActive();
-        return;
-      }
       const definition = panels.get(type);
-      if (!definition) return;
-      addPanel(definition, besideOf(definition) ?? placement(definition.area));
+      if (existing) existing.api.setActive();
+      else if (definition) {
+        const where = placePanel(
+          { type, sizes: sizesOf(definition), area: definition.area, beside: definition.beside },
+          groupsFor(used),
+          (other) => {
+            const known = panels.get(other);
+            return known ? sizesOf(known) : [];
+          },
+        );
+        addPanel(definition, optionsFor(where, definition.area));
+      } else return;
+      if (focusing) focus(type);
     },
     add(type, neighbours) {
       const definition = panels.get(type);
       if (!definition || api.getPanel(type)) return;
-      addPanel(definition, between(neighbours) ?? placement(definition.area), true);
+      addPanel(definition, between(neighbours) ?? areaPlace(definition.area), true);
     },
     items: () => api.panels.map((panel) => ({ type: typeOf(panel), visible: panel.api.isVisible })),
     active: () => (api.activePanel ? typeOf(api.activePanel) : undefined),

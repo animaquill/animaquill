@@ -57,6 +57,14 @@ export interface PanelNeighbours {
   readonly after: readonly string[];
 }
 
+/** What opening a panel needs to know besides the panel. */
+export interface PanelOpening {
+  /** When people last switched to a panel in this window; undefined when they have not. */
+  readonly used: (type: string) => number | undefined;
+  /** Puts the keyboard in it, as when people ask for it from the view menu. */
+  readonly focus: boolean;
+}
+
 /** All that the workbench asks of the docking library. */
 export interface Dock {
   /** Nothing at all when there is no layout. */
@@ -64,7 +72,11 @@ export interface Dock {
   /** Throws when the state cannot be used. */
   restore(state: unknown): void;
   serialize(): unknown;
-  open(type: string): void;
+  /**
+   * Shows a panel: switches to it where it is, or else puts it where it belongs, see
+   * `dock/placement.ts`.
+   */
+  open(type: string, opening: PanelOpening): void;
   /** Adds a panel next to the first of its neighbours that is there, without showing it. */
   add(type: string, neighbours: PanelNeighbours): void;
   items(): readonly DockItem[];
@@ -78,6 +90,8 @@ export interface LayoutSnapshot {
   readonly layout: string;
   readonly layouts: readonly LayoutChoice[];
   readonly visible: ReadonlySet<string>;
+  /** The panels in the layout, also those behind another tab. */
+  readonly open: ReadonlySet<string>;
   readonly active: string | undefined;
 }
 
@@ -112,6 +126,8 @@ interface SavedLayouts {
 
 const SETTINGS_KEY = "layout";
 const WINDOW_KEY = "layout";
+/** When people last switched to each panel in this window, for where new panels go. */
+const USED_KEY = "panels-used";
 const FORMAT_VERSION = 3;
 /**
  * Formats of before the launch, which are dropped without a word, and without a migration: 1 had
@@ -225,6 +241,23 @@ export function neighboursIn(node: LayoutNode, type: string): PanelNeighbours | 
   return undefined;
 }
 
+/** When panels were last switched to, as this window kept it. Nothing when it is not that. */
+function readUsed(text: string | undefined): Record<string, number> {
+  if (text === undefined) return {};
+  try {
+    const value: unknown = JSON.parse(text);
+    if (!isObject(value)) return {};
+    return Object.fromEntries(
+      Object.entries(value).filter(
+        (entry): entry is [string, number] =>
+          typeof entry[1] === "number" && Number.isFinite(entry[1]),
+      ),
+    );
+  } catch {
+    return {};
+  }
+}
+
 /** The name as it will show, or nothing when there is nothing to show. */
 function cleanName(name: string): string | undefined {
   const clean = name.replace(/\s+/g, " ").trim().slice(0, LAYOUT_NAME_MAX);
@@ -252,6 +285,12 @@ export class LayoutController {
   #saveFailed = false;
   /** What the store holds, so that only real changes are written. */
   #written = "";
+  /** When people last switched to each panel in this window. */
+  #used: Record<string, number> = {};
+  /** The panel that was active when the dock last changed, to tell a switch from the rest. */
+  #lastActive: string | undefined;
+  /** While a layout is put on screen, which is not people switching panels. */
+  #arranging = false;
 
   constructor(
     settings: SettingsStore,
@@ -275,8 +314,10 @@ export class LayoutController {
       layout: first.id,
       layouts: this.#choices,
       visible: new Set(),
+      open: new Set(),
       active: undefined,
     };
+    this.#used = readUsed(memory.read(USED_KEY));
   }
 
   subscribe = this.#emitter.subscribe;
@@ -304,6 +345,7 @@ export class LayoutController {
     this.#capture();
     this.#written = JSON.stringify(this.#saved);
     this.#stopListening = dock.onChange(() => {
+      this.#noteSwitch();
       this.#refresh();
       this.#scheduleSave();
     });
@@ -380,8 +422,12 @@ export class LayoutController {
     return this.#custom(id) !== undefined;
   }
 
-  openPanel(type: string): void {
-    this.#dock?.open(type);
+  /**
+   * Shows a panel and makes it the active one, wherever it is; one that is not open goes where it
+   * belongs. With `focus`, the keyboard goes there too, as when people ask for it themselves.
+   */
+  openPanel(type: string, { focus = false }: { focus?: boolean } = {}): void {
+    this.#dock?.open(type, { used: (panel) => this.#used[panel], focus });
   }
 
   /**
@@ -472,6 +518,26 @@ export class LayoutController {
   #apply(): void {
     const dock = this.#dock;
     if (!dock) return;
+    this.#arranging = true;
+    try {
+      this.#arrange(dock);
+    } finally {
+      this.#arranging = false;
+      this.#lastActive = dock.active();
+    }
+  }
+
+  /** Records when people switch to a panel; a layout going on screen does not count. */
+  #noteSwitch(): void {
+    const active = this.#dock?.active();
+    if (this.#arranging || active === this.#lastActive) return;
+    this.#lastActive = active;
+    if (active === undefined) return;
+    this.#used = { ...this.#used, [active]: Date.now() };
+    this.#memory.write(USED_KEY, JSON.stringify(this.#used));
+  }
+
+  #arrange(dock: Dock): void {
     const id = this.#layout;
     const preset = this.#presetOf(id);
     const available = this.#available();
@@ -514,11 +580,16 @@ export class LayoutController {
 
   #refresh(): void {
     const visible = new Set<string>();
-    for (const item of this.#dock?.items() ?? []) if (item.visible) visible.add(item.type);
+    const open = new Set<string>();
+    for (const item of this.#dock?.items() ?? []) {
+      open.add(item.type);
+      if (item.visible) visible.add(item.type);
+    }
     this.#snapshot = {
       layout: this.#layout,
       layouts: this.#choices,
       visible,
+      open,
       active: this.#dock?.active(),
     };
     this.#emitter.emit();

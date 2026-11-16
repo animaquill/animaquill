@@ -23,6 +23,7 @@
 - 包的依赖方向只能往下，比如 `ui` 依赖 `host`。
 - import 写完整的扩展名，这样 Node.js 也能直接运行这些源码。
 - dockview 只在 `packages/ui/src/dock` 里使用，这类关键依赖不进业务代码。
+- 打开面板一律走 `LayoutController.openPanel`：放在哪由不碰 DOM 的 `dock/placement.ts`（`placePanel`）按面板的大小标签（`PanelDefinition.sizes`，没写时按区域推）定，规则和用例见闭源仓库设计 `settings-and-properties.md` 第 11 节，改了跑 `dock/placement.test.ts`。只有人从视图菜单、命令面板、快捷键要的面板才把键盘放进去（`focus: true`）。
 - 界面文字都放在 `packages/ui/src/i18n`，不写在组件里。
 - 改动项目的操作走命令系统。界面上的操作是动作，两者不要混用。
 - 设置是所有窗口共享的，只放偏好，不放这个窗口正在做什么。窗口显示哪个项目由 `Host.address` 决定，其他窗口自己的状态放 `Host.windowMemory`。整份写回的设置要用 `listen` 跟上其他窗口的改动。

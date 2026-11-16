@@ -336,6 +336,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         data-placeholder={props.placeholder}
         data-empty={value === "" ? "" : undefined}
         data-testid="chat-input"
+        data-panel-focus=""
         tabIndex={0}
         spellCheck={false}
         onInput={changed}

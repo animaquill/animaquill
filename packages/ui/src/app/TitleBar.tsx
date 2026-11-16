@@ -42,6 +42,7 @@ export function TitleBar() {
         return {
           id: action.id,
           label: (action.menu?.title ?? action.title)(t),
+          ...(action.ticked?.() && { ticked: t("menu.opened") }),
           run: () => workbench.actions.perform(action, "menu"),
           disabled: action.enabled?.() === false,
           ...(action.selected ? { selected: action.selected() } : {}),

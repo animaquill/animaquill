@@ -75,7 +75,15 @@ class FakeDock implements Dock {
   }
 
   items = () => this.#panels().map((type) => ({ type, visible: true }));
-  active = () => this.#panels()[0];
+  switchedTo: string | undefined;
+  active = () => this.switchedTo ?? this.#panels()[0];
+
+  /** What clicking a tab looks like from the outside. */
+  async switchTo(type: string) {
+    this.switchedTo = type;
+    this.#announce();
+    await vi.advanceTimersByTimeAsync(0);
+  }
 
   onChange(listener: () => void) {
     this.#listener = listener;
@@ -700,5 +708,38 @@ describe("several windows", () => {
     const written = vi.mocked(two.settings.save).mock.calls.at(-1)?.[1] as Saved;
     expect(written.states[id]).toBeUndefined();
     expect(written.custom).toEqual([]);
+  });
+});
+
+describe("opening a panel", () => {
+  it("tells the dock when people last switched to each panel, not counting the layout coming up", async () => {
+    const memory = memoryWindow();
+    const { layout, dock } = await opened(undefined, memory);
+    await vi.advanceTimersByTimeAsync(0);
+    layout.openPanel("keyframes");
+    const first = dock.open.mock.calls[0]?.[1];
+    expect(first?.focus).toBe(false);
+    expect(first?.used("timeline")).toBeUndefined();
+
+    vi.setSystemTime(1000);
+    await dock.switchTo("keyframes");
+    vi.setSystemTime(2000);
+    await dock.switchTo("timeline");
+    layout.openPanel("problems", { focus: true });
+    const second = dock.open.mock.calls[1]?.[1];
+    expect(second?.focus).toBe(true);
+    expect(second?.used("keyframes")).toBe(1000);
+    expect(second?.used("timeline")).toBe(2000);
+
+    // Kept for the window, through a reload.
+    const again = await opened(undefined, memory);
+    again.layout.openPanel("problems");
+    expect(again.dock.open.mock.calls[0]?.[1].used("timeline")).toBe(2000);
+  });
+
+  it("says which panels are open, also those that do not show", async () => {
+    const { layout } = await opened();
+    await vi.advanceTimersByTimeAsync(0);
+    expect([...layout.getSnapshot().open]).toEqual(["timeline"]);
   });
 });

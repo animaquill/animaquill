@@ -1000,6 +1000,7 @@ describe("problems", () => {
       layout: "edit",
       layouts: [],
       visible: new Set(["problems"]),
+      open: new Set(["problems"]),
       active: undefined,
     });
     workbench.preview.noteProblem("c", "1", problem);
@@ -1524,5 +1525,18 @@ describe("a new project where nothing can keep it (the design of the start page,
     await making;
     expect(await library.list()).toEqual([]);
     expect(workbench.session.store).toBeUndefined();
+  });
+});
+
+describe("the view menu", () => {
+  it("ends with the settings and their keys, which the file menu also has", () => {
+    const { workbench } = setup();
+    const view = workbench.actions.menu("view");
+    expect(view.at(-1)?.map(({ id }) => id)).toEqual(["settings.open", "settings.open.keys"]);
+    expect(view.at(0)?.map(({ id }) => id)).toEqual(["view.commandPalette"]);
+    const file = workbench.actions.menu("file").flat();
+    expect(file.filter(({ id }) => id.startsWith("settings.")).map(({ id }) => id)).toEqual([
+      "settings.open",
+    ]);
   });
 });

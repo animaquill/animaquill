@@ -20,7 +20,8 @@
     "edit": "编辑",
     "view": "视图",
     "timeline": "时间轴",
-    "help": "帮助"
+    "help": "帮助",
+    "opened": "已打开"
   },
   "edit": {
     "undo": "撤销",
@@ -744,6 +745,7 @@
   "settings": {
     "title": "设置",
     "menu": "设置…",
+    "keysMenu": "快捷键…",
     "openGroup": "设置：{{group}}",
     "close": "关闭设置",
     "pagesLabel": "设置分组",
