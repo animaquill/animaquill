@@ -25,6 +25,7 @@
 - dockview 只在 `packages/ui/src/dock` 里使用，这类关键依赖不进业务代码。
 - 打开面板一律走 `LayoutController.openPanel`：放在哪由不碰 DOM 的 `dock/placement.ts`（`placePanel`）按面板的大小标签（`PanelDefinition.sizes`，没写时按区域推）定，规则和用例见闭源仓库设计 `settings-and-properties.md` 第 11 节，改了跑 `dock/placement.test.ts`。只有人从视图菜单、命令面板、快捷键要的面板才把键盘放进去（`focus: true`）。
 - 界面文字都放在 `packages/ui/src/i18n`，不写在组件里。
+- 颜色和字号只用 `packages/ui/src/theme/tokens.css` 的变量，不在组件里写死：新的颜色深色、浅色两套都给值（`tokens.test.ts` 查漏掉的和文字的对比度），画面上和自带颜色上的东西用两套一样的（`--aq-on-picture` 这类）；字号用 `--aq-font-N`，跟着设置里的界面字号缩放。画布、代码编辑器这类只读一次变量的，用 `theme/watch.ts` 的 `onAppearanceChange` 在切换主题和字号时重读。
 - 改动项目的操作走命令系统。界面上的操作是动作，两者不要混用。
 - 设置是所有窗口共享的，只放偏好，不放这个窗口正在做什么。窗口显示哪个项目由 `Host.address` 决定，其他窗口自己的状态放 `Host.windowMemory`。整份写回的设置要用 `listen` 跟上其他窗口的改动。
 - 项目属性在 `packages/ui/src/project`，和设置共用弹窗外壳（`settings/shell.tsx`）。改项目的项只走命令（`ProjectEdits`，一项一步、能撤销），会改画面的（剪辑帧率、母版的尺寸和比例、删画幅和语言、锁定）先出确认框说清后果；项目只读或锁定时每一格只读，只有标签能改（解锁的办法）。

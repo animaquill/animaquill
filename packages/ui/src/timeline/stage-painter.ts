@@ -1,9 +1,13 @@
 /** Canvas cannot read CSS variables, so the colours come over once. */
 export interface Theme {
   readonly font: string;
+  /** How much larger than standard the words are, as people chose in the settings. */
+  readonly fontScale: number;
   readonly background: string;
   readonly lane: string;
   readonly laneLocked: string;
+  /** Over the lane of what has properties under it, in the keyframes. */
+  readonly parent: string;
   readonly line: string;
   readonly ruler: string;
   readonly tick: string;
@@ -37,9 +41,11 @@ export function readTheme(element: Element): Theme {
   const color = (name: string) => style.getPropertyValue(`--aq-timeline-${name}`).trim();
   return {
     font: style.getPropertyValue("--aq-font"),
+    fontScale: Number.parseFloat(style.getPropertyValue("--aq-font-scale")) || 1,
     background: color("background"),
     lane: color("lane"),
     laneLocked: color("lane-locked"),
+    parent: color("parent"),
     line: color("line"),
     ruler: color("ruler"),
     tick: color("tick"),
@@ -74,6 +80,8 @@ export abstract class StagePainter {
   /** What was on the canvas is gone, so whatever comes next has to draw all of it. */
   protected isWiped = true;
   #pending: number | undefined;
+  /** Read at the first paint: a canvas that is not in the page yet has no styles to read. */
+  #theme: Theme | undefined;
 
   constructor(canvas: HTMLCanvasElement) {
     const context = canvas.getContext("2d", { alpha: false });
@@ -88,6 +96,18 @@ export abstract class StagePainter {
   }
 
   protected abstract paint(): void;
+
+  /** The colours and the size of words, as the theme and the settings have them now. */
+  protected get theme(): Theme {
+    return (this.#theme ??= readTheme(this.canvas));
+  }
+
+  /** The theme or the size of words changed: everything is drawn again, in the new ones. */
+  restyle(): void {
+    this.#theme = undefined;
+    this.isWiped = true;
+    this.paintNow();
+  }
 
   /** Sizes are in CSS pixels. The canvas itself has as many pixels as the screen shows. */
   resize(width: number, height: number, ratio: number): void {

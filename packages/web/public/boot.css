@@ -1,4 +1,4 @@
-/* Shown until the editor starts, and stays if it cannot. */
+/* Shown until the editor starts, and stays if it cannot. In the theme people chose, see boot.js. */
 html,
 body,
 #root {
@@ -25,4 +25,18 @@ body,
 
 .boot p {
   margin: 0;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="light"],
+:root[data-theme="light"] body,
+:root[data-theme="light"] #root {
+  background: #f3f3f3;
+}
+
+:root[data-theme="light"] .boot {
+  color: #636363;
 }

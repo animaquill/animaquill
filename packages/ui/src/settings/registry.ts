@@ -36,6 +36,8 @@ export interface SettingItem {
  */
 export const SETTING_ITEMS: readonly SettingItem[] = [
   { id: "general.language", group: "general", where: "device" },
+  { id: "general.theme", group: "general", where: "device" },
+  { id: "general.fontSize", group: "general", where: "device" },
   { id: "editing.trial", group: "editing", where: "device" },
   { id: "playback.proxyOffer", group: "playback", where: "device" },
   { id: "export.hardware", group: "export", where: "device" },

@@ -22,7 +22,7 @@ import {
 import { effectBandOf } from "./effect-band.ts";
 import { paintRuler } from "./ruler.ts";
 import type { Preview } from "./gestures.ts";
-import { StagePainter, readTheme, type Theme } from "./stage-painter.ts";
+import { StagePainter, type Theme } from "./stage-painter.ts";
 
 const ROW_INSET = 2;
 const CLIP_RADIUS = 3;
@@ -39,6 +39,12 @@ const EFFECT_BAND_LABEL_MIN = 20;
 const TRANSITION_HANDLE = 8;
 /** How tall a track that a drop would make shows, before it is there: as rows of its kind are. */
 const NEW_TRACK_HEIGHT = { video: 52, audio: 44 } as const;
+/**
+ * What goes on clips, whose colours are what they are in either theme, so these are too: words and
+ * marks, and a transition that does not work, on the dark plate of its block.
+ */
+const ON_CLIP = "#ffffff";
+const ON_CLIP_WARNING = "#cca700";
 /** Over what fades, darker the less of the clip shows, as the line says. */
 const FADE_SHADE = "#00000066";
 const FADE_LINE = "#ffffffd9";
@@ -136,8 +142,6 @@ export class TimelinePainter extends StagePainter {
    * one did not come: a bar along its bottom, as the mark of the picture of the asset.
    */
   readonly #downloadOf: ((clip: ClipState) => number | "failed" | undefined) | undefined;
-  /** Read at the first paint: a canvas that is not in the page yet has no styles to read. */
-  #theme!: Theme;
 
   constructor(
     canvas: HTMLCanvasElement,
@@ -169,13 +173,12 @@ export class TimelinePainter extends StagePainter {
     const { model, width, height, pixelsPerSecond } = this.#editor;
     // Behind another tab there is nothing to paint on, and no scale to work out positions with.
     if (width === 0 || height === 0 || pixelsPerSecond === 0 || !this.canvas.isConnected) return;
-    this.#theme ??= readTheme(this.canvas);
     const { context, ratio } = this;
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
-    context.fillStyle = this.#theme.background;
+    context.fillStyle = this.theme.background;
     context.fillRect(0, 0, width, height);
     if (!model) return;
-    context.font = `12px ${this.#theme.font}`;
+    context.font = `${12 * this.theme.fontScale}px ${this.theme.font}`;
     context.textBaseline = "middle";
 
     context.save();
@@ -186,7 +189,7 @@ export class TimelinePainter extends StagePainter {
     this.#paintClips(model);
     this.#paintJoins(model);
     this.#paintPreview();
-    this.#below?.(context, this.#theme, (value) => this.sharp(value));
+    this.#below?.(context, this.theme, (value) => this.sharp(value));
     this.#paintOutside();
     this.#paintMarquee();
     context.restore();
@@ -205,9 +208,9 @@ export class TimelinePainter extends StagePainter {
     for (const row of model.rows) {
       const top = this.#rowTop(row);
       if (top + row.height < RULER_HEIGHT || top > height) continue;
-      context.fillStyle = row.track.locked ? this.#theme.laneLocked : this.#theme.lane;
+      context.fillStyle = row.track.locked ? this.theme.laneLocked : this.theme.lane;
       context.fillRect(0, top, width, row.height);
-      context.fillStyle = this.#theme.line;
+      context.fillStyle = this.theme.line;
       context.fillRect(0, this.sharp(top + row.height) - 1, width, 1);
     }
   }
@@ -256,7 +259,7 @@ export class TimelinePainter extends StagePainter {
       }
     }
     // Over the clip that moves, which is exactly where it would overwrite something.
-    context.fillStyle = this.#theme.covered;
+    context.fillStyle = this.theme.covered;
     context.globalAlpha = 0.7;
     for (const { row, from, to } of preview.covered ?? []) {
       if (to <= first || from >= last) continue;
@@ -294,7 +297,7 @@ export class TimelinePainter extends StagePainter {
         const line = this.sharp(RULER_HEIGHT - editor.scrollY + lane);
         height = Math.round(NEW_TRACK_HEIGHT[part.kind] * model.rowScale);
         top = part.kind === "video" && first ? line - height : line;
-        context.fillStyle = this.#theme.selected;
+        context.fillStyle = this.theme.selected;
         context.fillRect(0, line - 1, editor.width, 2);
         const number = model.rows.filter(({ track, gone }) => track.kind === part.kind && !gone);
         const name = this.#newTrackName(part.kind, number.length + 1);
@@ -302,12 +305,12 @@ export class TimelinePainter extends StagePainter {
       }
       context.save();
       context.globalAlpha = 0.55;
-      context.fillStyle = part.kind === "audio" ? this.#theme.sound : this.#theme.picture;
+      context.fillStyle = part.kind === "audio" ? this.theme.sound : this.theme.picture;
       context.beginPath();
       context.roundRect(left, top, width, height, CLIP_RADIUS);
       context.fill();
       context.globalAlpha = 1;
-      context.strokeStyle = this.#theme.selected;
+      context.strokeStyle = this.theme.selected;
       context.lineWidth = 2;
       context.setLineDash([5, 3]);
       context.beginPath();
@@ -336,10 +339,10 @@ export class TimelinePainter extends StagePainter {
     const left = this.sharp(editor.xAt(drop.start));
     const width = Math.max(this.sharp(editor.xAt(drop.end)) - left, TRANSITION_HANDLE);
     context.globalAlpha = 0.35;
-    context.fillStyle = this.#theme.selected;
+    context.fillStyle = this.theme.selected;
     context.fillRect(left, top, width, height);
     context.globalAlpha = 1;
-    context.strokeStyle = this.#theme.selected;
+    context.strokeStyle = this.theme.selected;
     context.lineWidth = 2;
     context.strokeRect(left + 1, top + 1, width - 2, height - 2);
   }
@@ -392,12 +395,12 @@ export class TimelinePainter extends StagePainter {
     // Too narrow for words it should still show, and on any clip it stays out of the way.
     const coming = this.#downloadOf?.(box.clip);
     if (this.#hasFailed(box.clip) || coming === "failed") {
-      context.fillStyle = this.#theme.failed;
+      context.fillStyle = this.theme.failed;
       context.fillRect(left, top + height - FAILED_BAR, width, FAILED_BAR);
     } else if (coming !== undefined) {
       context.fillStyle = "#00000080";
       context.fillRect(left, top + height - FAILED_BAR, width, FAILED_BAR);
-      context.fillStyle = this.#theme.selected;
+      context.fillStyle = ON_CLIP;
       context.fillRect(left, top + height - FAILED_BAR, (width * coming) / 100, FAILED_BAR);
     }
 
@@ -405,7 +408,7 @@ export class TimelinePainter extends StagePainter {
     // What came from GitHub lately: the same corner, in a colour of its own.
     const isRepo = editor.repoMarked.has(box.id);
     if ((isRepo || editor.marked.has(box.id)) && width >= AI_MARK * 2) {
-      context.fillStyle = isRepo ? this.#theme.repo : this.#theme.selected;
+      context.fillStyle = isRepo ? this.theme.repo : ON_CLIP;
       context.beginPath();
       context.moveTo(right - AI_MARK - 1, top + 1);
       context.lineTo(right - 1, top + 1);
@@ -425,7 +428,7 @@ export class TimelinePainter extends StagePainter {
       this.#paintTransitionHandles(box, look, edges, { left, right, top });
     }
     if (look.selected) {
-      context.strokeStyle = this.#theme.selected;
+      context.strokeStyle = this.theme.selected;
       context.lineWidth = 1.5;
       context.beginPath();
       context.roundRect(left + 0.75, top + 0.75, width - 1.5, height - 1.5, CLIP_RADIUS);
@@ -579,7 +582,7 @@ export class TimelinePainter extends StagePainter {
     const at = [...(align === "after" ? [] : [left]), ...(align === "before" ? [] : [right])];
     for (const middle of at) {
       const x = this.sharp(middle - TRANSITION_HANDLE / 4);
-      context.fillStyle = this.#theme.selected;
+      context.fillStyle = this.theme.selected;
       context.fillRect(x, top, TRANSITION_HANDLE / 2, TRANSITION_BAND);
     }
   }
@@ -645,7 +648,7 @@ export class TimelinePainter extends StagePainter {
       context.restore();
     }
     context.lineWidth = chosen ? 1.5 : 1;
-    context.strokeStyle = chosen ? this.#theme.selected : works ? BLOCK_LINE : this.#theme.warning;
+    context.strokeStyle = chosen ? this.theme.selected : works ? BLOCK_LINE : this.theme.warning;
     context.setLineDash(works || chosen ? [] : [3, 2]);
     context.strokeRect(from + 0.5, top + 0.5, width - 1, TRANSITION_BAND - 1);
     context.setLineDash([]);
@@ -654,7 +657,7 @@ export class TimelinePainter extends StagePainter {
     context.beginPath();
     context.rect(from, top, width, TRANSITION_BAND);
     context.clip();
-    context.fillStyle = works ? "#ffffff" : this.#theme.warning;
+    context.fillStyle = works ? ON_CLIP : ON_CLIP_WARNING;
     context.fillText(label, from + LABEL_PLATE_PADDING + 2, top + TRANSITION_BAND / 2);
     context.restore();
   }
@@ -676,7 +679,7 @@ export class TimelinePainter extends StagePainter {
       if (edges[edge] <= 0 || joined?.has(`${box.id} ${edge}`) === true) continue;
       const middle = editor.xAt(at[edge]);
       const x = Math.min(Math.max(middle - TRANSITION_HANDLE / 2, left), right - TRANSITION_HANDLE);
-      context.fillStyle = look.handle === edge ? this.#theme.selected : "#ffffff";
+      context.fillStyle = look.handle === edge ? this.theme.selected : "#ffffff";
       context.strokeStyle = "#000000b3";
       context.lineWidth = 1;
       context.fillRect(this.sharp(x), top + 1, TRANSITION_HANDLE, TRANSITION_HANDLE);
@@ -773,9 +776,9 @@ export class TimelinePainter extends StagePainter {
   #fillOf({ clip }: ClipBox): string {
     const { source } = clip;
     if (source.kind === "color" && typeof source["color"] === "string") return source["color"];
-    if (source.kind === "caption") return this.#theme.caption;
+    if (source.kind === "caption") return this.theme.caption;
     const sound = ["audio", "sound", "music"].includes(source.kind);
-    return sound ? this.#theme.sound : this.#theme.picture;
+    return sound ? this.theme.sound : this.theme.picture;
   }
 
   /**
@@ -803,7 +806,7 @@ export class TimelinePainter extends StagePainter {
     context.roundRect(left, top, width, height, CLIP_RADIUS);
     context.clip();
     context.globalAlpha *= band.off ? 0.4 : 1;
-    context.fillStyle = this.#theme.effect;
+    context.fillStyle = this.theme.effect;
     let widest: { from: number; to: number } | undefined;
     for (const [from, to] of band.spans) {
       const x = Math.max(this.sharp(editor.xAt(look.start + from)), left);
@@ -823,7 +826,7 @@ export class TimelinePainter extends StagePainter {
         context.rect(from, y, room, size);
         context.clip();
         context.fillStyle = "#ffffff";
-        context.font = `600 10px ${this.#theme.font}`;
+        context.font = `600 ${10 * this.theme.fontScale}px ${this.theme.font}`;
         context.textBaseline = "middle";
         context.fillText(fitText(context, names, room), from, y + size / 2 + 0.5);
       }
@@ -859,7 +862,7 @@ export class TimelinePainter extends StagePainter {
     context.roundRect(left, top, width, height, CLIP_RADIUS);
     context.fill();
     context.globalAlpha = Math.min(share * 1.5, 1);
-    context.strokeStyle = this.#theme.flash;
+    context.strokeStyle = this.theme.flash;
     context.lineWidth = 2;
     context.beginPath();
     context.roundRect(left + 1, top + 1, width - 2, height - 2, CLIP_RADIUS);
@@ -932,7 +935,7 @@ export class TimelinePainter extends StagePainter {
     const { context } = this;
     const end = this.sharp(editor.xAt(editor.visibleDuration));
     if (end >= editor.width) return;
-    context.fillStyle = this.#theme.outside;
+    context.fillStyle = this.theme.outside;
     context.fillRect(Math.max(end, 0), RULER_HEIGHT, editor.width, editor.height);
   }
 
@@ -945,11 +948,11 @@ export class TimelinePainter extends StagePainter {
     const width = editor.xAt(marquee.to) - left;
     const top = RULER_HEIGHT - editor.scrollY + marquee.top;
     const height = marquee.bottom - marquee.top;
-    context.fillStyle = this.#theme.marquee;
+    context.fillStyle = this.theme.marquee;
     context.globalAlpha = 0.2;
     context.fillRect(left, top, width, height);
     context.globalAlpha = 1;
-    context.strokeStyle = this.#theme.marquee;
+    context.strokeStyle = this.theme.marquee;
     context.lineWidth = 1;
     context.strokeRect(left + 0.5, top + 0.5, width - 1, height - 1);
   }
@@ -957,7 +960,7 @@ export class TimelinePainter extends StagePainter {
   #paintRuler(model: TimelineModel): void {
     const editor = this.#editor;
     const { context } = this;
-    const theme = this.#theme;
+    const theme = this.theme;
     const look = { ...theme, background: theme.ruler };
     paintRuler(context, editor, model.rate, RULER_HEIGHT, look, (value) => this.sharp(value));
 
@@ -975,10 +978,10 @@ export class TimelinePainter extends StagePainter {
   #paintLines(): void {
     const editor = this.#editor;
     const { context } = this;
-    context.fillStyle = this.#theme.end;
+    context.fillStyle = this.theme.end;
     const end = this.sharp(editor.xAt(editor.visibleDuration));
     if (end >= 0 && end <= editor.width) context.fillRect(end, RULER_HEIGHT, 1, editor.height);
-    context.fillStyle = this.#theme.snap;
+    context.fillStyle = this.theme.snap;
     for (const moment of [editor.preview?.snap, editor.razorAt, editor.pointedAt]) {
       if (moment === undefined) continue;
       context.fillRect(this.sharp(editor.xAt(moment)), 0, 1, editor.height);

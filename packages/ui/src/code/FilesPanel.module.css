@@ -20,7 +20,7 @@
   gap: 4px;
   padding: 2px 8px;
   color: var(--aq-text);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   background: var(--aq-bg-input);
   border: 0;
   border-radius: 3px;
@@ -63,7 +63,7 @@
 
 .row[data-group] {
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
 }
 
 .icon {

@@ -39,7 +39,7 @@
   padding: 0 6px;
   color: var(--aq-text);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   background: var(--aq-bg-input);
   border: 1px solid transparent;
   border-radius: 2px;
@@ -60,7 +60,7 @@
 .range {
   padding: 1px 6px;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   white-space: nowrap;
   background: none;
   border: 0;

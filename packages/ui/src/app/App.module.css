@@ -34,7 +34,7 @@
 
 .crashed h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--aq-font-18);
   font-weight: 600;
 }
 

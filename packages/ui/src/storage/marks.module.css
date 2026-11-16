@@ -6,20 +6,20 @@
   place-items: center;
   width: 16px;
   height: 16px;
-  color: #fff;
-  background: #000000a0;
+  color: var(--aq-on-picture);
+  background: var(--aq-picture-mark);
   border-radius: 50%;
   pointer-events: auto;
 }
 
 .failed {
-  color: #fff;
+  color: var(--aq-on-picture);
   background: var(--aq-danger);
 }
 
 .track {
   fill: none;
-  stroke: #ffffff40;
+  stroke: var(--aq-picture-track);
   stroke-width: 2.5;
 }
 

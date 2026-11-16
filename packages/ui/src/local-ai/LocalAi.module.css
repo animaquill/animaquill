@@ -27,7 +27,7 @@
   margin-bottom: 14px;
   padding: 8px 12px;
   color: var(--aq-text-strong);
-  font-size: 13px;
+  font-size: var(--aq-font-13);
   background: var(--aq-bg-input);
   border: 1px solid var(--aq-border);
   border-radius: 6px;
@@ -62,7 +62,7 @@
   width: 20px;
   height: 20px;
   color: var(--aq-text-strong);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   background: var(--aq-bg-input);
   border-radius: 50%;
 }
@@ -77,7 +77,7 @@
 .stepTitle {
   margin: 0;
   color: var(--aq-text-strong);
-  font-size: 13px;
+  font-size: var(--aq-font-13);
   font-weight: 600;
 }
 
@@ -139,7 +139,7 @@
 .sub {
   margin: 4px 0 0;
   color: var(--aq-text-strong);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   font-weight: 600;
 }
 
@@ -160,7 +160,7 @@
   margin: 0;
   color: var(--aq-text-strong);
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   line-height: 1.5;
   /* All of a command shows, however narrow: it goes on in the next line. */
   white-space: pre-wrap;
@@ -258,26 +258,26 @@
   width: 16px;
   height: 16px;
   margin-right: 6px;
-  color: #fff;
-  font-size: 10px;
+  color: var(--aq-on-picture);
+  font-size: var(--aq-font-10);
   font-weight: 600;
-  background: #c15f3c;
+  background: var(--aq-tool-claude);
   border-radius: 3px;
 }
 
 .toolMark[data-tool="codex"] {
-  background: #3a3a3a;
-  border: 1px solid #6b6b6b;
+  background: var(--aq-tool-codex);
+  border: 1px solid var(--aq-tool-codex-line);
 }
 
 .toolMark[data-tool="cursor"] {
-  background: #2b2b2b;
+  background: var(--aq-tool-cursor);
 }
 
 .toolMark[data-tool="vscode"] {
-  background: #0065a9;
+  background: var(--aq-tool-vscode);
 }
 
 .toolMark[data-tool="other"] {
-  background: #5a5a5a;
+  background: var(--aq-tool-other);
 }

@@ -31,7 +31,7 @@
 .prompt p {
   margin: 0;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   line-height: 1.5;
 }
 
@@ -46,7 +46,7 @@
   padding: 3px 10px;
   color: var(--aq-text);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   background: var(--aq-bg-input);
   border: 0;
   border-radius: 3px;
@@ -94,7 +94,7 @@
   margin: 0;
   padding: 8px;
   overflow: auto;
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   background: var(--aq-bg-input);
   border-radius: 3px;
 }

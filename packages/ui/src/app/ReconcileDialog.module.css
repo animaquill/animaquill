@@ -21,7 +21,7 @@
   align-items: center;
   gap: 4px 12px;
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 @media (max-width: 640px) {
@@ -75,7 +75,7 @@
 .all button {
   padding: 3px 10px;
   color: var(--aq-text);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   background: var(--aq-bg-input);
   border: 1px solid var(--aq-border);
   border-radius: 3px;

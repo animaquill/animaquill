@@ -38,3 +38,22 @@
     { once: true },
   );
 })();
+
+// The theme and the size of words people chose, on the page before the editor is there to put them
+// (see `Appearance` in the editor, which keeps them under this key and takes over): what shows
+// while it loads is in the colours it will have, not dark first. Following the system by default.
+(() => {
+  let saved;
+  try {
+    saved = JSON.parse(localStorage.getItem("animaquill.appearance") ?? "null");
+  } catch {}
+  const chosen = saved?.version === 1 ? saved : {};
+  const theme = ["dark", "light"].includes(chosen.theme)
+    ? chosen.theme
+    : matchMedia("(prefers-color-scheme: light)").matches
+      ? "light"
+      : "dark";
+  const root = document.documentElement;
+  root.dataset.theme = theme;
+  root.dataset.fontSize = ["small", "large"].includes(chosen.fontSize) ? chosen.fontSize : "normal";
+})();

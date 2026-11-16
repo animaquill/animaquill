@@ -20,7 +20,7 @@
 
 .version {
   color: var(--aq-text-muted);
-  font-size: 10px;
+  font-size: var(--aq-font-10);
   font-weight: 400;
 }
 
@@ -63,7 +63,7 @@
 
 .search kbd {
   font: inherit;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   opacity: 0.8;
 }
 

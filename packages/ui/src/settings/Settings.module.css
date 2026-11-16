@@ -6,7 +6,7 @@
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: #0000008c;
+  background: var(--aq-backdrop-settings);
 }
 
 .dialog {
@@ -22,7 +22,7 @@
   transform: translate(-50%, -50%);
   outline: 0;
   color: var(--aq-text);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   background: var(--aq-bg-panel);
   border: 1px solid var(--aq-border);
   border-radius: 8px;
@@ -69,7 +69,7 @@
 .title {
   margin: 0;
   color: var(--aq-text-strong);
-  font-size: 14px;
+  font-size: var(--aq-font-14);
   font-weight: 600;
 }
 
@@ -176,7 +176,7 @@
 .sectionName {
   padding: 4px 16px 2px;
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
 }
 
 .navItem {
@@ -186,7 +186,7 @@
   padding: 6px 14px;
   color: var(--aq-text);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--aq-font-13);
   text-align: left;
   background: none;
   border: 0;
@@ -231,7 +231,7 @@
   padding: 8px 10px;
   color: var(--aq-text-strong);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--aq-font-13);
   text-align: left;
   background: none;
   border: 0;
@@ -253,7 +253,7 @@
   margin-top: 2px;
   overflow: hidden;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -299,7 +299,7 @@
   align-items: center;
   margin: 0 0 6px;
   color: var(--aq-text-strong);
-  font-size: 15px;
+  font-size: var(--aq-font-15);
   font-weight: 600;
 }
 
@@ -318,7 +318,7 @@
 .rowsHeading {
   margin: 18px 0 0;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   font-weight: 500;
 }
 
@@ -353,7 +353,7 @@
 
 .name {
   color: var(--aq-text-strong);
-  font-size: 13px;
+  font-size: var(--aq-font-13);
   font-weight: 600;
 }
 
@@ -468,7 +468,7 @@
 
 .invalid {
   color: var(--aq-danger-text);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
 }
 
 .unit {
@@ -506,7 +506,7 @@
 }
 
 .switch:checked::after {
-  background: #fff;
+  background: var(--aq-switch-knob);
   transform: translateX(14px);
 }
 
@@ -653,7 +653,7 @@
   display: inline-grid;
   place-items: center;
   color: var(--aq-text-strong);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   background: var(--aq-bg-hover);
 }
 

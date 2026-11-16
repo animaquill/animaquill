@@ -17,7 +17,7 @@
   max-width: 100%;
   padding: 4px 8px;
   color: var(--aq-text);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   background: var(--aq-bg-menu);
   border: 1px solid var(--aq-border);
   border-radius: 3px;

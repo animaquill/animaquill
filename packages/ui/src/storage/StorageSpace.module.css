@@ -32,14 +32,14 @@
 .head h2 {
   margin: 0;
   color: var(--aq-text-strong);
-  font-size: 14px;
+  font-size: var(--aq-font-14);
   font-weight: 600;
 }
 
 .muted {
   margin: 8px 0 0;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .total {
@@ -48,7 +48,7 @@
 
 .total strong {
   color: var(--aq-text-strong);
-  font-size: 20px;
+  font-size: var(--aq-font-20);
   font-weight: 500;
 }
 
@@ -59,7 +59,7 @@
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .table th {
@@ -106,7 +106,7 @@
   margin-left: 4px;
   padding: 0 6px;
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   font-weight: normal;
   border: 1px solid var(--aq-border);
   border-radius: 3px;

@@ -1,7 +1,7 @@
 .explorer {
   height: 100%;
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   container-type: size;
 }
 

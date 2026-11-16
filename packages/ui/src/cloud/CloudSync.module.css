@@ -126,7 +126,7 @@
 }
 
 .switch:checked::after {
-  background: #fff;
+  background: var(--aq-switch-knob);
   transform: translateX(14px);
 }
 
@@ -216,7 +216,7 @@
   padding: 0;
   overflow: auto;
   color: var(--aq-text);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   background: var(--aq-bg-menu);
   border: 1px solid var(--aq-border);
   border-radius: 6px;
@@ -224,7 +224,7 @@
 }
 
 .welcome::backdrop {
-  background: #00000088;
+  background: var(--aq-backdrop-welcome);
 }
 
 .welcomeBody {
@@ -235,7 +235,7 @@
 .welcomeBody h2 {
   margin: 0 0 8px;
   color: var(--aq-text-strong);
-  font-size: 18px;
+  font-size: var(--aq-font-18);
   font-weight: 500;
 }
 
@@ -313,14 +313,14 @@
 .page h2 {
   margin: 0 0 6px;
   color: var(--aq-text-strong);
-  font-size: 15px;
+  font-size: var(--aq-font-15);
   font-weight: 600;
 }
 
 .page h3 {
   margin: 20px 0 0;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   font-weight: 400;
 }
 

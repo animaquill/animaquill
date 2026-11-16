@@ -54,8 +54,6 @@ describe("the list", () => {
   it("has none of what is not a setting: what is changed while editing, or not made yet", () => {
     const ids = SETTING_ITEMS.map(({ id }) => id as string);
     for (const gone of [
-      "general.theme",
-      "general.fontSize",
       "general.input",
       "general.layout",
       "editing.snapping",
@@ -73,7 +71,14 @@ describe("the list", () => {
       const [group, name] = id.split(".") as [string, string];
       return texts[group]?.[name]?.help !== undefined;
     }).map(({ id }) => id);
-    for (const id of ["general.language", "account.space", "storage.persist", "storage.keys"])
+    for (const id of [
+      "general.language",
+      "general.theme",
+      "general.fontSize",
+      "account.space",
+      "storage.persist",
+      "storage.keys",
+    ])
       expect(said, id).not.toContain(id);
     for (const id of ["editing.trial", "playback.proxyOffer", "export.hardware", "cloud.ai"])
       expect(said, id).toContain(id);
@@ -95,7 +100,8 @@ describe("searching", () => {
   });
 
   it("finds by words a setting is also known by", () => {
-    expect(found("暗色")).toEqual([]);
+    expect(found("暗色")).toEqual(["general.theme"]);
+    expect(found("字体")).toEqual(["general.fontSize"]);
     expect(found("回车")).toEqual(["chat.sendWith"]);
     expect(found("代理")).toContain("playback.proxyOffer");
     expect(found("额度")).toContain("account.space");

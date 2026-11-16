@@ -17,7 +17,7 @@
 .placeholder h2 {
   margin: 4px 0 0;
   color: var(--aq-text);
-  font-size: 14px;
+  font-size: var(--aq-font-14);
   font-weight: 600;
 }
 

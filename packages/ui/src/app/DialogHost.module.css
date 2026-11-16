@@ -33,7 +33,7 @@
 
 .dialog::backdrop,
 .wide::backdrop {
-  background: #00000066;
+  background: var(--aq-backdrop);
 }
 
 .content {
@@ -43,7 +43,7 @@
 .content h2 {
   margin: 0 0 10px;
   color: var(--aq-text-strong);
-  font-size: 14px;
+  font-size: var(--aq-font-14);
   font-weight: 600;
 }
 
@@ -54,7 +54,7 @@
 
 .content p.hint {
   margin-top: -4px;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .content input {
@@ -111,7 +111,7 @@
   margin: 0 0 12px;
   padding: 0 0 0 16px;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .notes li + li {
@@ -121,7 +121,7 @@
 .content .list h3 {
   margin: 0 0 4px;
   color: var(--aq-text);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   font-weight: 600;
 }
 
@@ -131,7 +131,7 @@
   padding: 6px 8px;
   overflow: auto;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   overflow-wrap: anywhere;
   list-style: none;
   background: var(--aq-bg-input);
@@ -160,7 +160,7 @@
 
 .content .detail {
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -189,7 +189,7 @@
   flex: 1;
   align-self: center;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .buttons {
@@ -269,11 +269,11 @@
   display: block;
   max-width: 220px;
   max-height: 180px;
-  background: #000;
+  background: var(--aq-picture-backdrop);
   border: 1px solid var(--aq-border);
 }
 
 .pictures figcaption {
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }

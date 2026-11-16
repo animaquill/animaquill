@@ -12,7 +12,7 @@
 }
 
 .dialog::backdrop {
-  background: #00000066;
+  background: var(--aq-backdrop);
 }
 
 .toolbar {
@@ -23,7 +23,7 @@
   gap: 8px;
   margin-bottom: 8px;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .quick {
@@ -65,7 +65,7 @@
 .table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .table th {
@@ -102,7 +102,7 @@
 }
 
 .unused {
-  color: var(--aq-warning, #d7a33a);
+  color: var(--aq-warning);
 }
 
 .more {
@@ -118,7 +118,7 @@
   padding: 10px 12px;
   background: var(--aq-bg-input);
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .content .summary p,
@@ -132,12 +132,12 @@
   justify-content: space-between;
   gap: 8px;
   color: var(--aq-text-strong);
-  font-size: 13px;
+  font-size: var(--aq-font-13);
 }
 
 .repo {
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .summary a {
@@ -164,7 +164,7 @@
 
 .acknowledge {
   padding: 8px 10px;
-  border: 1px solid var(--aq-warning, #d7a33a);
+  border: 1px solid var(--aq-warning);
   border-radius: 4px;
 }
 
@@ -180,7 +180,7 @@
   gap: 8px;
   margin-top: 12px;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 @media (max-width: 640px) {

@@ -11,8 +11,8 @@
   top: 6px;
   right: 6px;
   padding: 1px 6px;
-  color: #1f1f1f;
-  font-size: 11px;
+  color: var(--aq-on-trial);
+  font-size: var(--aq-font-11);
   background: var(--aq-trial);
   border-radius: 2px;
   pointer-events: none;
@@ -26,7 +26,7 @@
   overflow: hidden;
   padding: 1px 6px;
   color: var(--aq-text-strong);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   white-space: nowrap;
   text-overflow: ellipsis;
   background: var(--aq-bg-input);
@@ -49,7 +49,7 @@
 .picture {
   flex: 1;
   min-width: 0;
-  background: #000;
+  background: var(--aq-picture-backdrop);
   border: 0;
 
   /* Focus inside a frame takes the keyboard away from the editor, and clicks never reach it. */

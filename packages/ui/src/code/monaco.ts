@@ -14,6 +14,7 @@ import TypeScriptWorker from "monaco-editor/language/typescript/ts.worker.js?wor
 import EditorWorker from "monaco-editor/editor/editor.worker.js?worker";
 import type { TFunction } from "i18next";
 import type { ProblemList } from "../problems/list.ts";
+import { onAppearanceChange } from "../theme/watch.ts";
 import type { CodeDocument, CodeDocuments, CodeSnapshot } from "./documents.ts";
 
 /**
@@ -71,11 +72,23 @@ const languageOf = (path: string) =>
 
 const THEME = "animaquill";
 
+/** The size of the code at the standard size of words, which the settings make smaller or larger. */
+const FONT_SIZE = 13;
+
+const fontSize = () =>
+  FONT_SIZE *
+  (Number.parseFloat(
+    getComputedStyle(document.documentElement).getPropertyValue("--aq-font-scale"),
+  ) || 1);
+
+/** The editors there are, which follow the theme and the size of words as they change. */
+const editors = new Set<monaco.editor.IEditor>();
+
 function defineTheme(): void {
   const style = getComputedStyle(document.documentElement);
   const token = (name: string) => style.getPropertyValue(name).trim();
   monaco.editor.defineTheme(THEME, {
-    base: "vs-dark",
+    base: document.documentElement.dataset["theme"] === "light" ? "vs" : "vs-dark",
     inherit: true,
     rules: [],
     colors: {
@@ -94,6 +107,12 @@ function configure(): void {
   if (configured) return;
   configured = true;
   defineTheme();
+  // Monaco has one theme for the page: defined again, every editor takes it.
+  onAppearanceChange(() => {
+    defineTheme();
+    monaco.editor.setTheme(THEME);
+    for (const editor of editors) editor.updateOptions({ fontSize: fontSize() });
+  });
   // Scenes are plain JavaScript in a page with globals nobody declares, so all it can say about
   // types is noise. What it says about syntax is real.
   javascriptDefaults.setDiagnosticsOptions({
@@ -147,12 +166,13 @@ export class CodeView {
       // take for text entry.
       editContext: false,
       minimap: { enabled: false },
-      fontSize: 13,
+      fontSize: fontSize(),
       fontFamily: "Consolas, 'Cascadia Mono', Menlo, 'DejaVu Sans Mono', monospace",
       tabSize: 2,
       scrollBeyondLastLine: false,
       scrollbar: { verticalScrollbarSize: 10, horizontalScrollbarSize: 10 },
     });
+    editors.add(this.#editor);
     const markers = monaco.editor.onDidChangeMarkers((uris) => this.#noteMarkers(uris));
     const stopCode = code.subscribe(this.#sync);
     // Lines people select can go into what they write to AI.
@@ -200,6 +220,7 @@ export class CodeView {
       model.dispose();
     }
     this.#files.clear();
+    editors.delete(this.#editor);
     this.#editor.dispose();
   }
 
@@ -326,11 +347,12 @@ export class DiffView {
       useInlineViewWhenSpaceIsLimited: !readOnly,
       editContext: false,
       minimap: { enabled: false },
-      fontSize: 13,
+      fontSize: fontSize(),
       fontFamily: "Consolas, 'Cascadia Mono', Menlo, 'DejaVu Sans Mono', monospace",
       scrollBeyondLastLine: false,
     });
     this.#editor.setModel({ original, modified });
+    editors.add(this.#editor);
   }
 
   /** What the left side has now, as people changed it. */
@@ -339,6 +361,7 @@ export class DiffView {
   }
 
   dispose(): void {
+    editors.delete(this.#editor);
     this.#editor.dispose();
     for (const model of this.#models) model.dispose();
   }

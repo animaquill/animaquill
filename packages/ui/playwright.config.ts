@@ -28,6 +28,10 @@ export default defineConfig({
     ...devices["Desktop Chrome"],
     baseURL: "http://localhost:5173",
     viewport: { width: 1440, height: 900 },
+    // The editor follows the system's theme unless people choose, and the tests that read colours
+    // were written for the dark one: a system in dark, as before there were two. appearance.spec.ts
+    // tries the others.
+    colorScheme: "dark",
     // With a window, on a virtual screen, a page behind another tab is hidden as for people.
     headless: !process.env["AQ_HEADED"],
     launchOptions: {

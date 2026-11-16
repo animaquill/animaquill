@@ -42,21 +42,21 @@ p.hint[class],
 .hint {
   margin: 6px 0 0;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 p.problem[class],
 .problem {
   margin: 6px 0 0;
   color: var(--aq-warning);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 p.note[class],
 .note {
   margin: 4px 0;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .toolbar {
@@ -69,7 +69,7 @@ p.note[class],
 .toolbarTitle {
   flex: 1;
   color: var(--aq-text);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   font-weight: 600;
 }
 
@@ -81,7 +81,7 @@ p.note[class],
   padding: 0;
   color: var(--aq-match);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   text-decoration: none;
   background: none;
   border: 0;
@@ -150,7 +150,7 @@ p.note[class],
   padding: 0;
   color: var(--aq-match);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   white-space: nowrap;
   background: none;
   border: 0;
@@ -186,14 +186,14 @@ p.note[class],
   gap: 3px;
   padding: 0 5px;
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   border: 1px solid var(--aq-border);
   border-radius: 8px;
 }
 
 .reason {
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   overflow-wrap: anywhere;
 }
 
@@ -203,7 +203,7 @@ p.note[class],
   padding: 0;
   color: var(--aq-match);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   background: none;
   border: 0;
   cursor: pointer;

@@ -7,7 +7,7 @@
 .dialog {
   width: min(600px, calc(100vw - 32px));
   border-radius: 12px;
-  font-size: 13px;
+  font-size: var(--aq-font-13);
 }
 
 .dialog form {
@@ -16,7 +16,7 @@
 
 .dialog h2 {
   margin-bottom: 18px;
-  font-size: 18px;
+  font-size: var(--aq-font-18);
 }
 
 /* Fields to type in. */

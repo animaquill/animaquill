@@ -4,7 +4,7 @@
   background: var(--aq-bg-input);
   border: 1px solid var(--aq-border);
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .failed {
@@ -14,7 +14,7 @@
 .title {
   margin: 0 0 6px;
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   font-weight: normal;
 }
 

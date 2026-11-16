@@ -1,14 +1,14 @@
 /* A README of a model pack: a page to read, wider than an answer in the chat. */
 .readme {
-  font-size: 13px;
+  font-size: var(--aq-font-13);
 }
 
 .readme h1 {
-  font-size: 18px;
+  font-size: var(--aq-font-18);
 }
 
 .readme h2 {
-  font-size: 15px;
+  font-size: var(--aq-font-15);
 }
 
 .picture {
@@ -41,6 +41,6 @@
 /* Where a link goes, where its words say something else. */
 .address {
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   overflow-wrap: anywhere;
 }

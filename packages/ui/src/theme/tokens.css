@@ -5,6 +5,29 @@
     "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC",
     system-ui, sans-serif;
 
+  /*
+   * The size of the words of the editor, as people chose it in the settings (see `Appearance`):
+   * every size of text is one of these, so that all of them follow. Standard is 1, at 13px.
+   */
+  --aq-font-scale: 1;
+  --aq-font-10: calc(10px * var(--aq-font-scale));
+  --aq-font-11: calc(11px * var(--aq-font-scale));
+  --aq-font-12: calc(12px * var(--aq-font-scale));
+  --aq-font-13: calc(13px * var(--aq-font-scale));
+  --aq-font-14: calc(14px * var(--aq-font-scale));
+  --aq-font-15: calc(15px * var(--aq-font-scale));
+  --aq-font-16: calc(16px * var(--aq-font-scale));
+  --aq-font-18: calc(18px * var(--aq-font-scale));
+  --aq-font-20: calc(20px * var(--aq-font-scale));
+  --aq-font-22: calc(22px * var(--aq-font-scale));
+  --aq-font-24: calc(24px * var(--aq-font-scale));
+  --aq-font-28: calc(28px * var(--aq-font-scale));
+
+  /*
+   * The colours of the dark theme, which is also what shows before the editor knows which one
+   * people chose. Every one of them has a value in the light theme below, and the pairs of text and
+   * background are checked for contrast, see tokens.test.ts.
+   */
   --aq-bg-chrome: #181818;
   --aq-bg-panel: #1f1f1f;
   --aq-bg-hover: #ffffff1a;
@@ -15,9 +38,23 @@
   --aq-text-muted: #9d9d9d;
   --aq-accent: #0078d4;
   --aq-on-accent: #ffffff;
+  /* The accent, faint, behind what it marks, a line around it, and under the pointer. */
+  --aq-accent-soft: #0078d426;
+  --aq-accent-soft-hover: #0078d440;
+  --aq-accent-line: #0078d466;
   --aq-match: #2aaaff;
+  /* What was found, on an option that is chosen, which has the colour of the accent. */
+  --aq-match-chosen: #ffffff40;
+  /* The words a search found in a conversation, on the colour of a star. */
+  --aq-found-text: #000000;
   --aq-warning: #cca700;
+  /* Words that warn, where the warning colour is too faint for words. */
+  --aq-warning-text: #e3b341;
+  --aq-warning-soft: #cca70014;
+  --aq-warning-line: #cca70040;
   --aq-trial: #e2c08d;
+  /* Words on the colour of trying out. */
+  --aq-on-trial: #1f1f1f;
   --aq-danger: #c72e2e;
   /* What takes something away, as text on a dark background. */
   --aq-danger-text: #ff8a8a;
@@ -25,6 +62,21 @@
   --aq-success: #4cc38a;
   --aq-bg-input: #313131;
   --aq-shadow: 0 2px 8px #0000008c;
+  /* Under a strip of panels that slides over the others. */
+  --aq-strip-shadow: rgb(0 0 0 / 70%);
+  /* Behind a dialog, over what it covers: the plain one, the settings', and the welcome's. */
+  --aq-backdrop: #00000066;
+  --aq-backdrop-settings: #0000008c;
+  --aq-backdrop-welcome: #00000088;
+  /* The knob of a switch, on the accent when on and on the input colour when off. */
+  --aq-switch-knob: #ffffff;
+  /* Lines taken away and lines added, where two versions of a file are compared. */
+  --aq-diff-removed: #c72e2e33;
+  --aq-diff-added: #4cc38a33;
+  /* A block in what people write to AI: a moment, an object, lines of code. */
+  --aq-chip-text: #9cd3ff;
+  /* Lines of code a block of the chat points at. */
+  --aq-pointed-lines: #2aaaff26;
   --aq-scrollbar: #79797966;
   --aq-scrollbar-hover: #646464b3;
   --aq-scrollbar-active: #bfbfbf66;
@@ -36,6 +88,10 @@
   --aq-local: #ffb44a;
   --aq-star: #ffb44a;
   --aq-cover-text: #ffffffd9;
+  /* A cover under the pointer: a light from the top left, a ring and a shadow. */
+  --aq-cover-shine: #ffffff1f;
+  --aq-cover-ring: #ffffff2e;
+  --aq-cover-shadow: #00000066;
   /* What shows beside a cover that is not 16:9, as a portrait one. */
   --aq-cover-backdrop: #0b0d12;
   --aq-cover-1: #2d4a7a;
@@ -47,9 +103,43 @@
   --aq-cover-7: #6b2d4f;
   --aq-cover-8: #3d5a2d;
 
+  /*
+   * What goes on pictures and on colours of their own (covers, frames, thumbnails, the marks of
+   * tools): the same in both themes, since what is under them is. Words and lines on them, black
+   * to darken with, behind a picture, and the plates under words on a picture, from faint to dark.
+   */
+  --aq-on-picture: #ffffff;
+  --aq-on-picture-muted: #9d9d9d;
+  --aq-shade: #000000;
+  --aq-picture-backdrop: #000000;
+  --aq-picture-badge: #00000099;
+  --aq-picture-mark: #000000a0;
+  --aq-picture-label: #000000a6;
+  --aq-picture-viewer: #000000cc;
+  --aq-picture-button: #000000d0;
+  --aq-picture-fade: #000000d9;
+  /* The track of a ring that fills as something is on its way, on a picture. */
+  --aq-picture-track: #ffffff40;
+  /* How hard AI thinks, from low to the most. */
+  --aq-level-low: #60a5fa;
+  --aq-level-medium: #a78bfa;
+  --aq-level-high: #f472b6;
+  --aq-level-xhigh: #fb923c;
+  --aq-level-max: #ef4444;
+  /* The marks of the AI tools on a computer, in colours of their own. */
+  --aq-tool-claude: #c15f3c;
+  --aq-tool-codex: #3a3a3a;
+  --aq-tool-codex-line: #6b6b6b;
+  --aq-tool-cursor: #2b2b2b;
+  --aq-tool-vscode: #0065a9;
+  --aq-tool-other: #5a5a5a;
+
+  /* The timeline and the keyframes, drawn on a canvas, which reads these, see stage-painter.ts.
+     The colours of clips are what the clips are, the same in both themes. */
   --aq-timeline-background: #161616;
   --aq-timeline-lane: #1c1c1c;
   --aq-timeline-lane-locked: #232220;
+  --aq-timeline-parent: #00000033;
   --aq-timeline-line: #2b2b2b;
   --aq-timeline-ruler: #181818;
   --aq-timeline-tick: #5f5f5f;
@@ -73,12 +163,99 @@
   --aq-timeline-repo: #b07cff;
   --aq-timeline-flash: #2aaaff;
 
-  /* What the preview draws over the picture: it has to stand out on any picture. */
+  /* What the preview draws over the picture: it has to stand out on any picture, in both themes. */
   --aq-overlay-line: #2aaaff;
   --aq-overlay-fill: #ffffff;
   --aq-overlay-halo: #000000a6;
   --aq-overlay-path: #ffb44a;
   --aq-overlay-muted: #c8c8c8b3;
+}
+
+/*
+ * The light theme. Only what differs from the dark one is here; the test makes sure that is every
+ * colour that is about the editor and not about a picture.
+ */
+:root[data-theme="light"] {
+  color-scheme: light;
+
+  --aq-bg-chrome: #f3f3f3;
+  --aq-bg-panel: #fbfbfb;
+  --aq-bg-hover: #0000000f;
+  --aq-bg-menu: #ffffff;
+  --aq-border: #e0e0e0;
+  --aq-text: #3b3b3b;
+  --aq-text-strong: #1a1a1a;
+  --aq-text-muted: #636363;
+  --aq-accent: #005fb8;
+  --aq-on-accent: #ffffff;
+  --aq-accent-soft: #005fb81a;
+  --aq-accent-soft-hover: #005fb82e;
+  --aq-accent-line: #005fb859;
+  --aq-match: #0062c4;
+  --aq-match-chosen: #ffffff40;
+  --aq-found-text: #000000;
+  --aq-warning: #7a5900;
+  --aq-warning-text: #6e5000;
+  --aq-warning-soft: #bf8f0014;
+  --aq-warning-line: #bf8f0059;
+  --aq-trial: #8a5a00;
+  --aq-on-trial: #ffffff;
+  --aq-danger: #b52a2a;
+  --aq-danger-text: #b3261e;
+  --aq-success: #186a40;
+  --aq-bg-input: #ececec;
+  --aq-shadow: 0 2px 8px #00000029;
+  --aq-strip-shadow: rgb(0 0 0 / 14%);
+  --aq-backdrop: #00000033;
+  --aq-backdrop-settings: #00000047;
+  --aq-backdrop-welcome: #00000045;
+  --aq-switch-knob: #ffffff;
+  --aq-diff-removed: #c72e2e24;
+  --aq-diff-added: #1d7a4a24;
+  --aq-chip-text: #00509e;
+  --aq-pointed-lines: #005fb81f;
+  --aq-scrollbar: #64646459;
+  --aq-scrollbar-hover: #646464b3;
+  --aq-scrollbar-active: #00000099;
+
+  --aq-bg-raised: #ffffff;
+  --aq-cloud: #0a5fbd;
+  --aq-local: #925000;
+  --aq-star: #e39b00;
+  --aq-cover-ring: #0000001f;
+  --aq-cover-shadow: #00000029;
+
+  --aq-timeline-background: #f0f0f0;
+  --aq-timeline-lane: #f8f8f8;
+  --aq-timeline-lane-locked: #ecebe8;
+  --aq-timeline-parent: #0000000d;
+  --aq-timeline-line: #dddddd;
+  --aq-timeline-ruler: #f3f3f3;
+  --aq-timeline-tick: #a6a6a6;
+  --aq-timeline-label: #5c5c5c;
+  --aq-timeline-selected: #1a1a1a;
+  --aq-timeline-playhead: #e5383b;
+  --aq-timeline-snap: #d19a00;
+  --aq-timeline-covered: #e5484d;
+  --aq-timeline-outside: #00000012;
+  --aq-timeline-end: #8a8a8a;
+  --aq-timeline-marquee: #0078d4;
+  --aq-timeline-key: #4f6478;
+  --aq-timeline-key-summary: #8796a5;
+  --aq-timeline-curve: #0078d4;
+  --aq-timeline-handle: #5c5c5c;
+  --aq-timeline-effect: #8447d6;
+  --aq-timeline-repo: #8a4fe0;
+  --aq-timeline-flash: #0078d4;
+}
+
+/* The size of the words, as people chose it: small is 12px where standard is 13, large 15. */
+:root[data-font-size="small"] {
+  --aq-font-scale: 0.923077;
+}
+
+:root[data-font-size="large"] {
+  --aq-font-scale: 1.153846;
 }
 
 *,
@@ -97,7 +274,7 @@ body,
 body {
   overflow: hidden;
   color: var(--aq-text);
-  font: 13px/1.4 var(--aq-font);
+  font: var(--aq-font-13)/1.4 var(--aq-font);
   background: var(--aq-bg-chrome);
 }
 
@@ -150,5 +327,5 @@ button {
 
 /* Lines of code a block of the chat points at, in the code editor (Monaco names its own classes). */
 .aq-pointed-lines {
-  background: #2aaaff26;
+  background: var(--aq-pointed-lines);
 }

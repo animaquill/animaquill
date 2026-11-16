@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, type MouseEvent, type PointerEvent, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
+import { onAppearanceChange } from "../theme/watch.ts";
 import { RULER_HEIGHT } from "./editor.ts";
 import { formatTimecode, type FrameRate } from "./frames.ts";
 import type { Pointer } from "./gestures.ts";
@@ -119,6 +120,7 @@ export function useStage(
 
     const painter = latest.current.paint(canvasElement);
     const stopRepaints = latest.current.repaintOn?.(() => painter.invalidate());
+    const stopRestyle = onAppearanceChange(() => painter.restyle());
 
     const show = () => {
       const { model } = editor;
@@ -193,6 +195,7 @@ export function useStage(
       observer.disconnect();
       stopView();
       stopRepaints?.();
+      stopRestyle();
       painter.dispose();
     };
   }, [canvas, editor, input, playhead, stage]);

@@ -14,7 +14,7 @@
 .empty h2 {
   margin: 0;
   color: var(--aq-text);
-  font-size: 16px;
+  font-size: var(--aq-font-16);
   font-weight: 600;
 }
 

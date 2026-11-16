@@ -4,7 +4,7 @@ import { formatNumber } from "../properties/scrub.ts";
 import { RULER_HEIGHT } from "../timeline/editor.ts";
 import { forEachBetween, type ClipBox } from "../timeline/model.ts";
 import { paintRuler } from "../timeline/ruler.ts";
-import { StagePainter, readTheme, type Theme } from "../timeline/stage-painter.ts";
+import { StagePainter, type Theme } from "../timeline/stage-painter.ts";
 import type { KeyArea, ShownHandle } from "./area.ts";
 import { liftKey, withinSpec } from "./gestures.ts";
 import { specOfLane, type Lane } from "./lanes.ts";
@@ -38,7 +38,6 @@ const VALUE_LABEL_OFFSET = 7;
 const MIN_SEGMENT_LABEL = 24;
 const TRIMMED_ALPHA = 0.4;
 const GHOST_ALPHA = 0.35;
-const PARENT_SHADE = "#00000033";
 const CLIP_SPAN_ALPHA = 0.18;
 const SEGMENT_ALPHA = 0.5;
 /** How wide a step of the colors on the way from one key to the next is. */
@@ -226,7 +225,7 @@ export class LanePainter {
     context.fillStyle = row.track.locked ? theme.laneLocked : theme.lane;
     context.fillRect(0, y, width, height);
     if (node.kind !== "property") {
-      context.fillStyle = PARENT_SHADE;
+      context.fillStyle = theme.parent;
       context.fillRect(0, y, width, height);
     }
     if (box) {
@@ -427,7 +426,7 @@ export class LanePainter {
     context.fillRect(0, top, area.width, 1);
     context.fillRect(0, bottom, area.width, 1);
     context.fillStyle = theme.label;
-    context.font = `11px ${theme.font}`;
+    context.font = `${11 * theme.fontScale}px ${theme.font}`;
     context.textBaseline = "middle";
     const x = Math.max(area.xAt(box.start), 0) + VALUE_LABEL_MARGIN;
     context.fillText(formatNumber(scale.high, spec), x, top + VALUE_LABEL_OFFSET);
@@ -607,8 +606,6 @@ export class LanePainter {
 export class KeyframesPainter extends StagePainter {
   readonly #view: KeyframesView;
   readonly #lanes: LanePainter;
-  /** Read at the first paint: a canvas that is not in the page yet has no styles to read. */
-  #theme!: Theme;
   /** What the last drawing went by. The playhead is an element, so playing changes none of it. */
   #drawn: readonly unknown[] = [];
 
@@ -627,15 +624,14 @@ export class KeyframesPainter extends StagePainter {
     if (!this.isWiped && drawing.every((item, index) => item === this.#drawn[index])) return;
     this.#drawn = drawing;
     this.isWiped = false;
-    this.#theme ??= readTheme(this.canvas);
-    const theme = this.#theme;
+    const { theme } = this;
     const { context, ratio } = this;
     const sharp = (value: number) => this.sharp(value);
     context.setTransform(ratio, 0, 0, ratio, 0, 0);
     context.fillStyle = theme.background;
     context.fillRect(0, 0, width, height);
     if (!model) return;
-    context.font = `12px ${theme.font}`;
+    context.font = `${12 * theme.fontScale}px ${theme.font}`;
     context.textBaseline = "middle";
 
     context.save();

@@ -82,6 +82,7 @@ import { AiSync } from "../chat/ai-sync.ts";
 import { CloudChats } from "../chat/cloud-chats.ts";
 import { SETTINGS_GROUPS, SettingsNav, type SettingsPlace } from "./settings-nav.ts";
 import { SwitchSetting } from "./switch-setting.ts";
+import { Appearance } from "./appearance.ts";
 import { ToolActivity, toolName } from "./tool-activity.ts";
 import { RepoChanges } from "./repo-changes.ts";
 import { BatchUndo } from "../cloud/batch-undo.ts";
@@ -458,6 +459,8 @@ export class Workbench {
   readonly projectEdits: ProjectEdits;
   /** Whether the preview offers to make a proxy of a video that plays too slowly. */
   readonly proxyOffer: SwitchSetting;
+  /** The theme and the size of words of the editor. */
+  readonly appearance: Appearance;
   /** The conversations this browser keeps, for the settings to say what they take. */
   readonly chatStore: ChatStore | undefined;
   /** Where the pictures of conversations are kept, for what they take and clearing them. */
@@ -604,6 +607,7 @@ export class Workbench {
     this.settingsNav = new SettingsNav(host.windowMemory);
     this.projectNav = new ProjectNav(host.windowMemory);
     this.proxyOffer = new SwitchSetting(host.settings, "proxyOffer", true);
+    this.appearance = new Appearance(host.settings);
     this.agentsFile = new SwitchSetting(host.settings, "agentsFile", true);
     this.palette = new CommandPalette(host.settings, this.actions);
     this.resourceHabits = new ResourceHabits(host.settings);
@@ -1895,6 +1899,7 @@ export class Workbench {
 
   async load(): Promise<void> {
     await Promise.all([
+      this.appearance.load(),
       this.layout.load(),
       this.keybindings.load(),
       this.palette.load(),

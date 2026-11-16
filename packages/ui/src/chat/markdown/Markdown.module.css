@@ -35,16 +35,16 @@
 .markdown h6 {
   margin: 10px 0 4px;
   color: var(--aq-text-strong);
-  font-size: 13px;
+  font-size: var(--aq-font-13);
   font-weight: 600;
 }
 
 .markdown h1 {
-  font-size: 15px;
+  font-size: var(--aq-font-15);
 }
 
 .markdown h2 {
-  font-size: 14px;
+  font-size: var(--aq-font-14);
 }
 
 .markdown ul,
@@ -63,7 +63,7 @@
 .markdown code {
   padding: 0 3px;
   font-family: ui-monospace, monospace;
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   background: var(--aq-bg-input);
   border-radius: 3px;
 }
@@ -105,7 +105,7 @@
 
 .table table {
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: var(--aq-font-11);
 }
 
 .table th,

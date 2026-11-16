@@ -2,7 +2,7 @@
 :root .dockview-theme-dark {
   --dv-group-view-background-color: var(--aq-bg-panel);
   --dv-tabs-and-actions-container-background-color: var(--aq-bg-chrome);
-  --dv-tabs-and-actions-container-font-size: 13px;
+  --dv-tabs-and-actions-container-font-size: var(--aq-font-13);
   --dv-activegroup-visiblepanel-tab-background-color: var(--aq-bg-panel);
   --dv-activegroup-hiddenpanel-tab-background-color: var(--aq-bg-chrome);
   --dv-inactivegroup-visiblepanel-tab-background-color: var(--aq-bg-panel);
@@ -158,7 +158,7 @@
     :has([data-edge="strip"]:hover)
   )
   > * {
-  box-shadow: 8px 0 12px -8px rgb(0 0 0 / 70%);
+  box-shadow: 8px 0 12px -8px var(--aq-strip-shadow);
 }
 
 .dv-groupview-header-right:has(
@@ -168,7 +168,7 @@
     :has([data-edge="strip"]:hover)
   )
   > * {
-  box-shadow: -8px 0 12px -8px rgb(0 0 0 / 70%);
+  box-shadow: -8px 0 12px -8px var(--aq-strip-shadow);
 }
 
 /* Where the tabs go when the empty part of their strip is let go here. */

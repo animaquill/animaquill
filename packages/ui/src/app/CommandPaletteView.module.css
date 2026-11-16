@@ -39,7 +39,7 @@
 .group {
   padding: 6px 8px 2px;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .option {
@@ -62,7 +62,7 @@
   flex: none;
   color: var(--aq-text-muted);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .option[aria-selected="true"] kbd {
@@ -83,7 +83,7 @@
 
 .option[aria-selected="true"] .title mark {
   color: inherit;
-  background: #ffffff40;
+  background: var(--aq-match-chosen);
   border-radius: 2px;
 }
 

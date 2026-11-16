@@ -9,7 +9,7 @@
   grid-template-columns: 248px minmax(0, 1fr);
   min-height: 0;
   background: var(--aq-bg-chrome);
-  font-size: 14px;
+  font-size: var(--aq-font-14);
   line-height: 1.5;
 }
 
@@ -54,7 +54,7 @@
 .blockLabel {
   padding: 0 12px 4px;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .navItem {
@@ -114,7 +114,7 @@
 
 .count {
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   font-variant-numeric: tabular-nums;
 }
 
@@ -176,7 +176,7 @@
 
 .problem {
   color: var(--aq-danger-text);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .account {
@@ -218,7 +218,7 @@
 
 .accountState {
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 /* ---- the view */
@@ -246,7 +246,7 @@
   margin: 0;
   overflow: hidden;
   color: var(--aq-text-strong);
-  font-size: 24px;
+  font-size: var(--aq-font-24);
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -409,7 +409,7 @@
 
 .newTitle {
   color: var(--aq-text-strong);
-  font-size: 16px;
+  font-size: var(--aq-font-16);
   font-weight: 600;
 }
 
@@ -434,7 +434,7 @@
 .welcome h2 {
   margin: 0;
   color: var(--aq-text-strong);
-  font-size: 28px;
+  font-size: var(--aq-font-28);
   font-weight: 600;
 }
 
@@ -455,7 +455,7 @@
 }
 
 .newCards[data-large] .newTitle {
-  font-size: 18px;
+  font-size: var(--aq-font-18);
 }
 
 .remote {
@@ -467,7 +467,7 @@
 .remote h2 {
   margin: 8px 0 0;
   color: var(--aq-text-strong);
-  font-size: 18px;
+  font-size: var(--aq-font-18);
   font-weight: 600;
 }
 
@@ -529,7 +529,7 @@
   aspect-ratio: 16 / 9;
   overflow: hidden;
   background:
-    radial-gradient(120% 90% at 20% 15%, #ffffff1f, transparent 60%),
+    radial-gradient(120% 90% at 20% 15%, var(--aq-cover-shine), transparent 60%),
     var(--cover, var(--aq-cover-1));
   border-radius: 10px;
   transition:
@@ -539,8 +539,8 @@
 
 .cardLink:hover .cover {
   box-shadow:
-    0 0 0 1px #ffffff2e,
-    0 10px 24px #00000066;
+    0 0 0 1px var(--aq-cover-ring),
+    0 10px 24px var(--aq-cover-shadow);
   transform: translateY(-2px);
 }
 
@@ -568,7 +568,7 @@
 
 .initial {
   color: var(--aq-cover-text);
-  font-size: clamp(32px, 4vw, 48px);
+  font-size: calc(clamp(32px, 4vw, 48px) * var(--aq-font-scale));
   font-weight: 600;
   line-height: 1;
 }
@@ -578,8 +578,8 @@
   right: 8px;
   bottom: 8px;
   padding: 2px 6px;
-  color: var(--aq-text-strong);
-  font-size: 12px;
+  color: var(--aq-on-picture);
+  font-size: var(--aq-font-12);
   font-variant-numeric: tabular-nums;
   background: var(--aq-overlay-halo);
   border-radius: 4px;
@@ -606,7 +606,7 @@
   gap: 6px;
   min-width: 0;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .status > span {
@@ -665,7 +665,7 @@
   padding: 0;
   color: var(--aq-accent);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   background: none;
   border: 0;
   cursor: pointer;
@@ -687,7 +687,7 @@
   width: 32px;
   height: 32px;
   padding: 0;
-  color: var(--aq-text-strong);
+  color: var(--aq-on-picture);
   background: var(--aq-overlay-halo);
   border: 0;
   border-radius: 8px;
@@ -731,7 +731,7 @@
 
 .star:hover,
 .moreButton:hover {
-  background: #000000d0;
+  background: var(--aq-picture-button);
 }
 
 /* The menu of a card is wider than the plain one: it says what it does. */
@@ -773,7 +773,7 @@
 .rowHead {
   padding: 8px 88px 8px 12px;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   border-bottom: 1px solid var(--aq-border);
 }
 
@@ -814,7 +814,7 @@
   width: 40px;
   height: 24px;
   color: var(--aq-cover-text);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   font-weight: 600;
   background: var(--cover, var(--aq-cover-1));
   border-radius: 4px;
@@ -830,7 +830,7 @@
   min-width: 0;
   overflow: hidden;
   color: var(--aq-text-muted);
-  font-size: 13px;
+  font-size: var(--aq-font-13);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -897,7 +897,7 @@
 
 .dropHintTitle {
   color: var(--aq-text-strong);
-  font-size: 16px;
+  font-size: var(--aq-font-16);
 }
 
 .empty {
@@ -934,7 +934,7 @@
 .notice p {
   margin: 0;
   color: var(--aq-text-strong);
-  font-size: 16px;
+  font-size: var(--aq-font-16);
 }
 
 .primary,
@@ -1086,7 +1086,7 @@
   }
 
   .newCards:not([data-large]) .newTitle {
-    font-size: 13px;
+    font-size: var(--aq-font-13);
   }
 
   .newCards:not([data-large]) .newAbout {
@@ -1105,7 +1105,7 @@
   }
 
   .initial {
-    font-size: 28px;
+    font-size: var(--aq-font-28);
   }
 
   .welcome {
@@ -1113,7 +1113,7 @@
   }
 
   .welcome h2 {
-    font-size: 22px;
+    font-size: var(--aq-font-22);
   }
 
   .rowHead {
@@ -1151,11 +1151,11 @@
   max-height: 100%;
   padding: 18px 10px 8px;
   overflow: hidden;
-  color: #fff;
-  font-size: 12px;
+  color: var(--aq-on-picture);
+  font-size: var(--aq-font-12);
   line-height: 1.5;
   text-align: left;
-  background: linear-gradient(transparent, #000000d9 40%);
+  background: linear-gradient(transparent, var(--aq-picture-fade) 40%);
   opacity: 0;
   transition: opacity 120ms;
   pointer-events: none;
@@ -1173,7 +1173,7 @@
   display: block;
   overflow: hidden;
   color: var(--aq-link, var(--aq-accent));
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   text-overflow: ellipsis;
   white-space: nowrap;
 }

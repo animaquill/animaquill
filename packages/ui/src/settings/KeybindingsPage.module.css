@@ -36,7 +36,7 @@
 .hint {
   margin: 0 0 8px;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .row {
@@ -76,7 +76,7 @@
 .key kbd {
   padding: 1px 2px 1px 6px;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .key button,
@@ -101,14 +101,14 @@
 
 .none {
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .reset {
   flex: none;
   padding: 2px 6px;
   color: var(--aq-text);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   white-space: nowrap;
   background: none;
   border: 1px solid var(--aq-border);
@@ -136,7 +136,7 @@
 .prompt {
   padding: 1px 6px;
   color: var(--aq-on-accent);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   background: var(--aq-accent);
   border-radius: 3px;
 }
@@ -147,7 +147,7 @@
   align-items: center;
   gap: 6px;
   color: var(--aq-warning);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .warning button {

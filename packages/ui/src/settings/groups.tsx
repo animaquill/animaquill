@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession, useWorkbench } from "../app/context.ts";
 import { GitHubRow, useAccount } from "../cloud/CloudParts.tsx";
+import { FONT_SIZES, THEME_CHOICES } from "../workbench/appearance.ts";
 
 import { Button, Choice, GroupPage, Segmented, SettingRow, Toggle } from "./parts.tsx";
 import { usageOfChats, clearLocalChats, type ChatsUsage } from "./storage.ts";
@@ -19,7 +20,9 @@ export const REPOSITORY = "https://github.com/animaquill/animaquill";
 // ---- 常规
 
 export function GeneralGroup() {
+  const { appearance } = useWorkbench();
   const { t } = useTranslation();
+  const { theme, fontSize } = useSyncExternalStore(appearance.subscribe, appearance.getSnapshot);
   return (
     <GroupPage title={t("settings.groups.general")}>
       <SettingRow id="general.language">
@@ -28,6 +31,22 @@ export function GeneralGroup() {
           value="zh-CN"
           options={[{ value: "zh-CN", label: "简体中文" }]}
           onChange={() => {}}
+        />
+      </SettingRow>
+      <SettingRow id="general.theme">
+        <Segmented
+          label={t("settings.items.general.theme.name")}
+          value={theme}
+          options={THEME_CHOICES.map((value) => ({ value, label: t(`settings.theme.${value}`) }))}
+          onChange={(value) => appearance.set({ theme: value })}
+        />
+      </SettingRow>
+      <SettingRow id="general.fontSize">
+        <Segmented
+          label={t("settings.items.general.fontSize.name")}
+          value={fontSize}
+          options={FONT_SIZES.map((value) => ({ value, label: t(`settings.fontSize.${value}`) }))}
+          onChange={(value) => appearance.set({ fontSize: value })}
         />
       </SettingRow>
     </GroupPage>

@@ -6,7 +6,7 @@
   color: var(--aq-text-strong);
   background: color-mix(in srgb, var(--aq-warning) 22%, var(--aq-bg-chrome));
   border-bottom: 1px solid color-mix(in srgb, var(--aq-warning) 55%, transparent);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .bar svg {

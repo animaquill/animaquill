@@ -4,7 +4,7 @@
 .group {
   margin: 0 0 8px;
   color: var(--aq-text-strong);
-  font-size: 13px;
+  font-size: var(--aq-font-13);
   font-weight: 600;
 }
 
@@ -148,7 +148,7 @@
 
 .muted {
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
 }
 
 /* The page: the tree, and on its right what is picked in it. */
@@ -359,7 +359,7 @@
 .kicker {
   margin: 0;
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -483,7 +483,7 @@
   max-width: 100%;
   padding: 2px 8px;
   overflow: hidden;
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   white-space: nowrap;
   text-overflow: ellipsis;
   border-radius: 10px;
@@ -552,7 +552,7 @@
 }
 
 .switch:checked::after {
-  background: #fff;
+  background: var(--aq-switch-knob);
   transform: translateX(14px);
 }
 
@@ -564,7 +564,7 @@
 .starButton {
   padding: 0 2px;
   color: var(--aq-text-muted);
-  font-size: 14px;
+  font-size: var(--aq-font-14);
   line-height: 1;
   background: none;
   border: 0;
@@ -583,8 +583,8 @@
   justify-content: center;
   width: 18px;
   height: 18px;
-  color: #fff;
-  font-size: 11px;
+  color: var(--aq-on-picture);
+  font-size: var(--aq-font-11);
   font-weight: 600;
   border-radius: 4px;
 }
@@ -592,21 +592,21 @@
 .avatarLarge {
   width: 24px;
   height: 24px;
-  font-size: 13px;
+  font-size: var(--aq-font-13);
 }
 
 .modelId {
   display: block;
   overflow: hidden;
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
 
 .num {
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -709,14 +709,14 @@
 
 .fetchInfo {
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   white-space: nowrap;
 }
 
 .fetchTag {
   min-width: 40px;
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   text-align: right;
   white-space: nowrap;
 }
@@ -792,7 +792,7 @@ button.markBar:hover {
   gap: 3px;
   align-items: center;
   color: var(--aq-match);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   text-decoration: none;
 }
 
@@ -884,23 +884,23 @@ button.markBar:hover {
 }
 
 .levelDot[data-dot="low"] {
-  background: #60a5fa;
+  background: var(--aq-level-low);
 }
 
 .levelDot[data-dot="medium"] {
-  background: #a78bfa;
+  background: var(--aq-level-medium);
 }
 
 .levelDot[data-dot="high"] {
-  background: #f472b6;
+  background: var(--aq-level-high);
 }
 
 .levelDot[data-dot="xhigh"] {
-  background: #fb923c;
+  background: var(--aq-level-xhigh);
 }
 
 .levelDot[data-dot="max"] {
-  background: #ef4444;
+  background: var(--aq-level-max);
 }
 
 /* Adding a service: a picker over the settings, as pi-web's (6.1). */
@@ -922,7 +922,7 @@ button.markBar:hover {
 }
 
 .picker::backdrop {
-  background: rgb(0 0 0 / 40%);
+  background: var(--aq-backdrop);
 }
 
 .pickerSearch {
@@ -1004,7 +1004,7 @@ button.markBar:hover {
 
 .cardSub {
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
 }
 
 .cardIcon {

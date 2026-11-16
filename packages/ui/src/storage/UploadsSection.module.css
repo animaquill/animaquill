@@ -1,7 +1,7 @@
 .section {
   padding: 8px 12px 10px;
   border-top: 1px solid var(--aq-border);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   outline: 0;
 }
 
@@ -19,7 +19,7 @@
 .head h3 {
   margin: 0;
   color: var(--aq-text-strong);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   font-weight: 600;
 }
 
@@ -67,7 +67,7 @@
 }
 
 .blocked {
-  color: var(--aq-warning, #d7a33a);
+  color: var(--aq-warning);
 }
 
 .rows {

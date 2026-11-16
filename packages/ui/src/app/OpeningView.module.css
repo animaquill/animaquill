@@ -22,7 +22,7 @@
 .box h2 {
   margin: 0 0 14px;
   color: var(--aq-text-strong);
-  font-size: 16px;
+  font-size: var(--aq-font-16);
   font-weight: 500;
 }
 

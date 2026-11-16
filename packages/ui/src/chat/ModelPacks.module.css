@@ -5,7 +5,7 @@
 .meta {
   margin: -6px 0 8px;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .trust {
@@ -23,7 +23,7 @@
 .section h3 {
   margin: 0 0 6px;
   color: var(--aq-text-strong);
-  font-size: 13px;
+  font-size: var(--aq-font-13);
   font-weight: 600;
 }
 
@@ -55,7 +55,7 @@
   cursor: pointer;
   color: var(--aq-text);
   font-family: var(--aq-mono, monospace);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 /* The words before and after, side by side: as text, never as markup. */
@@ -69,7 +69,7 @@
 .side h4 {
   margin: 0 0 2px;
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   font-weight: 600;
 }
 
@@ -79,7 +79,7 @@
   padding: 6px 8px;
   overflow: auto;
   color: var(--aq-text);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   background: var(--aq-bg-input);
@@ -93,7 +93,7 @@
 .hint {
   margin: 2px 0 0;
   color: var(--aq-warning);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .rows {
@@ -140,7 +140,7 @@
   margin-left: 6px;
   color: var(--aq-text-muted);
   font-family: var(--aq-font, inherit);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   font-weight: 400;
 }
 
@@ -222,7 +222,7 @@
 
 .copy {
   margin-left: 6px;
-  font-size: 11px;
+  font-size: var(--aq-font-11);
 }
 
 /*
@@ -251,7 +251,7 @@
   margin: 0;
   overflow: hidden;
   color: var(--aq-text-strong);
-  font-size: 13px;
+  font-size: var(--aq-font-13);
   font-weight: 600;
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -360,7 +360,7 @@
 .who {
   margin: 0 0 2px;
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
 }
 
 .cardText {
@@ -369,7 +369,7 @@
   padding: 6px 8px;
   overflow: auto;
   color: var(--aq-text);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   background: var(--aq-bg-input);
@@ -417,14 +417,14 @@
   max-width: 100%;
   margin: 0;
   color: var(--aq-text-strong);
-  font-size: 16px;
+  font-size: var(--aq-font-16);
   font-weight: 600;
 }
 
 .badge {
   padding: 0 5px;
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   white-space: nowrap;
   border: 1px solid var(--aq-border);
   border-radius: 3px;
@@ -490,13 +490,13 @@
 .note {
   margin: 0 0 8px;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .warning {
   margin: 0 0 8px;
   color: var(--aq-warning);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .pageTabs {
@@ -541,7 +541,7 @@
 .headVersion {
   color: var(--aq-text-muted);
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .meta2 {
@@ -595,7 +595,7 @@
   flex: none;
   color: var(--aq-text-muted);
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-  font-size: 11px;
+  font-size: var(--aq-font-11);
 }
 
 .listDot {
@@ -626,7 +626,7 @@
 .installHead h2 {
   margin: 0;
   color: var(--aq-text-strong);
-  font-size: 16px;
+  font-size: var(--aq-font-16);
   font-weight: 600;
 }
 

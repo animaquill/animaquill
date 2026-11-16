@@ -102,6 +102,29 @@ export function duration(ms: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+/** What the window shows its words and parts in: those of the editor, in the theme it is in. */
+const THEME = [
+  "--aq-text",
+  "--aq-text-strong",
+  "--aq-text-muted",
+  "--aq-bg-menu",
+  "--aq-bg-input",
+  "--aq-border",
+  "--aq-font-13",
+  "--aq-font-14",
+] as const;
+
+/**
+ * The colours and sizes of the editor, as they are now, onto the window, which has none of its
+ * style sheets: its progress bar and buttons follow the theme too.
+ */
+function takeTheme(page: Document): void {
+  const editor = getComputedStyle(document.documentElement);
+  const root = page.documentElement.style;
+  for (const name of THEME) root.setProperty(name, editor.getPropertyValue(name).trim());
+  root.colorScheme = editor.colorScheme;
+}
+
 /** Styles go on the elements: the policy of the editor takes no style sheets of its own. */
 const look = (element: HTMLElement, style: Partial<CSSStyleDeclaration>) =>
   Object.assign(element.style, style);
@@ -121,12 +144,13 @@ export function fillExportWindow(
   pause?: () => void,
 ): () => void {
   page.title = t("export.window.title");
+  takeTheme(page);
   look(page.body, {
     margin: "0",
     padding: "14px 16px",
-    color: "var(--aq-text, #ddd)",
-    background: "var(--aq-bg-menu, #1f1f23)",
-    font: "13px system-ui, sans-serif",
+    color: "var(--aq-text)",
+    background: "var(--aq-bg-menu)",
+    font: "var(--aq-font-13) system-ui, sans-serif",
   });
   const heading = page.createElement("h1");
   const file = page.createElement("p");
@@ -147,14 +171,14 @@ export function fillExportWindow(
   if (pause) hold.addEventListener("click", pause);
   look(heading, {
     margin: "0 0 4px",
-    fontSize: "14px",
+    fontSize: "var(--aq-font-14)",
     fontWeight: "600",
-    color: "var(--aq-text-strong, #fff)",
+    color: "var(--aq-text-strong)",
   });
   for (const text of [file, amount, after, note]) {
     look(text, {
       margin: "0 0 8px",
-      color: "var(--aq-text-muted, #aaa)",
+      color: "var(--aq-text-muted)",
       overflowWrap: "anywhere",
     });
   }
@@ -165,8 +189,8 @@ export function fillExportWindow(
       padding: "4px 14px",
       color: "inherit",
       font: "inherit",
-      background: "var(--aq-bg-input, #333)",
-      border: "1px solid var(--aq-border, #444)",
+      background: "var(--aq-bg-input)",
+      border: "1px solid var(--aq-border)",
       borderRadius: "3px",
       cursor: "pointer",
     });

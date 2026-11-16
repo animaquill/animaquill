@@ -22,14 +22,14 @@
 .head h2 {
   margin: 0;
   color: var(--aq-text-strong);
-  font-size: 14px;
+  font-size: var(--aq-font-14);
   font-weight: 600;
 }
 
 .close {
   padding: 0 6px;
   color: var(--aq-text-muted);
-  font-size: 18px;
+  font-size: var(--aq-font-18);
   background: none;
   border: 0;
   cursor: pointer;
@@ -62,7 +62,7 @@
   padding: 3px 10px;
   color: var(--aq-text);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   white-space: nowrap;
   background: var(--aq-bg-input);
   border: 1px solid var(--aq-border);
@@ -100,7 +100,7 @@
   padding: 0;
   color: var(--aq-match);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   background: none;
   border: 0;
   cursor: pointer;
@@ -167,12 +167,12 @@
 .whose {
   margin-bottom: 4px;
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
 }
 
 .whose .link {
   margin-left: 6px;
-  font-size: 11px;
+  font-size: var(--aq-font-11);
 }
 
 .dot {
@@ -215,17 +215,17 @@
   margin: 0;
   overflow: auto;
   font-family: Consolas, "Cascadia Mono", Menlo, "DejaVu Sans Mono", monospace;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   line-height: 1.5;
   white-space: pre;
 }
 
 .side[data-side="here"] .code [data-changed] {
-  background: #c72e2e33;
+  background: var(--aq-diff-removed);
 }
 
 .side[data-side="github"] .code [data-changed] {
-  background: #4cc38a33;
+  background: var(--aq-diff-added);
 }
 
 .choices {
@@ -236,7 +236,7 @@
 
 .failed {
   color: var(--aq-danger-text);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .handled {

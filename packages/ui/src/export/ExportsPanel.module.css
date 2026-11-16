@@ -26,7 +26,7 @@
   padding: 2px 8px;
   color: var(--aq-text);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   background: var(--aq-bg-input);
   border: 0;
   border-radius: 3px;
@@ -113,7 +113,7 @@
 .project {
   flex: none;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .bar {
@@ -137,7 +137,7 @@
 
 .status {
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   overflow-wrap: anywhere;
 }
 
@@ -159,7 +159,7 @@
   padding: 2px 8px;
   color: var(--aq-text);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   background: var(--aq-bg-input);
   border: 0;
   border-radius: 2px;

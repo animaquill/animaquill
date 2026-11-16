@@ -785,6 +785,14 @@
         "language": {
           "name": "语言",
           "keywords": "language 中文 英文 界面语言 i18n"
+        },
+        "theme": {
+          "name": "颜色主题",
+          "keywords": "theme 外观 配色 深色 浅色 暗色 亮色 夜间 黑色 白色 dark light 跟随系统"
+        },
+        "fontSize": {
+          "name": "界面字号",
+          "keywords": "font size 字体 文字大小 字大 字小 缩放 外观"
         }
       },
       "editing": {
@@ -1057,6 +1065,16 @@
       "project": "帧率 fps 分辨率 画幅 尺寸 宽高 项目 名称 封面 语言 安全区 背景"
     },
     "accountMenu": "账号设置…",
+    "theme": {
+      "dark": "深色",
+      "light": "浅色",
+      "system": "跟随系统"
+    },
+    "fontSize": {
+      "small": "小",
+      "normal": "标准",
+      "large": "大"
+    },
     "shotSize": {
       "1024": "1024",
       "1568": "1568",

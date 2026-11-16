@@ -3,7 +3,7 @@
   right: 0;
   left: 0;
   overflow: hidden;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   background: var(--aq-bg-panel);
   border-bottom: 1px solid var(--aq-border);
   container-type: inline-size;

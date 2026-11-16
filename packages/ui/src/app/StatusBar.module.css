@@ -4,7 +4,7 @@
   gap: 16px;
   padding: 0 10px;
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   background: var(--aq-bg-chrome);
   border-top: 1px solid var(--aq-border);
 }
@@ -230,12 +230,12 @@
 }
 
 .exportCancel:hover {
-  background: var(--aq-bg-hover, #ffffff1a);
+  background: var(--aq-bg-hover);
 }
 
 .exportResume {
   padding: 1px 8px;
-  color: var(--aq-text-strong);
+  color: var(--aq-on-accent);
   font: inherit;
   background: var(--aq-accent);
   border: 0;

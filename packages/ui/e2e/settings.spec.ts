@@ -244,7 +244,7 @@ test("searching finds a setting in any group, goes there and makes it stand out"
   );
   await expect(results.filter({ hasText: "预览画质" })).toHaveCount(0);
   // What is changed as people edit, or chosen as they export, is not among the settings.
-  for (const words of ["吸附", "时间码", "码率", "布局", "主题"]) {
+  for (const words of ["吸附", "时间码", "码率", "布局"]) {
     await search.fill(words);
     await expect(results, words).toHaveCount(0);
   }
@@ -272,9 +272,13 @@ test("each group has only what is a setting, and words only where they are neede
       .locator("[data-setting]")
       .evaluateAll((all) => all.map((each) => each.getAttribute("data-setting")));
   };
-  expect(await rows("常规", "settings-general")).toEqual(["general.language"]);
+  expect(await rows("常规", "settings-general")).toEqual([
+    "general.language",
+    "general.theme",
+    "general.fontSize",
+  ]);
   const general = settingsOf(page).getByTestId("settings-general");
-  await expect(general).toHaveText(/^常规语言简体中文$/);
+  await expect(general).toHaveText(/^常规语言简体中文颜色主题深色浅色跟随系统界面字号小标准大$/);
   expect(await rows("编辑", "settings-editing")).toEqual(["editing.trial"]);
   await expect(settingsOf(page).getByTestId("settings-editing")).toContainText(
     "手动改属性和关键帧时先进入试改",

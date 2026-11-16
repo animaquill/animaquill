@@ -16,6 +16,7 @@ import { percentOf } from "../storage/upload-text.ts";
 import { useWorkbench } from "../app/context.ts";
 import type { FilmStrip } from "../media/library.ts";
 import { NO_PROXIES, type ProxySnapshot, type ProxyState } from "../proxy/proxies.ts";
+import { onAppearanceChange } from "../theme/watch.ts";
 import type { ResourceIconProps } from "./ResourceBrowser.tsx";
 import type { ProjectItem } from "./project-resources.ts";
 import styles from "./ProjectIcon.module.css";
@@ -92,13 +93,18 @@ function Waveform({
     const element = canvas.current;
     const context = element?.getContext("2d");
     if (!element || !context) return;
-    const style = getComputedStyle(element);
-    const wave = style.getPropertyValue("--wave").trim() || "#8ab4f8";
-    const line = style.getPropertyValue("--line").trim() || "#fff";
+    const colors = () => {
+      const style = getComputedStyle(element);
+      return {
+        wave: style.getPropertyValue("--wave").trim(),
+        line: style.getPropertyValue("--line").trim(),
+      };
+    };
+    const look = colors();
     const { width, height } = element;
     const draw = (at: number | undefined) => {
       context.clearRect(0, 0, width, height);
-      context.fillStyle = wave;
+      context.fillStyle = look.wave;
       const per = peaks.length / width;
       for (let x = 0; x < width; x += 1) {
         let top = 0;
@@ -110,12 +116,17 @@ function Waveform({
         context.fillRect(x, (height - bar) / 2, 1, bar);
       }
       if (at !== undefined) {
-        context.fillStyle = line;
+        context.fillStyle = look.line;
         context.fillRect(Math.round(at * width), 0, 1, height);
       }
     };
     draw(undefined);
-    if (!playing || reducedMotion() || seconds <= 0) return;
+    // In the colours of the other theme once it changes; while it plays, the next frame does it.
+    const stopRestyle = onAppearanceChange(() => {
+      Object.assign(look, colors());
+      draw(undefined);
+    });
+    if (!playing || reducedMotion() || seconds <= 0) return stopRestyle;
     const began = performance.now();
     const loop = { frame: 0 };
     const step = (now: number) => {
@@ -124,6 +135,7 @@ function Waveform({
     };
     loop.frame = requestAnimationFrame(step);
     return () => {
+      stopRestyle();
       cancelAnimationFrame(loop.frame);
       draw(undefined);
     };

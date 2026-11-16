@@ -25,7 +25,7 @@
   margin-bottom: 6px;
   padding: 0;
   color: var(--aq-text-strong);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
   font-weight: 600;
 }
 
@@ -79,7 +79,7 @@ p.result[class] {
 
 .stepState {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .spin {
@@ -153,7 +153,7 @@ label.withFolder input[type] {
 
 .kindAbout {
   color: var(--aq-text-muted);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }
 
 .withFolder {
@@ -189,5 +189,5 @@ p.formatProblem[class] {
   flex-basis: 100%;
   margin: 0;
   color: var(--aq-warning);
-  font-size: 12px;
+  font-size: var(--aq-font-12);
 }

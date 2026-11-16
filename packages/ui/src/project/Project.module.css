@@ -94,7 +94,7 @@ textarea.text {
   padding: 1px 4px;
   color: var(--aq-text-strong);
   font-family: var(--aq-font-mono, ui-monospace, monospace);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   background: var(--aq-bg-input);
   border-radius: 3px;
   word-break: break-all;
@@ -175,7 +175,7 @@ textarea.text {
   align-items: center;
   min-width: 0;
   color: var(--aq-text-strong);
-  font-size: 13px;
+  font-size: var(--aq-font-13);
 }
 
 .cellMono {
@@ -191,7 +191,7 @@ textarea.text {
   grid-row: 2;
   grid-column: 1 / -1;
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
 }
 
 .cellNote:empty {
@@ -209,7 +209,7 @@ textarea.text {
 .badge {
   padding: 0 5px;
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
   border: 1px solid var(--aq-border);
   border-radius: 3px;
 }
@@ -227,7 +227,7 @@ textarea.text {
   flex-direction: column;
   gap: 2px;
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
 }
 
 .sides {
@@ -274,7 +274,7 @@ textarea.text {
   width: 192px;
   aspect-ratio: 16 / 9;
   object-fit: contain;
-  background: #000;
+  background: var(--aq-picture-backdrop);
   border: 1px solid var(--aq-border);
   border-radius: 4px;
 }
@@ -284,7 +284,7 @@ textarea.text {
   align-items: center;
   justify-content: center;
   color: var(--aq-text-muted);
-  font-size: 11px;
+  font-size: var(--aq-font-11);
 }
 
 .coverSide {
@@ -299,9 +299,9 @@ textarea.text {
   align-items: center;
   margin: 12px 20px 0;
   padding: 8px 10px;
-  color: var(--aq-warning-text, #e3b341);
-  background: color-mix(in srgb, var(--aq-warning, #d29922) 14%, transparent);
-  border: 1px solid color-mix(in srgb, var(--aq-warning, #d29922) 45%, transparent);
+  color: var(--aq-warning-text);
+  background: color-mix(in srgb, var(--aq-warning) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--aq-warning) 45%, transparent);
   border-radius: 4px;
 }
 
