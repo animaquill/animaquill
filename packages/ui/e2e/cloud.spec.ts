@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from "@playwright/test";
-import { dialog, footer, installChosen } from "./folder-support.ts";
+import { dialog, footer, installChosen, privateText, putPrivate } from "./folder-support.ts";
 import {
   cardMenu,
   cardMenuItems,
@@ -34,7 +34,10 @@ interface Lab {
     removed: string[];
     faults: { unreachable?: boolean; silent: boolean };
     drop(): void;
-    workingCopy(id: string): { getState(): { manifest: { name: string } } };
+    workingCopy(id: string): {
+      getState(): { manifest: { name: string }; files: Record<string, string> };
+    };
+    mergeFromRepository(id: string, commands: unknown[], batch?: string): void;
   };
   repositories: {
     choices: unknown[];
@@ -322,6 +325,80 @@ test.describe("the start page, with projects in folders", () => {
     await chooseFrom(page, "文件", "关闭项目");
     await expect(statusOf(page, "片头动画")).toHaveText(/^云端 · 文件夹也有一份/);
     await expect(projectCard(page, "片头动画")).toHaveCount(1);
+  });
+});
+
+test.describe("opening a project in a folder that syncs", () => {
+  test.use({ folders: true });
+
+  const CODE = "code/动画.js";
+  const BEFORE = "const a = 1;\nconst b = 2;\nconst c = 3;\n";
+  const ELSEWHERE = "const a = 1;\n// 另一台电脑\nconst b = 2;\nconst c = 3;\n";
+  const PUSHED = "const a = 1;\nconst b = 2;\nconst c = 3;\nconst d = 4;\n";
+  const MERGED = "const a = 1;\n// 另一台电脑\nconst b = 2;\nconst c = 3;\nconst d = 4;\n";
+
+  test("has what changed on the platform and in the folder while it was closed, each once", async ({
+    page,
+  }) => {
+    await installChosen(page);
+    await arrive(page);
+    await newInFolder(page, "原子", "atom");
+    await page.evaluate(
+      async ({ path, text }) => {
+        const { aqExecute, aqSave } = window as unknown as {
+          aqExecute: (call: unknown) => unknown;
+          aqSave: () => Promise<void>;
+        };
+        aqExecute({ type: "file.write", params: { path, text } });
+        await aqSave();
+      },
+      { path: CODE, text: BEFORE },
+    );
+    await cloudStatus(page).click();
+    await connectDialog(page).getByRole("button", { name: "连接到云端" }).click();
+    await expect(connectDialog(page)).toHaveAttribute("data-connect-phase", "done");
+    await connectDialog(page).getByRole("button", { name: "完成" }).click();
+    await expect(cloudStatus(page)).toHaveText("已同步");
+    await expect.poll(() => privateText(page, `atom/${CODE}`)).toBe(BEFORE);
+    await chooseFrom(page, "文件", "关闭项目");
+
+    // While it is closed, another computer changes the file, and people commit a change of it in
+    // the folder and push it, which the platform merges from GitHub: the same change, both ways.
+    const project = await withLab(
+      page,
+      (lab, { path, elsewhere, merged }) => {
+        const [id] = [...lab.platform.projects.keys()];
+        const write = (text: string) => ({ type: "file.write", params: { path, text } });
+        lab.platform.mergeFromRepository(id as string, [write(elsewhere)], "elsewhere");
+        lab.platform.mergeFromRepository(id as string, [write(merged)], "pushed");
+        return id as string;
+      },
+      { path: CODE, elsewhere: ELSEWHERE, merged: MERGED },
+    );
+    await putPrivate(page, "atom", { [CODE]: PUSHED });
+
+    await openCard(page, "原子");
+    await expect(page).toHaveTitle("原子 - AnimaQuill");
+    await expect(cloudStatus(page)).toHaveText("已同步");
+    await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
+    // Both, and the line that came both ways once: in the folder, the project and on the platform.
+    await expect.poll(() => privateText(page, `atom/${CODE}`)).toBe(MERGED);
+    expect(
+      await page.evaluate(
+        (path) =>
+          (window as unknown as { aqState: () => { files: Record<string, string> } }).aqState()
+            .files[path],
+        CODE,
+      ),
+    ).toBe(MERGED);
+    await expect
+      .poll(() =>
+        withLab(page, (lab, { id, path }) => lab.platform.workingCopy(id).getState().files[path], {
+          id: project,
+          path: CODE,
+        }),
+      )
+      .toBe(MERGED);
   });
 });
 

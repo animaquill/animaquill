@@ -27,8 +27,8 @@ function opened() {
   const store = ProjectStore.create(createProject({ name: "撤销" }));
   const timeline = store.getState().timelines["main"];
   const track = timeline && orderedTracks(timeline).find(({ kind }) => kind === "video")?.id;
-  const add = (target: ProjectStore, id: string, origin?: string) => {
-    const clip = { id, start: "0", duration: "1", source: { kind: "color", color: "#ff0000" } };
+  const add = (target: ProjectStore, id: string, origin?: string, start = "0") => {
+    const clip = { id, start, duration: "1", source: { kind: "color", color: "#ff0000" } };
     const result = target.execute(
       { type: "clip.add", params: { timeline: "main", track, ...clip } },
       origin === undefined ? {} : { origin },
@@ -96,6 +96,34 @@ describe("undo logs that last across reloads", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("says once what was saved is taken up, which a change of the same origin before keeps out", async () => {
+    const place = new MemoryUndoPlace();
+    const { store, add } = opened();
+    const first = window(store, memoryUndo(place));
+    add(store, "c1", TASK);
+    await first.keeper.flush();
+    first.keeper.destroy();
+
+    // Taken up before the batch goes on, as opening a project waits for: all of it goes back.
+    const again = reopened(store);
+    const second = window(again, memoryUndo(place));
+    await second.keeper.loaded(again);
+    expect(second.keeper.getSnapshot().restored).toHaveLength(1);
+    add(again, "c2", TASK, "2");
+    expect((await second.keeper.takeBack(TASK, "undo"))?.ok).toBe(true);
+    expect(again.getState().timelines["main"]?.clips["c1"]).toBeUndefined();
+    expect(again.getState().timelines["main"]?.clips["c2"]).toBeUndefined();
+    second.keeper.destroy();
+
+    // The batch went on first: what was saved of it does not come back.
+    const late = reopened(store);
+    const third = window(late, memoryUndo(place));
+    add(late, "c2", TASK, "2");
+    await third.keeper.loaded(late);
+    expect(third.keeper.getSnapshot().restored).toHaveLength(0);
+    third.keeper.destroy();
   });
 
   it("take back only once when two windows ask at the same time", async () => {

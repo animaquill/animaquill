@@ -118,6 +118,8 @@ export class UndoKeeper {
   #soon: ReturnType<typeof setTimeout> | undefined;
   /** Saving one after the other, so that an older log never comes after a newer one. */
   #saving: Promise<unknown> = Promise.resolve();
+  /** Taking up what was saved of the open project, see `loaded`. */
+  #loading: Promise<void> = Promise.resolve();
 
   constructor(options: UndoKeeperOptions) {
     this.#options = options;
@@ -167,9 +169,23 @@ export class UndoKeeper {
     this.#gone = new Map();
     this.#snapshot = { ...EMPTY, tick: this.#snapshot.tick + 1 };
     this.#emitter.emit();
-    if (!store || key === undefined) return;
+    if (!store || key === undefined) {
+      this.#loading = Promise.resolve();
+      return;
+    }
     this.#unsubscribe = store.subscribe(() => this.#heardStore(store));
-    void this.#load(store, key);
+    this.#loading = this.#load(store, key);
+  }
+
+  /**
+   * Resolves once what was saved of the undo logs of `store` is taken up, as far as it could be, or
+   * at once where another project is open by now. Opening a project waits for it before changes
+   * from its folder come in (`ProjectOpening`): a batch that goes on where it left off has the same
+   * origin, and a log the store has already of an origin keeps what was saved of it out.
+   */
+  loaded(store: ProjectStore): Promise<void> {
+    this.#attach(this.#options.session.getSnapshot());
+    return this.#store === store ? this.#loading : Promise.resolve();
   }
 
   async #load(store: ProjectStore, key: string): Promise<void> {

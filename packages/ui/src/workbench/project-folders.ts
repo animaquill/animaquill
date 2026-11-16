@@ -92,6 +92,7 @@ import type {
 } from "./dialogs.ts";
 import { Emitter } from "./emitter.ts";
 import type { Notifications } from "./notifications.ts";
+import type { ProjectOpening } from "./opening.ts";
 import type { ToolActivity } from "./tool-activity.ts";
 import { projectKeyOf, type ProjectSession } from "./session.ts";
 import { failureMessage, translateWith } from "../i18n/failures.ts";
@@ -178,6 +179,11 @@ export interface ProjectFoldersOptions {
   readonly leftBehind?: (key: string) => Promise<readonly string[]>;
   /** How people organised their projects, see `ProjectOrganizer`, which goes with a project. */
   readonly organizer?: Pick<ProjectOrganizer, "read" | "mark">;
+  /**
+   * When the folder of a project that opens is compared with it, see `ProjectOpening.folder`: after
+   * what the platform has came. Right away where it is not given.
+   */
+  readonly opening?: Pick<ProjectOpening, "folder">;
 }
 
 /** What people can do about the file of an asset, and what has to know that one changed. */
@@ -2360,8 +2366,10 @@ export class ProjectFolders {
     );
     this.#current = current;
     this.#changed();
-    await folderSession.start();
-    if (this.#current === current) {
+    // Not before what the platform has came, see `ProjectOpening`.
+    const start = () => folderSession.start();
+    await (this.#options.opening ? this.#options.opening.folder(store, start) : start());
+    if (this.#current === current && session.store === store) {
       this.#watchAssets(current);
       void this.#check(current);
       // What a copy that stopped with the page left behind.

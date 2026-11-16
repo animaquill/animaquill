@@ -84,6 +84,7 @@ import { CloudChats } from "../chat/cloud-chats.ts";
 import { SETTINGS_GROUPS, SettingsNav, type SettingsPlace } from "./settings-nav.ts";
 import { SwitchSetting } from "./switch-setting.ts";
 import { ToolActivity, toolName } from "./tool-activity.ts";
+import { ProjectOpening, type OpeningTiming } from "./opening.ts";
 import { placeText } from "./undo-text.ts";
 import { CodeDocuments, type CodePlace } from "../code/documents.ts";
 import { CodeDrafts } from "../code/drafts.ts";
@@ -208,6 +209,8 @@ export interface WorkbenchOptions {
   /** For tests: how long syncing with the platform waits, and the world it waits in. */
   readonly cloudTiming?: Partial<CloudTiming>;
   readonly cloudEnvironment?: CloudEnvironment;
+  /** For tests: how long opening a project waits for the platform, see `OpeningTiming`. */
+  readonly openingTiming?: Partial<OpeningTiming>;
   /** For tests: how long the dialog that connects a project waits, see `ConnectTiming`. */
   readonly connectTiming?: Partial<ConnectTiming>;
   /** What finds out hashes of files in project folders, in a worker where the page has one. */
@@ -421,6 +424,11 @@ export class Workbench {
   readonly listens: SoundListens;
   /** What AI tools on this computer do through the folder of the open project. */
   readonly tools: ToolActivity;
+  /**
+   * The steps of opening a project, one after the other, see `ProjectOpening`: its log, what the
+   * platform has, its folder, and then both as they change.
+   */
+  readonly opening: ProjectOpening;
   /** Whether new projects start with AGENTS.md, the instructions for AI. */
   readonly agentsFile: SwitchSetting;
   /** What the chat points at: the playhead, what is selected, and where its blocks go. */
@@ -810,12 +818,37 @@ export class Workbench {
       look: (request, sees, signal) => this.looks.look(request, sees, signal),
       listen: (request, signal) => this.listens.listen(request, signal),
     });
+    this.opening = new ProjectOpening({
+      session: this.session,
+      undoLoaded: (store) => this.undo.loaded(store),
+      ...(cloud && {
+        cloud: {
+          follow: async () => void (await this.#followCloud()),
+          syncOf: (key: string) => {
+            const said = this.cloud?.getSnapshot();
+            return said?.kind === "linked" && said.link.key === key && said.made
+              ? said.session
+              : undefined;
+          },
+        },
+      }),
+      isFolder: (key) => this.projectFolders?.holds(key) === true,
+      // What AI tools on this computer wrote is looked at now that the folder is compared, and
+      // what is not here downloads now that the project has what the platform and the folder had.
+      live: () => {
+        void this.tools.look({ batches: true });
+        this.downloads.follow();
+      },
+      ...(options.openingTiming && { timing: options.openingTiming }),
+      ...(options.cloudEnvironment && { environment: options.cloudEnvironment }),
+    });
     this.tools = new ToolActivity({
       t,
       notifications: this.notifications,
       dialogs: this.dialogs,
       showProblems: () => this.layout.openPanel("problems"),
-      folder: () => this.projectFolders?.folderOpen,
+      // Not before the folder is compared with the project, see `ProjectOpening`.
+      folder: () => (this.opening.isLive() ? this.projectFolders?.folderOpen : undefined),
       held: () => this.projectFolders?.isHeld === true,
       undo: (origin) => void this.projectFolders?.undoBatch(origin),
       lookAt: (paths) => this.projectFolders?.lookAt(paths),
@@ -909,6 +942,7 @@ export class Workbench {
           ...((await host.drafts.holds?.(key)) ? ["drafts"] : []),
         ],
         ...(host.organizer && { organizer: host.organizer }),
+        opening: this.opening,
       });
     this.session.subscribe(() => this.projectFolders?.followSession());
     this.session.subscribe(() => this.tools.follow(this.session.getSnapshot().store));
@@ -997,7 +1031,8 @@ export class Workbench {
     this.downloads = new AssetDownloads({
       store: host.downloads,
       lfs: () => cloud?.lfs,
-      project: () => this.#uploadProject(),
+      // Not before the project has what the platform and its folder had, see `ProjectOpening`.
+      project: () => (this.opening.isLive() ? this.#uploadProject() : undefined),
       missing: this.missingFiles.getSnapshot,
       subscribeMissing: this.missingFiles.subscribe,
       target: () => this.#downloadTarget(),

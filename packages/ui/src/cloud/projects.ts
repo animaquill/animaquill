@@ -468,21 +468,33 @@ export class CloudProjects {
     this.#emitter.emit();
   }
 
-  /** Looks again at the open project, after it changed or its folder came. */
+  /**
+   * Looks again at the open project, after it changed or its folder came. Resolves once every look
+   * asked for by then is over: a look asked for later takes the place of one that did not begin,
+   * and whoever asked for that one hears what the later one found.
+   */
   follow(): Promise<void> {
     const { session } = this.#options;
     const key = session.key;
     const store = session.store;
-    if (key === this.#key && store === this.#store && !this.#waitsForFolder()) {
-      return this.#following;
+    if (key !== this.#key || store !== this.#store || this.#waitsForFolder()) {
+      const turn = ++this.#turn;
+      this.#following = this.#following
+        .then(() => this.#look(turn))
+        .catch((error: unknown) => {
+          console.warn("Whether the project syncs could not be found out", error);
+        });
     }
-    const turn = ++this.#turn;
-    this.#following = this.#following
-      .then(() => this.#look(turn))
-      .catch((error: unknown) => {
-        console.warn("Whether the project syncs could not be found out", error);
-      });
-    return this.#following;
+    return this.#followed();
+  }
+
+  /** Resolves once no look is on its way, see `follow`. */
+  async #followed(): Promise<void> {
+    let seen: Promise<void>;
+    do {
+      seen = this.#following;
+      await seen;
+    } while (seen !== this.#following);
   }
 
   /**

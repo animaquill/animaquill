@@ -9,6 +9,9 @@ import {
   checkWhole,
   checkWritten,
   isEmptyUpdate,
+  mergeUpdates,
+  repoBatch,
+  type CommandCall,
   type ProjectStore as Store,
 } from "@animaquill/core";
 import {
@@ -624,6 +627,55 @@ export class MemoryPlatform {
   /** Drops the connections of a browser, or of all of them, as a network that went away. */
   drop(tag?: string): void {
     for (const side of this.#sides) if (tag === undefined || side.tag === tag) side.close(1006);
+  }
+
+  /**
+   * A change the platform makes itself, as it merges what changed on GitHub: written as the
+   * platform (`writeAsPlatform`), with the origin of a batch of the repository, and sent to every
+   * window that has the project open, as to those that come later.
+   */
+  mergeFromRepository(id: string, commands: readonly CommandCall[], batch = "1"): void {
+    const project = this.projects.get(id);
+    if (!project) throw new Error(`no project ${id}`);
+    const store = this.workingCopy(id);
+    const parts: Uint8Array[] = [];
+    const take = (update: Uint8Array) => parts.push(update);
+    store.doc.on("update", take);
+    try {
+      store.writeAsPlatform(() => {
+        for (const command of commands) {
+          const result = store.execute(command, { origin: repoBatch(batch) });
+          if (!result.ok) throw new Error(`the merge did not go: ${JSON.stringify(result)}`);
+        }
+      });
+    } finally {
+      store.doc.off("update", take);
+    }
+    if (parts.length === 0) return;
+    const delta = parts.length === 1 ? (parts[0] as Uint8Array) : mergeUpdates(parts);
+    project.head += 1;
+    project.digest = digestOf(project.digest, project.head, delta);
+    const update: PlatformUpdate = {
+      seq: project.head,
+      digest: project.digest,
+      data: delta,
+      kind: "repo",
+      device: "",
+      base: project.head - 1,
+      behind: false,
+    };
+    project.updates.push(update);
+    for (const side of this.#sides) {
+      if (side.project !== project) continue;
+      this.#send(side, {
+        t: "update",
+        seq: update.seq,
+        digest: update.digest,
+        kind: update.kind,
+        at: 0,
+        payload: delta,
+      });
+    }
   }
 
   /** The working copy of a project, as the platform has it now. */
