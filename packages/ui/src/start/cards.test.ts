@@ -352,6 +352,91 @@ describe("what a card says", () => {
   });
 });
 
+describe("what a card says of the platform's copy, which goes a week after it was last opened", () => {
+  const NOW = Date.UTC(2026, 10, 12, 12);
+  const releaseAt = NOW + 3 * DAY;
+
+  it("says a project with no repository goes as a whole, and how to choose one, where the platform says when", () => {
+    const cards = composeCards(
+      listsOf({
+        listed: [
+          listed("p-half", "半截的", { attention: "noRepository", releaseAt }),
+          listed("p-old", "以前的", { attention: "noRepository" }),
+        ],
+      }),
+      NOTHING_ORGANIZED,
+    );
+    expect(cardStatus(byName(cards, "半截的"), "ready", t, NOW)).toMatchObject({
+      text: "没有 GitHub 仓库，7 天没打开会被删除",
+      tone: "warning",
+      alert: true,
+      way: "chooseRepository",
+    });
+    // Before the platform lets copies go, as it was.
+    const before = cardStatus(byName(cards, "以前的"), "ready", t, NOW);
+    expect(before).toMatchObject({ text: "云端 · 还差一步：选仓库", tone: "warning" });
+    expect(before).not.toHaveProperty("way");
+  });
+
+  it("says when it was last opened, on any computer, on hovering", () => {
+    const cards = composeCards(
+      listsOf({
+        listed: [
+          listed("p-a", "九天前的", { repository: repository("a"), openedAt: NOW - 9 * DAY }),
+          listed("p-b", "刚打开的", { repository: repository("b"), openedAt: NOW - 3 * 60_000 }),
+          listed("p-c", "没记的", { repository: repository("c") }),
+        ],
+      }),
+      NOTHING_ORGANIZED,
+    );
+    expect(cardStatus(byName(cards, "九天前的"), "ready", t, NOW).hint).toBe("上次打开：9 天前");
+    expect(cardStatus(byName(cards, "刚打开的"), "ready", t, NOW).hint).toBe("上次打开：3 分钟前");
+    expect(cardStatus(byName(cards, "没记的"), "ready", t, NOW).hint).toBeUndefined();
+  });
+
+  it("says that it comes back from GitHub, and why, while it does", () => {
+    const cards = composeCards(
+      listsOf({
+        listed: [
+          listed("p-r", "取回中", {
+            copy: "restoring",
+            releasedAt: NOW - DAY,
+            repository: repository("r"),
+          }),
+          listed("p-n", "恢复中", { copy: "restoring", repository: repository("n") }),
+        ],
+      }),
+      NOTHING_ORGANIZED,
+    );
+    expect(cardStatus(byName(cards, "取回中"), "ready", t, NOW).text).toBe(
+      "云端 · 正在从 GitHub 取回…（平台上的临时内容 7 天没用已清掉）",
+    );
+    expect(cardStatus(byName(cards, "恢复中"), "ready", t, NOW).text).toBe(
+      "云端 · 正在从 GitHub 取回…",
+    );
+  });
+
+  it("says in how many days what GitHub does not have goes, on hovering an error", () => {
+    const cards = composeCards(
+      listsOf({
+        listed: [
+          listed("p-s", "暂停的", {
+            attention: "repository",
+            repository: { ...repository("s"), state: "paused", reason: "archived" },
+            archive: { seq: 3, behind: true },
+            releaseAt,
+          }),
+        ],
+      }),
+      NOTHING_ORGANIZED,
+    );
+    const said = cardStatus(byName(cards, "暂停的"), "ready", t, NOW);
+    // The line does not change: only what hovering says.
+    expect(said.text).toBe("GitHub 同步失败");
+    expect(said.hint).toMatch(/如果一直不打开，平台上的这些改动 3 天后清掉。$/);
+  });
+});
+
 describe("what the menu of a card offers", () => {
   const cards = composeCards(listsOf(EVERYTHING), { marks: new Map(), groups: [] });
   const actions = (name: string, context: Partial<CardContext> = {}) =>

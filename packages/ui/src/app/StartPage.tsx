@@ -816,7 +816,8 @@ function CardItem({
       >
         {status.text}
       </span>
-      {display === "cards" && when !== undefined && (
+      {/* What stands out with a way out under it has the line to itself. */}
+      {display === "cards" && when !== undefined && status.way === undefined && (
         <>
           <span aria-hidden="true">·</span>
           <span className={styles.when}>{when}</span>
@@ -903,6 +904,18 @@ function CardItem({
       ) : (
         <button type="button" {...linkProps}>
           {inside}
+        </button>
+      )}
+      {status.way !== undefined && display === "cards" && (
+        // Not in the link of the card, which opens it: what helps, right under what is wrong.
+        <button
+          type="button"
+          className={styles.way}
+          data-card-way={status.way}
+          disabled={busy}
+          onClick={() => actions.run(card, "chooseRepository", null)}
+        >
+          {t("start.card.chooseRepository")}
         </button>
       )}
       {card.marksKey !== undefined && (
@@ -1106,6 +1119,12 @@ function useCardActions(
         }
         case "connect":
           thenOpen(card, () => workbench.connectToCloud());
+          return;
+        case "chooseRepository":
+          run(async () => {
+            await open(card);
+            if (workbench.session.store) workbench.runCloudAction("chooseRepository");
+          });
           return;
         case "disconnect":
           thenOpen(card, () => cloud?.disconnect() ?? Promise.resolve());

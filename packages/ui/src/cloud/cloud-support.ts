@@ -452,6 +452,12 @@ export class MemoryPlatform {
   readonly branches = new Map<string, Map<string, string>>();
   /** A window that says hello for a project the platform let go of has it made again at once. */
   rebuildsOnHello = true;
+  /**
+   * Takes a change whatever it expects of the project (`expect` of "push"), as a platform from
+   * before that did: what a test turns on to see that taking copies back needs the platform to
+   * hold changes to it.
+   */
+  ignoresExpect = false;
   /** The next `rebuild` fails like this, once. */
   rebuildFails: CloudCopyProblem["code"] | undefined;
 
@@ -943,6 +949,16 @@ export class MemoryPlatform {
     const injected = this.faults.rejections.shift();
     if (injected) {
       reject(injected.reason, injected.retry);
+      return;
+    }
+    // Only on the project as the change was made against, see `expect` of "push".
+    const expected = message.expect;
+    if (
+      expected &&
+      !this.ignoresExpect &&
+      (expected.generation !== project.generation || expected.seq !== project.head)
+    ) {
+      reject("moved", false);
       return;
     }
     const fault = checkUpdate(message.payload, { most: SYNC_LIMITS.structs });

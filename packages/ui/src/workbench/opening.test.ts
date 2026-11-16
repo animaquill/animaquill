@@ -27,8 +27,9 @@ class TestSession {
 class TestSync {
   readonly #emitter = new Emitter();
   state: CloudState = "connecting";
+  restoring: "restoring" | "released" | undefined;
   subscribe = this.#emitter.subscribe;
-  getSnapshot = () => ({ state: this.state });
+  getSnapshot = () => ({ state: this.state, restoring: this.restoring });
   set(state: CloudState): void {
     this.state = state;
     this.#emitter.emit();
@@ -95,6 +96,20 @@ function opening({
 }
 
 describe("opening a project", () => {
+  it("waits for a copy the platform makes again from GitHub, saying so, as long as it waits at all", async () => {
+    const { session, sync, time, flow } = opening();
+    session.open("p");
+    await settle();
+    // The platform let go of its copy: it closes the line as it makes it again.
+    sync.restoring = "restoring";
+    sync.set("reconnecting");
+    await settle();
+    expect(flow.getSnapshot()).toMatchObject({ step: "cloud", restoring: true, cloud: undefined });
+    await time.advance(1000);
+    await settle();
+    expect(flow.getSnapshot()).toMatchObject({ step: "live", cloud: "timeout" });
+  });
+
   it("takes up what the device kept, then what the platform has, then the folder, then goes live", async () => {
     const { session, sync, events, flow, folderStart } = opening({ folder: true });
     const store = session.open("p");

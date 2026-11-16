@@ -345,6 +345,7 @@ export function fakeCloud(account: AccountAccess): { cloud: CloudAccess; lab: Cl
           }),
         ),
       remove: async (project, options) => signedIn(() => platform.remove(USER, project, options)),
+      wake: async (project, options) => signedIn(() => platform.wake(USER, project, options)),
       links,
       syncer: (key) => writers.writer(`cloud.${key}`, PAGE),
       line: (key) => lines.line(key),

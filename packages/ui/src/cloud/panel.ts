@@ -11,7 +11,7 @@ import {
   pauseDetail,
   pauseText,
 } from "./repository-text.ts";
-import { githubOfStatus, type GitHubState } from "./github-status.ts";
+import { clearsText, githubOfStatus, type GitHubState } from "./github-status.ts";
 import type { RepositoryWatchSnapshot } from "./repository-watch.ts";
 import type { CloudProblem, CloudSnapshot, CloudState } from "./session.ts";
 import { unusableFix, unusableKind, unusableLine, unusableWays } from "./unusable.ts";
@@ -504,12 +504,18 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
         ),
       );
     } else if (lacksRepository) {
+      // Where the platform says when, it goes as a whole once nobody opened it for a week.
+      const goes = status?.releaseAt !== undefined;
       rows.push(
-        row("repository", t("cloud.panel.repository.none"), {
-          notes: [t("github.week")],
-          tone: "attention",
-          actions: actions(["chooseRepository"]),
-        }),
+        row(
+          "repository",
+          t(goes ? "start.status.noRepositoryDeletes" : "cloud.panel.repository.none"),
+          {
+            ...(!goes && { notes: [t("github.week")] }),
+            tone: "attention",
+            actions: actions(["chooseRepository"]),
+          },
+        ),
       );
     } else {
       rows.push(
@@ -543,7 +549,7 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
     : notMade
       ? t("cloud.wake.busy", { why: copyProblemText(notMade, t), ...plain })
       : input.sync.restoring !== undefined && state !== "online"
-        ? t("cloud.open.restoring")
+        ? t("cloud.open.restoringReleased")
         : state === "online"
           ? pending > 0
             ? t("cloud.panel.sync.onlinePending", { count: pending })
@@ -589,7 +595,10 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
 
   // ---- archiving: what says why it cannot be used says it all. An error says that the
   // platform keeps its copy for a week only.
-  const week = github?.kind === "error" ? [t("github.week")] : [];
+  const week =
+    github?.kind === "error"
+      ? [t("github.week"), ...(github.clearsIn !== undefined ? [clearsText(github, t)] : [])]
+      : [];
   if (watch && status && repository && !unusable) {
     if (isPaused) {
       const { reason, fix } = pauseText(status, t);

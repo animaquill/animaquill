@@ -726,6 +726,14 @@ export interface CloudProjectSummary {
   /** When it last changed. */
   readonly updatedAt: number;
   readonly createdAt?: number;
+  /** When a window that edits it last connected, on any computer, where the platform noted it. */
+  readonly openedAt?: number;
+  /**
+   * When the platform lets go of its working copy unless somebody opens it before (sync/sweep.ts,
+   * `releaseAtOf`): what is not in the repository by then is only on the devices that made it.
+   * Milliseconds since 1970; missing while letting copies go has not begun, or the copy is not here.
+   */
+  readonly releaseAt?: number;
   /**
    * Whether the platform has its working copy: "live" where it does, which is what a platform that
    * says nothing means; "released" where only its repository has the project now; "restoring"
@@ -733,6 +741,11 @@ export interface CloudProjectSummary {
    * not know as one it cannot open yet.
    */
   readonly copy?: "live" | "released" | "restoring" | (string & {});
+  /**
+   * When the platform let go of its working copy, while that is not here: one it is making from the
+   * repository for the first time, as one restored from there, says none.
+   */
+  readonly releasedAt?: number;
   /**
    * Why making the working copy again from the repository failed the last time, where it did and
    * the platform does not have it yet: see `CloudCopyProblem`.
@@ -1389,6 +1402,12 @@ export interface RepositoryStatus {
   readonly kept?: readonly string[];
   /** Since when changes wait to be archived, and when they are due. */
   readonly dirtySince?: number;
+  /**
+   * When the platform lets go of its working copy unless somebody opens it before (sync/sweep.ts,
+   * `releaseAtOf`): what is not in the repository by then is only on the devices that made it.
+   * Milliseconds since 1970; missing while letting copies go has not begun, or the copy is not here.
+   */
+  readonly releaseAt?: number;
   readonly nextAt?: number;
   /** After failing: when it is tried again, and how many failed in a row. */
   readonly retryAt?: number;

@@ -346,10 +346,12 @@ function restoreRefusalText(error: RepositoryRefused, t: TFunction): string {
  * How taking the open project back onto the copy the platform made again goes, see
  * `CloudProjects.takeBack`: on its way ("running"); stopped until people try again, as they did
  * not choose or it failed ("stopped"); waiting for someone to sign in, as the right person
- * ("signedOut", "missing"); or trying by itself now and then, as the platform did not answer for
- * a while ("unavailable").
+ * ("signedOut", "missing"); trying by itself now and then, as the platform did not answer for
+ * a while ("unavailable"); or stopped as the platform's copy changed under it each time it tried
+ * ("moved"), until people try again.
  */
-export type TakeBackState = "running" | "stopped" | "signedOut" | "missing" | "unavailable";
+export type TakeBackState =
+  "running" | "stopped" | "signedOut" | "missing" | "unavailable" | "moved";
 
 /** The paths of either side. */
 const pathsOfBoth = (a: ReadonlyMap<string, string>, b: ReadonlyMap<string, string>) => [
@@ -1069,6 +1071,11 @@ export class CloudProjects {
             this.#setTakeBack("stopped");
             return;
           case "failed":
+            // The bar says that one, with the way to try again.
+            if (outcome.why === "moved") {
+              this.#setTakeBack("moved");
+              return;
+            }
             notifications.push(
               `${t("cloud.takeBack.failedTitle", { name, interpolation: { escapeValue: false } })}：${takeBackFailedText(outcome, t)}`,
             );
@@ -2048,6 +2055,8 @@ export class CloudProjects {
     const { cloud, dialogs, notifications, t } = this.#options;
     let copy = about.copy ?? "live";
     if (copy === "live") return true;
+    // Let go of as nobody opened it for long: people hear why it takes a moment.
+    const coming = t(copy === "released" ? "cloud.open.restoringReleased" : "cloud.open.restoring");
     const name = about.name ?? "";
     const environment = this.#options.environment ?? pageEnvironment();
     for (let asked = 0; asked < 10; asked++) {
@@ -2072,7 +2081,7 @@ export class CloudProjects {
         return false;
       }
       const progress = dialogs.progress({
-        title: t("cloud.open.restoring"),
+        title: coming,
         cancel: t("dialog.cancel"),
         stopping: t("transfer.stopping"),
       });
@@ -2940,7 +2949,7 @@ export class CloudProjects {
     const isOpen = () => session.key === key;
     if (isOpen() && !this.#options.closeProject) return false;
     /** Asks where something is only here, or may be. Resolves to whether it may go all the same. */
-    const mayGo = async (found: OnlyHere | undefined): Promise<boolean> => {
+    const mayGo = async (found: OnlyHere | undefined, warning?: string): Promise<boolean> => {
       const isGone = found?.cloud === "gone";
       // Opening it helps where it can sync, or where there is something in it to keep.
       const syncs = !isGone && (found === undefined || found.changes !== 0);
@@ -2954,6 +2963,7 @@ export class CloudProjects {
       const answer = await dialogs.choose({
         title: this.#onlyHereTitle(found, name),
         message: this.#onlyHereText(found),
+        ...(warning && { warning }),
         choices: [
           ...(helps && open !== undefined ? [{ id: "open", label: open }] : []),
           { id: "remove", label: t("cloud.remove.anyway"), kind: "danger" as const },
@@ -2980,14 +2990,30 @@ export class CloudProjects {
       }
     };
     let agreed = await look();
+    // What the platform has that GitHub does not goes a week after it was last opened: once this
+    // copy goes too, nothing is left of it after that (the design, 1).
+    const unsaved = await this.#notInGitHub(link.project);
+    const warning =
+      unsaved &&
+      t("cloud.remove.notInGitHub", {
+        conflicts:
+          unsaved.conflicts > 0 ? t("cloud.remove.conflicts", { count: unsaved.conflicts }) : "",
+      });
     if (isAllThere(agreed)) {
       const go = await dialogs.confirm({
         title: t("cloud.remove.title", words),
         message: t("cloud.remove.message"),
         confirm: t("cloud.remove.confirm"),
+        ...(warning && {
+          warning,
+          confirm: t("cloud.remove.anyway"),
+          cancel: t("cloud.remove.keep"),
+          keep: true,
+          danger: true,
+        }),
       });
       if (!go) return false;
-    } else if (!(await mayGo(agreed))) return false;
+    } else if (!(await mayGo(agreed, warning))) return false;
     if (isOpen()) {
       if (!(await this.#options.closeProject?.())) return false;
       if (isOpen()) return false;
@@ -3021,6 +3047,33 @@ export class CloudProjects {
     const isKept = last !== undefined && last.cloud === "there" && last.changes !== "all";
     notifications.push(t(isKept ? "cloud.remove.done" : "cloud.remove.doneHere", words));
     return true;
+  }
+
+  /**
+   * Whether the platform has changes of a project that its repository does not, which it lets go of
+   * a week after anybody last opened it, as it says (`releaseAt`, the design, 1), and how many
+   * conflicts of merges from GitHub wait: also all of one with no repository, which goes as a
+   * whole. Undefined where it has none, or keeps them anyway (GitHub or the platform keeps them
+   * out, or they go in within minutes), or that cannot be told now.
+   */
+  async #notInGitHub(project: string): Promise<{ readonly conflicts: number } | undefined> {
+    const repository = this.#options.cloud.repository;
+    if (!repository) return undefined;
+    try {
+      const status = await repository.status(project);
+      if (status.releaseAt === undefined) return undefined;
+      if (status.state === "none") return { conflicts: 0 };
+      if (status.dirtySince === undefined && status.head <= status.archivedSeq) return undefined;
+      if (
+        status.state === "ready" &&
+        (status.failingSince !== undefined || (status.failures ?? 0) === 0)
+      )
+        return undefined;
+      return { conflicts: status.reason === "conflicts" ? (status.conflicts ?? 0) : 0 };
+    } catch (error) {
+      console.warn("Whether GitHub has all of the project could not be read", error);
+      return undefined;
+    }
   }
 
   /** Takes a link away. Resolves to whether it is gone. */

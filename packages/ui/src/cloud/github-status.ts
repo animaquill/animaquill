@@ -56,6 +56,14 @@ export type GitHubCause =
 export interface GitHubState {
   readonly kind: GitHubKind;
   readonly cause: GitHubCause;
+  /**
+   * For an error with changes the repository does not have: in how many days the platform lets go
+   * of them unless somebody opens the project (`releaseAt`), where it says. Never where GitHub or the
+   * platform keeps them out: those it keeps.
+   */
+  readonly clearsIn?: number;
+  /** For "noRepository": the project goes as a whole once nobody opened it for a week. */
+  readonly goesWhole?: true;
   /** For "conflicts": how many wait, where the platform said. */
   readonly count?: number;
   /** For an error: why, in words, and what helps. */
@@ -76,6 +84,26 @@ const error = (cause: GitHubCause, reason: string, fix: string): GitHubState => 
 
 const isFailingLong = (since: number | undefined, now: number): boolean =>
   since !== undefined && now - since >= FAILING_LONG_MS;
+
+const DAY = 24 * 60 * 60_000;
+
+/**
+ * An error, with in how many days what the repository does not have goes, where something does not
+ * get there for people to see to, and the platform says when (`releaseAt`).
+ */
+const clearing = (
+  state: GitHubState,
+  { behind, releaseAt, now }: { behind: boolean; releaseAt: number | undefined; now: number },
+): GitHubState =>
+  state.kind !== "error" ||
+  !behind ||
+  releaseAt === undefined ||
+  state.cause === "failingLong" ||
+  state.cause === "unusable" ||
+  state.cause === "noRepository" ||
+  state.cause === "unfinished"
+    ? state
+    : { ...state, clearsIn: Math.max(1, Math.ceil((releaseAt - now) / DAY)) };
 
 /** The failure that went on for long, in words. */
 const failingLong = (
@@ -105,6 +133,16 @@ export interface StatusInput {
 
 /** How the open project stands with its repository, by what the platform says of it. */
 export function githubOfStatus(input: StatusInput, t: TFunction): GitHubState {
+  const { status } = input;
+  return clearing(statusState(input, t), {
+    behind:
+      status !== undefined && (status.dirtySince !== undefined || status.head > status.archivedSeq),
+    releaseAt: status?.releaseAt,
+    now: input.now,
+  });
+}
+
+function statusState(input: StatusInput, t: TFunction): GitHubState {
   const { status, unusable, unfinished, now } = input;
   if (unusable) return error("unusable", unusableTitle(unusable, t), unusableFix(unusable, t));
   if (unfinished)
@@ -114,8 +152,19 @@ export function githubOfStatus(input: StatusInput, t: TFunction): GitHubState {
       t("cloud.panel.repository.unfinishedNote"),
     );
   if (!status) return pending("unknown");
+  // One with no repository goes as a whole once nobody opened it for a week, where the platform
+  // says when.
   if (status.state === "none")
-    return error("noRepository", t("cloud.panel.repository.none"), t("github.fix.noRepository"));
+    return status.releaseAt === undefined
+      ? error("noRepository", t("cloud.panel.repository.none"), t("github.fix.noRepository"))
+      : {
+          ...error(
+            "noRepository",
+            t("start.status.noRepositoryDeletes"),
+            t("github.fix.noRepository"),
+          ),
+          goesWhole: true,
+        };
   if (status.state === "paused") {
     const { reason, fix } = pauseText(status, t);
     const detail = pauseDetail(status, t);
@@ -137,11 +186,25 @@ export function githubOfStatus(input: StatusInput, t: TFunction): GitHubState {
   return { kind: "synced", cause: "synced" };
 }
 
-/** What the list of the platform says of a project, as far as its repository goes. */
-export type ListedArchive = Pick<CloudProjectSummary, "attention" | "repository" | "archive">;
+/**
+ * What the list of the platform says of a project, as far as its repository goes, and when it was
+ * opened, and its copy goes unless somebody opens it.
+ */
+export type ListedArchive = Pick<
+  CloudProjectSummary,
+  "attention" | "repository" | "archive" | "openedAt" | "releaseAt"
+>;
 
 /** How a project of the list stands with its repository, for the start page. */
 export function githubOfListed(summary: ListedArchive, now: number, t: TFunction): GitHubState {
+  return clearing(listedState(summary, now, t), {
+    behind: summary.archive?.behind === true,
+    releaseAt: summary.releaseAt,
+    now,
+  });
+}
+
+function listedState(summary: ListedArchive, now: number, t: TFunction): GitHubState {
   const { attention, repository, archive } = summary;
   if (repository?.unusable)
     return error(
@@ -182,8 +245,13 @@ export function githubOfListed(summary: ListedArchive, now: number, t: TFunction
   return { kind: "synced", cause: "synced" };
 }
 
+/** In how many days what the repository does not have goes, where that is said; or nothing. */
+export const clearsText = (state: GitHubState, t: TFunction): string =>
+  state.clearsIn === undefined ? "" : t("github.clears", { count: state.clearsIn });
+
 /** The word of the status bar and of a card. */
 export function githubText(state: GitHubState, t: TFunction): string {
+  if (state.goesWhole) return t("github.text.goesWhole");
   if (state.cause === "unusable" || state.cause === "noRepository" || state.cause === "unfinished")
     return state.reason ?? t("github.text.error");
   if (state.cause === "conflicts" && state.count !== undefined && state.count > 0)
@@ -193,15 +261,19 @@ export function githubText(state: GitHubState, t: TFunction): string {
 
 /**
  * What hovering says, and the panel too: for an error, that saving into GitHub failed, why, what
- * helps, and that the platform keeps its copy for a week only.
+ * helps, and that the platform keeps its copy for a week only, and where it says, in how many days
+ * what the repository does not have goes unless somebody opens the project.
  */
 export function githubAbout(state: GitHubState, t: TFunction): string {
+  if (state.goesWhole) return t("github.about.noRepository", { fix: state.fix ?? "", ...plain });
   if (state.kind === "error")
-    return t("github.about.error", {
-      reason: (state.reason ?? "").replace(/。$/, ""),
-      fix: state.fix ?? "",
-      ...plain,
-    });
+    return (
+      t("github.about.error", {
+        reason: (state.reason ?? "").replace(/。$/, ""),
+        fix: state.fix ?? "",
+        ...plain,
+      }) + clearsText(state, t)
+    );
   const said =
     state.cause === "synced" || state.cause === "unknown" || state.cause === "retrying"
       ? state.cause

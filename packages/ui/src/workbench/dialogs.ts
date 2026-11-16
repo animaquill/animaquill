@@ -32,11 +32,15 @@ export interface ConfirmOptions {
   readonly keep?: boolean;
   /** Lists below the message, which can get long. */
   readonly details?: readonly DialogDetail[];
+  /** What is lost for good where people go on, standing out under the message. */
+  readonly warning?: string;
 }
 
 export interface ChoiceOptions {
   readonly title: string;
   readonly message: string;
+  /** What is lost for good where people go on, standing out under the message. */
+  readonly warning?: string;
   /** In the order of the buttons. Cancelling is always there, in front of them. */
   readonly choices: readonly DialogChoice[];
   /** What people should know besides, one line each, under the message. */

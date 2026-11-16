@@ -97,6 +97,16 @@
   border-radius: 3px;
 }
 
+/* What is lost for good where people go on. */
+.warning {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  color: var(--aq-text);
+  background: color-mix(in srgb, var(--aq-danger) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--aq-danger) 55%, transparent);
+  border-radius: 4px;
+}
+
 .notes {
   margin: 0 0 12px;
   padding: 0 0 0 16px;

@@ -659,6 +659,27 @@
   border-radius: 4px;
 }
 
+/* What helps a card whose line says something is wrong, right under it. */
+.way {
+  margin-top: 2px;
+  padding: 0;
+  color: var(--aq-accent);
+  font: inherit;
+  font-size: 12px;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.way:hover {
+  text-decoration: underline;
+}
+
+.way:focus-visible {
+  outline: 2px solid var(--aq-accent);
+  outline-offset: 2px;
+}
+
 .star,
 .moreButton {
   display: grid;

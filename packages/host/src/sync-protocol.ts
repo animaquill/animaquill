@@ -124,7 +124,12 @@ export type SyncRejection =
   /** Too much at once: try again later. */
   | "busy"
   /** The platform could not keep it right now: try again later. */
-  | "unavailable";
+  | "unavailable"
+  /**
+   * The project is not where the change said it has to be (`expect` of "push"): another change
+   * came first. The change is made again from what the platform has now, if at all.
+   */
+  | "moved";
 
 const REJECTIONS: ReadonlySet<string> = new Set<SyncRejection>([
   "malformed",
@@ -138,6 +143,7 @@ const REJECTIONS: ReadonlySet<string> = new Set<SyncRejection>([
   "source",
   "busy",
   "unavailable",
+  "moved",
 ]);
 
 export type SyncClientMessage =
@@ -173,7 +179,12 @@ export type SyncClientMessage =
     }
   /**
    * A change, with who made it, which update of the platform its window had then, when it made it,
-   * and whether it made it without the latest of the platform, such as while offline.
+   * and whether it made it without the latest of the platform, such as while offline. `expect`:
+   * the platform takes it only where the project is still this working copy, at this update, and
+   * says "moved" otherwise: a change made against the project as it was then, which would put the
+   * same thing in twice on top of anything else, as taking a copy back onto the one the platform
+   * made again from its repository makes (see `TakeBack` of the editor). A platform from before
+   * this takes it as any change.
    */
   | {
       readonly t: "push";
@@ -183,6 +194,7 @@ export type SyncClientMessage =
       readonly at: number;
       readonly window: string;
       readonly behind: boolean;
+      readonly expect?: { readonly generation: number; readonly seq: number };
       readonly payload: Uint8Array;
     }
   /** Asks what the platform has, to find out what either side is missing. */
@@ -465,6 +477,13 @@ export function readSyncClientMessage(data: Uint8Array | Parsed): SyncClientMess
     }
     case "push": {
       const kind = h["kind"];
+      const expected = h["expect"] as Record<string, unknown> | undefined;
+      const isExpect =
+        expected === undefined ||
+        (typeof expected === "object" &&
+          expected !== null &&
+          isCount(expected["generation"]) &&
+          isCount(expected["seq"]));
       if (
         !isCount(h["id"]) ||
         typeof kind !== "string" ||
@@ -472,7 +491,8 @@ export function readSyncClientMessage(data: Uint8Array | Parsed): SyncClientMess
         !isCount(h["base"]) ||
         !isTime(h["at"]) ||
         !isToken(h["window"]) ||
-        typeof h["behind"] !== "boolean"
+        typeof h["behind"] !== "boolean" ||
+        !isExpect
       )
         return undefined;
       return {
@@ -483,6 +503,9 @@ export function readSyncClientMessage(data: Uint8Array | Parsed): SyncClientMess
         at: h["at"],
         window: h["window"],
         behind: h["behind"],
+        ...(expected && {
+          expect: { generation: expected["generation"] as number, seq: expected["seq"] as number },
+        }),
         payload,
       };
     }

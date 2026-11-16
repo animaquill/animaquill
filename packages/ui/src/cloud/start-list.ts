@@ -129,6 +129,8 @@ export interface CloudRow {
   readonly needsSignIn: boolean;
   /** See `CloudProjectSummary.copy`: only a "live" one can be opened from the platform. */
   readonly copy: string;
+  /** The platform let go of its copy, which comes back from the repository as it is opened. */
+  readonly released?: boolean;
   /**
    * The platform could not make its working copy from the repository the last time it tried, see
    * `CloudProjectSummary.copyProblem`: why is said once people open it.
@@ -212,10 +214,18 @@ const isBehind = (summary: CloudProjectSummary): boolean =>
   summary.repository.unusable === undefined;
 
 /** What the list says of archiving a project, for `githubOfListed`. */
-const listedArchive = ({ attention, repository, archive }: CloudProjectSummary): ListedArchive => ({
+const listedArchive = ({
+  attention,
+  repository,
+  archive,
+  openedAt,
+  releaseAt,
+}: CloudProjectSummary): ListedArchive => ({
   ...(attention !== undefined && { attention }),
   ...(repository && { repository }),
   ...(archive && { archive }),
+  ...(openedAt !== undefined && { openedAt }),
+  ...(releaseAt !== undefined && { releaseAt }),
 });
 
 const isPending = (link: CloudLink | undefined): boolean =>
@@ -346,6 +356,7 @@ export function composeStartList(input: StartInput): StartLists {
         listed: true,
         needsSignIn: false,
         copy: summary.copy ?? "live",
+        ...(summary.copy !== "live" && summary.releasedAt !== undefined && { released: true }),
         ...(summary.copy === "released" && summary.copyProblem && { copyFailed: true }),
         deletable: input.canDelete,
         owner: account ?? copy?.link.owner,

@@ -148,3 +148,51 @@ describe("how a project of the list stands with its repository", () => {
     ).toBe("error unusable 仓库已删除");
   });
 });
+
+describe("how long what GitHub does not have stays on the platform", () => {
+  const DAY = 24 * 60 * MINUTE;
+  const releaseAt = NOW + 3 * DAY - MINUTE;
+
+  it("says in how many days, for an error with changes GitHub does not have, where the platform says when", () => {
+    const paused = githubOfStatus(
+      { status: status({ state: "paused", reason: "protected", head: 11, releaseAt }), now: NOW },
+      t,
+    );
+    expect(paused.clearsIn).toBe(3);
+    expect(githubAbout(paused, t)).toMatch(
+      /平台临时存储只保存 7 天，请尽快处理。如果一直不打开，平台上的这些改动 3 天后清掉。$/,
+    );
+    // Nothing waits, the platform does not say, or the platform keeps them as it is GitHub's or its
+    // own failure: nothing is said.
+    for (const more of [
+      { state: "paused", reason: "protected", releaseAt },
+      { state: "paused", reason: "protected", head: 11 },
+      { head: 11, failures: 30, failingSince: NOW - FAILING_LONG_MS, releaseAt },
+    ] as const)
+      expect(githubOfStatus({ status: status(more), now: NOW }, t).clearsIn).toBeUndefined();
+    // Nor for something that is no error.
+    expect(githubOfStatus({ status: status({ head: 11, releaseAt }), now: NOW }, t).clearsIn).toBe(
+      undefined,
+    );
+    // The list says the same.
+    const listed = githubOfListed(
+      {
+        attention: "conflicts",
+        archive: { seq: 3, behind: true },
+        releaseAt: NOW + 6 * DAY + MINUTE,
+      },
+      NOW,
+      t,
+    );
+    expect(listed.clearsIn).toBe(7);
+  });
+
+  it("says that a project with no repository goes as a whole, where the platform says when", () => {
+    const none = githubOfStatus({ status: status({ state: "none", releaseAt }), now: NOW }, t);
+    expect(githubText(none, t)).toBe("没有仓库，7 天没打开会被删除");
+    expect(githubAbout(none, t)).toBe(
+      "没有 GitHub 仓库，7 天没打开会被删除。点“选仓库…”选一个仓库，选好以后会自动存进去。",
+    );
+    expect(of({ state: "none" })).toBe("error noRepository 还差一步：选仓库");
+  });
+});

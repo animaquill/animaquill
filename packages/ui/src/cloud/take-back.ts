@@ -18,11 +18,18 @@
  *   `ProjectStore.mergeFiles`; files that both changed in the same place, and every file that is
  *   not the same where nothing says what both had (`commonBase` false, or more than one copy
  *   between), people choose for, as in `reconcile.ts`.
- * - The log then starts anew, in one step: the new copy as the platform has it, and what came of
- *   this computer's changes as one change on top, which syncs as any other. What the log had is
- *   kept until that change is on the platform (`ProjectLibrary.renew`, `CloudLink.kept`). A page
- *   that goes away halfway leaves the link saying so (`CloudLink.renewing`), and whoever opens the
- *   project next finishes it or puts it back, see `settleRenewal`.
+ * - What came of this computer's changes goes to the platform as one change first, on its own, and
+ *   the platform takes it only where the new copy is still as it was read (`pushExpecting`, the
+ *   design's P3a): two computers with the same changes that take them back at the same time would
+ *   otherwise both put them in, and text twice. The one that came second plans again from what the
+ *   platform has then, where the first one's are there already; three times at most, then people
+ *   try again ("moved"). Nothing here changed meanwhile.
+ * - The log then starts anew, in one step: the new copy as the platform has it, and that change on
+ *   top, both as the platform's. What the log had is kept until a week after (`ProjectLibrary.renew`,
+ *   `CloudLink.kept`). A page that goes away halfway leaves the link saying so
+ *   (`CloudLink.renewing`), and whoever opens the project next finishes it or puts it back, see
+ *   `settleRenewal`; one that goes away after the platform took the change and before the log
+ *   started anew takes it back again from the start, and finds the change there already.
  *
  * The log of the copy before never goes to the new one as it is: Yjs would keep either side of
  * every key at random.
@@ -43,7 +50,13 @@ import {
   type RepositoryStatus,
 } from "@animaquill/host";
 import type { Problem } from "@animaquill/schema";
-import { download, DownloadFailed, type Downloaded } from "./download.ts";
+import {
+  download,
+  DownloadFailed,
+  pushExpecting,
+  type Downloaded,
+  type Pushed,
+} from "./download.ts";
 import {
   differencesOf,
   settle,
@@ -311,11 +324,12 @@ export type TakeBackOutcome =
    * It did not get there, and nothing changed: `why` says what stopped it ("unsaved": what this
    * window changed is not in the log; "unreadable": the project here cannot be written as files;
    * "kept": the folder could not keep what it had; "library": this browser could not start the log
-   * anew; "gone": the link went).
+   * anew; "gone": the link went; "moved": the platform's copy changed under it each of the times it
+   * tried; "refused": the platform did not take what came of this computer's changes).
    */
   | {
       readonly kind: "failed";
-      readonly why: "unsaved" | "unreadable" | "kept" | "library" | "gone";
+      readonly why: "unsaved" | "unreadable" | "kept" | "library" | "gone" | "moved" | "refused";
       readonly error?: unknown;
       readonly problems?: readonly Problem[];
     };
@@ -357,8 +371,11 @@ export interface TakeBackRun {
   readonly signal?: AbortSignal;
 }
 
-/** How many times the log may change under a plan before giving up for now. */
-const MOST_TRIES = 3;
+/**
+ * How many times the log here, or the platform's copy, may change under a plan before giving up
+ * until people try again.
+ */
+export const MOST_TRIES = 3;
 
 export class TakeBack {
   readonly #options: TakeBackOptions;
@@ -373,7 +390,7 @@ export class TakeBack {
       const outcome = await this.#once(run);
       if (outcome !== "again") return outcome;
     }
-    return { kind: "later", why: "moved" };
+    return { kind: "failed", why: "moved" };
   }
 
   async #once(run: TakeBackRun): Promise<TakeBackOutcome | "again"> {
@@ -453,10 +470,9 @@ export class TakeBack {
       // computer took the same back meanwhile: the change is made against the copy as it was, and
       // Yjs would keep either side of such a file at random, or put the same text in twice. Where
       // it did, it is planned again from what the platform has now, and people look again (as in
-      // the review of linking a folder, 1); what is there already is no change any more. As late
-      // as it can be: what is left between this and the platform taking the change is a known
-      // risk until the platform takes it only on the copy as it was then, see the design of the
-      // start page, 1. What the platform changed elsewhere comes in as any change of others does.
+      // the review of linking a folder, 1); what is there already is no change any more. The
+      // platform takes the change only on the copy as it was read, see below: this only spares
+      // people choosing again for what they would have to anyway.
       const touched = pathsOf(plan.cloud, after).filter(
         (path) => plan.cloud.get(path) !== after.get(path),
       );
@@ -475,13 +491,37 @@ export class TakeBack {
         }
       }
       const window = this.#options.window;
-      const at = (this.#options.now ?? Date.now)();
+      // What came of this computer's changes goes first, and only onto the copy as it was read.
+      let seq = now.head;
+      let digest = now.digest;
+      if (update) {
+        let pushed: Pushed;
+        try {
+          pushed = await pushExpecting(
+            this.#options.cloud,
+            project,
+            { generation, after: now.head, digest: now.digest, kind: "other", update },
+            { window, editor: this.#options.editor, ...(run.signal && { signal: run.signal }) },
+          );
+        } catch (error) {
+          if (run.signal?.aborted) return { kind: "cancelled" };
+          return { kind: "later", why: laterOf(error) };
+        }
+        if (pushed.kind === "moved") return "again";
+        if (pushed.kind === "refused") {
+          if (pushed.retry) return { kind: "later", why: "unavailable" };
+          console.warn("The platform did not take what came of taking the copy back", pushed);
+          return { kind: "failed", why: "refused" };
+        }
+        seq = pushed.seq;
+        digest = pushed.digest;
+      }
       const renewal: CloudRenewal = {
         id: newSyncId(),
         from: run.generation,
         generation,
-        seq: now.head,
-        digest: now.digest,
+        seq,
+        digest,
         backup: `copy${run.generation}-${newSyncId()}`,
       };
       // Only where the log is still as it was read: what another window, or the start page, wrote
@@ -492,7 +532,7 @@ export class TakeBack {
         renewal,
         [
           { update: now.state, source: { kind: "cloud", seq: now.head } },
-          ...(update ? [{ update, source: { kind: "other", window, at } }] : []),
+          ...(update ? [{ update, source: { kind: "cloud" as const, seq } }] : []),
         ],
         lastMark,
       );
@@ -594,8 +634,9 @@ function filesOf(state: Uint8Array): Map<string, string> {
 
 /**
  * Moves the link on to the copy that its log is on now, see `CloudLinks.update` with `renewed`:
- * the platform has all of the log up to its first entry, which is the copy as it came, and the
- * rest, what came of the changes of this computer and whatever was done since, goes there.
+ * the platform has all of the log up to `renewal.seq`, which is the copy as it came and what came
+ * of the changes of this computer, the platform's from the start, and the rest, whatever was done
+ * since, goes there.
  */
 async function finishRenewal(
   cloud: CloudAccess,
@@ -611,13 +652,17 @@ async function finishRenewal(
   } finally {
     log.close();
   }
-  const first = entries[0];
-  // The copy as it came is the first entry: where it is not, all of it goes, which costs time and
-  // nothing else, as the platform has what it has.
-  const isCopy =
-    first !== undefined && first.source?.kind === "cloud" && first.source.seq === renewal.seq;
+  // The copy as it came, and what came of the changes of this computer, are the first entries:
+  // where they are not, all of it goes, which costs time and nothing else, as the platform has what
+  // it has.
+  let pushed = 0;
+  for (const entry of entries) {
+    const seq = entry.source?.kind === "cloud" ? entry.source.seq : undefined;
+    if (seq === undefined || seq > renewal.seq) break;
+    pushed = entry.mark;
+  }
   await cloud.links.update(key, project, {
-    renewed: { pushed: isCopy ? first.mark : 0, until: entries.at(-1)?.mark ?? 0, at: Date.now() },
+    renewed: { pushed, until: entries.at(-1)?.mark ?? 0, at: Date.now() },
   });
 }
 

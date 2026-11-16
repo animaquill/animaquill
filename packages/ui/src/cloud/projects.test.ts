@@ -930,6 +930,54 @@ describe("projects of the platform without a folder", () => {
 });
 
 describe("taking the copy of a project out of this browser", () => {
+  it("says where the platform has changes GitHub does not, which go a week after it was last opened", async () => {
+    const time = new TestTime();
+    const platform = new MemoryPlatform();
+    const { project } = await onPlatform(platform, time);
+    const repository = new FakeRepositories();
+    const here = await windowOf(platform, time, { repository });
+    await here.cloud.openCloudProject(project);
+    await time.advance(200);
+    await here.cloud.close();
+    await here.session.close();
+    const releaseAt = Date.now() + 5 * 24 * 3600_000;
+    // Archiving paused for two conflicts with GitHub, and changes wait.
+    repository.answer = {
+      archiving: false,
+      state: "paused",
+      reason: "conflicts",
+      conflicts: 2,
+      head: 9,
+      archivedSeq: 4,
+      releaseAt,
+    };
+    const asked = answering(here.dialogs, () => false);
+    expect(await here.cloud.removeFromBrowser(project)).toBe(false);
+    expect(asked[0]).toMatchObject({
+      kind: "confirm",
+      warning:
+        "这个项目还有改动没存进 GitHub（有 2 处冲突）。平台上的临时内容 7 天没打开会清掉；把这个浏览器里的副本也移除以后，这些改动最多再留 7 天，之后就没了。建议先处理好再移除。",
+      cancel: "先不移除",
+      confirm: "仍然移除",
+      keep: true,
+      danger: true,
+    });
+    // Saying no keeps it.
+    expect(here.library.summaries.has(project)).toBe(true);
+    // Not where the platform keeps them anyway, as GitHub is away, nor where it lets nothing go,
+    // nor where GitHub has everything.
+    for (const more of [
+      { state: "ready", head: 9, archivedSeq: 4, failures: 3, failingSince: 1, releaseAt },
+      { state: "paused", reason: "protected", head: 9, archivedSeq: 4 },
+      { state: "paused", reason: "protected", head: 9, archivedSeq: 9, releaseAt },
+    ] as const) {
+      repository.answer = { archiving: false, ...more };
+      const again = answering(here.dialogs, () => false);
+      expect(await here.cloud.removeFromBrowser(project)).toBe(false);
+      expect(again[0]).not.toHaveProperty("warning");
+    }
+  });
+
   /** A browser with a copy of a project of the platform, opened and in step, on the start page. */
   async function withCopy() {
     const time = new TestTime();

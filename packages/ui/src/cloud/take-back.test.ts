@@ -1,6 +1,7 @@
 import { ProjectStore, type CommandCall } from "@animaquill/core";
-import type { CloudLink } from "@animaquill/host";
+import type { CloudAccess, CloudConnection, CloudLink } from "@animaquill/host";
 import { afterEach, describe, expect, it } from "vitest";
+import { randomFrom, seedIds } from "../../../core/src/fuzz-support.ts";
 import { loadFixture } from "../../../schema/scripts/fixture.ts";
 import { MemoryLibrary, memoryAddress } from "../workbench/memory-library.ts";
 import { ProjectSession, type SessionMessages } from "../workbench/session.ts";
@@ -9,6 +10,7 @@ import type { ReconcileChoices } from "./reconcile.ts";
 import { CloudSession } from "./session.ts";
 import {
   KEEP_BACKUP_MS,
+  MOST_TRIES,
   TakeBack,
   baseOfTakeBack,
   dropKept,
@@ -144,9 +146,13 @@ class Device extends TestCloudBrowser {
     opened.splice(opened.indexOf(window), 1);
   }
 
+  /** `gate`: changes go to the platform only once every device sent one, see `PushGate`. */
+  gate: PushGate | undefined;
+
   takeBack(): TakeBack {
+    const access = this.access({ isAlive: () => true, asleep: false });
     return new TakeBack({
-      cloud: this.access({ isAlive: () => true, asleep: false }),
+      cloud: this.gate ? this.gate.around(access) : access,
       projects: this.library,
       status: statusFor(this),
       window: "take-back",
@@ -168,6 +174,50 @@ class Device extends TestCloudBrowser {
       entries: async () => (await window.session.journal.entries()) ?? [],
       choose,
     });
+  }
+}
+
+/**
+ * Holds the changes devices send until each of them sent one, or a moment went by: so that all of
+ * them read the platform's copy before any change is there, as pages that open at the same moment
+ * can, which is what only the platform's condition covers (`expect` of "push").
+ */
+class PushGate {
+  readonly #parties: number;
+  #arrived = 0;
+  #open: () => void = () => {};
+  readonly #opened = new Promise<void>((resolve) => {
+    this.#open = resolve;
+    setTimeout(resolve, 3000);
+  });
+
+  constructor(parties: number) {
+    this.#parties = parties;
+  }
+
+  around(access: CloudAccess): CloudAccess {
+    return {
+      ...access,
+      connect: (): CloudConnection => {
+        const connection = access.connect();
+        return {
+          opened: connection.opened,
+          closed: connection.closed,
+          onMessage: (listener) => connection.onMessage(listener),
+          close: (code, reason) => connection.close(code, reason),
+          send: (data) => {
+            const length = new DataView(data.buffer, data.byteOffset).getUint32(0);
+            const header = new TextDecoder().decode(data.subarray(4, 4 + length));
+            if (!header.includes('"t":"push"')) {
+              connection.send(data);
+              return;
+            }
+            if (++this.#arrived >= this.#parties) this.#open();
+            void this.#opened.then(() => connection.send(data));
+          },
+        };
+      },
+    };
   }
 }
 
@@ -343,8 +393,9 @@ describe("TakeBack", () => {
 
     const outcome = await a.run(again);
     expect(outcome).toMatchObject({ kind: "renewed", changed: true, merged: ["code/b.js"] });
-    // What the log had stays until the platform has what came of it.
-    expect(await dropKept(a.access(again.page), a.library, a.key, LATER)).toBe(false);
+    // The platform has what came of it before the log starts anew: what the log had stays a week.
+    expect(cloudText(platform, "code/b.js")).toBe("one\ntwo\nlate\n");
+    expect(await dropKept(a.access(again.page), a.library, a.key, Date.now())).toBe(false);
     expect(await a.library.backups(a.key)).toHaveLength(1);
     await a.close(again);
     const renewed = await a.open();
@@ -779,12 +830,10 @@ describe("a window of the copy before whose log cannot be read for a moment", ()
 });
 
 describe("two devices that take the same change back at the same moment", () => {
-  // A known risk, see the design of the start page of AnimaQuill Cloud, 1: both read the new copy
-  // before either change is there, and Yjs puts the same text in twice. The platform is to take
-  // such a change only where its copy is still the one it was made against, before it lets go of
-  // copies by itself (P3). This says so where that is done.
-  it.fails("puts it in once (not yet: it goes in twice)", async () => {
-    const { time, platform, a, window } = await start();
+  // Both read the new copy before either change is there: the platform takes the first one's only
+  // (`expect` of "push", the design's P3a), and the second plans again from what it has then,
+  // where the change is already, see the design of the start page of AnimaQuill Cloud, 1.
+  async function bothTakeBack(platform: MemoryPlatform, time: TestTime, a: Device, window: Window) {
     platform.archive(CLOUD_ID);
     const b = new Device(platform, "b-key", time);
     await b.fromPlatform();
@@ -804,6 +853,9 @@ describe("two devices that take the same change back at the same moment", () => 
     expect(aw.cloud.getSnapshot()).toMatchObject({ problem: { kind: "rebuilt" } });
     expect(bw.cloud.getSnapshot()).toMatchObject({ problem: { kind: "rebuilt" } });
     // Both read the new copy before either change is there, as two pages that open at once.
+    const gate = new PushGate(2);
+    a.gate = gate;
+    b.gate = gate;
     const [ra, rb] = await Promise.all([a.run(aw, all("cloud")), b.run(bw, all("cloud"))]);
     expect(ra.kind).toBe("renewed");
     expect(rb.kind).toBe("renewed");
@@ -814,6 +866,127 @@ describe("two devices that take the same change back at the same moment", () => 
     await time.advance(2000);
     expect(a2.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
     expect(b2.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
+    return { ra, rb };
+  }
+
+  it("puts it in once: the platform takes one of them, and the other has nothing left to add", async () => {
+    const { time, platform, a, window } = await start();
+    const { ra, rb } = await bothTakeBack(platform, time, a, window);
     expect(cloudText(platform, "code/b.js")).toBe("one\ntwo\nlate\n");
+    // One of them brought the file in, the other one found it there once it planned again.
+    const merged = [ra, rb].map((outcome) => (outcome.kind === "renewed" ? outcome.merged : []));
+    expect(merged.filter((files) => files.length > 0)).toEqual([["code/b.js"]]);
+    expect(platform.rejected).toEqual(["moved"]);
+  });
+
+  it("goes in twice where the platform takes either, which is what the condition is for", async () => {
+    const { time, platform, a, window } = await start();
+    platform.ignoresExpect = true;
+    await bothTakeBack(platform, time, a, window);
+    // Yjs keeps both insertions of what the two changes have the same: "latlate".
+    expect(cloudText(platform, "code/b.js")).not.toBe("one\ntwo\nlate\n");
+    expect(platform.rejected).toEqual([]);
+  });
+
+  it("gives up after three tries where the platform's copy keeps changing, and changes nothing", async () => {
+    const { time, platform, a, window } = await start();
+    platform.archive(CLOUD_ID);
+    expect(window.store.execute(writeFile("code/a.js", "mine\n")).ok).toBe(true);
+    await time.advance(200);
+    await a.close(window);
+    const again = await releaseAndComeBack(platform, a, time);
+    const link = await a.links.get(a.key);
+    for (let tries = 0; tries < MOST_TRIES; tries++)
+      platform.faults.rejections.push({ reason: "moved", retry: false });
+    const outcome = await a.run(again, all("here"));
+    expect(outcome).toEqual({ kind: "failed", why: "moved" });
+    expect(platform.faults.rejections).toHaveLength(0);
+    // Nothing changed here: the log and the link are as they were, for people to try again.
+    expect(await a.links.get(a.key)).toEqual(link);
+    expect(await a.library.backups(a.key)).toHaveLength(0);
+    expect(await a.run(again, all("here"))).toMatchObject({ kind: "renewed", changed: true });
+    expect(cloudText(platform, "code/a.js")).toBe("mine\n");
+  });
+});
+
+describe("devices that take the same changes back at the same moment, at random", () => {
+  /**
+   * The random test of the condition (the design's P3a): two or three devices have the same change
+   * that never got into the repository, and each one a change of its own that never got to the
+   * platform; the platform lets go of its copy, and all of them take theirs back at about the same
+   * moment, in a random order and with random delays. The shared change is in once, and each
+   * device's own change is there. Without the condition, some seed puts the shared one in twice.
+   */
+  async function round(seed: number, ignoresExpect: boolean): Promise<number> {
+    const random = randomFrom(seed);
+    const { time, platform, a, window } = await start();
+    platform.ignoresExpect = ignoresExpect;
+    platform.archive(CLOUD_ID);
+    const devices = [a];
+    const others = 1 + random.int(2);
+    for (let index = 0; index < others; index++) {
+      const device = new Device(platform, `d${index}-key`, time);
+      await device.fromPlatform();
+      devices.push(device);
+    }
+    const windows = [window];
+    for (const device of devices.slice(1)) windows.push(await device.open());
+    await time.advance(500);
+    const shared = `one\ntwo\nshared ${seed}\n${"more\n".repeat(random.int(4))}`;
+    expect(window.store.execute(writeFile("code/b.js", shared)).ok).toBe(true);
+    await time.advance(500);
+    for (const each of windows) expect(each.store.getState().files["code/b.js"]).toBe(shared);
+    for (const [index, device] of devices.entries()) await device.close(windows[index] as Window);
+    // Each one changes a file of its own offline: only it has that.
+    platform.faults.silent = true;
+    for (const [index, device] of devices.entries()) {
+      const away = await device.open();
+      await time.advance(10);
+      expect(away.store.execute(writeFile(`code/own${index}.js`, `own ${index}\n`)).ok).toBe(true);
+      await away.session.trySave();
+      await device.close(away);
+    }
+    platform.faults.silent = false;
+    platform.release(CLOUD_ID);
+    await time.advance(10);
+    const back: Window[] = [];
+    for (const device of devices) back.push(await device.open());
+    await time.advance(30_000);
+    for (const each of back)
+      expect(each.cloud.getSnapshot()).toMatchObject({ problem: { kind: "rebuilt" } });
+    const gate = new PushGate(devices.length);
+    for (const device of devices) device.gate = gate;
+    const order = devices.map((_, index) => index).toSorted(() => random.int(3) - 1);
+    const outcomes = await Promise.all(
+      order.map(async (index) => {
+        await new Promise((resolve) => setTimeout(resolve, random.int(40)));
+        return (devices[index] as Device).run(back[index] as Window, all("here"));
+      }),
+    );
+    for (const outcome of outcomes) expect(outcome.kind).toBe("renewed");
+    for (const [index, device] of devices.entries()) await device.close(back[index] as Window);
+    for (const device of devices) await device.open();
+    await time.advance(3000);
+    for (const index of devices.keys())
+      expect(cloudText(platform, `code/own${index}.js`)).toBe(`own ${index}\n`);
+    return cloudText(platform, "code/b.js")?.split(`shared ${seed}`).length ?? 0;
+  }
+
+  it.each([1, 2, 3, 4, 5, 6])("puts the shared change in once (seed %i)", async (seed) => {
+    seedIds(seed);
+    expect(await round(seed, false)).toBe(2);
+  });
+
+  it("puts it in more than once without the condition, for some seed", async () => {
+    const counts: number[] = [];
+    for (const seed of [1, 2, 3]) {
+      seedIds(seed);
+      counts.push(await round(seed, true));
+      for (const window of opened.splice(0)) {
+        await window.cloud.close();
+        await window.session.close();
+      }
+    }
+    expect(counts.some((count) => count > 2)).toBe(true);
   });
 });

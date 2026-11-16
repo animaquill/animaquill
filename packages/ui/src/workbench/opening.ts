@@ -45,6 +45,11 @@ export interface OpeningSnapshot {
   readonly step: OpeningStep | undefined;
   /** How the step of the platform ended, once it did. */
   readonly cloud: CatchUp | undefined;
+  /**
+   * The platform let go of its copy, which comes back from the repository meanwhile, as the step of
+   * the platform found (`CloudSnapshot.restoring`): it waits for it as long as it waits at all.
+   */
+  readonly restoring?: boolean;
 }
 
 /** What opening needs of the syncing of a project, see `CloudProjects`. */
@@ -56,7 +61,7 @@ export interface OpeningCloud {
 }
 
 export interface OpeningSync {
-  getSnapshot(): Pick<CloudSnapshot, "state">;
+  getSnapshot(): Pick<CloudSnapshot, "state" | "restoring">;
   subscribe(listener: () => void): () => void;
 }
 
@@ -106,6 +111,8 @@ interface Run {
   readonly key: string;
   step: OpeningStep;
   cloud: CatchUp | undefined;
+  /** See `OpeningSnapshot.restoring`. */
+  restoring: boolean;
   readonly over: AbortController;
   /** The folder is there, and starts with this, see `folder`; `done` hears what came of it. */
   folder:
@@ -209,6 +216,7 @@ export class ProjectOpening {
       key,
       step: "log",
       cloud: undefined,
+      restoring: false,
       over: new AbortController(),
       folder: undefined,
       folderCame,
@@ -325,7 +333,16 @@ export class ProjectOpening {
       };
       const closed = () => end("closed");
       const look = () => {
-        switch (sync.getSnapshot().state) {
+        const snapshot = sync.getSnapshot();
+        // On its way back from the repository: the line is not what is wrong, and it waits.
+        if (snapshot.restoring !== undefined && snapshot.state !== "online") {
+          if (!run.restoring) {
+            run.restoring = true;
+            this.#show(run);
+          }
+          return;
+        }
+        switch (snapshot.state) {
           case "online":
             end("caught-up");
             return;
@@ -379,7 +396,12 @@ export class ProjectOpening {
 
   #show(run: Run): void {
     if (this.#run !== run) return;
-    this.#set({ key: run.key, step: run.step, cloud: run.cloud });
+    this.#set({
+      key: run.key,
+      step: run.step,
+      cloud: run.cloud,
+      ...(run.restoring && { restoring: true }),
+    });
   }
 
   #set(snapshot: OpeningSnapshot): void {
@@ -387,7 +409,8 @@ export class ProjectOpening {
     if (
       before.key === snapshot.key &&
       before.step === snapshot.step &&
-      before.cloud === snapshot.cloud
+      before.cloud === snapshot.cloud &&
+      before.restoring === snapshot.restoring
     )
       return;
     this.#snapshot = snapshot;

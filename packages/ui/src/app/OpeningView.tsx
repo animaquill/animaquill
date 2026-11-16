@@ -50,7 +50,11 @@ export function OpeningView() {
       id: "cloud",
       label: t("repoMerge.opening.cloud"),
       state: stateOf("cloud"),
-      word: cloudWord(snapshot.cloud),
+      // The platform let go of its copy, which comes back from GitHub: why it takes a moment.
+      word:
+        snapshot.restoring === true && snapshot.step === "cloud"
+          ? t("cloud.open.restoringReleased")
+          : cloudWord(snapshot.cloud),
     });
   if (key !== undefined && projectFolders?.holds(key) === true)
     rows.push({

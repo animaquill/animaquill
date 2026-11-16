@@ -279,7 +279,7 @@ describe("the status of the platform in a project", () => {
     expect(
       read(cloudPanel(linked({ sync: sync({ state: "reconnecting", restoring: "restoring" }) }), t))
         .rows[1],
-    ).toBe("同步  正在从 GitHub 取回…");
+    ).toBe("同步  正在从 GitHub 取回…（平台上的临时内容 7 天没用已清掉）");
     // ...and could not lately: why, and what helps where the repository had what kept it.
     const notMade = (code: string) =>
       cloudPanel(

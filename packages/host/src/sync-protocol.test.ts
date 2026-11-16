@@ -100,6 +100,35 @@ describe("the copies of a project in the sync protocol", () => {
   });
 });
 
+describe("a change the platform takes only where the project still is as it was", () => {
+  const push: SyncClientMessage = {
+    t: "push",
+    id: 3,
+    kind: "other",
+    base: 12,
+    at: 1_700_000_000_000,
+    window: "window1",
+    behind: false,
+    payload: new Uint8Array([1, 2]),
+  };
+
+  it("says which copy and which update, which a window from before does not", () => {
+    const expecting = { ...push, expect: { generation: 2, seq: 12 } };
+    expect(readSyncClientMessage(encodeSyncMessage(expecting))).toEqual(expecting);
+    const notSaid = readSyncClientMessage(encodeSyncMessage(push));
+    expect(notSaid).toEqual(push);
+    expect(notSaid).not.toHaveProperty("expect");
+    const { payload: _payload, ...header } = push;
+    for (const wrong of [true, "2", null, { generation: 2 }, { generation: -1, seq: 3 }])
+      expect(readSyncClientMessage(frame({ ...header, expect: wrong }))).toBeUndefined();
+  });
+
+  it("is turned away with a reason of its own, that an editor knows", () => {
+    const turned: SyncServerMessage = { t: "reject", id: 3, reason: "moved", retry: false };
+    expect(readSyncServerMessage(encodeSyncMessage(turned))).toEqual(turned);
+  });
+});
+
 describe("updates the platform wrote as a batch of its own", () => {
   const update: SyncServerMessage = {
     t: "update",

@@ -8,6 +8,7 @@ import {
 } from "@animaquill/host";
 import type { TFunction } from "i18next";
 import { httpsLink } from "../app/links.ts";
+import { agoText } from "../app/start-view.ts";
 import { githubAbout, githubOfListed } from "../cloud/github-status.ts";
 import { unusableLine, unusableWays } from "../cloud/unusable.ts";
 import {
@@ -249,7 +250,33 @@ export interface CardStatus {
   readonly alert?: true;
   /** What the line means and what people can do, for hovering. */
   readonly hint: string | undefined;
+  /**
+   * What people can do about it right there, under the line: choose a repository for a project
+   * that has none, as it goes as a whole once nobody opened it for a week.
+   */
+  readonly way?: "chooseRepository";
 }
+
+const DAY = 24 * 60 * 60_000;
+
+/** "上次打开：9 天前", by when a window that edits it last connected on any computer. */
+const openedLine = (at: number | undefined, now: number, t: TFunction): string | undefined =>
+  at === undefined
+    ? undefined
+    : t("start.info.opened", {
+        when:
+          now - at >= DAY
+            ? t("start.ago.days", { count: Math.floor((now - at) / DAY) })
+            : agoText(at, now, t),
+        ...plain,
+      });
+
+/** The hint of a line, with when it was last opened, where the platform says. */
+const withOpened = (status: CardStatus, at: number | undefined, now: number, t: TFunction) => {
+  const opened = openedLine(at, now, t);
+  if (opened === undefined) return status;
+  return { ...status, hint: status.hint === undefined ? opened : `${status.hint}\n${opened}` };
+};
 
 const plain = { interpolation: { escapeValue: false } } as const;
 
@@ -298,6 +325,15 @@ export function cardStatus(
   t: TFunction,
   now = Date.now(),
 ): CardStatus {
+  return withOpened(lineOf(card, folder, t, now), platformOf(card)?.archive?.openedAt, now, t);
+}
+
+function lineOf(
+  card: ProjectCard,
+  folder: FolderStatus | undefined,
+  t: TFunction,
+  now: number,
+): CardStatus {
   const { source } = card;
   // What says most: a project that cannot be edited, then one that cannot get into its repository,
   // as the platform keeps it a week only. Changes on their way there say so, as nothing to do.
@@ -309,6 +345,22 @@ export function cardStatus(
       text: unusableLine(platform.unusable, now, t),
       tone: "warning",
       hint: t("start.hint.unusable"),
+    };
+  }
+  // One with no repository goes as a whole once nobody opened it for a week, where the platform
+  // says when: it stands out, with the way out right under it.
+  if (
+    platform?.archive?.attention === "noRepository" &&
+    platform.archive.releaseAt !== undefined &&
+    platform.mark?.kind === "noRepository"
+  ) {
+    return {
+      place: where,
+      text: t("start.status.noRepositoryDeletes"),
+      tone: "warning",
+      alert: true,
+      hint: t("start.hint.noRepository"),
+      way: "chooseRepository",
     };
   }
   const github = platform?.archive && githubOfListed(platform.archive, now, t);
@@ -376,14 +428,18 @@ export function cardStatus(
       ? t("start.status.onlyBrowser")
       : row.copy === "live"
         ? t("start.status.notHere")
-        : t("start.status.fromGitHub");
+        : row.copy === "restoring"
+          ? t(row.released === true ? "cloud.open.restoringReleased" : "cloud.open.restoring")
+          : t("start.status.fromGitHub");
   return {
     place: "cloud",
     text: t("start.status.cloud", { what: trouble ?? githubWord ?? place, ...plain }),
     tone: trouble === undefined ? "plain" : "warning",
     hint:
       markHint(row.mark, t) ??
-      (githubWord !== undefined && github ? githubAbout(github, t) : undefined),
+      (githubWord !== undefined && github ? githubAbout(github, t) : undefined) ??
+      // Coming back from GitHub, said whole where the line is too short for it.
+      (row.copy === "restoring" && trouble === undefined ? place : undefined),
   };
 }
 
@@ -438,6 +494,11 @@ export type CardAction =
   | "delete"
   /** People choose a picture as the cover, see start/cover-choice.ts. */
   | "setCover"
+  /**
+   * Opens the project and has people choose a repository for it, from under the line of one that
+   * has none, see `CardStatus.way`.
+   */
+  | "chooseRepository"
   /** Back to the cover the editor makes. */
   | "autoCover";
 

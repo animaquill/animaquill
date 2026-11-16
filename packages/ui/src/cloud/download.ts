@@ -4,8 +4,11 @@ import {
   SYNC_LIMITS,
   SYNC_PROTOCOL,
   encodeSyncMessage,
+  framesOf,
   readSyncServerMessage,
   type CloudAccess,
+  type SyncKind,
+  type SyncRejection,
 } from "@animaquill/host";
 
 /** How long the whole project may take to come, at most. */
@@ -35,6 +38,141 @@ export interface Downloaded {
   readonly digest: string;
   /** Which working copy of the platform this is, where the platform says, see `CloudLink.generation`. */
   readonly generation: number | undefined;
+}
+
+/**
+ * What came of a change sent on its own, see `pushExpecting`: the platform has it, as this update
+ * ("taken"; one that was there already says the update the project is at); the project moved on
+ * from where the change was made, and the platform did not take it ("moved"); or it did not take it
+ * for another reason ("refused", and whether it can go again later).
+ */
+export type Pushed =
+  | { readonly kind: "taken"; readonly seq: number; readonly digest: string }
+  | { readonly kind: "moved" }
+  | { readonly kind: "refused"; readonly reason: SyncRejection; readonly retry: boolean };
+
+/**
+ * Sends one change of a project on a connection of its own, made against the project as it was
+ * at `after` (whose digest is `digest`) of working copy `generation`: the platform takes it only
+ * where the project is still there (`expect` of "push"), and where anything came since, nothing is
+ * sent. What taking a copy back makes goes so (see `TakeBack`): the same change of another computer
+ * that came first would be in twice. Rejects with `DownloadFailed` where the connection closed
+ * before the platform said, or it took too long.
+ */
+export async function pushExpecting(
+  cloud: CloudAccess,
+  project: string,
+  change: {
+    readonly generation: number;
+    readonly after: number;
+    readonly digest: string;
+    readonly kind: SyncKind;
+    readonly update: Uint8Array;
+  },
+  who: { readonly window: string; readonly editor: string; readonly signal?: AbortSignal },
+): Promise<Pushed> {
+  const connection = cloud.connect();
+  try {
+    return await new Promise<Pushed>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new DownloadFailed("The change took too long to go")),
+        DOWNLOAD_MS,
+      );
+      const done = (pushed: Pushed) => {
+        clearTimeout(timer);
+        resolve(pushed);
+      };
+      const fail = (error: Error) => {
+        clearTimeout(timer);
+        reject(error);
+      };
+      void connection.closed.then(({ code, reason }) =>
+        fail(new DownloadFailed("The platform closed the connection", code, reason)),
+      );
+      who.signal?.addEventListener("abort", () => {
+        fail(new DownloadFailed("Stopped"));
+        connection.close(1000, "");
+      });
+      const frames = new Reassembler(SYNC_LIMITS.state);
+      let moved = false;
+      let sent = false;
+      connection.onMessage((data) => {
+        const whole = frames.take(data);
+        if (whole === "more") return;
+        const message = whole && readSyncServerMessage(whole);
+        if (!message) {
+          fail(new DownloadFailed("The platform said something that makes no sense"));
+          return;
+        }
+        switch (message.t) {
+          case "welcome":
+            if (message.reset || message.generation !== change.generation) moved = true;
+            return;
+          case "update":
+            moved = true;
+            return;
+          case "synced": {
+            if (sent) return;
+            if (moved || message.head !== change.after || message.digest !== change.digest) {
+              done({ kind: "moved" });
+              return;
+            }
+            sent = true;
+            for (const frame of framesOf({
+              t: "push",
+              id: 1,
+              kind: change.kind,
+              base: change.after,
+              at: Date.now(),
+              window: who.window,
+              behind: false,
+              expect: { generation: change.generation, seq: change.after },
+              payload: change.update,
+            }))
+              connection.send(frame);
+            return;
+          }
+          case "ack":
+            if (message.id === 1) done({ kind: "taken", seq: message.seq, digest: message.digest });
+            return;
+          case "reject":
+            if (message.id !== 1) return;
+            done(
+              message.reason === "moved"
+                ? { kind: "moved" }
+                : { kind: "refused", reason: message.reason, retry: message.retry },
+            );
+            return;
+          default:
+            return;
+        }
+      });
+      void (async () => {
+        try {
+          await connection.opened;
+          const device = await cloud.links.device();
+          connection.send(
+            encodeSyncMessage({
+              t: "hello",
+              v: SYNC_PROTOCOL,
+              project,
+              after: change.after,
+              digest: change.digest,
+              generation: change.generation,
+              device,
+              window: who.window,
+              editor: who.editor,
+              payload: new Uint8Array(0),
+            }),
+          );
+        } catch {
+          // The connection says why once it is closed.
+        }
+      })();
+    });
+  } finally {
+    connection.close(1000, "");
+  }
 }
 
 /**
