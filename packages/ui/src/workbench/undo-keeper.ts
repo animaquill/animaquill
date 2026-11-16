@@ -105,6 +105,8 @@ export class UndoKeeper {
   /** What lists show of each origin, as saved or as learned here. */
   readonly #about = new Map<Origin, UndoAbout>();
   readonly #pending = new Set<Origin>();
+  /** Origins whose logs are on their way to be saved, how many times. */
+  readonly #unsaved = new Map<Origin, number>();
   #timer: ReturnType<typeof setTimeout> | undefined;
   /**
    * Origins whose log here is what another window saved last. That window's changes can reach this
@@ -254,7 +256,18 @@ export class UndoKeeper {
     const store = this.#store;
     const key = this.#key;
     if (!store || key === undefined || origins.length === 0) return this.#saving.then(() => {});
+    return this.#queueSave(store, key, origins);
+  }
+
+  /** Saves after what is queued already; until then the logs count as not saved, see `#takeUp`. */
+  #queueSave(store: ProjectStore, key: string, origins: readonly Origin[]): Promise<void> {
+    for (const origin of origins) this.#unsaved.set(origin, (this.#unsaved.get(origin) ?? 0) + 1);
     return this.#queue(() => this.#save(store, key, origins));
+  }
+
+  /** Whether this window changed the log of an origin and has not saved it yet. */
+  #isUnsaved(origin: Origin): boolean {
+    return this.#pending.has(origin) || (this.#unsaved.get(origin) ?? 0) > 0;
   }
 
   #queue(run: () => Promise<void>): Promise<void> {
@@ -268,39 +281,49 @@ export class UndoKeeper {
     if (!host) return;
     for (const origin of origins) {
       try {
-        const record = store.saveUndo(origin);
-        if (!record) {
-          await host.remove(key, origin);
-          continue;
-        }
-        const told = this.#options.describe(origin);
-        const known = this.#about.get(origin);
-        const now = Date.now();
-        const about: UndoAbout = {
-          kind: kindOf(origin),
-          count: 0,
-          from: now,
-          to: now,
-          ...known,
-          ...told,
-        };
-        this.#about.set(origin, about);
-        const { dropped } = await host.save({
-          project: key,
-          origin,
-          record,
-          about,
-          madeAt: about.from,
-        });
-        this.#foreign.delete(origin);
-        if (dropped.length > 0) {
-          for (const away of dropped) store.forgetUndo(away);
-          this.#gone = await host.gone(key);
-          this.#emit();
-        }
-      } catch (error) {
-        console.warn("An undo log could not be saved", error);
+        await this.#saveOne(host, store, key, origin);
+      } finally {
+        const left = (this.#unsaved.get(origin) ?? 1) - 1;
+        if (left > 0) this.#unsaved.set(origin, left);
+        else this.#unsaved.delete(origin);
       }
+    }
+  }
+
+  async #saveOne(host: UndoStore, store: ProjectStore, key: string, origin: Origin): Promise<void> {
+    try {
+      const record = store.saveUndo(origin);
+      if (!record) {
+        await host.remove(key, origin);
+        return;
+      }
+      const told = this.#options.describe(origin);
+      const known = this.#about.get(origin);
+      const now = Date.now();
+      const about: UndoAbout = {
+        kind: kindOf(origin),
+        count: 0,
+        from: now,
+        to: now,
+        ...known,
+        ...told,
+      };
+      this.#about.set(origin, about);
+      const { dropped } = await host.save({
+        project: key,
+        origin,
+        record,
+        about,
+        madeAt: about.from,
+      });
+      this.#foreign.delete(origin);
+      if (dropped.length > 0) {
+        for (const away of dropped) store.forgetUndo(away);
+        this.#gone = await host.gone(key);
+        this.#emit();
+      }
+    } catch (error) {
+      console.warn("An undo log could not be saved", error);
     }
   }
 
@@ -320,9 +343,9 @@ export class UndoKeeper {
 
   async #takeUp(host: UndoStore, store: ProjectStore, key: string, origin: Origin): Promise<void> {
     // What this window changed and has not saved yet is newer than anything another one saved.
-    if (this.#pending.has(origin)) return;
+    if (this.#isUnsaved(origin)) return;
     const saved = await host.get(key, origin);
-    if (this.#store !== store || this.#pending.has(origin)) return;
+    if (this.#store !== store || this.#isUnsaved(origin)) return;
     if (saved?.window === host.window) return;
     this.#foreign.delete(origin);
     if (!saved) {
@@ -377,7 +400,7 @@ export class UndoKeeper {
       // of another window, which this one may be behind of.
       if (result.ok || !isForeign) {
         this.#pending.delete(origin);
-        await this.#queue(() => this.#save(store, key, [origin]));
+        await this.#queueSave(store, key, [origin]);
       }
       if (result.ok) {
         for (const each of store.undoOrigins) if (each !== origin) this.#pending.add(each);

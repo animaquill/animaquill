@@ -22,8 +22,18 @@ import {
 
 const STEPS = 160;
 
-const counts = { dropped: 0, reloads: 0, undone: 0, partly: 0, blocked: 0, redone: 0, restored: 0 };
+const counts = {
+  checked: 0,
+  dropped: 0,
+  reloads: 0,
+  undone: 0,
+  partly: 0,
+  blocked: 0,
+  redone: 0,
+  restored: 0,
+};
 const AT_LEAST: Readonly<Record<keyof typeof counts, number>> = {
+  checked: 200,
   dropped: 20,
   reloads: 40,
   undone: 60,
@@ -66,6 +76,20 @@ function shuffled<T>(items: readonly T[], random: ReturnType<typeof randomFrom>)
     [copy[index], copy[other]] = [copy[other] as T, copy[index] as T];
   }
   return copy;
+}
+
+/** Every value of a project, by its path, as text: what a change can leave or take away. */
+function valuesOf(
+  value: unknown,
+  path = "",
+  into = new Map<string, string>(),
+): Map<string, string> {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    for (const [key, inner] of Object.entries(value)) valuesOf(inner, `${path}/${key}`, into);
+  } else if (value !== undefined) {
+    into.set(path, JSON.stringify(value));
+  }
+  return into;
 }
 
 /** Runs something with ids from a seed, see `seedIds`. */
@@ -134,27 +158,39 @@ describe.each(Array.from({ length: 12 }, (_, i) => i + 1))(
         origins.add(origin);
       };
 
+      /**
+       * Who wrote each value last, as this test sees it, apart from the store and its records: what
+       * an AI task, a batch or people wrote is theirs; what something taken back put there is
+       * nobody's in particular, as it can belong to anyone it was handed back to.
+       */
+      const writers = new Map<string, string>();
+      let values = valuesOf(again.getState());
       for (let step = 0; step < STEPS; step++) {
         const where = `seed ${seed} step ${step}`;
         const roll = random.int(100);
+        let writer = "people";
         if (roll < 22) {
           command(undefined);
         } else if (roll < 42) {
           const origin = aiTask(`t${random.int(6)}`);
+          writer = origin;
           command(origin);
           origins.add(origin);
           save(origin);
         } else if (roll < 48) {
           const origin = folderBatch(`tool-${step}`);
+          writer = origin;
           batch(origin, false, where);
           save(origin);
         } else if (roll < 52) {
           const origin = repoBatch(`r${step}`);
+          writer = origin;
           batch(origin, true, where);
           save(origin);
         } else if (roll < 58) {
           // People take back their own steps, which only go as far as this store has them.
           const redo = random.chance(0.3);
+          writer = "back";
           if (redo ? again.canRedo : again.canUndo) {
             const [a, b] = both((store) => outcome(redo ? store.redo() : store.undo()), where);
             expect(b, where).toEqual(a);
@@ -171,6 +207,18 @@ describe.each(Array.from({ length: 12 }, (_, i) => i + 1))(
             `${where} ${redo ? "redo" : "undo"} ${origin}`,
           );
           expect(b, `${where} ${redo ? "redo" : "undo"} ${origin}`).toEqual(a);
+          // What anybody else wrote last stays as it is, whatever the records say.
+          const now = valuesOf(again.getState());
+          for (const key of new Set([...values.keys(), ...now.keys()])) {
+            if (values.get(key) === now.get(key)) continue;
+            const last = writers.get(key);
+            expect(
+              last === origin || last === "back",
+              `${where} ${origin} took ${key} of ${last}`,
+            ).toBe(true);
+            counts.checked += 1;
+          }
+          writer = "back";
           if (a.ok && !redo) counts.undone += 1;
           if (a.ok && redo) counts.redone += 1;
           if (a.ok && (a.kept?.length ?? 0) > 0) counts.partly += 1;
@@ -197,6 +245,7 @@ describe.each(Array.from({ length: 12 }, (_, i) => i + 1))(
           }
           const update = Y.encodeStateAsUpdate(other.doc, Y.encodeStateVector(live.doc));
           both((store) => Y.applyUpdate(store.doc, update, "remote"), where);
+          writer = "elsewhere";
         } else {
           // In any order: a record saved before another one takes nothing from it.
           again = reopen(again, shuffled([...records.values()], random));
@@ -206,6 +255,11 @@ describe.each(Array.from({ length: 12 }, (_, i) => i + 1))(
           counts.reloads += 1;
           expect(again.getState(), where).toEqual(live.getState());
         }
+        const now = valuesOf(again.getState());
+        for (const key of new Set([...values.keys(), ...now.keys()])) {
+          if (values.get(key) !== now.get(key)) writers.set(key, writer);
+        }
+        values = now;
       }
       for (const origin of origins) {
         expect(again.undoOutlook(origin), `seed ${seed} at the end ${origin}`).toEqual(

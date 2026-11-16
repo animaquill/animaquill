@@ -285,4 +285,97 @@ describe("undo logs saved and read again", () => {
     expect(store.undoOrigins).toEqual([]);
     expect(store.saveUndo(AI)).toBeUndefined();
   });
+
+  const addClip = (store: ProjectStore, origin: ReturnType<typeof aiTask>, start: string) => {
+    const added = success(
+      store.execute(
+        {
+          type: "clip.add",
+          params: {
+            timeline: "main",
+            track: Object.keys(store.getState().timelines["main"]?.tracks ?? {})[0],
+            start,
+            duration: "1",
+            source: { kind: "color", color: "#112233" },
+            overlap: "overwrite",
+          },
+        },
+        { origin },
+      ),
+    );
+    return added.patches[0]?.path[3] as string;
+  };
+
+  it("keep what people changed below a place whose record was saved after that", () => {
+    const store = open();
+    const id = addClip(store, AI, "40");
+    setProperty(store, "opacity", 0.5, {}, id);
+    const records = saved(store);
+    const again = reopened(store, records);
+    const clip = ["timelines", "main", "clips", id];
+    const live = store.undoOrigin(AI);
+    const re = again.undoOrigin(AI);
+    expect({ ...re, revision: 0 }).toEqual({ ...live, revision: 0 });
+    expect(again.getState()).toEqual(store.getState());
+    expect(live).toMatchObject({ ok: true, kept: [clip] });
+  });
+
+  it("keep what people wrote after a second task below the first, in either order", () => {
+    const build = () => {
+      const store = open();
+      const B = aiTask("two");
+      const id = addClip(store, AI, "40");
+      const ra = JSON.parse(JSON.stringify(store.saveUndo(AI)));
+      setProperty(store, "opacity", 0.5, {}, id);
+      setProperty(store, "param.size", 7, { origin: B }, id);
+      const rb = JSON.parse(JSON.stringify(store.saveUndo(B)));
+      setProperty(store, "param.size", 9, {}, id);
+      return { store, ra, rb, B, id };
+    };
+    for (const reverse of [false, true]) {
+      const { store, ra, rb, B, id } = build();
+      const again = reopened(store, reverse ? [rb, ra] : [ra, rb]);
+      expect(again.undoOutlook(B)).toEqual(store.undoOutlook(B));
+      expect(again.undoOutlook(AI)).toEqual(store.undoOutlook(AI));
+      again.undoOrigin(AI);
+      store.undoOrigin(AI);
+      expect(again.getState()).toEqual(store.getState());
+      expect(property(again, "param.size", id)).toBe(9);
+    }
+  });
+
+  it("keep what people changed of another task below a place whose record was saved last", () => {
+    for (const reverse of [false, true]) {
+      const store = open();
+      const B = aiTask("two");
+      const id = addClip(store, AI, "40");
+      setProperty(store, "param.size", 7, { origin: B }, id);
+      const rb = JSON.parse(JSON.stringify(store.saveUndo(B)));
+      setProperty(store, "param.size", 9, {}, id);
+      const ra = JSON.parse(JSON.stringify(store.saveUndo(AI)));
+      const again = reopened(store, reverse ? [ra, rb] : [rb, ra]);
+      expect(again.undoOutlook(B)).toEqual(store.undoOutlook(B));
+      again.undoOrigin(B);
+      store.undoOrigin(B);
+      expect(again.getState()).toEqual(store.getState());
+      expect(property(again, "param.size", id)).toBe(9);
+    }
+  });
+
+  it("keep what another device wrote below a place a record knew", () => {
+    const store = open();
+    const id = addClip(store, AI, "40");
+    const ra = JSON.parse(JSON.stringify(store.saveUndo(AI)));
+    const other = new ProjectStore(new Y.Doc());
+    Y.applyUpdate(other.doc, store.encodeState());
+    setProperty(other, "opacity", 0.25, {}, id);
+    Y.applyUpdate(store.doc, Y.encodeStateAsUpdate(other.doc, Y.encodeStateVector(store.doc)));
+    const again = reopened(store, [ra]);
+    expect({ ...again.undoOrigin(AI), revision: 0 }).toEqual({
+      ...store.undoOrigin(AI),
+      revision: 0,
+    });
+    expect(again.getState()).toEqual(store.getState());
+    expect(property(again, "opacity", id)).toBe(0.25);
+  });
 });
