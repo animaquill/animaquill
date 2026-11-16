@@ -198,7 +198,8 @@ export function createDock(
       const existing = api.getPanel(type);
       const definition = panels.get(type);
       if (existing) existing.api.setActive();
-      else if (definition) {
+      // Still to come: it has no place yet, as in layouts.
+      else if (definition && !definition.planned) {
         const where = placePanel(
           { type, sizes: sizesOf(definition), area: definition.area, beside: definition.beside },
           groupsFor(used),

@@ -4621,7 +4621,8 @@ export class Workbench {
       menu: { name: "view", group: "commands" },
       palette: false,
     });
-    for (const panel of this.panels.list()) {
+    // A panel that is still to come is nowhere to be chosen, until it is ready.
+    for (const panel of this.panels.list().filter(({ planned }) => !planned)) {
       this.actions.register({
         id: `view.open.${panel.type}`,
         title: (t) => t("action.openPanel", { panel: panel.title(t) }),

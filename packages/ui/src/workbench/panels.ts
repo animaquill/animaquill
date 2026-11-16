@@ -36,8 +36,8 @@ export interface PanelDefinition {
   readonly sizes?: readonly PanelSize[];
   readonly component: ComponentType;
   /**
-   * The real content comes later, and the panel only says so. Layouts keep its place without
-   * showing it, until it is ready.
+   * The real content comes later, and the panel only says so. Until it is ready, it is in no menu,
+   * command or list of keys, and opens nowhere; layouts keep its place without showing it.
    */
   readonly planned?: boolean;
   /** Default keys that open this panel. */

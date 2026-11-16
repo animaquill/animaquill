@@ -45,6 +45,20 @@ test("the view menu ticks the panels that are open, and says so", async ({ page 
   }
   await expect(viewItem(page, "运行情况")).not.toHaveAccessibleDescription("已打开");
   await expect(viewItem(page, "运行情况").locator("svg")).toHaveCount(0);
+  // What is still to come is not there to choose.
+  for (const name of [
+    "音乐",
+    "录音",
+    "版本矩阵",
+    "历史记录",
+    "经验库",
+    "批注",
+    "差异列表",
+    "终端",
+    "缓存",
+  ]) {
+    await expect(viewItem(page, name)).toHaveCount(0);
+  }
   // Only says how things are: it is no checkbox.
   await expect(viewMenu(page).getByRole("menuitemcheckbox")).toHaveCount(0);
   await page.keyboard.press("Escape");

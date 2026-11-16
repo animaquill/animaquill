@@ -222,8 +222,10 @@ test.describe("shortcuts", () => {
     await expect(content(page, "files")).toBeVisible();
     await page.keyboard.press("Control+Shift+KeyM");
     await expect(content(page, "problems")).toBeVisible();
+    // The terminal is still to come: its keys open nothing yet.
     await page.keyboard.press("Control+Backquote");
-    await expect(content(page, "terminal")).toBeVisible();
+    await expect(content(page, "problems")).toBeVisible();
+    await expect(content(page, "terminal")).toHaveCount(0);
   });
 
   test("appear in the layout menu", async ({ page }) => {

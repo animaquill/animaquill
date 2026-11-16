@@ -246,9 +246,10 @@ test("the tab menu closes other tabs", async ({ page }) => {
 
 test("a panel opens in a group of the kind of room it is made for", async ({ page }) => {
   // Tall and large: large comes first, and the preview is the large group.
-  await chooseFromView(page, "经验库");
-  await expect(group(page, "preview").locator('[data-tab="notes"]')).toBeVisible();
-  await expect(content(page, "notes")).toBeVisible();
+  await tab(page, "effects").click({ button: "middle" });
+  await chooseFromView(page, "效果");
+  await expect(group(page, "preview").locator('[data-tab="effects"]')).toBeVisible();
+  await expect(content(page, "effects")).toBeVisible();
 });
 
 test("the layout survives a reload", async ({ page }) => {
@@ -565,33 +566,47 @@ async function expectTabInView(page: Page, type: string) {
   expect(active.y + active.height).toBeLessThanOrEqual(strip.y + strip.height + 1);
 }
 
-/** Panels that open in the middle, enough to fill its tab strip in a small window. */
-const MORE_IN_THE_MIDDLE = ["版本矩阵", "音乐", "录音"];
+/** Panels that are also made for large room, which go to the preview, enough to fill its strip in a small window. */
+const MORE_IN_THE_MIDDLE = [
+  ["assets", "素材"],
+  ["transitions", "转场"],
+  ["effects", "效果"],
+] as const;
+
+async function fillTheMiddle(page: Page) {
+  for (const [type] of MORE_IN_THE_MIDDLE) await tab(page, type).click({ button: "middle" });
+  for (const [, name] of MORE_IN_THE_MIDDLE) await chooseFromView(page, name);
+  await expect(group(page, "preview").locator("[data-tab]")).toHaveCount(5);
+}
 
 test("the active tab is not hidden in a narrow group", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 620 });
-  for (const name of MORE_IN_THE_MIDDLE) await chooseFromView(page, name);
-  await expectTabInView(page, "recording");
+  await fillTheMiddle(page);
+  await expectTabInView(page, "effects");
   await chooseFromView(page, "预览");
   await expectTabInView(page, "preview");
-  await chooseFromView(page, "录音");
-  await expectTabInView(page, "recording");
+  await chooseFromView(page, "效果");
+  await expectTabInView(page, "effects");
 });
 
 test("the active tab stays in view when the strip first runs out of room", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 720 });
-  for (const name of MORE_IN_THE_MIDDLE) {
-    await chooseFromView(page, name);
-  }
-  await expectTabInView(page, "recording");
+  await fillTheMiddle(page);
+  await expectTabInView(page, "effects");
 });
 
 /** Tall panels, which go down the right side once it was used last, enough to fill its strip in a low window. */
-const MORE_ON_THE_RIGHT = ["历史记录", "批注", "导出", "聊天"];
+const MORE_ON_THE_RIGHT = [
+  ["files", "文件"],
+  ["explorer", "资源管理器"],
+] as const;
 
 async function fillTheRight(page: Page) {
+  for (const [type] of MORE_ON_THE_RIGHT) await tab(page, type).click({ button: "middle" });
   await tab(page, "properties").click();
-  for (const name of MORE_ON_THE_RIGHT) await chooseFromView(page, name);
+  for (const [, name] of MORE_ON_THE_RIGHT) await chooseFromView(page, name);
+  await chooseFromView(page, "导出");
+  await chooseFromView(page, "聊天");
   await expect(group(page, "properties").locator("[data-tab]")).toHaveCount(5);
 }
 
@@ -605,7 +620,7 @@ test("the active tab of a full strip down a side is in view", async ({ page }) =
 
 test("a tab dragged into a full strip is in view", async ({ page }) => {
   await page.setViewportSize({ width: 900, height: 620 });
-  for (const name of MORE_IN_THE_MIDDLE) await chooseFromView(page, name);
+  await fillTheMiddle(page);
   // In the middle, because near the ends the strip scrolls by itself during a drag.
   const strip = await settledBox(group(page, "preview").locator(".dv-tabs-container"));
   await dragTab(page, "properties", strip.x + strip.width / 2, strip.y + strip.height / 2);
@@ -615,7 +630,7 @@ test("a tab dragged into a full strip is in view", async ({ page }) => {
 
 test("the wheel scrolls a tab strip that is full", async ({ page }) => {
   await page.setViewportSize({ width: 760, height: 620 });
-  for (const name of MORE_IN_THE_MIDDLE) await chooseFromView(page, name);
+  await fillTheMiddle(page);
   const list = group(page, "preview").locator(".dv-tabs-container");
   await list.evaluate((element: HTMLElement) => (element.scrollLeft = 0));
   const strip = await settledBox(list);
@@ -628,7 +643,7 @@ test("the wheel scrolls a tab strip that is full", async ({ page }) => {
 
 test("a tab strip that is full shows no scrollbar", async ({ page }) => {
   await page.setViewportSize({ width: 760, height: 320 });
-  for (const name of MORE_IN_THE_MIDDLE) await chooseFromView(page, name);
+  await fillTheMiddle(page);
   await fillTheRight(page);
   const across = group(page, "preview").locator(".dv-tabs-container");
   const down = group(page, "properties").locator(".dv-tabs-container");

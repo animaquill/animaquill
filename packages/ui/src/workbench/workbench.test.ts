@@ -1,3 +1,5 @@
+import { builtinPanels } from "../panels/builtin.tsx";
+import type { PanelDefinition } from "./panels.ts";
 import { ProjectStore, aiTask, orderedTracks } from "@animaquill/core";
 import { memoryOrganizer } from "@animaquill/host";
 import type {
@@ -30,7 +32,11 @@ const noFolders: FolderAccess = {
   savesInBrowser: false,
 };
 
-function setup(folders = noFolders, more: Partial<Host> = {}, { here = true } = {}) {
+function setup(
+  folders = noFolders,
+  more: Partial<Host> = {},
+  { here = true, panels = [] as readonly PanelDefinition[] } = {},
+) {
   const library = new MemoryLibrary();
   const trials = new MemoryTrials();
   const drafts = new MemoryTrials();
@@ -58,7 +64,7 @@ function setup(folders = noFolders, more: Partial<Host> = {}, { here = true } = 
     t: ((key: string) => key) as never,
     version: "test",
     platform: "other",
-    panels: [],
+    panels,
     layouts,
     compositorUrl: "",
   });
@@ -1538,5 +1544,18 @@ describe("the view menu", () => {
     expect(file.filter(({ id }) => id.startsWith("settings.")).map(({ id }) => id)).toEqual([
       "settings.open",
     ]);
+  });
+
+  it("has no panel that is still to come, and nothing else does either", () => {
+    const { workbench } = setup(noFolders, {}, { panels: builtinPanels });
+    const planned = workbench.panels.list().filter((panel) => panel.planned);
+    expect(planned.length).toBeGreaterThan(0);
+    for (const { type } of planned)
+      expect(workbench.actions.get(`view.open.${type}`)).toBeUndefined();
+    const listed = workbench.actions
+      .menu("view")
+      .flat()
+      .map(({ id }) => id);
+    expect(listed).toContain("view.open.preview");
   });
 });
