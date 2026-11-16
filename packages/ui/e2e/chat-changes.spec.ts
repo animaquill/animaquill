@@ -186,7 +186,8 @@ test("each line opens to before and after: a value, keys, code, the picture", as
 
   // A value: the time as the properties panel writes it.
   const logo = await checkLogo(page);
-  await expect(logo.locator('button[data-state="ready"]')).toHaveCount(2, { timeout: 30_000 });
+  // Only how long it is: the middle of it looks the same before and after, so no pictures.
+  await expect(logo.getByTestId("chat-change-pictures")).toHaveCount(0);
   await logo.scrollIntoViewIfNeeded();
   await shoot(page, "properties");
   await opener(row(page, "Logo")).click();
@@ -220,7 +221,7 @@ test("each line opens to before and after: a value, keys, code, the picture", as
   await tab(page, "chat").click();
   await opener(row(page, "标题")).click();
   await expect(title).toBeHidden();
-  const file = await openLine(row(page, "改了文件"));
+  const file = await openLine(row(page, "改了文件「code/helper.js」"));
   const lines = file.getByTestId("chat-change-code").locator("[data-kind]");
   await expect(file.getByTestId("chat-change-code").locator('[data-kind="removed"]')).toHaveText([
     "10export const n10 = 10;",
@@ -231,6 +232,9 @@ test("each line opens to before and after: a value, keys, code, the picture", as
     "25export const n25 = 250;",
   ]);
   await expect(lines).toHaveCount(2 * (2 + 2 + 2));
+  // Between the two pieces, a line that says lines were left out; over them, the file.
+  await expect(file.getByTestId("chat-change-code")).toContainText("⋯");
+  await expect(file.getByTitle("code/helper.js")).toHaveText("code/helper.js");
   await file.scrollIntoViewIfNeeded();
   await shoot(page, "code");
   await file.getByRole("button", { name: "打开对比" }).click();
@@ -248,7 +252,7 @@ test("each line opens to before and after: a value, keys, code, the picture", as
   // The width of a phone.
   await page.setViewportSize({ width: 390, height: 844 });
   await tab(page, "chat").click();
-  await opener(row(page, "改了文件")).click();
+  await opener(row(page, "改了文件「code/helper.js」")).click();
   await opener(row(page, "标题")).click();
   await row(page, "标题").getByTestId("chat-change-pictures").scrollIntoViewIfNeeded();
   await shoot(page, "390");

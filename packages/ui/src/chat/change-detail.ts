@@ -66,8 +66,11 @@ export interface ChangeDetail {
 /** Longer than this, code is compared in the code editor only. */
 export const LARGE_TEXT = 200_000;
 
-/** Fields of a clip that change nothing in the picture. */
-const UNSEEN_FIELDS = new Set(["name", "link"]);
+/**
+ * Fields of a clip whose change shows nothing at the middle of it: its name, and where and how long
+ * it is, which moves that moment along with it. Two pictures alike say nothing.
+ */
+const UNSEEN_FIELDS = new Set(["name", "link", "start", "duration", "offset"]);
 
 /** Tracks whose clips are in the picture. */
 const SEEN_TRACKS = new Set(["video", "caption"]);

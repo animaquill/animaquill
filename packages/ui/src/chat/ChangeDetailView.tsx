@@ -1,7 +1,7 @@
 import { projectFrameRate, type BeforeAfter, type Origin } from "@animaquill/core";
 import { formatAddress } from "@animaquill/tools";
 import { ToggleLeft, ToggleRight, TriangleAlert } from "lucide-react";
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import { Tip } from "../app/Tip.tsx";
@@ -235,17 +235,25 @@ function CodeDiff({ origin, code }: { origin: Origin; code: CodeDetail }) {
       ).hunks;
   return (
     <div className={styles.code}>
+      <div className={styles.codePath} title={path}>
+        {path}
+      </div>
       {shown.length > 0 && (
         <div className={styles.codeLines} data-testid="chat-change-code">
           {shown.map((hunk, index) => (
-            <div key={index} className={styles.hunk}>
+            <Fragment key={index}>
+              {index > 0 && (
+                <div className={styles.hunkGap} aria-hidden="true">
+                  ⋯
+                </div>
+              )}
               {hunk.map((line, at) => (
                 <div key={at} className={styles.codeLine} data-kind={line.kind}>
                   <span className={styles.lineNumber}>{line.after ?? line.before}</span>
                   <span className={styles.lineText}>{line.text}</span>
                 </div>
               ))}
-            </div>
+            </Fragment>
           ))}
         </div>
       )}
@@ -334,7 +342,12 @@ function Pictures({
             onClick={go}
           >
             {picture?.ok && <img src={picture.url} alt="" />}
-            {reason !== undefined && <TriangleAlert size={16} aria-hidden="true" />}
+            {reason !== undefined && (
+              <span className={styles.baFailed}>
+                <TriangleAlert size={14} aria-hidden="true" />
+                <span>{reason}</span>
+              </span>
+            )}
           </button>
         );
         return (

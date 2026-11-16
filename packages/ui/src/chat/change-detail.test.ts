@@ -166,6 +166,17 @@ describe("a line of the card, opened", () => {
     expect(detailOf(clipChange("clip_hit", "removed"), both)).toBeUndefined();
   });
 
+  it("has no picture where only where it is or how long changed: the two would be alike", () => {
+    const store = open();
+    run(store, {
+      type: "clip.update",
+      params: { timeline: "main", clip: "clip_title", changes: { duration: "4" } },
+    });
+    const detail = detailOf(clipChange("clip_title", "changed", ["duration"]), seen(store));
+    expect(detail?.picture).toBeUndefined();
+    expect(detail?.fields).toEqual([{ path: "duration", before: "5", after: "4" }]);
+  });
+
   it("has no picture where only the name of a clip changed", () => {
     const store = open();
     run(store, {

@@ -693,8 +693,20 @@
   border-radius: 3px;
 }
 
-.hunk + .hunk {
-  border-top: 1px dashed var(--aq-border);
+.hunkGap {
+  color: var(--aq-text-muted);
+  line-height: 1.3;
+  text-align: center;
+  background: var(--aq-bg-hover);
+  user-select: none;
+}
+
+.codePath {
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .codeLine {
@@ -758,6 +770,20 @@
   color: var(--aq-warning);
   background: var(--aq-bg-hover);
   border: 1px solid var(--aq-border);
+}
+
+.baFailed {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 4px;
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: left;
+}
+
+.baFailed svg {
+  flex: none;
 }
 
 .baPicture img {

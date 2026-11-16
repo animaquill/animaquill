@@ -31,6 +31,10 @@ const state = {
 } as unknown as ProjectState;
 
 describe("what a change of a turn calls an object", () => {
+  it("is the path of a file, also where the project is not open", () => {
+    expect(changeName(t, { kind: "file", id: "code/helper.js" }, undefined)).toBe("code/helper.js");
+  });
+
   it("is its name, else what a clip shows, else 片段 and its number; never the inner id", () => {
     const named = (id: string) => changeName(t, { kind: "clip", id, timeline: "main" }, state);
     expect(named("named")).toBe("标题");

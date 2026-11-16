@@ -9,7 +9,7 @@ const asText = { interpolation: { escapeValue: false } } as const;
  * What people call an object a turn changed, as the editor calls it elsewhere: its name; for a clip
  * without one, the name of what it shows (the asset, scene or sound), else "片段" and its number on
  * its timeline; for a track without one, its kind and number. Never the inner id. Nothing where the
- * object is gone and the tool did not say its name.
+ * object is gone and the tool did not say its name. A file goes by its path in the project.
  */
 export function changeName(
   t: TFunction,
@@ -17,6 +17,7 @@ export function changeName(
   state: ProjectState | undefined,
 ): string | undefined {
   if (change.name) return change.name;
+  if (change.kind === "file") return change.id;
   if (!state) return undefined;
   const timelines =
     change.timeline !== undefined ? [change.timeline] : Object.keys(state.timelines ?? {});
