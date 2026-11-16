@@ -22,8 +22,6 @@ import {
 } from "@animaquill/agent";
 import {
   aiTask,
-  objectKey,
-  objectOfPath,
   type ClipDescription,
   type ClipState,
   type CommandFailure,
@@ -31,7 +29,6 @@ import {
   type ProjectState,
   type ProjectStore,
   type ManyUndoResult,
-  type Path,
   type StaticInputs,
   type UndoResult,
 } from "@animaquill/core";
@@ -83,7 +80,7 @@ import { Drafts } from "./drafts.ts";
 import { DEFAULT_IMAGE_BYTES, DEFAULT_SHOT_SIZE, type ShotSize } from "./shots.ts";
 import type { ModelPacks } from "./packs.ts";
 import type { AiSettingsStore } from "./settings.ts";
-import { clipsOf, summaryOf } from "./summary.ts";
+import { clipsOf, placesOf, summaryOf, type TurnSummary } from "./summary.ts";
 import { groupsOf } from "./turns.ts";
 
 /**
@@ -1183,24 +1180,21 @@ export class ChatSession {
     const rows: BackRow[] = [];
     for (const task of tasks) {
       const result = of.get(aiTask(task));
+      const summary = this.#summaryOfTask(task, entries);
       if (result?.ok) {
         rows.push({
           task,
-          places: objectsIn(result.patches.map(({ path }) => path)),
-          kept: objectsIn(result.kept),
+          places: placesOf(
+            summary,
+            result.patches.map(({ path }) => path),
+          ),
+          kept: placesOf(summary, result.kept),
         });
         continue;
       }
-      const group = groupsOf(entries).find(({ user }) => user.task === task);
-      const changed = group ? summaryOf(group.entries).changes.length : 0;
+      const changed = placesOf(summary);
       if (result?.error.code === "undo-blocked") {
-        const whyNot = result.error.obstacle ?? "changed";
-        rows.push({
-          task,
-          places: changed || objectsIn(result.error.conflicts ?? []),
-          kept: 0,
-          whyNot,
-        });
+        rows.push({ task, places: changed, kept: 0, whyNot: result.error.obstacle ?? "changed" });
         continue;
       }
       // No log of it here: gone, or made on another device; or taken back already.
@@ -1217,6 +1211,12 @@ export class ChatSession {
       kept: going.reduce((sum, row) => sum + row.kept, 0),
       key: planKey(plan),
     };
+  }
+
+  /** What a turn of the open conversation did, as its card says. */
+  #summaryOfTask(task: string, entries: readonly ChatEntry[]): TurnSummary {
+    const group = groupsOf(entries).find(({ user }) => user.task === task);
+    return summaryOf(group?.entries ?? []);
   }
 
   /**
@@ -1243,19 +1243,27 @@ export class ChatSession {
     if (!many) return undefined;
     if (!many.done) return { done: false, plan: this.#backPlanOf(plan.from, tasks, many.plan) };
     const each = many.result.ok ? many.result.each : [];
+    const entries = this.#snapshot.conversation?.getSnapshot().entries ?? [];
+    const all = this.#snapshot.conversation?.tasks ?? [];
+    const failure = (task: string, error: CommandFailure) => ({
+      task,
+      turn: all.indexOf(task) + 1,
+      error,
+    });
     const taken: string[] = [];
     let places = 0;
-    let failed: { task: string; error: CommandFailure } | undefined;
+    let failed: ReturnType<typeof failure> | undefined;
     for (const { origin, result } of each) {
       const task = origin.slice("ai:".length);
       if (result.ok) {
         taken.push(task);
-        places += objectsIn(result.patches.map(({ path }) => path));
+        const paths = result.patches.map(({ path }) => path);
+        places += placesOf(this.#summaryOfTask(task, entries), paths);
       } else {
-        failed ??= { task, error: result.error };
+        failed ??= failure(task, result.error);
       }
     }
-    if (!many.result.ok) failed = { task: plan.from, error: many.result.error };
+    if (!many.result.ok) failed = failure(plan.from, many.result.error);
     const last = this.#lastTask();
     if (last !== undefined && taken.includes(last)) {
       this.#unmarked = last;
@@ -1319,9 +1327,9 @@ export class ChatSession {
 /** A turn in the list of "back to before this turn": what of it goes back, or why nothing can. */
 export interface BackRow {
   readonly task: string;
-  /** How many objects go back; or for one that cannot, how many it changed. */
+  /** How many places go back, counted as its card does; for one that cannot, as many as it changed. */
   readonly places: number;
-  /** How many objects of it stay, because they were changed since. */
+  /** How many places of it stay, because they were changed since. */
   readonly kept: number;
   readonly whyNot?: UndoWhyNot;
 }
@@ -1344,17 +1352,18 @@ export type BackOutcome =
   | { readonly done: false; readonly plan: BackPlan }
   | {
       readonly done: true;
-      /** How many objects went back. */
+      /** How many places went back, counted as the cards do. */
       readonly places: number;
       /** The turns that went back, to do them again. */
       readonly taken: readonly string[];
       /** The first turn that did not go back although it should have, and why. */
-      readonly failed?: { readonly task: string; readonly error: CommandFailure };
+      readonly failed?: {
+        readonly task: string;
+        /** Which turn of the conversation it is, from 1. */
+        readonly turn: number;
+        readonly error: CommandFailure;
+      };
     };
-
-/** How many objects these paths are of. */
-const objectsIn = (paths: readonly Path[]): number =>
-  new Set(paths.map((path) => objectKey(objectOfPath(path)))).size;
 
 const REASONING_LEVELS: ReadonlySet<string> = new Set(REASONING);
 

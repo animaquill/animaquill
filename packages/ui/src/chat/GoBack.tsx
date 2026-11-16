@@ -36,15 +36,12 @@ export function GoBack({
 
   if ("outcome" in going) {
     const { outcome } = going;
-    const failedAt = outcome.failed
-      ? plan.rows.findIndex((row) => row.task === outcome.failed?.task) + 1
-      : 0;
     return (
       <div className={styles.goBackDone} data-testid="chat-back-done">
         {outcome.failed ? (
           <Tip name={commandFailedText(t, outcome.failed.error)} usage="">
             <span tabIndex={0}>
-              {t("chat.back.donePartly", { count: outcome.places, turn: Math.max(failedAt, 1) })}
+              {t("chat.back.donePartly", { count: outcome.places, turn: outcome.failed.turn })}
             </span>
           </Tip>
         ) : (

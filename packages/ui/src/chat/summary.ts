@@ -1,5 +1,5 @@
 import type { ChatEntry, ToolEntry } from "@animaquill/agent";
-import type { ObjectKind } from "@animaquill/core";
+import { objectKey, objectOfPath, type ObjectKind, type Path } from "@animaquill/core";
 import { WRITE_TOOLS, type OtherChange } from "@animaquill/tools";
 
 /** What a turn did to one object, as the tools tell it (`ObjectChange` of `@animaquill/tools`). */
@@ -208,4 +208,17 @@ export function problemsOfTurn(entries: readonly ChatEntry[]): ProblemsOfTurn {
     }
   }
   return { added, resolved, checked };
+}
+
+/**
+ * How many places a turn changed, as its card says "改了 N 处": one for each object. With `paths`,
+ * only the places among them, as what taking it back writes, so that a list of what goes back and
+ * the card count the same way. A turn whose tools said nothing of what they changed counts the
+ * objects of the paths.
+ */
+export function placesOf(summary: TurnSummary, paths?: readonly Path[]): number {
+  if (!paths) return summary.changes.length;
+  const objects = new Set(paths.map((path) => objectKey(objectOfPath(path))));
+  if (!summary.told) return objects.size;
+  return summary.changes.filter((change) => objects.has(objectKey(change))).length;
 }

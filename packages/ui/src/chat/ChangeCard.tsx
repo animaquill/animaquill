@@ -15,6 +15,7 @@ import { Tip } from "../app/Tip.tsx";
 import styles from "./ChatPanel.module.css";
 import {
   othersOfTurn,
+  placesOf,
   problemsOfTurn,
   summaryOf,
   type OtherRow,
@@ -71,7 +72,7 @@ export function ChangeCard({
   const results = entries.filter((entry): entry is ToolEntry => entry.role === "tool");
   // Earlier conversations had tools that said nothing of what they changed: those count calls.
   const count = summary.told
-    ? summary.changes.length
+    ? placesOf(summary)
     : results.filter(
         (result) => result.ok && !result.name.startsWith("aq_") && !OLD_READ_TOOLS.has(result.name),
       ).length;

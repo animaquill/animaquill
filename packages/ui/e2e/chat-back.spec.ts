@@ -76,6 +76,10 @@ test("back to before the first turn takes back every turn from there, and does t
   await expect(rows.nth(0)).toContainText("1 处");
   await expect(rows.nth(1)).toHaveAttribute("aria-disabled", "true");
   await expect(rows.nth(2)).toContainText("2 处");
+  // Counted as the card of the turn counts: what goes back and what stays add up to it.
+  const cards = chat(page).getByTestId("chat-card");
+  await expect(cards.nth(2)).toContainText("改了 2 处");
+  await expect(cards.nth(0)).toContainText("改了 2 处");
   await expect(list(page).getByText("后来改过的 1 处保留")).toBeVisible();
   await rows.nth(1).getByTestId("chat-back-why").hover();
   await expect(page.getByRole("tooltip")).toHaveText("这次任务改的地方后来都被改过了");
@@ -86,7 +90,6 @@ test("back to before the first turn takes back every turn from there, and does t
   const done = chat(page).getByTestId("chat-back-done");
   await expect(done).toContainText("撤掉了 3 处");
   // Each card says so, as if each turn had been taken back on its own.
-  const cards = chat(page).getByTestId("chat-card");
   await expect(cards.nth(0).getByRole("button", { name: "重做这次任务" })).toBeVisible();
   await expect(cards.nth(2).getByRole("button", { name: "重做这次任务" })).toBeVisible();
   await shot(page, "sd2-done");

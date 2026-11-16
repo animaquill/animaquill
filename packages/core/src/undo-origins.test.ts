@@ -225,6 +225,26 @@ describe("taking back several turns at once", () => {
     expect(size(again)).toBe(64);
   });
 
+  it("goes by when a record was saved where an older one does not say when its entries were made", () => {
+    const store = threeTurns();
+    // Saved one after the other as each turn ended, before entries said when they were made.
+    const records = [ONE, TWO, THREE].map((origin) => {
+      const record = JSON.parse(JSON.stringify(store.saveUndo(origin)));
+      for (const entry of [...record.done, ...record.undone]) delete entry.made;
+      return record;
+    });
+    const { store: again } = ProjectStore.fromUpdates([store.encodeState()]);
+    if (!again) throw new Error("did not open again");
+    again.restoreUndo([records[1], records[2], records[0]]);
+    expect(went(again.undoOrigins([ONE, TWO, THREE])).map(([origin]) => origin)).toEqual([
+      THREE,
+      TWO,
+      ONE,
+    ]);
+    expect(size(again)).toBe(64);
+    expect(name(again)).toBe("原子是什么");
+  });
+
   it("has nothing to do for turns already taken back, and refuses people's own steps", () => {
     const store = threeTurns();
     store.undoOrigin(THREE);
