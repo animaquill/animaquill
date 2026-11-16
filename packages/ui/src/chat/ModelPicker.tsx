@@ -1,6 +1,7 @@
 import type { ReasoningLevel } from "@animaquill/agent";
 import { closenessFor, REASONING, usePack as packFor, type ModelPack } from "@animaquill/tools";
 import {
+  Brain,
   Check,
   ChevronDown,
   ChevronLeft,
@@ -1032,7 +1033,8 @@ export function ReasoningPicker() {
           }
         }}
       >
-        {label}
+        <Brain size={12} className={styles.reasoningIcon} aria-hidden />
+        <span className={styles.reasoningLabel}>{label}</span>
         <ChevronUp size={11} aria-hidden />
       </button>
       {open && (

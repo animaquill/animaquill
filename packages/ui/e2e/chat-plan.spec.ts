@@ -19,7 +19,10 @@ import { markers, reload } from "./undo-support.ts";
 devPageOnly("window.aqState");
 
 const chat = (page: Page) => content(page, "chat");
-const card = (page: Page) => chat(page).getByTestId("chat-plan");
+/** The plan that waits for people. */
+const card = (page: Page) => chat(page).locator('[data-testid="chat-plan"][data-state="open"]');
+const cardIn = (page: Page, state: string) =>
+  chat(page).locator(`[data-testid="chat-plan"][data-state="${state}"]`);
 const steps = (page: Page) => card(page).getByTestId("chat-plan-step");
 const toggle = (page: Page) => chat(page).getByTestId("chat-plan-first");
 const timeShown = (page: Page) =>
@@ -85,8 +88,13 @@ test("plan first: changes are held, the plan is changed and accepted, and then A
           ]),
         );
       case 2:
-        return fulfil(route, calls([{ name: "aq_propose", input: PLAN }]));
+        return fulfil(
+          route,
+          calls([{ name: "aq_propose", input: { ...PLAN, title: "片头 40 秒" } }]),
+        );
       case 3:
+        return fulfil(route, calls([{ name: "aq_propose", input: PLAN }]));
+      case 4:
         return fulfil(route, calls([marker("m1")]));
       default:
         return fulfil(route, anthropicSays("做好了。"));
@@ -115,6 +123,14 @@ test("plan first: changes are held, the plan is changed and accepted, and then A
   await expect(chat(page).locator('[data-testid="chat-tool"][data-state="held"]')).toHaveCount(2);
   await chat(page).getByTestId("chat-process").getByRole("button").first().click();
 
+  // Not quite: said in the box, with the switch still on, and a new version replaces the card.
+  await box.fill("短一点");
+  await box.press("Enter");
+  await expect(cardIn(page, "replaced")).toContainText("片头 40 秒");
+  await expect(cardIn(page, "replaced")).toContainText("已换新方案");
+  await expect(card(page)).toContainText("片头 30 秒");
+  expect(lastWords(requests[2])).toContain("Plan first: only read and look");
+
   await expect(steps(page)).toHaveCount(3);
   await expect(steps(page).first()).toContainText("黑底淡入 logo，低音起");
   await expect(steps(page).first().getByTestId("chat-chip")).toHaveText(["0:00", "0:04"]);
@@ -124,6 +140,12 @@ test("plan first: changes are held, the plan is changed and accepted, and then A
   // A time goes to its moment.
   await steps(page).first().getByTestId("chat-chip").nth(1).click();
   await expect(timeShown(page)).toContainText("0:04");
+
+  // On hovering a line, a pencil and ×; the pencil opens the line, Esc leaves it as it was.
+  await steps(page).first().hover();
+  await steps(page).first().getByRole("button", { name: "改这一行" }).click();
+  await card(page).getByRole("textbox", { name: "改这一行" }).press("Escape");
+  await expect(steps(page).first()).toContainText("黑底淡入 logo，低音起");
 
   // A line changes with a click, one goes with ×, one comes with +.
   await steps(page).nth(1).getByRole("button", { name: "三张产品图依次推进，每张 2.5 秒" }).click();
@@ -147,11 +169,37 @@ test("plan first: changes are held, the plan is changed and accepted, and then A
   await expect(toggle(page)).toHaveAttribute("aria-pressed", "true");
   await shoot(page, "3-plan-edited");
 
-  // A phone.
+  // The chat 330 (as it opens here), 390 and 420 wide: the model keeps its name, send its icon.
+  const panel = chat(page).getByTestId("chat");
+  for (const width of [330, 390, 420]) {
+    // Wider by the edge between the chat and what is left of it, as people drag it.
+    const edge = await panel.boundingBox();
+    if (edge && Math.abs(edge.width - width) > 2) {
+      const y = edge.y + edge.height / 2;
+      await page.mouse.move(edge.x - 1, y);
+      await page.mouse.down();
+      await page.mouse.move(edge.x - 1 - (width - edge.width), y, { steps: 5 });
+      await page.mouse.up();
+    }
+    await expect(chat(page).getByTestId("chat-model")).toBeVisible();
+    await panel.screenshot({ path: test.info().outputPath(`sd3-chat-${width}.png`) });
+  }
+
+  // A phone: the buttons go into "+", the switch with them as an item to tick, a dot on "+".
   await page.setViewportSize({ width: 390, height: 844 });
   await tab(page, "chat").click();
   await card(page).scrollIntoViewIfNeeded();
+  await expect(chat(page).getByTestId("chat-plan-first-dot")).toBeVisible();
+  await expect(chat(page).getByTestId("chat-tools-more")).toBeVisible();
+  await expect(chat(page).getByTestId("chat-model")).toBeVisible();
   await shoot(page, "390-plan");
+  await chat(page).getByTestId("chat-tools-more").click();
+  await expect(chat(page).getByRole("menuitemcheckbox", { name: "先出方案" })).toHaveAttribute(
+    "aria-checked",
+    "true",
+  );
+  await shoot(page, "390-menu");
+  await chat(page).getByTestId("chat-tools-more").click();
   await page.setViewportSize({ width: 1440, height: 900 });
 
   // 按这个做: the plan as changed goes as people's message, the switch goes off, and AI does it.
@@ -170,13 +218,17 @@ test("plan first: changes are held, the plan is changed and accepted, and then A
     "0:12",
     "0:30",
   ]);
-  const words = lastWords(requests[2]);
+  const words = lastWords(requests[3]);
   expect(words).toContain("aq://time?timeline=main&t=4");
   expect(words).not.toContain("Plan first");
   expect(await markers(page)).toEqual({ m1: "m1" });
   // The plan is one line now, which says it was accepted.
-  await expect(card(page)).toHaveAttribute("data-state", "accepted");
-  await expect(card(page)).toContainText("已按这个做");
-  await expect(card(page).getByTestId("chat-plan-accept")).toHaveCount(0);
+  // Only the message of the task that runs says to plan first.
+  expect(JSON.stringify((requests[3]?.postDataJSON() as Sent | undefined)?.messages)).not.toContain(
+    "Plan first",
+  );
+  await expect(cardIn(page, "accepted")).toContainText("片头 30 秒");
+  await expect(cardIn(page, "accepted")).toContainText("已按这个做");
+  await expect(chat(page).getByTestId("chat-plan-accept")).toHaveCount(0);
   await shoot(page, "4-accepted");
 });

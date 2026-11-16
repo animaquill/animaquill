@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, ListChecks, Plus, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ListChecks, Pencil, Plus, X } from "lucide-react";
 import { useCallback, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
@@ -37,9 +37,9 @@ export function PlanCard(props: {
         {open ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
         <ListChecks size={12} aria-hidden />
         <span className={styles.planTitle}>{props.plan.title}</span>
-        {props.state === "accepted" && (
-          <span className={styles.muted}>{t("chat.plan.accepted")}</span>
-        )}
+        <span className={styles.muted}>
+          {t(props.state === "accepted" ? "chat.plan.accepted" : "chat.plan.replaced")}
+        </span>
       </button>
       {open && (
         <>
@@ -197,6 +197,21 @@ function OpenPlan(props: {
                 }}
               >
                 {step.text}
+              </button>
+            )}
+            {editing?.index !== index && (
+              <button
+                type="button"
+                className={`${styles.icon} ${styles.planRemove}`}
+                aria-label={t("chat.plan.edit")}
+                title={t("chat.plan.edit")}
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => {
+                  commit();
+                  setEditing({ index, text: step.text });
+                }}
+              >
+                <Pencil size={12} aria-hidden />
               </button>
             )}
             <button

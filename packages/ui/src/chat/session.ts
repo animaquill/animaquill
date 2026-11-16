@@ -684,15 +684,27 @@ export class ChatSession {
     const project = this.#project?.key;
     const { id } = this.#snapshot;
     if (this.running || !text.trim() || project === undefined || id === undefined) return undefined;
-    this.setPlanFirst(false);
     const conversation = this.#snapshot.conversation;
-    const outcome = await this.send(text, [], undefined, { fromPlan: call });
-    // It went as people changed it: that is in the conversation now, and the draft goes.
-    const went = conversation
-      ?.getSnapshot()
-      .entries.some((entry) => entry.role === "user" && entry.fromPlan === call);
-    if (went) this.planDrafts.write(project, id, call, undefined);
-    return outcome;
+    if (!conversation) return undefined;
+    const went = () =>
+      conversation
+        .getSnapshot()
+        .entries.some((entry) => entry.role === "user" && entry.fromPlan === call);
+    // Once it went, and not before: where it cannot go, the switch and the card stay as they were.
+    let off = false;
+    const goneOff = () => {
+      if (off || !went()) return;
+      off = true;
+      if (this.#snapshot.conversation === conversation) this.setPlanFirst(false);
+      this.planDrafts.write(project, id, call, undefined);
+    };
+    const stop = conversation.subscribe(goneOff);
+    try {
+      return await this.send(text, [], undefined, { fromPlan: call });
+    } finally {
+      stop();
+      goneOff();
+    }
   }
 
   /** How hard the model of the conversation open reasons; nothing leaves it to the settings. */

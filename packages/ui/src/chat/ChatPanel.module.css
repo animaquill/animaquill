@@ -1064,10 +1064,20 @@
   white-space: nowrap;
 }
 
-/* Its name next to it where the chat has room; else the icon alone, as the buttons before it. */
+/*
+ * At 400 wide or less: "先出方案", how hard the model reasons and send keep their icons alone, so
+ * that the model keeps its name and nothing stands on end.
+ */
 @container (max-width: 400px) {
-  .planFirstName {
+  .planFirstName,
+  .reasoningLabel,
+  .panel .send .buttonText {
     display: none;
+  }
+
+  .panel .reasoningIcon,
+  .panel .send .narrowIcon {
+    display: inline-flex;
   }
 }
 
@@ -1089,6 +1099,11 @@
   bottom: 100%;
   left: 0;
   min-width: 200px;
+}
+
+.menuCheck {
+  flex: none;
+  color: var(--aq-accent);
 }
 
 .menuKeys {
@@ -1344,6 +1359,7 @@ span.sentPicture {
 /* Under the box: the model, how hard it reasons, then send or stop. */
 .controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   align-items: center;
   min-width: 0;
@@ -1385,7 +1401,34 @@ span.sentPicture {
 /* Its bubble grows up from the top of the input box, not from the button. */
 .pickerWrap {
   flex: 0 1 auto;
+  /* The model keeps a few letters of its name: how hard it reasons gives way first. */
+  min-width: 6em;
+}
+
+.reasoningIcon {
+  display: none;
+  flex: none;
+}
+
+.reasoningLabel {
   min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* "先出方案" on, with the buttons in "+": a dot on it. */
+.plusDot {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  background: var(--aq-accent);
+  border-radius: 50%;
+}
+
+.moreWrap > button {
+  position: relative;
 }
 
 .panel .reasoning {

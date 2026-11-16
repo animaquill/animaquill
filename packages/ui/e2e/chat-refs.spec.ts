@@ -745,6 +745,9 @@ test("narrower than 320, the buttons of the box are one menu", async ({ page }) 
   await expect(items.nth(2)).toBeFocused();
   await page.keyboard.press("ArrowUp");
   await expect(items.nth(0)).toBeFocused();
+  // Last comes "先出方案", an item to tick.
+  await page.keyboard.press("ArrowUp");
+  await expect(menu.getByRole("menuitemcheckbox", { name: "先出方案" })).toBeFocused();
   await page.keyboard.press("ArrowUp");
   await expect(items.nth(3)).toBeFocused();
   await page.keyboard.press("Escape");

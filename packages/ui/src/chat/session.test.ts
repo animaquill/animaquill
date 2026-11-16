@@ -640,6 +640,26 @@ describe("a conversation of its own", () => {
       expect(chat.planDrafts.read(project, id, call)).toBeUndefined();
     });
 
+    it("按这个做 that cannot go leaves the switch on and the plan as people changed it", async () => {
+      const memory = windowMemory();
+      const { chat, fake, ai } = setup({ memory });
+      chat.setPlanFirst(true);
+      fake({ fake: [plan()] });
+      await chat.send("做个片头");
+      const call = results(chat, "aq_propose")[0]?.call as string;
+      const project = chat.projectKey as string;
+      const id = chat.getSnapshot().id as string;
+      const changed = [{ text: "改过的一行" }];
+      chat.planDrafts.write(project, id, call, changed);
+      // No service any more: nothing goes.
+      fake(undefined as never);
+      expect(ai.getSnapshot().services).toHaveLength(0);
+      expect(await chat.acceptPlan(call, "按这个做：片头\n1. 改过的一行")).toBeUndefined();
+      expect(users(chat)).toHaveLength(1);
+      expect(chat.getSnapshot().planFirst).toBe(true);
+      expect(chat.planDrafts.read(project, id, call)).toEqual(changed);
+    });
+
     it("goes with its conversation: kept, read back, off in a new one", async () => {
       const { chat, chats, fake } = setup();
       fake({ fake: [{ text: "好" }] });

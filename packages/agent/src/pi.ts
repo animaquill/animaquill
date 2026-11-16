@@ -952,13 +952,29 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
       }),
   };
 
+  /** Where the message of this task is in the history: there when it goes on from there. */
+  const current =
+    options.prompt === undefined
+      ? options.history.findLastIndex((entry) => entry.role === "user")
+      : -1;
   const agent = new Agent({
     initialState: {
       systemPrompt: options.system,
       model,
       tools,
       messages: withSummary(
-        messagesOf(options.history, names, said, shown, start),
+        messagesOf(
+          options.history,
+          names,
+          // Only the message of this task says to plan first: the earlier ones' turns are over.
+          (entry, at) => {
+            if (at === current) return said(entry, at);
+            const { plan: _plan, ...earlier } = entry;
+            return said(earlier, at);
+          },
+          shown,
+          start,
+        ),
         inForce,
       ) as AgentMessage[],
     },

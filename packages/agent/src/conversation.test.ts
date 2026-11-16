@@ -49,7 +49,10 @@ describe("a message that asks for a plan first", () => {
     const store = ProjectStore.create(createProject({ name: "方案" }));
     const caller = new CallerState();
     const conversation = new Conversation({
-      newTask: () => "t1",
+      newTask: (() => {
+        let count = 0;
+        return () => `t${++count}`;
+      })(),
       onAnswer: () => caller.beginAnswer(),
     });
     const entries = () => conversation.getSnapshot().entries;
@@ -72,6 +75,8 @@ describe("a message that asks for a plan first", () => {
               },
             ],
           },
+          { calls: [addMarker("2")] },
+          { text: "做好了" },
         ],
         heard: (messages) => heard.push([...messages]),
       },
@@ -106,6 +111,12 @@ describe("a message that asks for a plan first", () => {
     expect(readEntry(JSON.parse(JSON.stringify(accepted)))).toMatchObject({ fromPlan: "call-1" });
     expect(readEntry(JSON.parse(JSON.stringify(accepted)))).not.toHaveProperty("plan");
     expect(promptOf({ text: "做个片头" })).toBe("做个片头");
+    // The plan accepted: that turn's model reads the earlier message without the line, and writes.
+    await conversation.send("按这个做：片头", target, [], undefined, { fromPlan: "call-1" });
+    const line = JSON.stringify(PLAN_FIRST_LINE).slice(1, -1);
+    expect(JSON.stringify(heard.at(-1))).toContain("做个片头");
+    expect(JSON.stringify(heard.at(-1))).not.toContain(line);
+    expect(Object.keys(store.getState().timelines.main?.markers ?? {})).toHaveLength(1);
   });
 });
 

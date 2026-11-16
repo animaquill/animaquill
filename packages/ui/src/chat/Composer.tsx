@@ -1,6 +1,7 @@
 import {
   Boxes,
   Camera,
+  Check,
   Clock,
   CornerUpLeft,
   ListChecks,
@@ -396,7 +397,13 @@ export function Composer(props: {
       />
       <div className={styles.controls}>
         {narrow ? (
-          <PlusMenu tools={tools} combo={combo} onRun={runTool} />
+          <PlusMenu
+            tools={tools}
+            combo={combo}
+            onRun={runTool}
+            planFirst={snapshot.planFirst}
+            onPlanFirst={() => chat.setPlanFirst(!snapshot.planFirst)}
+          />
         ) : (
           <div className={styles.composeTools} data-testid="chat-tools">
             {tools.map((tool) => (
@@ -427,21 +434,25 @@ export function Composer(props: {
             ))}
           </div>
         )}
-        <Tip name={t("chat.compose.planFirst")} usage="">
-          <button
-            type="button"
-            className={`${styles.icon} ${styles.planFirst}`}
-            aria-label={t("chat.compose.planFirst")}
-            aria-pressed={snapshot.planFirst}
-            data-testid="chat-plan-first"
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => chat.setPlanFirst(!snapshot.planFirst)}
-          >
-            <ListChecks size={13} aria-hidden />
-            <span className={styles.planFirstName}>{t("chat.plan.short")}</span>
-          </button>
-        </Tip>
-        {!narrow && <span className={styles.toolsSep} aria-hidden />}
+        {!narrow && (
+          <>
+            <Tip name={t("chat.compose.planFirst")} usage="">
+              <button
+                type="button"
+                className={`${styles.icon} ${styles.planFirst}`}
+                aria-label={t("chat.compose.planFirst")}
+                aria-pressed={snapshot.planFirst}
+                data-testid="chat-plan-first"
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => chat.setPlanFirst(!snapshot.planFirst)}
+              >
+                <ListChecks size={13} aria-hidden />
+                <span className={styles.planFirstName}>{t("chat.plan.short")}</span>
+              </button>
+            </Tip>
+            <span className={styles.toolsSep} aria-hidden />
+          </>
+        )}
         <ModelPicker request={picking} />
         <ReasoningPicker />
         <span className={styles.grow} />
@@ -486,11 +497,16 @@ interface ToolItem {
   readonly count?: number;
 }
 
-/** The buttons of the box as one menu, where the chat is narrow. */
+/**
+ * The buttons of the box as one menu, where the chat is narrow, with "先出方案" as an item to tick:
+ * a dot on "+" says it is on, without opening the menu.
+ */
 function PlusMenu(props: {
   readonly tools: readonly ToolItem[];
   readonly combo: (keys: string) => string;
   readonly onRun: (which: ToolItem["id"]) => void;
+  readonly planFirst: boolean;
+  readonly onPlanFirst: () => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -499,9 +515,11 @@ function PlusMenu(props: {
   /** Opened from the keyboard: the first item that can be chosen gets the focus. */
   const [fromKeys, setFromKeys] = useState(false);
   const items = () =>
-    [...(ref.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])].filter(
-      (item) => !item.disabled,
-    );
+    [
+      ...(ref.current?.querySelectorAll<HTMLButtonElement>(
+        '[role="menuitem"], [role="menuitemcheckbox"]',
+      ) ?? []),
+    ].filter((item) => !item.disabled);
   useEffect(() => {
     if (!open || !fromKeys) return;
     ref.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)')?.focus();
@@ -541,7 +559,11 @@ function PlusMenu(props: {
       <button
         type="button"
         className={styles.icon}
-        aria-label={t("chat.compose.more")}
+        aria-label={
+          props.planFirst
+            ? `${t("chat.compose.more")} · ${t("chat.compose.planFirst")}`
+            : t("chat.compose.more")
+        }
         title={t("chat.compose.more")}
         aria-expanded={open}
         aria-haspopup="menu"
@@ -562,6 +584,7 @@ function PlusMenu(props: {
         }}
       >
         <Plus size={13} aria-hidden />
+        {props.planFirst && <span className={styles.plusDot} data-testid="chat-plan-first-dot" />}
       </button>
       {open && (
         <div
@@ -589,6 +612,26 @@ function PlusMenu(props: {
               {tool.keys && <span className={styles.menuKeys}>{props.combo(tool.keys)}</span>}
             </button>
           ))}
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={props.planFirst}
+            data-testid="chat-plan-first"
+            onPointerDown={(event) => event.preventDefault()}
+            onClick={() => {
+              setOpen(false);
+              if (fromKeys) toggle.current?.focus();
+              props.onPlanFirst();
+            }}
+          >
+            {/* Ticked, the tick takes the place of its icon: the menu can be wider than the chat. */}
+            {props.planFirst ? (
+              <Check size={12} aria-hidden className={styles.menuCheck} />
+            ) : (
+              <ListChecks size={12} aria-hidden />
+            )}{" "}
+            {t("chat.compose.planFirst")}
+          </button>
         </div>
       )}
     </div>
