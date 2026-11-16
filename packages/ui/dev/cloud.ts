@@ -7,6 +7,8 @@ import {
   type AccountAccess,
   type CloudAccess,
   type CloudProjectSummary,
+  type PlatformBatchState,
+  type PlatformBatchTaken,
   type RepositoryAccess,
   type RepositoryCheck,
   type RepositoryChoice,
@@ -264,6 +266,16 @@ export class LabRepositories implements RepositoryAccess {
     this.statuses.set(project, { ...rest, state: "ready", archiving: true });
     if (this.archiveMs >= 0) setTimeout(() => this.archived(project), this.archiveMs);
     return this.status(project);
+  }
+
+  async batch(project: string, batch: string): Promise<PlatformBatchState> {
+    await wait(50);
+    return this.#platform.batchState(project, batch);
+  }
+
+  async undoBatch(project: string, batch: string): Promise<PlatformBatchTaken> {
+    await wait(50);
+    return this.#platform.undoBatch(project, batch);
   }
 
   async prefer(project: string, prefer: "editor" | "github"): Promise<RepositoryStatus> {

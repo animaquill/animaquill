@@ -6,6 +6,7 @@ import { useWorkbench } from "./context.ts";
 import { Bubble } from "./Bubble.tsx";
 import { operationText } from "./operation-text.ts";
 import { toolName } from "../workbench/tool-activity.ts";
+import { batchWhyKey } from "../cloud/batch-undo.ts";
 import styles from "./OperationStatus.module.css";
 import { Tip } from "./Tip.tsx";
 
@@ -20,6 +21,8 @@ interface Choice {
   readonly why?: string;
   /** It can be done elsewhere, or could before: the button is there, grey, and says why. */
   readonly off?: boolean;
+  /** It asks people first, in a dialog of its own: the list goes out of the way. */
+  readonly asks?: boolean;
 }
 
 /**
@@ -38,8 +41,10 @@ export function OperationStatus() {
   const listElement = useRef<HTMLOListElement>(null);
   // Re-rendered as batches of AI tools on this computer come in, which name their operations.
   useSyncExternalStore(workbench.tools.subscribe, workbench.tools.getSnapshot);
-  // And as what can be taken back changes, also in other windows.
+  // And as what can be taken back changes, also in other windows, and what the platform says of
+  // merges.
   useSyncExternalStore(workbench.undo.subscribe, workbench.undo.getSnapshot);
+  useSyncExternalStore(workbench.batchUndo.subscribe, workbench.batchUndo.getSnapshot);
   const toolOf = (operation: Operation) => {
     const batch =
       operation.source === "folder" ? workbench.tools.batchOf(operation.origin) : undefined;
@@ -60,9 +65,21 @@ export function OperationStatus() {
     switch (operation.source) {
       case "other":
         return { why: t("operations.why.other") };
-      // Taking a merge of GitHub's back as a whole comes with the persistent undo of batches (2E).
-      case "github":
-        return {};
+      // A merge of GitHub's goes back as a whole on the platform (2E); files people chose to take
+      // out never come back.
+      case "github": {
+        const { batches } = operation;
+        if (operation.dropped || !batches || batches.length === 0) return {};
+        const { direction, why } = workbench.batchUndo.stateOf(batches, operation.undone);
+        if (!direction) return why === undefined ? {} : { why: t(batchWhyKey(why)) };
+        const label = direction === "redo" ? t("operations.redoThis") : t("operations.undoThis");
+        if (why !== undefined) return { label, off: true, why: t(batchWhyKey(why)) };
+        return {
+          label,
+          ...(direction === "undo" && { asks: true }),
+          run: () => workbench.batchUndo.takeBack(batches, direction, operation.count),
+        };
+      }
       case "ai":
       case "folder": {
         if (operation.origin === undefined) return { why: t("operations.why.originGone") };
@@ -156,6 +173,11 @@ export function OperationStatus() {
                         className={styles.action}
                         onClick={() => {
                           if (!choice.run) return;
+                          if (choice.asks) {
+                            setAnchor(undefined);
+                            void choice.run();
+                            return;
+                          }
                           const said = choice.run();
                           setMessage(typeof said === "string" ? said : undefined);
                           // Its button goes with what it did: the keys stay in the list, for Escape.

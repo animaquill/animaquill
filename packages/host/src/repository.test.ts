@@ -435,4 +435,63 @@ describe("repositories through the platform", () => {
       ["POST", "/projects/p1/repository/prefer", { prefer: "editor" }],
     ]);
   });
+
+  test("batches the platform wrote: what each is, and taking one back as a whole", async () => {
+    const { access, sent } = platform(({ url, method }) => {
+      if (method === "GET")
+        return Response.json({
+          batch: {
+            id: "m1",
+            kind: "repo",
+            label: "GitHub 上的改动 abc1234",
+            files: 2,
+            at: 5,
+            undone: false,
+            next: { batch: "m1", direction: "undo" },
+            extra: true,
+          },
+        });
+      if (url.endsWith("/m2/undo"))
+        return Response.json({ error: "notUndoable", why: "drop" }, { status: 409 });
+      return Response.json({
+        batch: "u1",
+        seq: 9,
+        direction: "undo",
+        back: [["files", "code/a.js"], "not a path", []],
+        kept: [["scenes", "intro"]],
+        backCount: 3,
+        keptCount: 1,
+        obstacle: "changed",
+        next: { batch: "u1", direction: "redo" },
+      });
+    });
+    expect(await access.batch?.("p1", "m1")).toEqual({
+      id: "m1",
+      kind: "repo",
+      label: "GitHub 上的改动 abc1234",
+      files: 2,
+      at: 5,
+      undone: false,
+      next: { batch: "m1", direction: "undo" },
+    });
+    expect(await access.undoBatch?.("p1", "m1")).toEqual({
+      batch: "u1",
+      seq: 9,
+      direction: "undo",
+      back: [["files", "code/a.js"]],
+      kept: [["scenes", "intro"]],
+      backCount: 3,
+      keptCount: 1,
+      obstacle: "changed",
+      next: { batch: "u1", direction: "redo" },
+    });
+    const refused = await access.undoBatch?.("p1", "m2").catch((error: unknown) => error);
+    expect(refused).toBeInstanceOf(RepositoryRefused);
+    expect(refused).toMatchObject({ code: "notUndoable", why: "drop" });
+    expect(sent.map(({ method, url }) => [method, url.slice(28)])).toEqual([
+      ["GET", "/projects/p1/batches/m1"],
+      ["POST", "/projects/p1/batches/m1/undo"],
+      ["POST", "/projects/p1/batches/m2/undo"],
+    ]);
+  });
 });

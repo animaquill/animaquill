@@ -1057,9 +1057,12 @@ describe("merges of what changed on GitHub, as the window takes them in", async 
       },
       store: () => window.store,
       heard: (merges) => operations.heardRepo(merges),
+      heardTakenBack: (taken) => operations.heardTakenBack(taken),
+      undo: (batches, files) => undone.push({ batches, files }),
       refresh: () => {},
     });
-    return { operations, notifications, changes };
+    const undone: { batches: readonly string[]; files: number }[] = [];
+    return { operations, notifications, changes, undone };
   }
 
   const clipOf = (store: ProjectStore) =>
@@ -1104,6 +1107,38 @@ describe("merges of what changed on GitHub, as the window takes them in", async 
     expect(operations.getSnapshot()[0]?.source).toBe("other");
   });
 
+  it("offers to take a merge back from its notice, and says it taken back, here and in every window", async () => {
+    const time = new TestTime();
+    const { platform, a } = await start(time);
+    const { operations, notifications, undone } = watch(a);
+    const clip = clipOf(a.store);
+    platform.mergeFromRepository(CLOUD_ID, [renameClip(clip, "GitHub 改的")], "m1", 2);
+    await time.advance(100);
+    await Promise.resolve();
+    expect(operations.getSnapshot()[0]).toMatchObject({
+      source: "github",
+      batches: ["m1"],
+      undone: false,
+    });
+    const [notice] = notifications.getSnapshot();
+    expect(notice?.actions?.map(({ label }) => label)).toEqual(["查看", "撤销这次"]);
+    notice?.actions?.[1]?.run();
+    expect(undone).toEqual([{ batches: ["m1"], files: 2 }]);
+    // The platform takes it back, as any window asked: the list says so, with nothing more in it.
+    const before = operations.getSnapshot().length;
+    platform.takeBackFromRepository(CLOUD_ID, "m1");
+    await time.advance(100);
+    await Promise.resolve();
+    expect(a.store.getState().timelines["main"]?.clips[clip]?.name).not.toBe("GitHub 改的");
+    expect(operations.getSnapshot()).toHaveLength(before);
+    expect(operations.getSnapshot()[0]).toMatchObject({ source: "github", undone: true });
+    platform.takeBackFromRepository(CLOUD_ID, "m1", "redo");
+    await time.advance(100);
+    await Promise.resolve();
+    expect(a.store.getState().timelines["main"]?.clips[clip]?.name).toBe("GitHub 改的");
+    expect(operations.getSnapshot()[0]).toMatchObject({ source: "github", undone: false });
+  });
+
   it("says files people chose to take out as their doing, not as a change of GitHub's", async () => {
     const time = new TestTime();
     const { platform, a } = await start(time);
@@ -1119,10 +1154,15 @@ describe("merges of what changed on GitHub, as the window takes them in", async 
     await Promise.resolve();
     const [operation] = operations.getSnapshot();
     expect(operation).toMatchObject({ source: "github", dropped: true, count: 1 });
+    // Never taken back: it would bring back what people took out on purpose, such as a secret.
+    expect(operation?.batches).toBeUndefined();
     expect(operationText(t, operation as Operation)).toBe("按你的选择从项目里去掉了 1 个文件");
     expect(notifications.getSnapshot().map(({ message }) => message)).toEqual([
       "按你的选择从项目里去掉了 1 个文件",
     ]);
+    expect(notifications.getSnapshot()[0]?.actions?.map(({ label }) => label) ?? []).not.toContain(
+      "撤销这次",
+    );
   });
 
   it("says merges that came while the editor was away once, together, as the project opens", async () => {

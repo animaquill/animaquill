@@ -6,7 +6,8 @@
   position: fixed;
   top: 0;
   left: 0;
-  z-index: 110;
+  /* Over whatever it is about, also in a bubble or the settings: it never takes the pointer. */
+  z-index: 2100;
   max-width: 280px;
   padding: 6px 8px;
   color: var(--aq-text);

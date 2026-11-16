@@ -152,7 +152,7 @@ test.describe("merges of what changed on GitHub", () => {
     await expect(dialog(page)).toContainText("GitHub 上的改动（2 个文件）");
     await expect(dialog(page)).toContainText("GitHub 上改的名字");
     await page.keyboard.press("Escape");
-    // One operation, of GitHub's, which cannot be taken back from here yet.
+    // One operation, of GitHub's, which can be taken back as a whole (2E).
     await page
       .getByRole("contentinfo")
       .getByRole("button", { name: /^上次的操作：/ })
@@ -160,13 +160,102 @@ test.describe("merges of what changed on GitHub", () => {
     const list = page.getByRole("dialog", { name: "最近的操作" });
     await expect(list.getByRole("listitem").first()).toContainText("GitHub 上的改动（2 个文件）");
     await expect(list.getByRole("listitem").first()).toContainText("GitHub");
-    await expect(list.getByRole("listitem").first().getByRole("button")).toHaveCount(0);
+    await expect(list.getByRole("listitem").first().getByRole("button")).toHaveText("撤销这次");
     await page.keyboard.press("Escape");
     // The panel says so with the archive.
     await cloudStatus(page).click();
     await expect(row(page, "archive")).toContainText("合并了 GitHub 上的改动（2 个文件），");
     // The notice goes by itself.
     await expect(notice).toHaveCount(0, { timeout: 15_000 });
+  });
+
+  test("taking a merge back as a whole: asked first, what came of it, done again, and why not", async ({
+    page,
+  }) => {
+    test.setTimeout(60_000);
+    const id = await opened(page);
+    const original = (await stateOf(page)).manifest.name;
+    await withLab(
+      page,
+      (lab, project) =>
+        lab.platform.mergeFromRepository(
+          project,
+          [
+            { type: "project.rename", params: { name: "GitHub 上改的名字" } },
+            { type: "file.write", params: { path: "code/title.js", text: "const title = 2;\n" } },
+          ],
+          "m1",
+          2,
+        ),
+      id,
+    );
+    await expect(page).toHaveTitle("GitHub 上改的名字 - AnimaQuill");
+    // People change one of the places since: that one stays.
+    expect(
+      await execute(page, {
+        type: "file.write",
+        params: { path: "code/title.js", text: "const title = 3;\n" },
+      }),
+    ).toBe(true);
+    await expect
+      .poll(() =>
+        withLab(
+          page,
+          (lab, project) => lab.platform.workingCopy(project).getState().files["code/title.js"],
+          id,
+        ),
+      )
+      .toBe("const title = 3;\n");
+    const status = page.getByRole("contentinfo").getByRole("button", { name: /^上次的操作：/ });
+    await status.click();
+    const list = page.getByRole("dialog", { name: "最近的操作" });
+    const merge = list.getByRole("listitem").filter({ hasText: "GitHub 上的改动（2 个文件）" });
+    await expect(merge.getByRole("button", { name: "撤销这次" })).toBeVisible();
+    await shot(page, "2e-history-undo");
+    await merge.getByRole("button", { name: "撤销这次" }).click();
+    // Asked first: GitHub goes back too.
+    await expect(dialog(page)).toContainText("撤销 GitHub 上合并进来的改动（2 个文件）");
+    await expect(dialog(page)).toContainText("下次存档时，GitHub 上也会改回来。");
+    await shot(page, "2e-confirm");
+    await dialog(page).getByRole("button", { name: "撤销", exact: true }).click();
+    await expect(page).toHaveTitle(`${original} - AnimaQuill`);
+    expect((await stateOf(page)).files["code/title.js"]).toBe("const title = 3;\n");
+    const notices = page.locator("[data-notifications]");
+    await expect(notices).toContainText("撤销了 1 处");
+    await expect(notices).toContainText("1 处你后来又改过，保留了你的。");
+    await shot(page, "2e-partial");
+    await notices.getByRole("button", { name: "查看是哪 1 处" }).click();
+    await expect(dialog(page)).toContainText("保留了 1 处");
+    await shot(page, "2e-partial-list");
+    await page.keyboard.press("Escape");
+    // The list says it, and does it again from there.
+    await status.click();
+    await expect(merge).toContainText("已撤销");
+    await merge.getByRole("button", { name: "重做这次" }).click();
+    await expect(page).toHaveTitle("GitHub 上改的名字 - AnimaQuill");
+    // What cannot be taken back is grey, and says why.
+    await withLab(
+      page,
+      (lab, project) => {
+        lab.platform.mergeFromRepository(
+          project,
+          [{ type: "project.rename", params: { name: "很久以前" } }],
+          "m2",
+          1,
+        );
+        (lab.platform as unknown as { batchWhy: Map<string, string> }).batchWhy.set("m2", "age");
+      },
+      id,
+    );
+    await expect(page).toHaveTitle("很久以前 - AnimaQuill");
+    await page.keyboard.press("Escape");
+    await status.click();
+    const old = list.getByRole("listitem").filter({ hasText: "GitHub 上的改动（1 个文件）" });
+    const grey = old.getByRole("button", { name: "撤销这次" });
+    await expect(grey).toHaveAttribute("aria-disabled", "true");
+    await grey.hover();
+    await expect(page.getByRole("tooltip")).toHaveText("撤销记录只留 30 天");
+    await shot(page, "2e-grey-hover");
   });
 
   test("merges while the editor was away are told once as the project opens", async ({ page }) => {

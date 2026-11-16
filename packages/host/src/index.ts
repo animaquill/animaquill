@@ -1531,6 +1531,19 @@ export interface RepositoryAccess {
   /** Which side merges keep first, see `RepositoryStatus.prefer`: only people change it. */
   prefer?(project: string, prefer: "editor" | "github"): Promise<RepositoryStatus>;
   /**
+   * A batch the platform wrote into a project itself, such as a merge of changes on GitHub (its id
+   * is `SyncBatch.batch`), and whether it can be taken back as a whole now, see
+   * `PlatformBatchState`. Refuses "notFound" for one that is not there.
+   */
+  batch?(project: string, batch: string): Promise<PlatformBatchState>;
+  /**
+   * Takes such a batch back as a whole ("撤销这次"), on the platform, which keeps what it takes
+   * whatever window or device asks: `batch` is the batch itself, or the one that took it back last
+   * to do it again (`PlatformBatchState.next`). What anybody changed since stays, and is said. The
+   * next archive writes what the project has then. Refuses "notUndoable" with `why`.
+   */
+  undoBatch?(project: string, batch: string): Promise<PlatformBatchTaken>;
+  /**
    * "Check again": the platform asks GitHub now whether the repository of a project can be used,
    * see `RepositoryStatus.unusable`; where it can, the project can be edited again. Resolves to the
    * status as it is then. Refuses "busy" more than once a minute, "unavailable" where GitHub could
@@ -1550,6 +1563,52 @@ export interface RepositoryAccess {
     readonly existing: { readonly id: number };
     readonly confirmPublic?: boolean;
   }): Promise<RepositoryRestored>;
+}
+
+/**
+ * Which way a batch of the platform's goes from where it is now, see `PlatformBatchState.next`:
+ * the batch to take back for it, and whether that takes the batch back or does it again.
+ */
+export interface PlatformBatchNext {
+  readonly batch: string;
+  readonly direction: "undo" | "redo";
+}
+
+/** A batch the platform wrote into a project itself, see `RepositoryAccess.batch`. */
+export interface PlatformBatchState {
+  readonly id: string;
+  /** "repo" (a merge of changes on GitHub), "drop", "undo", "redo", or others to come. */
+  readonly kind: string;
+  readonly label: string;
+  readonly files: number;
+  readonly at: number;
+  /** The batch it is about is taken back now. */
+  readonly undone: boolean;
+  /** For "undo" and "redo": the batch it takes back or does again. */
+  readonly undoes?: string;
+  readonly next?: PlatformBatchNext;
+  /**
+   * Why `next` would not go now: "drop" (files people chose to take out, never brought back),
+   * "changed" or "inUse" (all of it was changed since, or is in use), "count" or "age" (older than
+   * the platform keeps it for), "rebuilt" (the project was made again from the repository since),
+   * "format", "locked", "unusable", and others for what is done with ("undone", "notLatest").
+   */
+  readonly why?: string;
+}
+
+/** What came of taking a batch back, or doing it again, see `RepositoryAccess.undoBatch`. */
+export interface PlatformBatchTaken {
+  /** The batch that took it back, which is one of its own, and the update it is. */
+  readonly batch: string;
+  readonly seq: number | undefined;
+  readonly direction: "undo" | "redo";
+  /** Places that went back, and that stayed as they were changed since: the first of each. */
+  readonly back: readonly (readonly string[])[];
+  readonly kept: readonly (readonly string[])[];
+  readonly backCount: number;
+  readonly keptCount: number;
+  readonly obstacle?: "changed" | "inUse";
+  readonly next: PlatformBatchNext;
 }
 
 /** A file on GitHub that a merge did not take in, see `RepositoryStatus.blocked`. */
@@ -1628,7 +1687,8 @@ export type RepositoryRefusal =
   | "notBlocked"
   /** The history on GitHub is not rewritten (any more), see `RepositoryAccess.mergeNow`. */
   | "notRewritten"
-  | "noCommonBase";
+  | "noCommonBase"
+  | "notUndoable";
 
 /**
  * The platform did not do what was asked: always one of the codes of `RepositoryRefusal`, also where
@@ -1645,6 +1705,8 @@ export class RepositoryRefused extends Error {
   readonly diverged: RepositoryStatus["diverged"];
   /** For "busy": seconds to wait. */
   readonly retryAfter: number | undefined;
+  /** For "notUndoable": why, see `PlatformBatchState.why`. */
+  readonly why: string | undefined;
   constructor(
     code: RepositoryRefusal,
     more: {
@@ -1652,6 +1714,7 @@ export class RepositoryRefused extends Error {
       readonly project?: { readonly id: string; readonly name: string };
       readonly diverged?: RepositoryStatus["diverged"];
       readonly retryAfter?: number;
+      readonly why?: string;
     } = {},
   ) {
     super(`The platform refused: ${code}`);
@@ -1660,6 +1723,7 @@ export class RepositoryRefused extends Error {
     this.project = more.project;
     this.diverged = more.diverged;
     this.retryAfter = more.retryAfter;
+    this.why = more.why;
   }
 }
 

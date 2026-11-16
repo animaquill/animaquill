@@ -39,6 +39,13 @@ export interface RepoChangesOptions {
   readonly store: () => ProjectStore | undefined;
   /** Tells the list of operations, see `OperationLog.heardRepo`. */
   readonly heard: (merges: RepoMergesHeard) => void;
+  /** ...that merges were taken back or done again, see `OperationLog.heardTakenBack`. */
+  readonly heardTakenBack?: (taken: {
+    readonly undoes: readonly string[];
+    readonly direction: "undo" | "redo";
+  }) => void;
+  /** "撤销这次" of merges, see `BatchUndo`: undefined where the platform does not take them back. */
+  readonly undo?: (batches: readonly string[], files: number) => void;
   /** Asks the platform how archiving goes, see `RepositoryWatch.refresh`. */
   readonly refresh: () => void;
 }
@@ -115,6 +122,21 @@ export class RepoChanges {
 
   /** Merges of what changed on GitHub came in, see `CloudBatchNote`. */
   heard(note: CloudBatchNote): void {
+    this.#heardMerges(note);
+    // Merges taken back as a whole, or done again: the list says so, nothing else changes. After
+    // the merges of the same note, which take the place of "其他窗口" first.
+    for (const direction of ["undo", "redo"] as const) {
+      const undoes = note.batches.flatMap((batch) =>
+        batch.kind === direction && batch.undoes !== undefined ? [batch.undoes] : [],
+      );
+      if (undoes.length > 0) {
+        this.#options.heardTakenBack?.({ undoes, direction });
+        this.#options.refresh();
+      }
+    }
+  }
+
+  #heardMerges(note: CloudBatchNote): void {
     // Files people chose to take out ("drop") are told as what they are, not as GitHub's.
     const dropped = note.batches.some(({ kind }) => kind === "drop");
     const repo = note.batches.filter(({ kind }) => kind === "repo" || kind === "drop");
@@ -124,10 +146,13 @@ export class RepoChanges {
     const isDrop = dropped && repo.every(({ kind }) => kind === "drop");
     const merge = { ...repoMergeOf(store, { ...note, batches: repo }), dropped: isDrop };
     const { t, notifications } = this.#options;
+    // Only GitHub's own changes can be taken back as a whole: what people chose to take out stays.
+    const undoable = repo.filter(({ kind }) => kind === "repo").map(({ batch }) => batch);
     this.#options.heard({
       files: repo.map(({ files }) => files),
       away: note.away,
       ...(isDrop && { dropped: true }),
+      ...(!isDrop && undoable.length > 0 && { batches: undoable }),
     });
     this.#set({ marked: markedOf(merge) });
     const message = isDrop
@@ -135,11 +160,16 @@ export class RepoChanges {
       : merge.away
         ? t("repoMerge.notice.away", { merges: merge.merges, count: merge.files })
         : t("repoMerge.notice.merged", { count: merge.files });
-    notifications.push(message, {
-      ...(merge.changes.length > 0 && {
-        actions: [{ label: t("repoMerge.notice.show"), run: () => void this.show(merge) }],
-      }),
-    });
+    const undo = this.#options.undo;
+    const actions = [
+      ...(merge.changes.length > 0
+        ? [{ label: t("repoMerge.notice.show"), run: () => void this.show(merge) }]
+        : []),
+      ...(undo && !isDrop && undoable.length > 0
+        ? [{ label: t("operations.undoThis"), run: () => undo(undoable, merge.files) }]
+        : []),
+    ];
+    notifications.push(message, { ...(actions.length > 0 && { actions }) });
     this.#options.refresh();
   }
 

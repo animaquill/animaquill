@@ -33,6 +33,9 @@ import {
   type CloudProjectSummary,
   type CloudRemoval,
   type CloudRemoveOptions,
+  type PlatformBatchState,
+  type PlatformBatchTaken,
+  RepositoryRefused,
   type RepositoryStatus,
   type RepositoryUnusable,
   type SyncBatch,
@@ -186,6 +189,16 @@ export class MemoryPlatform {
   /** What the platform turned away, by why. */
   readonly rejected: SyncRejection[] = [];
   #working = new Map<string, Store>();
+  /**
+   * The batches the platform wrote into each project itself, as `RepositoryAccess.batch` says them,
+   * by project and batch, with the steps that took each back or did it again, newest last.
+   */
+  readonly batches = new Map<
+    string,
+    Map<string, Omit<PlatformBatchState, "undone"> & { undone: boolean; steps: string[] }>
+  >();
+  /** Why a batch cannot be taken back, where a test says so, as the platform would. */
+  readonly batchWhy = new Map<string, string>();
   readonly #sides = new Set<ServerSide>();
   /** Every connection that opened. */
   connections = 0;
@@ -649,6 +662,126 @@ export class MemoryPlatform {
     batch = "1",
     files = commands.length,
   ): void {
+    const kind = batch === "drop" ? "drop" : "repo";
+    const label =
+      batch === "drop" ? `按你的选择从项目里去掉了 ${files} 个文件` : `GitHub 上的改动 ${batch}`;
+    let known = this.batches.get(id);
+    if (!known) this.batches.set(id, (known = new Map()));
+    known.set(batch, { id: batch, kind, label, files, at: Date.now(), undone: false, steps: [] });
+    this.#writeAsPlatform(
+      id,
+      (store) => {
+        for (const command of commands) {
+          const result = store.execute(command, { origin: repoBatch(batch) });
+          if (!result.ok) throw new Error(`the merge did not go: ${JSON.stringify(result)}`);
+        }
+      },
+      {
+        batch,
+        kind: batch === "drop" ? "drop" : "repo",
+        label:
+          batch === "drop"
+            ? `按你的选择从项目里去掉了 ${files} 个文件`
+            : `GitHub 上的改动 ${batch}`,
+        files,
+      },
+    );
+  }
+
+  /**
+   * A merge of what changed on GitHub taken back as a whole by the platform, or done again, as a
+   * batch of its own (`step`) that says which one it is about (`undoes`).
+   */
+  takeBackFromRepository(
+    id: string,
+    batch: string,
+    direction: "undo" | "redo" = "undo",
+    step = `${direction}-${batch}-${(this.batches.get(id)?.get(batch)?.steps.length ?? 0) + 1}`,
+  ): PlatformBatchTaken {
+    const known = this.batches.get(id)?.get(batch);
+    let taken: ReturnType<Store["undoOrigin"]> | undefined;
+    this.#writeAsPlatform(
+      id,
+      (store) => {
+        taken =
+          direction === "undo"
+            ? store.undoOrigin(repoBatch(batch))
+            : store.redoOrigin(repoBatch(batch));
+        if (!taken.ok) throw new Error(`it did not go back: ${JSON.stringify(taken)}`);
+      },
+      {
+        batch: step,
+        kind: direction,
+        label: `${direction === "undo" ? "撤销了" : "重做了"}${known?.label ?? batch}`,
+        files: known?.files ?? 1,
+        undoes: batch,
+      },
+    );
+    if (known) {
+      known.undone = direction === "undo";
+      known.steps.push(step);
+    }
+    const result = taken as Extract<ReturnType<Store["undoOrigin"]>, { ok: true }>;
+    const kept = new Set(result.kept.map((path) => path.join("\n")));
+    const back = result.patches
+      .map(({ path }) => path)
+      .filter((path) => !kept.has(path.join("\n")));
+    return {
+      batch: step,
+      seq: this.projects.get(id)?.head,
+      direction,
+      back,
+      kept: result.kept,
+      backCount: back.length,
+      keptCount: result.kept.length,
+      ...(result.obstacle && { obstacle: result.obstacle }),
+      next: { batch: step, direction: direction === "undo" ? "redo" : "undo" },
+    };
+  }
+
+  /** A batch the platform wrote, and what taking it back would do now, as the platform says it. */
+  batchState(id: string, batch: string): PlatformBatchState {
+    const { root, step } = this.#batchOf(id, batch);
+    const { steps, ...state } = root;
+    const last = steps.at(-1);
+    const direction = root.undone ? "redo" : "undo";
+    const next = { batch: root.undone && last ? last : root.id, direction } as const;
+    const why =
+      this.batchWhy.get(root.id) ??
+      (root.kind === "drop"
+        ? "drop"
+        : step !== undefined && step !== last
+          ? "notLatest"
+          : this.workingCopy(id).undoOutlook(repoBatch(root.id)).blocked);
+    return {
+      ...state,
+      ...(step !== undefined && { id: step, kind: root.undone ? "undo" : "redo", undoes: root.id }),
+      next,
+      ...(why !== undefined && { why }),
+    };
+  }
+
+  /** Takes a batch back as a whole, or does it again, as `RepositoryAccess.undoBatch`. */
+  undoBatch(id: string, batch: string): PlatformBatchTaken {
+    const { root } = this.#batchOf(id, batch);
+    const state = this.batchState(id, batch);
+    if (state.why !== undefined || !state.next)
+      throw new RepositoryRefused("notUndoable", { why: state.why ?? "failed" });
+    // The batch itself goes only one way; the other is the last step's.
+    if (batch === root.id && root.undone)
+      throw new RepositoryRefused("notUndoable", { why: "undone" });
+    return this.takeBackFromRepository(id, root.id, state.next.direction);
+  }
+
+  #batchOf(id: string, batch: string) {
+    const known = this.batches.get(id);
+    const root =
+      known?.get(batch) ?? [...(known?.values() ?? [])].find(({ steps }) => steps.includes(batch));
+    if (!root) throw new RepositoryRefused("notFound");
+    return { root, step: root.id === batch ? undefined : batch };
+  }
+
+  #writeAsPlatform(id: string, write: (store: Store) => void, by: SyncBatch): void {
     const project = this.projects.get(id);
     if (!project) throw new Error(`no project ${id}`);
     const store = this.workingCopy(id);
@@ -656,12 +789,7 @@ export class MemoryPlatform {
     const take = (update: Uint8Array) => parts.push(update);
     store.doc.on("update", take);
     try {
-      store.writeAsPlatform(() => {
-        for (const command of commands) {
-          const result = store.execute(command, { origin: repoBatch(batch) });
-          if (!result.ok) throw new Error(`the merge did not go: ${JSON.stringify(result)}`);
-        }
-      });
+      store.writeAsPlatform(() => write(store));
     } finally {
       store.doc.off("update", take);
     }
@@ -677,15 +805,7 @@ export class MemoryPlatform {
       device: "",
       base: project.head - 1,
       behind: false,
-      by: {
-        batch,
-        kind: batch === "drop" ? "drop" : "repo",
-        label:
-          batch === "drop"
-            ? `按你的选择从项目里去掉了 ${files} 个文件`
-            : `GitHub 上的改动 ${batch}`,
-        files,
-      },
+      by,
     };
     project.updates.push(update);
     for (const side of this.#sides) {

@@ -288,15 +288,20 @@ export interface SyncBatch {
   readonly kind: string;
   readonly label: string;
   readonly files: number;
+  /**
+   * For a batch that takes another back as a whole ("undo") or does it again ("redo"): which one.
+   * A platform from before says none.
+   */
+  readonly undoes?: string;
 }
 
 const batchOf = (value: unknown): SyncBatch | undefined => {
   if (typeof value !== "object" || value === null) return undefined;
-  const { batch, kind, label, files } = value as Record<string, unknown>;
+  const { batch, kind, label, files, undoes } = value as Record<string, unknown>;
   if (!isText(batch, 64) || !isText(kind, 32) || !isText(label, 200) || !isCount(files)) {
     return undefined;
   }
-  return { batch, kind, label, files };
+  return { batch, kind, label, files, ...(isText(undoes, 64) && { undoes }) };
 };
 
 /** A message as the frames that carry it, in order. */

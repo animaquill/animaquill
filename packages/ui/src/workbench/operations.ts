@@ -41,10 +41,17 @@ export interface Operation {
    * the platform did as a batch of its own ("drop"): not a change of GitHub's.
    */
   readonly dropped?: boolean;
+  /**
+   * For changes from GitHub: the batches of the platform they are, which the platform takes back
+   * as a whole (`BatchUndo`), oldest first.
+   */
+  readonly batches?: readonly string[];
 }
 
 /** Merges of what changed on GitHub that the project just took in, see `CloudBatchNote`. */
 export interface RepoMergesHeard {
+  /** Their batches of the platform, see `Operation.batches`. */
+  readonly batches?: readonly string[];
   /** How many files each came from. */
   readonly files: readonly number[];
   readonly away: boolean;
@@ -229,7 +236,7 @@ export class OperationLog {
    * tells right after the project took them in): one "GitHub 上的改动" in place of "其他窗口", which
    * says how many files, and, where they came while the editor was away, how many merges.
    */
-  heardRepo({ files, away, dropped }: RepoMergesHeard): void {
+  heardRepo({ files, away, dropped, batches }: RepoMergesHeard): void {
     const store = this.#store;
     const last = this.#lastOther;
     if (!store || !last || last.revision !== store.revision || files.length === 0) return;
@@ -242,8 +249,35 @@ export class OperationLog {
       merges: files.length,
       ...(away && { away: true }),
       ...(dropped && { dropped: true }),
+      ...(batches && batches.length > 0 && { batches }),
     });
     this.#lastOther = undefined;
+    this.#show();
+  }
+
+  /**
+   * What came from the platform just now took merges of GitHub back as a whole, or did them again
+   * (`BatchUndo`, here or anywhere else): the merges in the list say so, as an AI task taken back
+   * does, in place of one more "其他窗口".
+   */
+  heardTakenBack({
+    undoes,
+    direction,
+  }: {
+    readonly undoes: readonly string[];
+    readonly direction: "undo" | "redo";
+  }): void {
+    const store = this.#store;
+    const last = this.#lastOther;
+    if (store && last && last.revision === store.revision) {
+      this.#operations = this.#operations.filter(({ id }) => id !== last.id);
+      this.#lastOther = undefined;
+    }
+    for (const operation of this.#operations) {
+      if (operation.source !== "github" || !operation.batches?.some((id) => undoes.includes(id)))
+        continue;
+      this.#replace(operation, { ...operation, undone: direction === "undo" });
+    }
     this.#show();
   }
 

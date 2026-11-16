@@ -1361,7 +1361,12 @@
       "inUse": "这次改的地方还被别的内容用着",
       "count": "撤销记录只留最近 50 次",
       "age": "撤销记录只留 30 天",
-      "elsewhere": "在做这次改动的那台电脑上能撤销"
+      "elsewhere": "在做这次改动的那台电脑上能撤销",
+      "rebuilt": "平台上的项目后来从 GitHub 重建过，这次撤不了了",
+      "format": "项目格式升级过，这次撤不了了",
+      "locked": "项目锁着，解锁以后才能撤销",
+      "unusable": "仓库现在用不了，项目改不了",
+      "history": "这次去掉的是 GitHub 上改写历史时删掉的内容，撤销会把它带回来"
     },
     "command": {
       "project": {
@@ -5644,6 +5649,12 @@
     },
     "showTitle": "GitHub 上的改动（{{count}} 个文件）",
     "changes": "改了什么",
+    "undo": {
+      "title": "撤销 GitHub 上合并进来的改动（{{count}} 个文件）",
+      "message": "下次存档时，GitHub 上也会改回来。",
+      "confirm": "撤销",
+      "failed": "没能撤销，请再试一次"
+    },
     "list": {
       "title": "和 GitHub 上的改动冲突的地方（{{count}} 处）",
       "titleDone": "和 GitHub 上的改动冲突的地方",

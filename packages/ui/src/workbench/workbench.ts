@@ -28,8 +28,6 @@ import {
   ProjectStore,
   withId,
   aiTask,
-  objectKey,
-  objectOfPath,
   type Origin,
   type OperationCall,
   type UndoResult,
@@ -86,10 +84,11 @@ import { SETTINGS_GROUPS, SettingsNav, type SettingsPlace } from "./settings-nav
 import { SwitchSetting } from "./switch-setting.ts";
 import { ToolActivity, toolName } from "./tool-activity.ts";
 import { RepoChanges } from "./repo-changes.ts";
+import { BatchUndo } from "../cloud/batch-undo.ts";
 import { RepoMerges } from "../cloud/repo-merges.ts";
 import { objectOfConflict } from "../cloud/conflicts.ts";
 import { ProjectOpening, type OpeningTiming } from "./opening.ts";
-import { placeText } from "./undo-text.ts";
+import { tellTakenBack } from "./undo-text.ts";
 import { CodeDocuments, type CodePlace } from "../code/documents.ts";
 import { CodeDrafts } from "../code/drafts.ts";
 import { FileActions } from "../code/files.ts";
@@ -430,6 +429,8 @@ export class Workbench {
   readonly tools: ToolActivity;
   /** What merges of changes on GitHub did to the open project, see `RepoChanges`. */
   readonly repoChanges: RepoChanges;
+  /** Merges of changes on GitHub taken back as a whole, see `BatchUndo`. */
+  readonly batchUndo: BatchUndo;
   /** What people do where merging changes on GitHub waits for them, see `RepoMerges`. */
   readonly repoMerges: RepoMerges | undefined;
   /**
@@ -1158,13 +1159,38 @@ export class Workbench {
     });
     // Merges of what changed on GitHub, as they come in, and what waits for people of them.
     const cloudProjects = this.cloud;
+    // Merges taken back as a whole, by the platform (2E).
+    const repositoryAccess = cloud?.repository;
+    this.batchUndo = new BatchUndo({
+      t,
+      dialogs: this.dialogs,
+      notifications: this.notifications,
+      target: () => {
+        const snapshot = cloudProjects?.getSnapshot();
+        return repositoryAccess && snapshot?.kind === "linked"
+          ? { access: repositoryAccess, project: snapshot.link.project }
+          : undefined;
+      },
+      state: () => this.session.store?.getState(),
+    });
     this.repoChanges = new RepoChanges({
       t,
       notifications: this.notifications,
       dialogs: this.dialogs,
       cloud: cloudProjects,
       store: () => this.session.store,
-      heard: (merges) => this.operations.heardRepo(merges),
+      heard: (merges) => {
+        this.operations.heardRepo(merges);
+        // What can be taken back changes with every merge: older ones may go out of reach.
+        this.batchUndo.forget();
+      },
+      heardTakenBack: (taken) => {
+        this.operations.heardTakenBack(taken);
+        this.batchUndo.forget();
+      },
+      ...(repositoryAccess?.undoBatch && {
+        undo: (batches, files) => void this.batchUndo.takeBack(batches, "undo", files),
+      }),
       refresh: () => void cloudProjects?.repository?.refresh(),
     });
     this.repoChanges.subscribe(() =>
@@ -4395,52 +4421,21 @@ export class Workbench {
     store: ProjectStore,
     result: UndoResult,
   ): void {
-    const { t } = this;
     if (!result.ok) {
       this.tellUndo(result);
       return;
     }
-    const objects = (paths: readonly (readonly string[])[]) =>
-      new Set(paths.map((path) => objectKey(objectOfPath(path))));
-    const kept = objects(result.kept);
-    const back = [...objects(result.patches.map(({ path }) => path))].filter(
-      (key) => !kept.has(key),
-    );
-    const count = back.length;
-    if (direction === "redo") {
-      if (kept.size > 0)
-        this.notifications.push(t("notice.takenBack.redonePartly", { count, kept: kept.size }));
-      return;
-    }
-    const again = {
-      label: t("notice.takenBack.redo"),
-      run: () => void this.takeBackOrigin(origin, "redo"),
-    };
-    if (kept.size === 0) {
-      this.notifications.push(t("notice.takenBack.undone", { count }), { actions: [again] });
-      return;
-    }
-    const why = result.obstacle === "inUse" ? "inUse" : "changed";
-    const state = store.getState();
-    const places = result.kept.map((path) => placeText(t, state, path));
-    this.notifications.push(t("notice.takenBack.undone", { count }), {
-      stays: true,
-      warning: {
-        text: t(`notice.takenBack.kept.${why}`, { count: kept.size }),
-        action: {
-          label: t("notice.takenBack.showKept", { count: kept.size }),
-          run: () =>
-            void this.dialogs.confirm({
-              title: t("notice.takenBack.keptTitle", { count: kept.size }),
-              message: t(`notice.takenBack.kept.${why}`, { count: kept.size }),
-              confirm: t("dialog.close"),
-              noticeOnly: true,
-              details: [{ title: t("notice.takenBack.keptList"), items: [...new Set(places)] }],
-            }),
-        },
+    tellTakenBack(
+      this,
+      store.getState(),
+      {
+        direction,
+        paths: result.patches.map(({ path }) => path),
+        kept: result.kept,
+        obstacle: result.obstacle,
       },
-      actions: [again],
-    });
+      () => void this.takeBackOrigin(origin, "redo"),
+    );
   }
 
   /** What lists show of an AI task or a batch, as far as this window knows it now. */

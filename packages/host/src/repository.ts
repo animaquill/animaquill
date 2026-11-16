@@ -14,6 +14,9 @@ import {
 import {
   CloudSignedOut,
   RepositoryRefused,
+  type PlatformBatchNext,
+  type PlatformBatchState,
+  type PlatformBatchTaken,
   type RepositoryAccess,
   type RepositoryBlocked,
   type RepositoryCheck,
@@ -40,6 +43,8 @@ import {
  *   `POST .../conflicts/resolve` with `{ ids, keep, seq? }`, `POST .../repository/blocked` with
  *   `{ path, use: "editor" }`, `POST .../repository/merge-now` with `{ sha }`,
  *   `POST .../repository/prefer` with `{ prefer }`: merging changes on GitHub
+ * - `GET  <api>/projects/<project>/batches/<batch>`, `POST .../batches/<batch>/undo`: batches the
+ *   platform wrote itself, taken back as a whole
  * - `POST <api>/projects/restore` with `{ existing: { id }, confirmPublic? }`: 201 or 202 with
  *   `{ project: { id, name }, copy }`
  *
@@ -289,6 +294,7 @@ const CODES: ReadonlySet<string> = new Set<RepositoryRefusal>([
   "notBlocked",
   "notRewritten",
   "noCommonBase",
+  "notUndoable",
 ]);
 
 /**
@@ -301,6 +307,63 @@ const codeOf = (status: number, said: unknown): RepositoryRefusal => {
   if (status === 400 || status === 413 || status === 415 || status === 422) return "invalid";
   return "unavailable";
 };
+
+const nextOf = (value: unknown): PlatformBatchNext | undefined => {
+  if (!isObject(value)) return undefined;
+  const batch = text(value.batch);
+  const direction = value.direction;
+  if (batch === undefined || (direction !== "undo" && direction !== "redo")) return undefined;
+  return { batch, direction };
+};
+
+const pathsOf = (value: unknown): (readonly string[])[] =>
+  Array.isArray(value)
+    ? value.slice(0, 1000).flatMap((path) => {
+        const parts = texts(path);
+        return parts && parts.length > 0 ? [parts] : [];
+      })
+    : [];
+
+function batchStateOf(value: unknown): PlatformBatchState | undefined {
+  if (!isObject(value)) return undefined;
+  const id = text(value.id);
+  const kind = text(value.kind);
+  if (id === undefined || kind === undefined) return undefined;
+  return {
+    id,
+    kind,
+    label: text(value.label) ?? "",
+    files: count(value.files) ?? 0,
+    at: count(value.at) ?? 0,
+    undone: value.undone === true,
+    ...optional("undoes", text(value.undoes)),
+    ...optional("next", nextOf(value.next)),
+    ...optional("why", text(value.why)),
+  };
+}
+
+function batchTakenOf(value: unknown): PlatformBatchTaken | undefined {
+  if (!isObject(value)) return undefined;
+  const batch = text(value.batch);
+  const next = nextOf(value.next);
+  const direction = value.direction;
+  if (batch === undefined || !next || (direction !== "undo" && direction !== "redo"))
+    return undefined;
+  const back = pathsOf(value.back);
+  const kept = pathsOf(value.kept);
+  const obstacle = value.obstacle;
+  return {
+    batch,
+    seq: count(value.seq),
+    direction,
+    back,
+    kept,
+    backCount: count(value.backCount) ?? back.length,
+    keptCount: count(value.keptCount) ?? kept.length,
+    ...(obstacle === "changed" || obstacle === "inUse" ? { obstacle } : {}),
+    next,
+  };
+}
 
 export function browserRepository(options: BrowserRepositoryOptions): RepositoryAccess {
   const request = options.fetch ?? ((input, init) => fetch(input, init));
@@ -341,6 +404,7 @@ export function browserRepository(options: BrowserRepositoryOptions): Repository
       ...optional("files", texts(answer.files)),
       ...optional("project", projectOf(answer.project)),
       ...optional("diverged", divergedOf(answer.diverged)),
+      ...optional("why", text(answer.why)),
       ...optional(
         "retryAfter",
         Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined,
@@ -440,6 +504,28 @@ export function browserRepository(options: BrowserRepositoryOptions): Repository
     },
     async prefer(project, prefer) {
       return statusOf(await call("POST", projectPath(project, "repository/prefer"), { prefer }));
+    },
+    async batch(project, batch) {
+      const answer = await call(
+        "GET",
+        projectPath(project, `batches/${encodeURIComponent(batch)}`),
+      );
+      const said = batchStateOf(isObject(answer) ? answer.batch : undefined);
+      if (!said) throw new RepositoryRefused("unavailable");
+      return said;
+    },
+    async undoBatch(project, batch) {
+      const said = batchTakenOf(
+        await call(
+          "POST",
+          projectPath(project, `batches/${encodeURIComponent(batch)}/undo`),
+          {},
+          changeMs,
+        ),
+      );
+      // An answer that is none, as from a gateway: whether it went, asking again finds out.
+      if (!said) throw new RepositoryRefused("unavailable");
+      return said;
     },
   };
 }
