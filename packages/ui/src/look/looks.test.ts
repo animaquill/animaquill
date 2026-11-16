@@ -185,3 +185,65 @@ describe("frames for AI", () => {
     });
   });
 });
+
+describe("pictures before and after a change, for people", () => {
+  it("render the moment of each state at the size asked for, keep nothing, and never wait", async () => {
+    const images = memoryChatImages();
+    const save = vi.spyOn(images, "save");
+    const { looks, asked, disposed, change } = setUp({ images });
+    change({ busy: "playing", hidden: true });
+    const state = openStore().getState();
+    const answer = await looks.pictures({
+      before: state,
+      after: state,
+      timeline: "main",
+      seconds: 2,
+      side: 320,
+    });
+    expect(answer).toMatchObject({
+      before: { ok: true, width: 1024, height: 576 },
+      after: { ok: true, width: 1024, height: 576 },
+    });
+    expect(asked).toHaveLength(2);
+    expect(asked.every((spec) => spec.cells[0]?.seconds === 2 && !spec.base)).toBe(true);
+    expect(save).not.toHaveBeenCalled();
+    expect(disposed).toHaveBeenCalledTimes(2);
+    expect(looks.getSnapshot()).toEqual({ kind: "idle" });
+  });
+
+  it("say for each side whether it failed, and why", async () => {
+    let calls = 0;
+    const { looks } = setUp({
+      compositor: () => ({
+        look: async () => {
+          calls += 1;
+          if (calls === 1) throw new StillFailed({ reason: "missing-file", layer: "c", file: "h" });
+          return { image: new Blob(["jpeg"]), width: 320, height: 180, texts: [] };
+        },
+        dispose: () => {},
+      }),
+    });
+    const state = openStore().getState();
+    const answer = await looks.pictures({
+      before: state,
+      after: state,
+      timeline: "main",
+      seconds: 1,
+      side: 320,
+    });
+    expect(answer.before).toEqual({
+      ok: false,
+      failure: { reason: "missing-file", layer: "c", file: "h" },
+    });
+    expect(answer.after).toMatchObject({ ok: true, width: 320 });
+    expect(
+      await looks.pictures({
+        before: state,
+        after: state,
+        timeline: "nope",
+        seconds: 1,
+        side: 320,
+      }),
+    ).toMatchObject({ before: { ok: false, failure: { reason: "failed" } } });
+  });
+});

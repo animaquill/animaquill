@@ -9,6 +9,7 @@ import {
 } from "@animaquill/schema";
 import * as Y from "yjs";
 import { operationOf, type Operation } from "./commands.ts";
+import { beforeAfter, type BeforeAfter } from "./before-after.ts";
 import { Draft, factsTakenBack, type ClipFact, type Step } from "./draft.ts";
 import {
   CommandError,
@@ -276,6 +277,9 @@ export interface ChangeRecord {
   /** It took changes of `origin` back, or did them again: that is people's doing. */
   readonly takesBack?: "undo" | "redo";
 }
+
+/** How many origins `beforeAfterOf` keeps what it worked out of. */
+const MOST_BEFORE_AFTERS = 20;
 
 /** How many paths one record keeps before it keeps one of each object. */
 const MAX_RECORDED_PATHS = 500;
@@ -592,6 +596,8 @@ export class ProjectStore {
   #savedAt = 0;
   /** See `undoOutlook`. */
   readonly #outlooks = new Map<Origin, { readonly at: string; readonly outlook: UndoOutlook }>();
+  /** See `beforeAfterOf`. */
+  readonly #beforeAfters = new Map<Origin, { readonly at: string; readonly value: BeforeAfter }>();
 
   /** Opens a document that already has content, such as one that came from the platform. */
   constructor(doc: Y.Doc) {
@@ -1165,6 +1171,32 @@ export class ProjectStore {
     return outlook;
   }
 
+  /**
+   * What the changes of an AI task or a batch were, from its undo log, see `beforeAfter`: the project
+   * as it is now, with the places it wrote holding what was there before it, and what it wrote
+   * there. What somebody changed since at one of those places shows what this one wrote, done or
+   * taken back. Only reads: nothing new is kept for it. Undefined where this store has no log of it,
+   * as on another device or once the log went.
+   */
+  beforeAfterOf(origin: Origin): BeforeAfter | undefined {
+    const log = origin === USER ? undefined : this.#undo.get(origin);
+    if (!log || log.done.length + log.undone.length === 0) return undefined;
+    const serials = (entries: readonly UndoEntry[]) =>
+      entries.map(({ serial }) => serial).join(",");
+    const at = `${this.#revision}:${serials(log.done)}:${serials(log.undone)}`;
+    const known = this.#beforeAfters.get(origin);
+    if (known?.at === at) return known.value;
+    const value = beforeAfter(this.#state, log.done, log.undone);
+    // The ones looked at last: a conversation has a card for each task, and few are open at once.
+    this.#beforeAfters.delete(origin);
+    this.#beforeAfters.set(origin, { at, value });
+    if (this.#beforeAfters.size > MOST_BEFORE_AFTERS) {
+      const [oldest] = this.#beforeAfters.keys();
+      if (oldest !== undefined) this.#beforeAfters.delete(oldest);
+    }
+    return value;
+  }
+
   /** The AI tasks and batches whose changes can be taken back or done again as a whole. */
   get undoOrigins(): readonly Origin[] {
     return [...this.#undo.keys()].filter((origin) => origin !== USER);
@@ -1175,6 +1207,7 @@ export class ProjectStore {
     if (origin === USER) return;
     this.#undo.delete(origin);
     this.#outlooks.delete(origin);
+    this.#beforeAfters.delete(origin);
     const known = this.#batches.indexOf(origin);
     if (known >= 0) this.#batches.splice(known, 1);
   }

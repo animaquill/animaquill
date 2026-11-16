@@ -1,6 +1,6 @@
 import { buildRenderPlan, type ProjectState, type RenderPlan } from "@animaquill/core";
 import type { ChatImageStore } from "@animaquill/host";
-import { StillFailed, type LookResult, type LookSpec } from "@animaquill/render";
+import { StillFailed, type LookResult, type LookSpec, type StillFailure } from "@animaquill/render";
 import {
   LOOK_SIDES,
   type LookAnswer,
@@ -112,6 +112,26 @@ function failureOf(error: unknown): LookFailure {
   }
 }
 
+/** A moment before and after a change, for people to look at, see `FrameLooks.pictures`. */
+export interface PicturesRequest {
+  readonly before: ProjectState;
+  readonly after: ProjectState;
+  readonly timeline: string;
+  readonly seconds: number;
+  /** Of the long side, in pixels. */
+  readonly side: number;
+}
+
+/** One of the two pictures, or why it could not be rendered. */
+export type PictureSide =
+  | { readonly ok: true; readonly image: Blob; readonly width: number; readonly height: number }
+  | { readonly ok: false; readonly failure: StillFailure };
+
+export interface PicturesAnswer {
+  readonly before: PictureSide;
+  readonly after: PictureSide;
+}
+
 class Stopped extends Error {
   constructor() {
     super("The task stopped");
@@ -143,6 +163,64 @@ export class FrameLooks {
     const run = this.#queue.then(() => this.#look(request, sees, signal));
     this.#queue = run.catch(() => undefined);
     return run;
+  }
+
+  /**
+   * One moment of two states of a project, the way `look` renders them, for people who look at what
+   * a change did: nothing is kept, and it is nobody's task, so it neither says that AI looks nor
+   * waits for people. It still waits for whatever AI looks at, one look at a time.
+   */
+  pictures(request: PicturesRequest): Promise<PicturesAnswer> {
+    const run = this.#queue.then(() => this.#pictures(request));
+    this.#queue = run.catch(() => undefined);
+    return run;
+  }
+
+  async #pictures({
+    before,
+    after,
+    timeline,
+    seconds,
+    side,
+  }: PicturesRequest): Promise<PicturesAnswer> {
+    const now = buildRenderPlan(after, timeline);
+    const was = buildRenderPlan(before, timeline);
+    // Both at the size of the picture after, each on its own: one can fail and the other not.
+    const size = lookPlan(now ?? was ?? ({ width: side, height: side } as RenderPlan), side);
+    const render = async (
+      state: ProjectState,
+      plan: RenderPlan | undefined,
+    ): Promise<PictureSide> => {
+      if (!plan) {
+        return { ok: false, failure: { reason: "failed", message: "No such timeline" } };
+      }
+      let compositor: LookCompositor | undefined;
+      try {
+        compositor = this.#options.compositor(state, {
+          ...plan,
+          width: size.width,
+          height: size.height,
+        });
+        const result = await compositor.look({
+          cells: [{ seconds, marks: [] }],
+          columns: 1,
+          texts: false,
+        });
+        return { ok: true, image: result.image, width: result.width, height: result.height };
+      } catch (error) {
+        const failure: StillFailure =
+          error instanceof StillFailed
+            ? error.failure
+            : {
+                reason: "failed",
+                message: error instanceof Error ? error.message : String(error),
+              };
+        return { ok: false, failure };
+      } finally {
+        compositor?.dispose();
+      }
+    };
+    return { before: await render(before, was), after: await render(after, now) };
   }
 
   /**

@@ -315,7 +315,7 @@ test("AI changes the timeline, and the whole task goes back in one step", async 
 
   await chat(page).getByRole("button", { name: "撤销这次任务", exact: true }).click();
   await expect(clips(page)).toHaveCount(0);
-  await expect(rows.first().getByRole("button")).toBeDisabled();
+  await expect(rows.first().getByRole("button", { name: "定位" })).toBeDisabled();
   await chat(page).getByRole("button", { name: "重做这次任务", exact: true }).click();
   await expect(clips(page)).toHaveCount(1);
 

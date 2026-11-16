@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import { ResourcePage } from "../panels/ResourceDetails.tsx";
 import { useResourceCatalog } from "../resources/catalog.ts";
-import type { ResourceTab } from "../resources/pages.ts";
+import { isPage, type PageTab, type ResourceTab } from "../resources/pages.ts";
 import { isDirty, type CodeDocument } from "./documents.ts";
 import { loadCodeEditor } from "./load.ts";
 import styles from "./CodePanel.module.css";
@@ -115,7 +115,7 @@ function Tabs({
   active: string | undefined;
 }) {
   const { t } = useTranslation();
-  const hasPages = tabs.some((tab) => tab.kind === "resource");
+  const hasPages = tabs.some(isPage);
   return (
     <div className={styles.tabs} role="tablist" aria-label={t("panel.code.title")}>
       {hasPages ? (
@@ -146,6 +146,7 @@ function NamedTabs({
 }) {
   const { byId } = useResourceCatalog({ missing: false });
   const names = new Map([...byId].map(([id, resource]) => [id, resource.name]));
+  const { t } = useTranslation();
   return tabs.map((tab) => {
     if (tab.kind === "resource") {
       return (
@@ -153,6 +154,21 @@ function NamedTabs({
           key={`page:${tab.id}`}
           id={tab.id}
           name={tab.name}
+          active={tab.id === page}
+          names={names}
+        />
+      );
+    }
+    if (tab.kind === "compare") {
+      const name = t("code.compareName", {
+        name: nameOf(tab.path),
+        interpolation: { escapeValue: false },
+      });
+      return (
+        <PageTab
+          key={`page:${tab.id}`}
+          id={tab.id}
+          name={name}
           active={tab.id === page}
           names={names}
         />
@@ -167,6 +183,43 @@ function NamedTabs({
       />
     ) : null;
   });
+}
+
+/** Two versions of a file side by side in the code editor, read only. */
+function CompareHost({ tab }: { tab: Extract<PageTab, { kind: "compare" }> }) {
+  const { t } = useTranslation();
+  const place = useRef<HTMLDivElement>(null);
+  const [stage, setStage] = useState<Stage>("loading");
+  const { path, before, after } = tab;
+  useEffect(() => {
+    const over = new AbortController();
+    let view: { dispose(): void } | undefined;
+    loadCodeEditor().then(
+      ({ DiffView }) => {
+        if (over.signal.aborted || !place.current) return;
+        view = new DiffView(place.current, { path, ours: before, theirs: after, readOnly: true });
+        setStage("ready");
+      },
+      (error: unknown) => {
+        console.warn("The code editor did not load", error);
+        if (!over.signal.aborted) setStage("failed");
+      },
+    );
+    return () => {
+      over.abort();
+      view?.dispose();
+    };
+  }, [path, before, after]);
+  return (
+    <>
+      <div ref={place} className={styles.editor} data-compare={path} />
+      {stage !== "ready" && (
+        <div className={styles.message} role={stage === "failed" ? "alert" : "status"}>
+          <p>{t(stage === "failed" ? "code.loadFailed" : "code.loading")}</p>
+        </div>
+      )}
+    </>
+  );
 }
 
 /** The project moved on under what is in this tab. Nothing goes away until people say so. */
@@ -238,7 +291,7 @@ export function CodePanel() {
   const [wanted, setWanted] = useState(false);
   if (documents.length > 0 && !wanted) setWanted(true);
   const shownPage =
-    page === undefined ? undefined : tabs.find((tab) => tab.kind === "resource" && tab.id === page);
+    page === undefined ? undefined : tabs.filter(isPage).find((tab) => tab.id === page);
   const current = shownPage ? undefined : documents.find(({ path }) => path === active);
 
   return (
@@ -250,6 +303,11 @@ export function CodePanel() {
         {shownPage?.kind === "resource" && (
           <div className={styles.page} role="tabpanel">
             <ResourcePage key={shownPage.id} id={shownPage.id} name={shownPage.name} />
+          </div>
+        )}
+        {shownPage?.kind === "compare" && (
+          <div className={styles.page} role="tabpanel">
+            <CompareHost key={shownPage.id} tab={shownPage} />
           </div>
         )}
         {tabs.length === 0 && (

@@ -129,7 +129,8 @@ if (root)
     panels: [crashTest, frameTest],
     onWorkbench: (workbench) => {
       Object.assign(window, {
-        aqExecute: (call: never) => workbench.session.store?.execute(call),
+        aqExecute: (call: never, options?: never) =>
+          workbench.session.store?.execute(call, options),
         // What the open project holds now, for tests that look at more than the screen shows.
         aqState: () => workbench.session.store?.getState(),
         // Resolves once the undo logs are kept, for tests that reload right after.

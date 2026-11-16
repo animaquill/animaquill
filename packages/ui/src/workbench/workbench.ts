@@ -1773,6 +1773,15 @@ export class Workbench {
     this.layout.openPanel("code");
   }
 
+  /**
+   * Two versions of a file side by side in the resources tab, read only, such as before and after
+   * AI changed it. The same `id` opens the same tab again, with what it is given now.
+   */
+  compareCode(id: string, path: string, before: string, after: string): void {
+    this.resourcePages.compare(id, path, before, after);
+    this.layout.openPanel("code");
+  }
+
   /** An import says all of this once. The list is where it can still be found afterwards. */
   #noteImport({ missing, elsewhere, damaged, skipped, lost, warnings }: ImportReport): void {
     const { t } = this;

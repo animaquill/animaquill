@@ -1,6 +1,12 @@
 import type { ChatEntry, ToolEntry } from "@animaquill/agent";
-import { aiTask, pathOfObject, type ObjectRef, type ProjectState } from "@animaquill/core";
-import { TriangleAlert } from "lucide-react";
+import {
+  aiTask,
+  pathOfObject,
+  type ObjectRef,
+  type Origin,
+  type ProjectState,
+} from "@animaquill/core";
+import { ChevronRight, TriangleAlert } from "lucide-react";
 import { useState, useSyncExternalStore } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
@@ -15,6 +21,8 @@ import {
   type TurnChange,
 } from "./summary.ts";
 import { changeLine, fieldName } from "./change-line.ts";
+import { mayOpen } from "./change-detail.ts";
+import { ChangeDetailView, useDetail } from "./ChangeDetailView.tsx";
 import type { Say } from "./toolSummary.ts";
 
 /** The tools before these, which read, for the count of changes of an earlier conversation. */
@@ -103,7 +111,7 @@ export function ChangeCard({
           ))}
       </div>
       {summary.told && summary.changes.length + summary.said.length > 0 && (
-        <ChangesView said={summary.said} changes={summary.changes} />
+        <ChangesView task={task} said={summary.said} changes={summary.changes} />
       )}
       {others.mine.length > 0 && <OthersLine rows={others.mine} mine />}
       {others.elsewhere.length > 0 && <OthersLine rows={others.elsewhere} mine={false} />}
@@ -179,11 +187,17 @@ function otherText(say: Say, row: OtherRow): string {
   return named.length > 0 ? `${what} ${named.join("、")}` : what;
 }
 
-/** What the batches of a turn did, as AI said it, and the objects they changed. */
+/**
+ * What the batches of a turn did, as AI said it, and the objects they changed. A line opens to what
+ * it changed before and after where this device has the undo log of the task, see
+ * `ChangeDetailView`; without the log, or with nothing more to show, it does not.
+ */
 function ChangesView({
+  task,
   said,
   changes,
 }: {
+  readonly task: string;
   readonly said: readonly string[];
   readonly changes: readonly TurnChange[];
 }) {
@@ -194,6 +208,11 @@ function ChangesView({
   const [open, setOpen] = useState(false);
   const lines = open ? changes : changes.slice(0, SHOWN_CHANGES);
   const sentences = open ? said : said.slice(0, SHOWN_SAID);
+  const origin = aiTask(task);
+  // The card follows what can be taken back, which follows the undo logs, see `ChangeCard`.
+  const hasLog =
+    store !== undefined && (store.canUndoOrigin(origin) || store.canRedoOrigin(origin));
+  const indent = hasLog && lines.some((change) => mayOpen(change) !== "never");
   return (
     <div className={styles.changes} data-testid="chat-changes">
       {sentences.map((sentence, index) => (
@@ -201,32 +220,17 @@ function ChangesView({
           {sentence}
         </p>
       ))}
-      {lines.map((change) => {
-        const ref: ObjectRef = {
-          kind: change.kind,
-          id: change.id,
-          ...(change.timeline !== undefined && { timeline: change.timeline }),
-        };
-        const there = change.change !== "removed" && isThere(state, ref);
-        return (
-          <div key={change.key} className={styles.change} data-testid="chat-change">
-            <span className={styles.changeText}>{changeLine(t, change, state)}</span>
-            {change.change !== "removed" && change.kind !== "project" && (
-              <button
-                type="button"
-                className={styles.link}
-                disabled={!there}
-                title={there ? undefined : t("chat.summary.gone")}
-                onClick={() => workbench.goToObject(ref)}
-              >
-                {change.kind === "file" || change.kind === "scene"
-                  ? t("chat.summary.open")
-                  : t("chat.summary.locate")}
-              </button>
-            )}
-          </div>
-        );
-      })}
+      {lines.map((change) => (
+        <ChangeRow
+          key={change.key}
+          origin={origin}
+          change={change}
+          hasLog={hasLog}
+          indent={indent}
+          state={state}
+          workbench={workbench}
+        />
+      ))}
       {(changes.length > SHOWN_CHANGES || said.length > SHOWN_SAID) && (
         <button type="button" className={styles.more} onClick={() => setOpen(!open)}>
           {open
@@ -235,6 +239,73 @@ function ChangesView({
               ? t("chat.summary.more", { count: changes.length - SHOWN_CHANGES })
               : t("chat.summary.saidMore", { count: said.length - SHOWN_SAID })}
         </button>
+      )}
+    </div>
+  );
+}
+
+/** One object a turn changed: its sentence, where it is, and what it was before and after. */
+function ChangeRow({
+  origin,
+  change,
+  hasLog,
+  indent,
+  state,
+  workbench,
+}: {
+  readonly origin: Origin;
+  readonly change: TurnChange;
+  readonly hasLog: boolean;
+  readonly indent: boolean;
+  readonly state: ProjectState | undefined;
+  readonly workbench: ReturnType<typeof useWorkbench>;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const may = hasLog ? mayOpen(change) : "never";
+  const found = useDetail(origin, change, may !== "never" && (open || may === "maybe"));
+  const opens = may === "surely" || (may === "maybe" && found !== undefined);
+  const ref: ObjectRef = {
+    kind: change.kind,
+    id: change.id,
+    ...(change.timeline !== undefined && { timeline: change.timeline }),
+  };
+  const there = change.change !== "removed" && isThere(state, ref);
+  const line = changeLine(t, change, state);
+  return (
+    <div className={styles.changeRow} data-testid="chat-change">
+      <div className={styles.change}>
+        {opens ? (
+          <button
+            type="button"
+            className={styles.changeOpen}
+            aria-expanded={open}
+            onClick={() => setOpen(!open)}
+          >
+            <ChevronRight size={12} className={styles.twisty} aria-hidden="true" />
+            <span className={styles.changeText}>{line}</span>
+          </button>
+        ) : (
+          <span className={styles.changeText} data-indent={indent || undefined}>
+            {line}
+          </span>
+        )}
+        {change.change !== "removed" && change.kind !== "project" && (
+          <button
+            type="button"
+            className={styles.link}
+            disabled={!there}
+            title={there ? undefined : t("chat.summary.gone")}
+            onClick={() => workbench.goToObject(ref)}
+          >
+            {change.kind === "file" || change.kind === "scene"
+              ? t("chat.summary.open")
+              : t("chat.summary.locate")}
+          </button>
+        )}
+      </div>
+      {open && opens && found && (
+        <ChangeDetailView origin={origin} change={change} detail={found.detail} seen={found.seen} />
       )}
     </div>
   );

@@ -289,8 +289,9 @@ export class CodeView {
 
 /**
  * Two versions of a file side by side, as Monaco compares them: the left one (`original`) is the
- * project's, which people can change, and the right one GitHub's, which they read. For choosing
- * by hand what of each stays, see the list of conflicts with GitHub.
+ * project's, which people can change unless `readOnly`, and the right one GitHub's, which they
+ * read. For choosing by hand what of each stays, see the list of conflicts with GitHub; read only,
+ * what AI changed in a file, before against after.
  */
 export class DiffView {
   readonly #editor: monaco.editor.IStandaloneDiffEditor;
@@ -302,7 +303,13 @@ export class DiffView {
       path,
       ours,
       theirs,
-    }: { readonly path: string; readonly ours: string; readonly theirs: string },
+      readOnly = false,
+    }: {
+      readonly path: string;
+      readonly ours: string;
+      readonly theirs: string;
+      readonly readOnly?: boolean;
+    },
   ) {
     configure();
     const language = languageOf(path);
@@ -312,9 +319,11 @@ export class DiffView {
     this.#editor = monaco.editor.createDiffEditor(host, {
       theme: THEME,
       automaticLayout: true,
-      originalEditable: true,
+      originalEditable: !readOnly,
       readOnly: true,
       renderSideBySide: true,
+      // Only to compare, it stays side by side however narrow, as asked for.
+      useInlineViewWhenSpaceIsLimited: !readOnly,
       editContext: false,
       minimap: { enabled: false },
       fontSize: 13,

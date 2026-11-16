@@ -92,6 +92,20 @@ describe("the tabs of the resources tab", () => {
     expect(shown()).toBe(`code:${OTHER}`);
   });
 
+  it("compares two versions of a file in a tab of their own, which opens again with what is new", () => {
+    code.open(MAIN);
+    pages.compare("compare:a", MAIN, "old\n", "new\n");
+    expect(tabs()).toEqual([`code:${MAIN}`, "page:compare:a"]);
+    expect(shown()).toBe("page:compare:a");
+    pages.showCode(MAIN);
+    pages.compare("compare:a", MAIN, "old\n", "newer\n");
+    expect(tabs()).toEqual([`code:${MAIN}`, "page:compare:a"]);
+    expect(shown()).toBe("page:compare:a");
+    expect(pages.getSnapshot().tabs[1]).toMatchObject({ kind: "compare", after: "newer\n" });
+    pages.close("compare:a");
+    expect(shown()).toBe(`code:${MAIN}`);
+  });
+
   it("closing a page that is not showing leaves what shows", () => {
     code.open(MAIN);
     pages.open("image", "封面");

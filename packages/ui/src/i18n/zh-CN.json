@@ -1840,7 +1840,8 @@
     "draftsDropped": "有 {{count}} 份没保存的代码读不懂，没有找回。",
     "draftsReadFailed": "上次没保存的代码读不出来，会再试。",
     "draftsKeepFailed": "没保存的代码存不到这台设备上，刷新或崩溃会丢。保存之后就没事了。",
-    "draftsKeepRecovered": "没保存的代码又能存到这台设备上了。"
+    "draftsKeepRecovered": "没保存的代码又能存到这台设备上了。",
+    "compareName": "{{name}} 对比"
   },
   "problems": {
     "none": "没有发现问题",
@@ -3925,6 +3926,14 @@
       "someAsset": "素材",
       "at": "跳到 {{time}}",
       "list": "AI 收到的结果（英文原文）"
+    },
+    "beforeAfter": {
+      "before": "前",
+      "after": "后",
+      "all": "全部",
+      "openCompare": "打开对比",
+      "on": "开",
+      "off": "关"
     }
   },
   "account": {

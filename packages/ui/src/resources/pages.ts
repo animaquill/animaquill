@@ -12,7 +12,20 @@ import type { ProjectSession } from "../workbench/session.ts";
 export type ResourceTab =
   | { readonly kind: "code"; readonly path: string }
   /** `name` is what it was called when it was opened, for when it is not there any more. */
-  | { readonly kind: "resource"; readonly id: string; readonly name: string };
+  | { readonly kind: "resource"; readonly id: string; readonly name: string }
+  /** Two versions of a file side by side, such as before and after AI changed it. Read only. */
+  | {
+      readonly kind: "compare";
+      readonly id: string;
+      readonly path: string;
+      readonly before: string;
+      readonly after: string;
+    };
+
+/** A tab that is a page of its own, rather than a file in the code editor. */
+export type PageTab = Exclude<ResourceTab, { readonly kind: "code" }>;
+
+export const isPage = (tab: ResourceTab): tab is PageTab => tab.kind !== "code";
 
 export interface PagesSnapshot {
   readonly tabs: readonly ResourceTab[];
@@ -87,7 +100,7 @@ export class ResourcePages {
       if (!open.has(path) && next !== undefined && !was.has(next)) moved.set(path, next);
     });
     const tabs = this.#snapshot.tabs.flatMap((tab): ResourceTab[] => {
-      if (tab.kind === "resource" || open.has(tab.path)) return [tab];
+      if (isPage(tab) || open.has(tab.path)) return [tab];
       const path = moved.get(tab.path);
       return path === undefined ? [] : [{ kind: "code", path }];
     });
@@ -100,8 +113,7 @@ export class ResourcePages {
   };
 
   #lastPage(tabs: readonly ResourceTab[]): string | undefined {
-    const last = tabs.findLast((tab) => tab.kind === "resource");
-    return last?.kind === "resource" ? last.id : undefined;
+    return tabs.findLast(isPage)?.id;
   }
 
   /** Opens the details of a resource, or goes to them when they are open already. */
@@ -113,9 +125,21 @@ export class ResourcePages {
     this.#set({ tabs, page: id });
   }
 
+  /**
+   * Opens two versions of a file side by side, or shows them again with what they are now where a
+   * tab with this id is open already.
+   */
+  compare(id: string, path: string, before: string, after: string): void {
+    const tab = { kind: "compare" as const, id, path, before, after };
+    const { tabs } = this.#snapshot;
+    const index = tabs.findIndex((each) => isPage(each) && each.id === id);
+    const next = index < 0 ? [...tabs, tab] : tabs.with(index, tab);
+    this.#set({ tabs: next, page: id });
+  }
+
   /** Goes to a page that is open. */
   show(id: string): void {
-    if (this.#snapshot.tabs.some((tab) => tab.kind === "resource" && tab.id === id)) {
+    if (this.#snapshot.tabs.some((tab) => isPage(tab) && tab.id === id)) {
       this.#set({ ...this.#snapshot, page: id });
     }
   }
@@ -129,7 +153,7 @@ export class ResourcePages {
   /** Closes the details of a resource. When they were showing, the tab next to them shows. */
   close(id: string): void {
     const { tabs, page } = this.#snapshot;
-    const index = tabs.findIndex((tab) => tab.kind === "resource" && tab.id === id);
+    const index = tabs.findIndex((tab) => isPage(tab) && tab.id === id);
     if (index === -1) return;
     const left = tabs.filter((_, at) => at !== index);
     if (page !== id) {

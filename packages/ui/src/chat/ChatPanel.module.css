@@ -507,6 +507,266 @@
   white-space: nowrap;
 }
 
+/* A line of the card opens to what it changed, before and after (S-D1). */
+.changeRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.panel .changeOpen {
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+  padding: 0;
+  text-align: left;
+  background: none;
+}
+
+.panel .changeOpen:hover {
+  background: none;
+}
+
+.changeOpen:hover .changeText {
+  color: var(--aq-text-strong);
+}
+
+.twisty {
+  flex: none;
+  color: var(--aq-text-muted);
+  transition: transform 0.12s;
+}
+
+.changeOpen[aria-expanded="true"] .twisty {
+  transform: rotate(90deg);
+}
+
+.changeText[data-indent] {
+  padding-left: 16px;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  margin: 0 0 4px 6px;
+  padding: 4px 0 4px 10px;
+  border-left: 2px solid var(--aq-border);
+}
+
+.baField {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.fieldName {
+  flex: none;
+  min-width: 56px;
+  color: var(--aq-text-muted);
+}
+
+.fieldValues,
+.keyLists {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.keyLists {
+  align-items: flex-start;
+}
+
+.value {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--aq-text-strong);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.valueNone,
+.arrow {
+  color: var(--aq-text-muted);
+}
+
+.swatch {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--aq-border);
+  border-radius: 2px;
+}
+
+.switchOn {
+  color: var(--aq-accent);
+}
+
+.switchOff {
+  color: var(--aq-text-muted);
+}
+
+.keys {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chart {
+  display: block;
+  width: 100%;
+  max-width: 360px;
+  height: auto;
+  overflow: visible;
+}
+
+.curveBefore,
+.curveAfter {
+  fill: none;
+  stroke-width: 1.5;
+}
+
+.curveBefore {
+  stroke: var(--aq-text-muted);
+  stroke-dasharray: 4 3;
+}
+
+.curveAfter {
+  stroke: var(--aq-accent);
+}
+
+.dotBefore {
+  fill: var(--aq-text-muted);
+}
+
+.dotAfter {
+  fill: var(--aq-accent);
+}
+
+.keyList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.keyList li {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.keyTime {
+  color: var(--aq-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.code {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.codeLines {
+  display: flex;
+  flex-direction: column;
+  overflow-x: auto;
+  font-size: 12px;
+  font-family: Consolas, "Cascadia Mono", Menlo, "DejaVu Sans Mono", monospace;
+  line-height: 1.5;
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+}
+
+.hunk + .hunk {
+  border-top: 1px dashed var(--aq-border);
+}
+
+.codeLine {
+  display: flex;
+  min-width: max-content;
+  white-space: pre;
+}
+
+.codeLine[data-kind="removed"] {
+  background: color-mix(in srgb, var(--aq-danger) 20%, transparent);
+}
+
+.codeLine[data-kind="added"] {
+  background: color-mix(in srgb, var(--aq-success) 20%, transparent);
+}
+
+.lineNumber {
+  flex: none;
+  width: 3.5em;
+  padding-right: 8px;
+  color: var(--aq-text-muted);
+  text-align: right;
+  user-select: none;
+}
+
+.lineText {
+  padding-right: 8px;
+}
+
+.codeActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.baPictures {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  max-width: 480px;
+}
+
+.baPictureSide {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+}
+
+.baPictureSide figcaption {
+  color: var(--aq-text-muted);
+  text-align: center;
+}
+
+.panel .baPicture {
+  justify-content: center;
+  width: 100%;
+  padding: 0;
+  overflow: hidden;
+  color: var(--aq-warning);
+  background: var(--aq-bg-hover);
+  border: 1px solid var(--aq-border);
+}
+
+.baPicture img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 .panel .link {
   padding: 0 4px;
   color: var(--aq-accent);

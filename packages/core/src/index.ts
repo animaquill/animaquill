@@ -390,7 +390,8 @@ export {
   type JoinTransition,
   type TrackState,
 } from "./model.ts";
-export { getIn, type Patch } from "./patch.ts";
+export { deepEqual, getIn, type Patch } from "./patch.ts";
+export { beforeAfter, patchedState, type BeforeAfter } from "./before-after.ts";
 export { Place } from "./places.ts";
 export {
   VALUE_LIMIT,
