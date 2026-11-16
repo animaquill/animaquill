@@ -141,9 +141,9 @@ function pageLibrary(
         return {
           ...log,
           load: () => log.load(),
-          async append(update, name) {
+          async append(update, name, source) {
             if (isDead()) throw new DOMException("The page went away", "AbortError");
-            await log.append(update, name);
+            await log.append(update, name, source);
           },
           compact: (merge) => log.compact(merge),
           listen: (listener) =>

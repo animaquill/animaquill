@@ -3453,15 +3453,47 @@ export class Workbench {
    * project twice.
    */
   async #changeProject(next?: () => Promise<unknown>): Promise<void> {
-    if (this.#changingProject) return;
+    if (this.#changingProject) {
+      // A project folder that waits for what the platform has before it is compared, see
+      // `ProjectOpening`: people need not wait for that to go elsewhere. It is let go of, which
+      // ends its opening, and what they asked for comes once that is over.
+      const changing = this.#changing;
+      if (!changing || !this.#waitsToOpen()) return;
+      if (!(await this.#leaveProject())) return;
+      await changing;
+      return this.#changeProject(next);
+    }
     this.#changingProject = true;
     // Only the project that `#reopenProject` opens again is left without a word.
     const quietly = this.#reopening !== undefined && this.#reopening === this.session.key;
+    let over = () => {};
+    this.#changing = new Promise<void>((resolve) => {
+      over = resolve;
+    });
     try {
       if (await this.#leaveProject({ quietly })) await next?.();
     } finally {
       this.#changingProject = false;
+      this.#changing = undefined;
+      over();
     }
+  }
+
+  /** Changing the project, while it does, see `#changeProject`. */
+  #changing: Promise<void> | undefined;
+
+  /**
+   * Whether the open project is a folder whose opening waits, with the folder there and not yet
+   * compared, see `ProjectOpening`: leaving it then leaves nothing half done.
+   */
+  #waitsToOpen(): boolean {
+    const { key, step } = this.opening.getSnapshot();
+    return (
+      key !== undefined &&
+      key === this.session.key &&
+      (step === "log" || step === "cloud") &&
+      this.projectFolders?.getSnapshot().open?.record.id === key
+    );
   }
 
   /**
@@ -3871,6 +3903,8 @@ export class Workbench {
       });
       if (!leave) return false;
     }
+    // Its opening is over: what is not compared yet is not, as the parts close one by one.
+    this.opening.giveUp();
     // A cover of the project as people leave it, while its files can still be read.
     this.covers?.leaving();
     await this.layout.detach();

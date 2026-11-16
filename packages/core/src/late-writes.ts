@@ -628,7 +628,19 @@ export function lateOf(
       if (!key.text || key.path[0] !== "files" || key.path.length !== 2) continue;
       const file = key.path[1] as string;
       const copy = batch.copied.find((each) => each.file === file);
-      if (!copy || typeof key.after !== "string") continue;
+      if (!copy) {
+        // The batch merged the file with what the platform had, which `undoubled` cannot put
+        // right: where the change wrote it too, the same lines may be there twice, as from a
+        // folder that came in before the platform's, see `ProjectOpening` of the editor.
+        const wrote = batch.writes.some(
+          (write) => write.text === true && keyOf(write.path) === keyOf(key.path),
+        );
+        if (wrote) {
+          add(batch, key.path, key.after, undefined, { kind: "check-duplicate", lost: "change" });
+        }
+        continue;
+      }
+      if (typeof key.after !== "string") continue;
       const once = undoubled(key.after, copy.insertion);
       if (once !== undefined && once !== key.after) {
         doubled.push({ batch: batch.batch, file, text: once });

@@ -268,7 +268,9 @@ describe("opening a folder that is a clone of the repository of its project of t
       // The folder came in all the same.
       expect(again.session.store?.getState().files[CODE]).toBe(PUSHED);
       // Once the platform answers, the change from the folder goes there, as one made before what it
-      // merged: it can tell that the same lines came twice, see `lateOf` of AnimaQuill Cloud.
+      // merged: it can tell that the same lines came twice, see `lateOf`. This only pins that it
+      // says so: this platform in memory puts nothing right, the real one does, which
+      // apps/api/src/sync/editors-opening.test.ts of AnimaQuill Cloud checks to the end.
       platform.faults.silent = false;
       platform.drop();
       await online(again);
@@ -277,6 +279,40 @@ describe("opening a folder that is a clone of the repository of its project of t
         ?.updates.filter((update) => update.kind === "folder");
       expect(fromFolder?.length).toBeGreaterThan(0);
       for (const update of fromFolder ?? []) expect(update.base).toBeLessThan(merged);
+    },
+  );
+
+  it(
+    "lets people leave a folder that waits for the platform, and open it again",
+    { timeout: 30_000 },
+    async () => {
+      const platform = new MemoryPlatform();
+      const { there, here, project, key } = await linkedFolder(platform);
+      await leave(there);
+      here.disk.write(`${FOLDER}/${CODE}`, PUSHED);
+      platform.mergeFromRepository(project, [write(CODE, MERGED)]);
+      platform.faults.silent = true;
+
+      const again = here.window();
+      const opening = again.openProject(key);
+      await vi.waitFor(() => expect(again.projectFolders?.getSnapshot().open).toBeDefined());
+      expect(again.opening.getSnapshot().step).toBe("cloud");
+      // People go back to the start page meanwhile: it does not wait for the platform.
+      await again.closeProject();
+      expect(again.session.store).toBeUndefined();
+      expect(again.opening.getSnapshot().step).toBeUndefined();
+      await opening;
+      // Nothing of the folder came in, and nothing was written to it.
+      expect(filesOf(here.disk, FOLDER).get(CODE)).toBe(PUSHED);
+
+      platform.faults.silent = false;
+      await again.openProject(key);
+      await live(again);
+      expect(again.opening.getSnapshot().cloud).toBe("caught-up");
+      await online(again);
+      await written(again);
+      expect(again.session.store?.getState().files[CODE]).toBe(MERGED);
+      expect(filesOf(here.disk, FOLDER).get(CODE)).toBe(MERGED);
     },
   );
 

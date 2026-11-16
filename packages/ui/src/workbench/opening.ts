@@ -157,6 +157,8 @@ export class ProjectOpening {
    */
   folder(store: ProjectStore, start: () => Promise<void>): Promise<void> {
     const run = this.#run;
+    // Given up on, see `giveUp`: nothing of it starts.
+    if (run?.store === store && run.over.signal.aborted) return Promise.resolve();
     if (run?.store !== store || run.folder || (run.step !== "log" && run.step !== "cloud")) {
       // Gone before the folder came: nothing of it starts.
       if (this.#done.has(store) && this.#isGone(store)) return Promise.resolve();
@@ -167,6 +169,17 @@ export class ProjectOpening {
       run.over.signal.addEventListener("abort", () => resolve(), { once: true });
       run.folderComes();
     });
+  }
+
+  /**
+   * The open project is being left: whatever of its opening did not happen yet does not, also as
+   * its parts close one by one before the project does. Its folder does not start.
+   */
+  giveUp(): void {
+    const run = this.#run;
+    if (!run || run.step === "live") return;
+    run.over.abort();
+    this.#done.add(run.store);
   }
 
   /** Whether `store` is not the open project any more. */
@@ -219,14 +232,18 @@ export class ProjectOpening {
     await this.#within(this.#options.undoLoaded(run.store), this.#timing.undoMs, run);
     if (this.#isOver(run)) return;
     // Which project of the platform a folder is goes by the folder, which has to be there.
+    let folderCame = true;
     if (this.#options.isFolder(run.key)) {
-      await Promise.race([run.folderCame, this.#overOf(run)]);
+      folderCame = await this.#within(run.folderCame, this.#timing.catchUpMs, run);
       if (this.#isOver(run)) return;
+      // Nothing is known to keep it, but nothing else waits for it for ever either: should it come
+      // after all, it starts as it comes, see `folder`.
+      if (!folderCame) console.warn("The folder of the project did not come: it opens without");
     }
     // 2. What the platform has.
     run.step = "cloud";
     this.#show(run);
-    run.cloud = await this.#catchUp(run);
+    run.cloud = folderCame ? await this.#catchUp(run) : "failed";
     if (this.#isOver(run)) return;
     // 3. The folder.
     run.step = "folder";
@@ -253,7 +270,7 @@ export class ProjectOpening {
   }
 
   async #goLive(run: Run): Promise<void> {
-    if (run.step === "live") return;
+    if (run.step === "live" || this.#isOver(run)) return;
     // A folder that waited for a step that failed still starts.
     if (run.folder && run.step !== "folder") {
       run.step = "folder";
@@ -266,21 +283,43 @@ export class ProjectOpening {
     this.#options.live?.(run.store);
   }
 
-  /** Waits for what the platform has, see `CatchUp`. */
+  /**
+   * Waits for what the platform has, see `CatchUp`: `catchUpMs` at most, from finding out whether
+   * the project syncs on.
+   */
   async #catchUp(run: Run): Promise<CatchUp> {
     const { cloud } = this.#options;
     if (!cloud) return "none";
-    await cloud.follow();
-    if (this.#isOver(run)) return "closed";
-    const sync = cloud.syncOf(run.key);
-    if (!sync) return "none";
-    if (!this.#env.isOnline()) return "offline";
+    let timer: unknown;
+    const late = new Promise<"timeout">((resolve) => {
+      timer = this.#env.setTimeout(() => resolve("timeout"), this.#timing.catchUpMs);
+    });
+    try {
+      const followed = await Promise.race([
+        cloud.follow().then(() => "followed" as const),
+        late,
+        this.#overOf(run).then(() => "closed" as const),
+      ]);
+      if (followed !== "followed") return followed;
+      if (this.#isOver(run)) return "closed";
+      const sync = cloud.syncOf(run.key);
+      if (!sync) return "none";
+      if (!this.#env.isOnline()) return "offline";
+      return await this.#caughtUp(run, sync, late);
+    } finally {
+      this.#env.clearTimeout(timer);
+    }
+  }
+
+  /** Waits for `sync` to have what the platform has, or to fail, or for `late`. */
+  #caughtUp(run: Run, sync: OpeningSync, late: Promise<"timeout">): Promise<CatchUp> {
     return new Promise<CatchUp>((resolve) => {
       let stop = () => {};
-      let timer: unknown;
+      let isEnded = false;
       const end = (outcome: CatchUp) => {
+        if (isEnded) return;
+        isEnded = true;
         stop();
-        this.#env.clearTimeout(timer);
         run.over.signal.removeEventListener("abort", closed);
         resolve(outcome);
       };
@@ -304,24 +343,31 @@ export class ProjectOpening {
             return;
         }
       };
-      timer = this.#env.setTimeout(() => end("timeout"), this.#timing.catchUpMs);
+      void late.then(end);
       run.over.signal.addEventListener("abort", closed, { once: true });
       stop = sync.subscribe(look);
       look();
     });
   }
 
-  /** Waits for `work`, but not longer than `ms`, nor once the opening is over. */
-  async #within(work: Promise<unknown>, ms: number, run: Run): Promise<void> {
+  /**
+   * Waits for `work`, but not longer than `ms`, nor once the opening is over. Resolves to whether
+   * the work was over first.
+   */
+  async #within(work: Promise<unknown>, ms: number, run: Run): Promise<boolean> {
     let timer: unknown;
-    await Promise.race([
-      work.catch(() => {}),
-      new Promise<void>((resolve) => {
-        timer = this.#env.setTimeout(resolve, ms);
+    const done = await Promise.race([
+      work.then(
+        () => true,
+        () => true,
+      ),
+      new Promise<boolean>((resolve) => {
+        timer = this.#env.setTimeout(() => resolve(false), ms);
       }),
-      this.#overOf(run),
+      this.#overOf(run).then(() => false),
     ]);
     this.#env.clearTimeout(timer);
+    return done;
   }
 
   #overOf(run: Run): Promise<void> {

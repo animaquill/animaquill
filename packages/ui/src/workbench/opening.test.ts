@@ -48,10 +48,12 @@ function opening({
   folder = false,
   synced = true,
   undo = () => Promise.resolve(),
+  follow = () => Promise.resolve(),
 }: {
   readonly folder?: boolean;
   readonly synced?: boolean;
   readonly undo?: () => Promise<void>;
+  readonly follow?: () => Promise<void>;
 } = {}) {
   const session = new TestSession();
   const sync = new TestSync();
@@ -67,6 +69,7 @@ function opening({
     cloud: {
       follow: async () => {
         events.push("cloud followed");
+        await follow();
       },
       syncOf: () => (synced ? sync : undefined),
     },
@@ -158,6 +161,34 @@ describe("opening a project", () => {
     expect(events.slice(-2)).toEqual(["cloud followed", "folder started"]);
   });
 
+  it("goes on without a folder that does not come, and starts it should it come after all", async () => {
+    const { session, time, events, flow, folderStart } = opening({ folder: true });
+    const store = session.open("p");
+    await time.advance(999);
+    expect(flow.getSnapshot().step).toBe("log");
+    await time.advance(1);
+    await settle();
+    expect(flow.getSnapshot()).toMatchObject({ step: "live", cloud: "failed" });
+    expect(events).not.toContain("cloud followed");
+    expect(events.at(-1)).toBe("live p");
+    void flow.folder(store, folderStart().start);
+    expect(events.at(-1)).toBe("folder started");
+  });
+
+  it("does not wait for ever to find out whether the project syncs", async () => {
+    const { session, time, events, flow, folderStart } = opening({
+      folder: true,
+      follow: () => new Promise(() => {}),
+    });
+    const store = session.open("p");
+    void flow.folder(store, folderStart().start);
+    await time.advance(999);
+    expect(events).not.toContain("folder started");
+    await time.advance(1);
+    expect(flow.getSnapshot()).toMatchObject({ step: "folder", cloud: "timeout" });
+    expect(events.at(-1)).toBe("folder started");
+  });
+
   it("compares the folder once it waited too long for the platform", async () => {
     const { session, time, events, flow, folderStart } = opening({ folder: true });
     const store = session.open("p");
@@ -229,6 +260,22 @@ describe("opening a project", () => {
     expect(flow.isLive(store)).toBe(false);
     expect(flow.getSnapshot().step).toBeUndefined();
     // Its folder, should it come late, does not start either.
+    await flow.folder(store, folderStart("late").start);
+    expect(events).not.toContain("late started");
+  });
+
+  it("starts nothing of a project that is being left, as its parts close one by one", async () => {
+    const { session, sync, events, flow, folderStart } = opening({ folder: true });
+    const store = session.open("p");
+    const attached = flow.folder(store, folderStart().start);
+    await settle();
+    flow.giveUp();
+    // Syncing closes first, while the project is still open.
+    sync.set("closed");
+    await attached;
+    await settle();
+    expect(events).not.toContain("folder started");
+    expect(flow.isLive(store)).toBe(false);
     await flow.folder(store, folderStart("late").start);
     expect(events).not.toContain("late started");
   });
