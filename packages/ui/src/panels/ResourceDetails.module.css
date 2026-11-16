@@ -146,7 +146,7 @@
 }
 
 .actions button[data-danger] {
-  color: var(--aq-danger);
+  color: var(--aq-danger-text);
 }
 
 .uses {

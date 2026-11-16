@@ -126,7 +126,7 @@
 }
 
 .group[data-first] .heading {
-  color: var(--aq-accent);
+  color: var(--aq-link);
 }
 
 .grid {

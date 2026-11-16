@@ -40,7 +40,7 @@
  */
 :global(.dv-tabs-container-vertical) .tab {
   position: relative;
-  height: 36px;
+  height: calc(36px * var(--aq-size-scale));
   padding: 0 8px 0 12px;
   gap: 10px;
 }

@@ -36,7 +36,7 @@
   align-items: flex-start;
   gap: 6px;
   margin: 0 0 6px;
-  color: var(--aq-danger);
+  color: var(--aq-danger-text);
 }
 
 .bar {

@@ -3,6 +3,7 @@
   --dv-group-view-background-color: var(--aq-bg-panel);
   --dv-tabs-and-actions-container-background-color: var(--aq-bg-chrome);
   --dv-tabs-and-actions-container-font-size: var(--aq-font-13);
+  --dv-tabs-and-actions-container-height: calc(35px * var(--aq-size-scale));
   --dv-activegroup-visiblepanel-tab-background-color: var(--aq-bg-panel);
   --dv-activegroup-hiddenpanel-tab-background-color: var(--aq-bg-chrome);
   --dv-inactivegroup-visiblepanel-tab-background-color: var(--aq-bg-panel);

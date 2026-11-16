@@ -469,6 +469,8 @@ export class TimelineEditor implements TouchTarget {
   #beforeFit: { readonly from: ViewPlace; readonly fitted: ViewPlace } | undefined;
   #pixelsPerSecond = 0;
   #rowScale = 1;
+  /** Rows are this much taller for the size of words people chose, apart from their zoom. */
+  #sizeScale = 1;
   #scrollX = 0;
   #scrollY = 0;
   #width = 0;
@@ -727,6 +729,14 @@ export class TimelineEditor implements TouchTarget {
     return this.#rowScale;
   }
 
+  setSizeScale(scale: number): void {
+    if (scale === this.#sizeScale || !(scale > 0)) return;
+    this.#sizeScale = scale;
+    this.#refresh();
+    this.#clampScroll();
+    this.#viewChanged();
+  }
+
   /** Changes the height of rows while the row at height `y` stays where it is. */
   zoomRowsAround(y: number, factor: number): void {
     if (this.#gesture) return;
@@ -941,9 +951,10 @@ export class TimelineEditor implements TouchTarget {
       current.state === timeline &&
       current.assets === state.assets &&
       current.fps === fps &&
-      current.rowScale === this.#rowScale &&
+      current.rowScale === this.#rowScale * this.#sizeScale &&
       current.roomBelow === this.#roomBelow;
-    return same ? current : buildModel(id, timeline, fps, this.#rowScale, this.#roomBelow, state);
+    const rowScale = this.#rowScale * this.#sizeScale;
+    return same ? current : buildModel(id, timeline, fps, rowScale, this.#roomBelow, state);
   }
 
   /**

@@ -127,7 +127,7 @@
 .value input,
 .value select,
 .value button {
-  height: 20px;
+  height: calc(20px * var(--aq-size-scale));
 }
 
 .value[data-readonly] input,

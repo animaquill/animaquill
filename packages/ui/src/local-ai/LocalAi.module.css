@@ -60,7 +60,7 @@
   display: grid;
   place-items: center;
   width: 20px;
-  height: 20px;
+  height: calc(20px * var(--aq-size-scale));
   color: var(--aq-text-strong);
   font-size: var(--aq-font-11);
   background: var(--aq-bg-input);

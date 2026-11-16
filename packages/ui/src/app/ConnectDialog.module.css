@@ -70,7 +70,7 @@ p.result[class] {
 }
 
 .steps li[data-state="done"] svg {
-  color: var(--aq-accent);
+  color: var(--aq-link);
 }
 
 .steps li[data-state="failed"] {

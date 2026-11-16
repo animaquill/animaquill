@@ -12,3 +12,13 @@ export function onAppearanceChange(listener: () => void): () => void {
   });
   return () => observer.disconnect();
 }
+
+/**
+ * How much taller rows, buttons and boxes are for the size of words people chose: `--aq-size-scale`
+ * of theme/tokens.css, for what sets its sizes itself, such as the rows of the timeline.
+ */
+export function sizeScale(): number {
+  if (typeof document === "undefined") return 1;
+  const value = getComputedStyle(document.documentElement).getPropertyValue("--aq-size-scale");
+  return Number.parseFloat(value) || 1;
+}

@@ -1,6 +1,8 @@
 .shell {
   display: grid;
-  grid-template-rows: 35px minmax(0, 1fr) 22px;
+  grid-template-rows: calc(35px * var(--aq-size-scale)) minmax(0, 1fr) calc(
+      22px * var(--aq-size-scale)
+    );
   height: 100%;
 }
 

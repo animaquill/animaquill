@@ -110,7 +110,7 @@
 
 .failed {
   min-width: 0;
-  color: var(--aq-danger);
+  color: var(--aq-danger-text);
 }
 
 .buttons {

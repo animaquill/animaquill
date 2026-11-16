@@ -28,7 +28,7 @@ const THEMES = { dark, light } as const;
  * colours of their own, which are the same whatever the theme.
  */
 const SAME_IN_BOTH =
-  /^--aq-(font|on-picture|shade|picture-|cover-(text|shine|backdrop|\d)|level-|tool-|overlay-|timeline-(picture|sound|caption)$)/;
+  /^--aq-(font|size-scale|on-picture|shade|picture-|cover-(text|shine|backdrop|\d)|level-|tool-|overlay-|timeline-(picture|sound|caption)$)/;
 
 type Rgba = readonly [number, number, number, number];
 
@@ -91,12 +91,11 @@ const TEXTS = [
   "text",
   "text-strong",
   "text-muted",
-  "accent",
+  "link",
   "match",
   "warning",
   "warning-text",
   "trial",
-  "danger",
   "danger-text",
   "success",
   "cloud",
@@ -108,6 +107,7 @@ const PAIRS: readonly { text: string; on: Surface; large?: true }[] = [
   { text: "on-accent", on: "accent" },
   { text: "on-accent", on: "danger" },
   { text: "on-trial", on: "trial" },
+  { text: "on-alert", on: "alert" },
   { text: "found-text", on: "star" },
   { text: "chip-text", on: ["accent-soft", "bg-input"] },
   { text: "chip-text", on: ["accent-soft", "bg-panel"] },
@@ -117,32 +117,6 @@ const PAIRS: readonly { text: string; on: Surface; large?: true }[] = [
   { text: "timeline-label", on: "timeline-background" },
   { text: "timeline-label", on: "timeline-ruler" },
 ];
-
-/**
- * Where the dark theme is below, as it was before there were two themes: S-E leaves its look as it
- * was, to the pixel. The accent and the colour of danger as words, mostly small links and buttons,
- * and quiet words under the pointer, just below.
- */
-const DARK_AS_IT_WAS = new Set([
-  "text-muted on bg-hover over bg-panel",
-  "text-muted on bg-hover over bg-menu",
-  "accent on bg-chrome",
-  "accent on bg-panel",
-  "accent on bg-menu",
-  "accent on bg-input",
-  "accent on bg-raised",
-  "accent on bg-hover over bg-chrome",
-  "accent on bg-hover over bg-panel",
-  "accent on bg-hover over bg-menu",
-  "danger on bg-chrome",
-  "danger on bg-panel",
-  "danger on bg-menu",
-  "danger on bg-input",
-  "danger on bg-raised",
-  "danger on bg-hover over bg-chrome",
-  "danger on bg-hover over bg-panel",
-  "danger on bg-hover over bg-menu",
-]);
 
 const nameOf = (surface: Surface) =>
   typeof surface === "string" ? surface : `${surface[0]} over ${surface[1]}`;
@@ -170,14 +144,8 @@ describe("the themes", () => {
     expect([...own.keys()].filter((name) => !dark.has(name))).toEqual([]);
   });
 
-  it("keep words readable in the light theme", () => {
-    expect(belowIn(THEMES.light)).toEqual([]);
-  });
-
-  it("keep words readable in the dark theme, where it was before", () => {
-    const below = belowIn(THEMES.dark).filter(
-      (line) => !DARK_AS_IT_WAS.has(line.slice(0, line.lastIndexOf(":"))),
-    );
-    expect(below).toEqual([]);
-  });
+  for (const [name, theme] of Object.entries(THEMES))
+    it(`keep words readable in the ${name} theme`, () => {
+      expect(belowIn(theme)).toEqual([]);
+    });
 });

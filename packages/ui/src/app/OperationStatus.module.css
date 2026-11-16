@@ -81,7 +81,7 @@
 
 .source[data-source="ai"],
 .source[data-source="folder"] {
-  color: var(--aq-accent);
+  color: var(--aq-link);
   border-color: currentColor;
 }
 

@@ -89,7 +89,7 @@
 }
 
 .markdown a {
-  color: var(--aq-accent);
+  color: var(--aq-link);
 }
 
 .markdown hr {

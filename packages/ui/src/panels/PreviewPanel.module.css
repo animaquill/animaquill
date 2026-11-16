@@ -62,7 +62,7 @@
   flex: none;
   align-items: center;
   justify-content: center;
-  height: 34px;
+  height: calc(34px * var(--aq-size-scale));
   padding: 0 8px;
   background: var(--aq-bg-panel);
   border-top: 1px solid var(--aq-border);

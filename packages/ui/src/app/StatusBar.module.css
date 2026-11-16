@@ -85,17 +85,17 @@
 .alert,
 .alert .saveLabel,
 .alert .saveWord {
-  color: var(--aq-bg-chrome);
+  color: var(--aq-on-alert);
   font-weight: 600;
 }
 
 .alert {
-  background: var(--aq-warning);
+  background: var(--aq-alert);
 }
 
 .alert:hover {
-  color: var(--aq-bg-chrome);
-  background: var(--aq-warning);
+  color: var(--aq-on-alert);
+  background: var(--aq-alert);
   filter: brightness(1.1);
 }
 

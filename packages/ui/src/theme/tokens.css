@@ -10,6 +10,8 @@
    * every size of text is one of these, so that all of them follow. Standard is 1, at 13px.
    */
   --aq-font-scale: 1;
+  /* How much taller rows, buttons and boxes with words in them are: only the large size grows them. */
+  --aq-size-scale: 1;
   --aq-font-10: calc(10px * var(--aq-font-scale));
   --aq-font-11: calc(11px * var(--aq-font-scale));
   --aq-font-12: calc(12px * var(--aq-font-scale));
@@ -35,9 +37,11 @@
   --aq-border: #2b2b2b;
   --aq-text: #cccccc;
   --aq-text-strong: #ffffff;
-  --aq-text-muted: #9d9d9d;
+  --aq-text-muted: #a0a0a0;
   --aq-accent: #0078d4;
   --aq-on-accent: #ffffff;
+  /* The accent as words: links, and small buttons that are only words. */
+  --aq-link: #4daafc;
   /* The accent, faint, behind what it marks, a line around it, and under the pointer. */
   --aq-accent-soft: #0078d426;
   --aq-accent-soft-hover: #0078d440;
@@ -52,6 +56,9 @@
   --aq-warning-text: #e3b341;
   --aq-warning-soft: #cca70014;
   --aq-warning-line: #cca70040;
+  /* What stands out as a warning on its own: a badge, a part of the status bar. */
+  --aq-alert: #cca700;
+  --aq-on-alert: #181818;
   --aq-trial: #e2c08d;
   /* Words on the colour of trying out. */
   --aq-on-trial: #1f1f1f;
@@ -188,6 +195,7 @@
   --aq-text-muted: #636363;
   --aq-accent: #005fb8;
   --aq-on-accent: #ffffff;
+  --aq-link: #005fb8;
   --aq-accent-soft: #005fb81a;
   --aq-accent-soft-hover: #005fb82e;
   --aq-accent-line: #005fb859;
@@ -198,6 +206,8 @@
   --aq-warning-text: #6e5000;
   --aq-warning-soft: #bf8f0014;
   --aq-warning-line: #bf8f0059;
+  --aq-alert: #fbe7a6;
+  --aq-on-alert: #5c4300;
   --aq-trial: #8a5a00;
   --aq-on-trial: #ffffff;
   --aq-danger: #b52a2a;
@@ -249,13 +259,18 @@
   --aq-timeline-flash: #0078d4;
 }
 
-/* The size of the words, as people chose it: small is 12px where standard is 13, large 15. */
+/*
+ * The size of the words, as people chose it: small is 11px where standard is 13, large 15. Large
+ * also makes rows, buttons and boxes as much taller, so that the editor is larger and not only its
+ * words; small leaves them as they are.
+ */
 :root[data-font-size="small"] {
-  --aq-font-scale: 0.923077;
+  --aq-font-scale: 0.846154;
 }
 
 :root[data-font-size="large"] {
   --aq-font-scale: 1.153846;
+  --aq-size-scale: 1.153846;
 }
 
 *,

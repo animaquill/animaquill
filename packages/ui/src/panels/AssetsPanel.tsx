@@ -131,17 +131,32 @@ export function AssetsPanel() {
       }}
     >
       <div className={styles.toolbar}>
-        <button type="button" onClick={() => void workbench.pickFiles()}>
+        <button
+          type="button"
+          onClick={() => void workbench.pickFiles()}
+          aria-label={t("assets.import")}
+          title={t("assets.import")}
+        >
           <Upload size={14} />
-          {t("assets.import")}
+          <span className={styles.label}>{t("assets.import")}</span>
         </button>
-        <button type="button" onClick={() => timeline.createScene()}>
+        <button
+          type="button"
+          onClick={() => timeline.createScene()}
+          aria-label={t("assets.newScene")}
+          title={t("assets.newScene")}
+        >
           <Plus size={14} />
-          {t("assets.newScene")}
+          <span className={styles.label}>{t("assets.newScene")}</span>
         </button>
-        <button type="button" onClick={() => timeline.createSound()}>
+        <button
+          type="button"
+          onClick={() => timeline.createSound()}
+          aria-label={t("assets.newSound")}
+          title={t("assets.newSound")}
+        >
           <Plus size={14} />
-          {t("assets.newSound")}
+          <span className={styles.label}>{t("assets.newSound")}</span>
         </button>
         {importing > 0 && !copying && (
           <span role="status">{t("assets.importing", { count: importing })}</span>

@@ -53,7 +53,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 22px;
+  height: calc(22px * var(--aq-size-scale));
   padding: 0 8px;
   color: var(--aq-text-strong);
 }
@@ -74,7 +74,7 @@
   align-items: center;
   gap: 6px;
   width: 100%;
-  min-height: 22px;
+  min-height: calc(22px * var(--aq-size-scale));
   padding: 2px 8px 2px 28px;
   color: var(--aq-text);
   font: inherit;
@@ -99,7 +99,7 @@
 }
 
 .row[data-severity="error"] .icon {
-  color: var(--aq-danger);
+  color: var(--aq-danger-text);
 }
 
 .text {

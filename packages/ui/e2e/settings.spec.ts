@@ -173,6 +173,15 @@ test.describe("with an account", () => {
         .boundingBox(),
     ]);
     expect(box!.x + box!.width).toBeLessThanOrEqual(name!.x);
+    // The theme and the size of words: of this device, following the system by default.
+    for (const [id, chosen] of [
+      ["general.theme", "跟随系统"],
+      ["general.fontSize", "标准"],
+    ] as const) {
+      const row = settingsOf(page).locator(`[data-setting="${id}"]`);
+      await expect(row.locator('[data-where="device"]')).toHaveAttribute("title", "只在这台设备");
+      await expect(row.getByRole("radio", { checked: true })).toHaveText(chosen);
+    }
     for (const group of ["常规", "编辑", "预览和播放", "导出", "AI 聊天", "存储和数据"]) {
       await goToSettingsGroup(page, group);
       await expect(settingsOf(page).getByText(/^(这台设备|跟账号)$/)).toHaveCount(0);
@@ -278,7 +287,7 @@ test("each group has only what is a setting, and words only where they are neede
     "general.fontSize",
   ]);
   const general = settingsOf(page).getByTestId("settings-general");
-  await expect(general).toHaveText(/^常规语言简体中文颜色主题深色浅色跟随系统界面字号小标准大$/);
+  await expect(general).toHaveText(/^常规语言简体中文颜色主题跟随系统浅色深色界面字号小标准大$/);
   expect(await rows("编辑", "settings-editing")).toEqual(["editing.trial"]);
   await expect(settingsOf(page).getByTestId("settings-editing")).toContainText(
     "手动改属性和关键帧时先进入试改",

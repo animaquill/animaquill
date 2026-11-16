@@ -1,5 +1,6 @@
 .panel,
 .dropping {
+  container: assets / inline-size;
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -35,6 +36,25 @@
 
 .toolbar button:hover {
   background: var(--aq-bg-hover);
+}
+
+/* Too narrow for the three buttons with their words, at the size of words people chose: icons. */
+@container assets (max-width: 246px) {
+  .toolbar .label {
+    display: none;
+  }
+}
+
+@container assets (max-width: 260px) {
+  :root:not([data-font-size="small"]) .toolbar .label {
+    display: none;
+  }
+}
+
+@container assets (max-width: 280px) {
+  :root[data-font-size="large"] .toolbar .label {
+    display: none;
+  }
 }
 
 .browser {

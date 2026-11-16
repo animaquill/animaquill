@@ -12,7 +12,7 @@ export interface AppearanceChoice {
   readonly fontSize: FontSize;
 }
 
-export const THEME_CHOICES: readonly ThemeChoice[] = ["dark", "light", "system"];
+export const THEME_CHOICES: readonly ThemeChoice[] = ["system", "light", "dark"];
 export const FONT_SIZES: readonly FontSize[] = ["small", "normal", "large"];
 
 /**

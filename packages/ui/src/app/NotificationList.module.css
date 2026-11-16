@@ -37,7 +37,7 @@
   place-items: center;
   flex: none;
   width: 20px;
-  height: 20px;
+  height: calc(20px * var(--aq-size-scale));
   padding: 0;
   color: var(--aq-text-muted);
   background: none;
@@ -58,7 +58,7 @@
   width: auto;
   height: auto;
   padding: 1px 8px;
-  color: var(--aq-accent);
+  color: var(--aq-link);
   white-space: nowrap;
 }
 

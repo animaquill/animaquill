@@ -201,7 +201,7 @@
   align-items: center;
   box-sizing: border-box;
   width: 100%;
-  min-height: 28px;
+  min-height: calc(28px * var(--aq-size-scale));
   padding: 3px 8px;
   color: var(--aq-text);
   font: inherit;
@@ -353,7 +353,7 @@
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
-  min-height: 30px;
+  min-height: calc(30px * var(--aq-size-scale));
 }
 
 .kicker {

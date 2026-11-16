@@ -43,7 +43,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  height: 22px;
+  height: calc(22px * var(--aq-size-scale));
   padding-right: 8px;
   white-space: nowrap;
   cursor: pointer;

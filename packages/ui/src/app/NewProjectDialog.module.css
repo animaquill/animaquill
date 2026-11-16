@@ -22,7 +22,7 @@
 /* Fields to type in. */
 .dialog input:not([type]),
 .dialog input[type="text"] {
-  min-height: 34px;
+  min-height: calc(34px * var(--aq-size-scale));
   padding: 0 10px;
   color: var(--aq-text-strong);
   background: var(--aq-bg-input);
@@ -43,7 +43,7 @@
 /* Lists to choose from: a field with a chevron, and where the browser lets the page style the list
    that opens, that list too. */
 .dialog select {
-  min-height: 32px;
+  min-height: calc(32px * var(--aq-size-scale));
   padding: 0 30px 0 10px;
   color: var(--aq-text-strong);
   font: inherit;
@@ -81,7 +81,7 @@
   .dialog select {
     display: inline-flex;
     align-items: center;
-    height: 32px;
+    height: calc(32px * var(--aq-size-scale));
   }
 
   .dialog select::picker-icon {

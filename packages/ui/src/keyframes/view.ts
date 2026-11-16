@@ -41,6 +41,8 @@ export class KeyframesView extends KeyArea implements StageEditor {
   #pixelsPerSecond = 0;
   #scrollX = 0;
   #rowScale = 1;
+  /** Rows are this much taller for the size of words people chose, apart from their zoom. */
+  #sizeScale = 1;
   /** The playhead moved while this did not show, so it gets in sight once it does. */
   #revealLater = false;
   #width = 0;
@@ -111,7 +113,7 @@ export class KeyframesView extends KeyArea implements StageEditor {
   }
 
   get #keyHeight(): number {
-    return Math.round(LANE_HEIGHT * this.#rowScale);
+    return Math.round(LANE_HEIGHT * this.#rowScale * this.#sizeScale);
   }
 
   xAt(seconds: number): number {
@@ -269,6 +271,14 @@ export class KeyframesView extends KeyArea implements StageEditor {
     if (!model) return 0;
     const x = this.xAt(this.frame / model.rate.fps);
     return x >= 0 && x <= this.#width ? x : this.#width / 2;
+  }
+
+  setSizeScale(scale: number): void {
+    if (scale === this.#sizeScale || !(scale > 0)) return;
+    this.#sizeScale = scale;
+    this.relist();
+    this.#clampScroll();
+    this.#viewChanged();
   }
 
   /** Changes the height of the rows of keys while what is at height `y` stays where it is. */

@@ -431,7 +431,7 @@
 }
 
 .badge[data-kind="update"] {
-  color: var(--aq-accent);
+  color: var(--aq-link);
   border-color: var(--aq-accent);
 }
 
@@ -620,7 +620,7 @@
 .installHead {
   display: flex;
   align-items: center;
-  min-height: 30px;
+  min-height: calc(30px * var(--aq-size-scale));
 }
 
 .installHead h2 {

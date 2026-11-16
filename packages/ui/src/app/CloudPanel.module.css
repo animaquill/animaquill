@@ -132,7 +132,7 @@
 
 /* Takes something away: it says so in its colour, and asks before it does. */
 .footer .danger {
-  color: var(--aq-danger);
+  color: var(--aq-danger-text);
 }
 
 .buttons button:disabled,

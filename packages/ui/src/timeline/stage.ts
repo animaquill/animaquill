@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, type MouseEvent, type PointerEvent, type RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
-import { onAppearanceChange } from "../theme/watch.ts";
+import { onAppearanceChange, sizeScale } from "../theme/watch.ts";
 import { RULER_HEIGHT } from "./editor.ts";
 import { formatTimecode, type FrameRate } from "./frames.ts";
 import type { Pointer } from "./gestures.ts";
@@ -35,6 +35,8 @@ export interface StageEditor extends TouchTarget {
   leave(): void;
   scrollDuringDrag(pointer: Pointer, dx: number, dy: number): void;
   setTouchInput(on: boolean): void;
+  /** How much taller rows are for the size of words people chose, see `sizeScale`. */
+  setSizeScale?(scale: number): void;
 }
 
 export function pointerOf(event: MouseEvent | PointerEvent, stage: HTMLElement): Pointer {
@@ -120,7 +122,11 @@ export function useStage(
 
     const painter = latest.current.paint(canvasElement);
     const stopRepaints = latest.current.repaintOn?.(() => painter.invalidate());
-    const stopRestyle = onAppearanceChange(() => painter.restyle());
+    editor.setSizeScale?.(sizeScale());
+    const stopRestyle = onAppearanceChange(() => {
+      editor.setSizeScale?.(sizeScale());
+      painter.restyle();
+    });
 
     const show = () => {
       const { model } = editor;

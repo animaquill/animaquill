@@ -18,7 +18,7 @@
   display: flex;
   flex: none;
   align-items: center;
-  height: 30px;
+  height: calc(30px * var(--aq-size-scale));
   padding-right: 4px;
   color: var(--aq-text-muted);
   border-right: 1px solid var(--aq-border);

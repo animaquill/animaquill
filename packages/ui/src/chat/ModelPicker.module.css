@@ -101,7 +101,7 @@
   display: inline-flex;
   flex: none;
   width: 12px;
-  color: var(--aq-accent);
+  color: var(--aq-link);
 }
 
 .name {

@@ -64,16 +64,16 @@
 }
 
 .item[data-status="running"] .icon {
-  color: var(--aq-accent);
+  color: var(--aq-link);
   animation: spin 1.6s linear infinite;
 }
 
 .item[data-status="failed"] .icon {
-  color: var(--aq-danger);
+  color: var(--aq-danger-text);
 }
 
 .item[data-status="done"] .icon {
-  color: var(--aq-accent);
+  color: var(--aq-link);
 }
 
 @media (prefers-reduced-motion: reduce) {

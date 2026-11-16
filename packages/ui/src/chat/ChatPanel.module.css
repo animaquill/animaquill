@@ -349,7 +349,7 @@
 }
 
 .tool[data-state="running"] .toolIcon {
-  color: var(--aq-accent);
+  color: var(--aq-link);
 }
 
 .toolName,
@@ -610,7 +610,7 @@
 }
 
 .switchOn {
-  color: var(--aq-accent);
+  color: var(--aq-link);
 }
 
 .switchOff {
@@ -787,7 +787,7 @@
 
 .panel .link {
   padding: 0 4px;
-  color: var(--aq-accent);
+  color: var(--aq-link);
   background: none;
 }
 
@@ -949,7 +949,7 @@
 
 /* The box people write in: text and blocks, 2 to 10 lines, then it scrolls. */
 .input {
-  min-height: 42px;
+  min-height: calc(42px * var(--aq-size-scale));
   max-height: 170px;
   overflow-y: auto;
   padding: 4px 6px;
@@ -1082,7 +1082,7 @@
 }
 
 .panel .planFirst[aria-pressed="true"] {
-  color: var(--aq-accent);
+  color: var(--aq-link);
   background: color-mix(in srgb, var(--aq-accent) 16%, transparent);
 }
 
@@ -1103,7 +1103,7 @@
 
 .menuCheck {
   flex: none;
-  color: var(--aq-accent);
+  color: var(--aq-link);
 }
 
 .menuKeys {
@@ -1337,7 +1337,7 @@ span.sentPicture {
 
 .panel .pictureRetry {
   padding: 0 4px;
-  color: var(--aq-accent);
+  color: var(--aq-link);
   font-size: var(--aq-font-10);
   background: none;
   border: 0;
@@ -1600,7 +1600,7 @@ span.sentPicture {
   display: inline-flex;
   flex: none;
   width: 12px;
-  color: var(--aq-accent);
+  color: var(--aq-link);
 }
 
 .modelRowText {
@@ -1695,7 +1695,7 @@ span.sentPicture {
 }
 
 .tag[data-kind="mine"] {
-  color: var(--aq-accent);
+  color: var(--aq-link);
   border-color: var(--aq-accent);
 }
 

@@ -78,7 +78,7 @@
 }
 
 .node[data-missing] svg {
-  color: var(--aq-danger);
+  color: var(--aq-danger-text);
 }
 
 .node[aria-selected="true"][data-missing] svg {

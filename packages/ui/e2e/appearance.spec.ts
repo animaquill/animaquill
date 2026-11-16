@@ -130,13 +130,18 @@ test.describe("a project with code", () => {
   });
 });
 
-for (const [option, value, pixels] of [
-  ["小", "small", "12px"],
-  ["大", "large", "15px"],
+for (const [option, value, pixels, taller] of [
+  ["小", "small", "11px", 1],
+  ["大", "large", "15px", 15 / 13],
 ] as const) {
   test(`words ${option}: everything bigger or smaller, nothing out of its place`, async ({
     page,
   }) => {
+    const bar = page.locator("header").first();
+    const trackRow = () =>
+      content(page, "timeline").getByText("视频 1", { exact: true }).locator("xpath=..");
+    await tab(page, "timeline").click();
+    const before = { bar: await bar.boundingBox(), row: await trackRow().boundingBox() };
     await openGeneral(page);
     await choose(page, "界面字号", option);
     await expect(root(page)).toHaveAttribute("data-font-size", value);
@@ -166,6 +171,18 @@ for (const [option, value, pixels] of [
       expect(name.y).toBeGreaterThanOrEqual(around.y);
       expect(name.y + name.height).toBeLessThanOrEqual(around.y + around.height + 0.5);
     }
+
+    // Large makes the bars and the rows as much taller; small leaves them as they are.
+    const after = { bar: await bar.boundingBox(), row: await trackRow().boundingBox() };
+    expect(after.bar?.height ?? 0).toBeCloseTo((before.bar?.height ?? 0) * taller, 0);
+    expect(after.row?.height ?? 0).toBeCloseTo((before.row?.height ?? 0) * taller, 0);
+
+    // The buttons over the assets stay in one line, with their words or as icons.
+    await tab(page, "assets").click();
+    const tops = await content(page, "assets")
+      .getByRole("button", { name: /^(导入|新建场景|新建声音)$/ })
+      .evaluateAll((all) => all.map((each) => Math.round(each.getBoundingClientRect().top)));
+    expect(new Set(tops).size).toBe(1);
 
     // And back to standard, as it was.
     await openGeneral(page);

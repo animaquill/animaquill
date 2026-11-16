@@ -14,7 +14,7 @@
 .button {
   position: absolute;
   right: 8px;
-  height: 22px;
+  height: calc(22px * var(--aq-size-scale));
   color: var(--aq-text-muted);
 }
 

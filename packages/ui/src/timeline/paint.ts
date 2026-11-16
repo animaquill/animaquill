@@ -65,11 +65,22 @@ const MAX_SLOTS_PER_BAR = 8;
 /** How big the mark of a clip that AI just changed is. */
 const AI_MARK = 7;
 
-/** Dark text on light colours, light text on dark ones. */
-function readableOn(color: string): string {
+/**
+ * Dark text on light colours, light text on dark ones, whichever stands out more, as WCAG measures
+ * contrast: white on the green of sound reads at 3:1, black at 6:1. Words and waveforms of clips.
+ */
+export function readableOn(color: string): string {
   const value = Number.parseInt(color.slice(1, 7), 16);
-  const [red, green, blue] = [value >> 16, (value >> 8) & 255, value & 255];
-  return red * 0.299 + green * 0.587 + blue * 0.114 > 150 ? "#000000" : "#ffffff";
+  const linear = (channel: number) => {
+    const part = channel / 255;
+    return part <= 0.03928 ? part / 12.92 : ((part + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance =
+    0.2126 * linear(value >> 16) +
+    0.7152 * linear((value >> 8) & 255) +
+    0.0722 * linear(value & 255);
+  // Where black and white stand out as much: (1 + 0.05) / (L + 0.05) = (L + 0.05) / 0.05.
+  return luminance > Math.sqrt(1.05 * 0.05) - 0.05 ? "#000000" : "#ffffff";
 }
 
 /** Text cut short with an ellipsis to fit a width, as the canvas measures it. */

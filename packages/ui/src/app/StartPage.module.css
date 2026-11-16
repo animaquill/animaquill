@@ -32,7 +32,7 @@
   justify-content: center;
   gap: 8px;
   flex: none;
-  min-height: 44px;
+  min-height: calc(44px * var(--aq-size-scale));
   color: var(--aq-on-accent);
   font-weight: 600;
   background: var(--aq-accent);
@@ -76,7 +76,7 @@
   gap: 10px;
   flex: 1;
   min-width: 0;
-  min-height: 40px;
+  min-height: calc(40px * var(--aq-size-scale));
   padding: 0 12px;
   color: var(--aq-text);
   text-align: left;
@@ -128,7 +128,7 @@
   display: grid;
   place-items: center;
   width: 28px;
-  height: 28px;
+  height: calc(28px * var(--aq-size-scale));
   padding: 0;
   color: var(--aq-text-muted);
   background: var(--aq-bg-panel);
@@ -160,7 +160,7 @@
 
 .nameInput input {
   width: 100%;
-  min-height: 36px;
+  min-height: calc(36px * var(--aq-size-scale));
   padding: 0 10px;
   color: var(--aq-text-strong);
   font: inherit;
@@ -268,7 +268,7 @@
 }
 
 .filters button {
-  min-height: 34px;
+  min-height: calc(34px * var(--aq-size-scale));
   padding: 0 14px;
   color: var(--aq-text);
   background: transparent;
@@ -292,7 +292,7 @@
   gap: 8px;
   width: 260px;
   max-width: 100%;
-  min-height: 42px;
+  min-height: calc(42px * var(--aq-size-scale));
   padding: 0 12px;
   color: var(--aq-text-muted);
   background: var(--aq-bg-input);
@@ -318,7 +318,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  min-height: 42px;
+  min-height: calc(42px * var(--aq-size-scale));
   padding: 0 12px;
   color: var(--aq-text);
   border: 1px solid var(--aq-border);
@@ -336,7 +336,7 @@
   display: grid;
   place-items: center;
   width: 42px;
-  height: 40px;
+  height: calc(40px * var(--aq-size-scale));
   color: var(--aq-text);
   background: transparent;
   border: 0;
@@ -653,9 +653,9 @@
 .status[data-tone="warning"] .statusText[data-alert="true"],
 .card[data-kind="onlyHere"] .status[data-tone="warning"] .statusText {
   padding: 0 6px;
-  color: var(--aq-bg-chrome);
+  color: var(--aq-on-alert);
   font-weight: 600;
-  background: var(--aq-warning);
+  background: var(--aq-alert);
   border-radius: 4px;
 }
 
@@ -663,7 +663,7 @@
 .way {
   margin-top: 2px;
   padding: 0;
-  color: var(--aq-accent);
+  color: var(--aq-link);
   font: inherit;
   font-size: var(--aq-font-12);
   background: none;
@@ -742,7 +742,7 @@
 }
 
 .more [role^="menuitem"] {
-  min-height: 34px;
+  min-height: calc(34px * var(--aq-size-scale));
   border-radius: 6px;
 }
 
@@ -791,7 +791,7 @@
 .row > .cardLink {
   flex: 1;
   min-width: 0;
-  min-height: 52px;
+  min-height: calc(52px * var(--aq-size-scale));
   padding: 6px 12px;
   border-radius: 0;
 }
@@ -943,7 +943,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  min-height: 34px;
+  min-height: calc(34px * var(--aq-size-scale));
   padding: 0 14px;
   color: var(--aq-on-accent);
   font: inherit;
@@ -1047,7 +1047,7 @@
 
   .navButton {
     flex: none;
-    min-height: 36px;
+    min-height: calc(36px * var(--aq-size-scale));
     white-space: nowrap;
   }
 
