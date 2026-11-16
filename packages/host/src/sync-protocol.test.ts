@@ -99,3 +99,33 @@ describe("the copies of a project in the sync protocol", () => {
       expect(readSyncClientMessage(frame({ ...header, base: wrong }))).toBeUndefined();
   });
 });
+
+describe("updates the platform wrote as a batch of its own", () => {
+  const update: SyncServerMessage = {
+    t: "update",
+    seq: 7,
+    digest: "d7",
+    kind: "repo",
+    at: 1_700_000_000_000,
+    payload: new Uint8Array([1, 2, 3]),
+  };
+  const by = { batch: "0193e0a1-merge", kind: "repo", label: "GitHub 上的改动", files: 2 };
+
+  it("say which batch, and an update without one says none", () => {
+    expect(readSyncServerMessage(encodeSyncMessage({ ...update, by }))).toEqual({ ...update, by });
+    expect(readSyncServerMessage(encodeSyncMessage(update))).not.toHaveProperty("by");
+  });
+
+  it("are still updates where what they say of it cannot be read", () => {
+    const { payload, ...header } = update;
+    const withPayload = (bytes: Uint8Array) => {
+      const out = new Uint8Array(bytes.length + payload.length);
+      out.set(bytes);
+      out.set(payload, bytes.length);
+      return out;
+    };
+    for (const wrong of [{ ...by, files: -1 }, { ...by, label: 3 }, "repo", null]) {
+      expect(readSyncServerMessage(withPayload(frame({ ...header, by: wrong })))).toEqual(update);
+    }
+  });
+});

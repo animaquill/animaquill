@@ -136,8 +136,12 @@ export interface MergedFile {
  *   cannot be taken from the other side without that file, so only people can settle it.
  * - `removed-link`: what the file starts to point at, which the editor took away. Only people can
  *   settle that, by bringing it back or by changing what points at it.
+ * - `check-duplicate`: a file of code that the same change may have come into twice, by two ways
+ *   that did not hear of each other, such as from GitHub and from a folder that is a clone of the
+ *   repository, where it is not what `undoubled` can put right. Only people can tell.
  */
-export type ConflictKind = "value" | "lines" | "file" | "order" | "asset-file" | "removed-link";
+export type ConflictKind =
+  "value" | "lines" | "file" | "order" | "asset-file" | "removed-link" | "check-duplicate";
 
 /** Something both sides changed, each in its own way. What the editor had stays. */
 export interface MergeConflict {
@@ -2059,7 +2063,9 @@ function ordersFor(
 export function takeTheirs(draft: Draft, conflict: TakenConflict): void {
   const { file, path, kind, ours, theirs } = conflict;
   const refuse = (why: NotTaken): never => fail("conflict-not-taken", { why, file });
-  if (kind === "asset-file" || kind === "removed-link") refuse("manual");
+  if (kind === "asset-file" || kind === "removed-link" || kind === "check-duplicate") {
+    refuse("manual");
+  }
   const place = placeOf(file);
   if (!place || isProblem(place) || !startsWith(path, place.at)) return refuse("not-found");
   const before = draft.state;
@@ -2147,3 +2153,40 @@ export function takeTheirs(draft: Draft, conflict: TakenConflict): void {
     refuse("would-break");
   }
 }
+
+/**
+ * A conflict that is found after a merge, said as a merge says its own, so that `conflict.take`
+ * takes it the same way: where a change made without the merge, which arrives after it, took away
+ * what the merge wrote, or the merge what the change did, see late-writes.ts. `ours` is what the
+ * project has there, `theirs` what went; either can be nothing, for what is not there.
+ */
+export function conflictAt(
+  state: ProjectState,
+  {
+    path,
+    kind,
+    ours,
+    theirs,
+  }: {
+    readonly path: Path;
+    readonly kind: ConflictKind;
+    readonly ours?: unknown;
+    readonly theirs?: unknown;
+  },
+): MergeConflict {
+  const unnamed: Unnamed = {
+    file: fileOf(path),
+    path,
+    kind,
+    ...(ours !== undefined && { ours }),
+    ...(theirs !== undefined && { theirs }),
+  };
+  return { ...unnamed, label: labelOf(state, unnamed) };
+}
+
+/** The tracks or the sections of a timeline by their ids in their order, as `order` conflicts say it. */
+export const orderAt = (
+  state: ProjectState,
+  timeline: string,
+  level: "tracks" | "sections",
+): readonly string[] => sequenceIn(level, withoutVersions(entryOf(state.timelines, timeline)));

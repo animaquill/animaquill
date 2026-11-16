@@ -303,7 +303,24 @@ export type {
   MergedFile,
   MergedFileStatus,
 } from "./merge-files.ts";
+export { conflictAt, orderAt } from "./merge-files.ts";
 export { SALVAGEABLE, mergeInRounds, type MergeRound, type Mergeable } from "./merge-rounds.ts";
+export {
+  lateOf,
+  valuesWithout,
+  watch,
+  writeBatch,
+  type BatchCopy,
+  type BatchOrder,
+  type BatchRemoved,
+  type BatchWrite,
+  type IdRanges,
+  type KeyChange,
+  type LateConflict,
+  type LateOutcome,
+  type PlatformBatch,
+  type Watched,
+} from "./late-writes.ts";
 export {
   editSpan,
   insertionOf,

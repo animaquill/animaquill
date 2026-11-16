@@ -203,13 +203,17 @@ export type SyncServerMessage =
       readonly reset: boolean;
       readonly generation?: number;
     }
-  /** An update of the platform. "snapshot" is the whole project up to `seq`. */
+  /**
+   * An update of the platform. "snapshot" is the whole project up to `seq`. One that the platform
+   * wrote itself as a batch, such as a merge from GitHub, says which (`by`).
+   */
   | {
       readonly t: "update";
       readonly seq: number;
       readonly digest: string;
       readonly kind: string;
       readonly at: number;
+      readonly by?: SyncBatch;
       readonly payload: Uint8Array;
     }
   /** Everything up to `head` has come, as asked for by "hello". */
@@ -261,6 +265,27 @@ export function encodeSyncMessage(
   if (!only || more.length > 0) throw new Error("This message needs more than one frame");
   return only;
 }
+
+/**
+ * A batch the platform wrote itself, as an update says it (`by`): which one, of what kind (such as
+ * "repo", for changes from GitHub), what people call it, and how many files it came from. An editor
+ * that does not know a field of it goes without; one that cannot read it at all, without `by`.
+ */
+export interface SyncBatch {
+  readonly batch: string;
+  readonly kind: string;
+  readonly label: string;
+  readonly files: number;
+}
+
+const batchOf = (value: unknown): SyncBatch | undefined => {
+  if (typeof value !== "object" || value === null) return undefined;
+  const { batch, kind, label, files } = value as Record<string, unknown>;
+  if (!isText(batch, 64) || !isText(kind, 32) || !isText(label, 200) || !isCount(files)) {
+    return undefined;
+  }
+  return { batch, kind, label, files };
+};
 
 /** A message as the frames that carry it, in order. */
 export function framesOf(
@@ -506,6 +531,7 @@ export function readSyncServerMessage(data: Uint8Array | Parsed): SyncServerMess
         digest: h["digest"],
         kind: h["kind"],
         at: h["at"],
+        ...(batchOf(h["by"]) && { by: batchOf(h["by"]) as SyncBatch }),
         payload,
       };
     case "synced":

@@ -142,7 +142,15 @@ const ConflictTake = z.strictObject({
   conflict: z.object({
     file: z.string().min(1),
     path: z.array(z.string()).min(1),
-    kind: z.enum(["value", "lines", "file", "order", "asset-file", "removed-link"]),
+    kind: z.enum([
+      "value",
+      "lines",
+      "file",
+      "order",
+      "asset-file",
+      "removed-link",
+      "check-duplicate",
+    ]),
     lines: z
       .strictObject({ from: z.number().int().nonnegative(), to: z.number().int().nonnegative() })
       .optional(),

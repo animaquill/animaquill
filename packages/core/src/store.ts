@@ -21,6 +21,7 @@ import { isSourceFile, planFileImport } from "./import-file.ts";
 import {
   planMerge,
   rememberWritten,
+  takeTheirs,
   unmergedFiles,
   type BaseOf,
   type FileChange,
@@ -1034,6 +1035,33 @@ export class ProjectStore {
     if (result.patches.length > 0 && options?.dryRun !== true) this.#rememberBatch(origin);
     const { files, problems, conflicts, kept, held } = merge;
     return { ...result, files, problems, conflicts, kept, held };
+  }
+
+  /**
+   * Takes the other side of conflicts of a merge, as `conflict.take` does, for whoever is no person:
+   * the platform, right after it merged a batch from GitHub into a project whose people want what
+   * came from GitHub kept where both sides changed the same thing, as the same origin (see
+   * `project_repos.prefer` on the platform). Each conflict goes on its own, with the checks of the
+   * command: one that cannot be taken stays as it is. Only for batches of files. Resolves to those
+   * that it took.
+   */
+  takeConflicts(conflicts: readonly MergeConflict[], origin: Origin): readonly MergeConflict[] {
+    if (!isFileBatch(origin)) return [];
+    const taken: MergeConflict[] = [];
+    for (const conflict of conflicts) {
+      const result = this.#commit(
+        ["conflict.take"],
+        origin,
+        { origin, checksDocuments: true },
+        (draft) => {
+          this.#assertUnlocked(draft);
+          takeTheirs(draft, conflict);
+          return [];
+        },
+      );
+      if (result.ok) taken.push(conflict);
+    }
+    return taken;
   }
 
   /** Only the last few batches of files can be taken back: the oldest goes, with all of its log. */
