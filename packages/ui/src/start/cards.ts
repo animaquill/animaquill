@@ -429,7 +429,7 @@ function lineOf(
       : row.copy === "live"
         ? t("start.status.notHere")
         : row.copy === "restoring"
-          ? t(row.released === true ? "cloud.open.restoringReleased" : "cloud.open.restoring")
+          ? t("cloud.open.restoring")
           : t("start.status.fromGitHub");
   return {
     place: "cloud",
@@ -438,8 +438,10 @@ function lineOf(
     hint:
       markHint(row.mark, t) ??
       (githubWord !== undefined && github ? githubAbout(github, t) : undefined) ??
-      // Coming back from GitHub, said whole where the line is too short for it.
-      (row.copy === "restoring" && trouble === undefined ? place : undefined),
+      // Coming back from GitHub, and why, on hovering: the line is too short for it.
+      (row.copy === "restoring" && trouble === undefined
+        ? t(row.released === true ? "cloud.open.restoringReleased" : "cloud.open.restoring")
+        : undefined),
   };
 }
 

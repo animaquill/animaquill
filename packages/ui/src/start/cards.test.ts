@@ -408,9 +408,10 @@ describe("what a card says of the platform's copy, which goes a week after it wa
       }),
       NOTHING_ORGANIZED,
     );
-    expect(cardStatus(byName(cards, "取回中"), "ready", t, NOW).text).toBe(
-      "云端 · 正在从 GitHub 取回…（平台上的临时内容 7 天没用已清掉）",
-    );
+    // The line says what goes on, hovering why.
+    const coming = cardStatus(byName(cards, "取回中"), "ready", t, NOW);
+    expect(coming.text).toBe("云端 · 正在从 GitHub 取回…");
+    expect(coming.hint).toBe("正在从 GitHub 取回…（平台上的临时内容 7 天没用已清掉）");
     expect(cardStatus(byName(cards, "恢复中"), "ready", t, NOW).text).toBe(
       "云端 · 正在从 GitHub 取回…",
     );

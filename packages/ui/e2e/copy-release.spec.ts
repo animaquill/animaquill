@@ -105,8 +105,10 @@ test("the cards say what goes, when, and what helps", async ({ page }) => {
   await chooseFrom(page, "文件", "打开云端的项目…");
 
   // Coming back from GitHub, and why.
-  await expect(statusOf(page, "婚礼快剪")).toHaveText(
-    /^云端 · 正在从 GitHub 取回…（平台上的临时内容 7 天没用已清掉）/,
+  await expect(statusOf(page, "婚礼快剪")).toHaveText(/^云端 · 正在从 GitHub 取回…/);
+  await expect(statusOf(page, "婚礼快剪")).toHaveAttribute(
+    "title",
+    /^正在从 GitHub 取回…（平台上的临时内容 7 天没用已清掉）/,
   );
   // When it was last opened, on any computer, on hovering.
   await expect(statusOf(page, "课程第 3 集")).toHaveAttribute("title", "上次打开：9 天前");
@@ -197,6 +199,8 @@ test("in the project, an error says in how many days, and one with no repository
   await shot(page, "p3-status-hover");
   await githubStatus(page).click();
   await expect(row(page, "archive")).toContainText("如果一直不打开，平台上的这些改动 3 天后清掉。");
+  // The days, in place of the week in general.
+  await expect(row(page, "archive")).not.toContainText("平台临时存储只保存 7 天");
   await shot(page, "p3-panel");
   await page.keyboard.press("Escape");
 

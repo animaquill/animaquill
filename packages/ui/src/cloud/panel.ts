@@ -595,9 +595,10 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
 
   // ---- archiving: what says why it cannot be used says it all. An error says that the
   // platform keeps its copy for a week only.
+  // How long, where the platform says: in so many days, rather than a week in general.
   const week =
     github?.kind === "error"
-      ? [t("github.week"), ...(github.clearsIn !== undefined ? [clearsText(github, t)] : [])]
+      ? [github.clearsIn !== undefined ? clearsText(github, t) : t("github.week")]
       : [];
   if (watch && status && repository && !unusable) {
     if (isPaused) {
