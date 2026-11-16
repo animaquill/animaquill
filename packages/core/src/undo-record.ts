@@ -45,12 +45,24 @@ export interface SavedEntry {
 export interface UndoRecord {
   readonly format: typeof UNDO_FORMAT;
   readonly origin: Origin;
+  /**
+   * When it was saved, in milliseconds since 1970, and always later than every record the store
+   * that saved it knew: what a later record knew of a place counts over what an earlier one did.
+   */
+  readonly at: number;
   readonly done: readonly SavedEntry[];
   readonly undone: readonly SavedEntry[];
   /** The places the steps are about, and their marks when this was saved. */
   readonly marks: readonly (readonly [Path, Mark])[];
   /** Which document this is about: a project that was made again from its files is another one. */
-  readonly doc: { readonly manifest: Mark };
+  readonly doc: {
+    readonly manifest: Mark;
+    /**
+     * The version of the format of projects the steps were written in, see `CURRENT_FORMAT_VERSION`:
+     * a step of an older one would put back a value in a shape the project no longer has.
+     */
+    readonly formatVersion: number;
+  };
 }
 
 export const UNDO_FORMAT = 1;
@@ -63,7 +75,7 @@ const isStrings = (value: unknown): value is readonly string[] =>
 
 /** A path, never one that means something to every object, whatever wrote it down. */
 const isPath = (value: unknown): value is readonly string[] =>
-  isStrings(value) && !value.includes("__proto__");
+  isStrings(value) && value.length > 0 && !value.includes("__proto__");
 
 function isPatch(value: unknown): value is Patch {
   if (!isObject(value) || !isPath(value.path)) return false;
@@ -107,13 +119,19 @@ const isEntry = (value: unknown): value is SavedEntry =>
 
 /** Whether something read back is a record this editor can use, whoever kept it. */
 export function isUndoRecord(value: unknown): value is UndoRecord {
-  if (!isObject(value) || value.format !== UNDO_FORMAT || typeof value.origin !== "string") {
+  if (
+    !isObject(value) ||
+    value.format !== UNDO_FORMAT ||
+    typeof value.origin !== "string" ||
+    typeof value.at !== "number"
+  ) {
     return false;
   }
   const doc = value.doc;
   return (
     isObject(doc) &&
     typeof doc.manifest === "string" &&
+    Number.isInteger(doc.formatVersion) &&
     Array.isArray(value.done) &&
     value.done.every(isEntry) &&
     Array.isArray(value.undone) &&

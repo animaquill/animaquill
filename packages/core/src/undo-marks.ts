@@ -159,11 +159,11 @@ export function marksAround(root: Y.Map<unknown>, where: Path, into: Marks): voi
   const entry = map ? entriesOf(map).get(key) : undefined;
   into.set(keyOf(where), { path: where, mark: map ? markOfEntry(entry) : NOWHERE });
   const type = entry && typeOf(entry);
-  if (type instanceof Y.Map) marksBelow(type as Y.Map<unknown>, placePath(where), into);
+  if (type instanceof Y.Map) marksBelow(type as Y.Map<unknown>, placePathOf(where), into);
 }
 
 /** The path of the map at a place, as the store reads what is in it. */
-const placePath = (where: Path): Path =>
+export const placePathOf = (where: Path): Path =>
   where.at(-1) === "" && isStanding(where.slice(0, -1)) ? where.slice(0, -1) : where;
 
 function marksBelow(map: Y.Map<unknown>, base: Path, into: Marks): void {

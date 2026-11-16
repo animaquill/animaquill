@@ -131,6 +131,48 @@ describe("undo logs saved and read again", () => {
     expect(again.getState().manifest.name).toBe("原子是什么");
   });
 
+  it("come out the same in whatever order they are read, also one saved before the other", () => {
+    const store = open();
+    const [a, b] = [aiTask("a"), aiTask("b")];
+    rename(store, "第一个任务", { origin: a });
+    const first = JSON.parse(JSON.stringify(store.saveUndo(a)));
+    rename(store, "第二个任务", { origin: b });
+    store.undoOrigin(b);
+    const second = JSON.parse(JSON.stringify(store.saveUndo(b)));
+    for (const order of [
+      [first, second],
+      [second, first],
+    ]) {
+      const again = reopened(store, order);
+      expect(again.undoOutlook(a)).toEqual(store.undoOutlook(a));
+      expect(again.undoOutlook(b)).toEqual(store.undoOutlook(b));
+    }
+  });
+
+  it("leave out one that cannot be taken up, and of another format of projects", () => {
+    const store = open();
+    rename(store, "AI 改的", { origin: AI });
+    const [record] = saved(store) as [{ doc: { formatVersion: number } }];
+    const older = {
+      ...record,
+      doc: { ...record.doc, formatVersion: record.doc.formatVersion - 1 },
+    };
+    // One that goes wrong as it is taken up, after it looked right.
+    let looked = 0;
+    const broken = {
+      ...record,
+      origin: aiTask("broken"),
+      get marks() {
+        looked += 1;
+        if (looked > 1) throw new Error("broken");
+        return (record as unknown as { marks: unknown }).marks;
+      },
+    };
+    const fresh = reopened(store, []);
+    expect(fresh.restoreUndo([older, broken, record])).toEqual([AI]);
+    expect(fresh.undoOutlook(AI)).toEqual({ direction: "undo" });
+  });
+
   it("hand a place back when people took back their own change after they were saved", () => {
     const store = open();
     rename(store, "AI 改的", { origin: AI });

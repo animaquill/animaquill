@@ -311,28 +311,35 @@ export class UndoKeeper {
     const key = this.#key;
     if (!host || !store || key === undefined) return;
     try {
-      const saved = await host.get(key, origin);
-      if (this.#store !== store) return;
-      if (saved?.window === host.window) return;
-      this.#foreign.delete(origin);
-      if (!saved) {
-        store.forgetUndo(origin);
-        this.#gone = await host.gone(key);
-      } else if (store.restoreUndo([saved.record], { replace: true }).length > 0) {
-        this.#foreign.add(origin);
-        if (isAbout(saved.about)) this.#about.set(origin, saved.about);
-        const known = this.#snapshot.restored.some((each) => each.origin === origin);
-        if (!known && isAbout(saved.about) && !this.#isMine(origin)) {
-          this.#snapshot = {
-            ...this.#snapshot,
-            restored: [...this.#snapshot.restored, { origin, about: saved.about }],
-          };
-        }
-      }
-      this.#emit();
+      // In turn with taking it back here: a log read before that would put back what it changed.
+      await host.exclusive(key, origin, () => this.#takeUp(host, store, key, origin));
     } catch (error) {
       console.warn("An undo log of another window could not be read", error);
     }
+  }
+
+  async #takeUp(host: UndoStore, store: ProjectStore, key: string, origin: Origin): Promise<void> {
+    // What this window changed and has not saved yet is newer than anything another one saved.
+    if (this.#pending.has(origin)) return;
+    const saved = await host.get(key, origin);
+    if (this.#store !== store || this.#pending.has(origin)) return;
+    if (saved?.window === host.window) return;
+    this.#foreign.delete(origin);
+    if (!saved) {
+      store.forgetUndo(origin);
+      this.#gone = await host.gone(key);
+    } else if (store.restoreUndo([saved.record], { replace: true }).length > 0) {
+      this.#foreign.add(origin);
+      if (isAbout(saved.about)) this.#about.set(origin, saved.about);
+      const known = this.#snapshot.restored.some((each) => each.origin === origin);
+      if (!known && isAbout(saved.about) && !this.#isMine(origin)) {
+        this.#snapshot = {
+          ...this.#snapshot,
+          restored: [...this.#snapshot.restored, { origin, about: saved.about }],
+        };
+      }
+    }
+    this.#emit();
   }
 
   /** Whether this window made changes of an origin itself. */
@@ -363,11 +370,18 @@ export class UndoKeeper {
         store.restoreUndo([saved.record], { replace: true });
         this.#foreign.add(origin);
       }
+      const isForeign = this.#foreign.has(origin);
       const result = go();
-      // Only what changed something is saved: a window that is behind keeps the log of the others.
-      if (result.ok) {
+      // Taking it back can hand places back to other tasks and batches: their logs say so too. One
+      // that went wrong took its steps out of the log, which is saved as well, unless it is the log
+      // of another window, which this one may be behind of.
+      if (result.ok || !isForeign) {
         this.#pending.delete(origin);
         await this.#queue(() => this.#save(store, key, [origin]));
+      }
+      if (result.ok) {
+        for (const each of store.undoOrigins) if (each !== origin) this.#pending.add(each);
+        this.#later();
       }
       this.#emit();
       return result;

@@ -1,4 +1,5 @@
 import {
+  CURRENT_FORMAT_VERSION,
   newId,
   readProject,
   writeProject,
@@ -56,7 +57,7 @@ import {
   type Path,
 } from "./structure.ts";
 import { UNWRITTEN, WriteTree, type WriteId, type Written } from "./write-tree.ts";
-import { documentMark, marksAround, type Marks } from "./undo-marks.ts";
+import { documentMark, marksAround, placePathOf, type Mark, type Marks } from "./undo-marks.ts";
 import {
   UNDO_FORMAT,
   isUndoRecord,
@@ -586,6 +587,8 @@ export class ProjectStore {
   readonly #named = new Map<string, WriteId>();
   /** Different for every store, so that names of writes from two of them never meet. */
   readonly #namePrefix = newId("writes");
+  /** When the last undo record this store knows was saved, see `UndoRecord.at`. */
+  #savedAt = 0;
   /** See `undoOutlook`. */
   readonly #outlooks = new Map<Origin, { readonly at: string; readonly outlook: UndoOutlook }>();
 
@@ -1173,40 +1176,71 @@ export class ProjectStore {
       danglingBefore: entry.danglingBefore,
       danglingAfter: entry.danglingAfter,
     });
+    this.#savedAt = Math.max(Date.now(), this.#savedAt + 1);
     return {
       format: UNDO_FORMAT,
       origin,
+      at: this.#savedAt,
       done: log.done.map(saveEntry),
       undone: log.undone.map(saveEntry),
       marks: [...marks.values()].map(({ path, mark }) => [path, mark] as const),
-      doc: { manifest: documentMark(this.#root) },
+      doc: { manifest: documentMark(this.#root), formatVersion: CURRENT_FORMAT_VERSION },
     };
   }
 
   /**
-   * Takes up what `saveUndo` saved, in the order it was saved, so that those changes can be taken
-   * back or done again here as in the store that saved them: where the document still has what it
-   * had then, the steps can go back; what was written since, here or anywhere else, stays, as it
-   * would there. A record of an origin that this store has a log of already counts only with
-   * `replace`, for one that another window saved after it took back or did again some of it.
-   * Records that are not of this document, or that this editor cannot read, are left out. Resolves
-   * to the origins that it took up.
+   * Takes up what `saveUndo` saved, so that those changes can be taken back or done again here as in
+   * the store that saved them: where the document still has what it had then, the steps can go back;
+   * what was written since, here or anywhere else, stays, as it would there. For each place the
+   * steps are about, what a record knew counts where its marks are still those of the document: a
+   * record saved earlier than another one, whatever the order they come in, takes nothing from it.
+   * Only where no record has the marks the document has now was something written by somebody else.
+   * A record of an origin that this store has a log of already counts only with `replace`, for one
+   * that another window saved after it took back or did again some of it. Records that are not of
+   * this document, or of another format of the project, or that this editor cannot read, are left
+   * out, each on its own. Resolves to the origins that it took up.
    */
   restoreUndo(
     records: readonly unknown[],
     { replace = false }: { readonly replace?: boolean } = {},
   ): readonly Origin[] {
-    const writes = new WriteTree(this.#written);
-    const restored: Origin[] = [];
+    interface Taken {
+      readonly origin: Origin;
+      readonly at: number;
+      readonly log: UndoLog;
+      readonly marks: ReadonlyMap<string, Mark>;
+      readonly places: ReadonlyMap<string, { readonly where: Path; readonly now: SavedWritten }>;
+    }
+    const taken: Taken[] = [];
+    // The marks the document has now around each place, which every record is compared with.
+    const around = new Map<string, Marks>();
+    const marksNow = (where: Path): Marks => {
+      const key = keyOf(where);
+      let marks = around.get(key);
+      if (!marks) {
+        marks = new Map();
+        marksAround(this.#root, where, marks);
+        around.set(key, marks);
+      }
+      return marks;
+    };
     for (const record of records) {
-      if (!isUndoRecord(record) || !this.#isOfThisDocument(record)) continue;
-      const { origin } = record;
-      if (origin === USER || origin === STORAGE) continue;
-      if (this.#undo.has(origin) && !replace) continue;
-      const toEntry = (saved: SavedEntry): UndoEntry => {
-        this.#serial += 1;
-        return {
-          serial: this.#serial,
+      try {
+        if (!isUndoRecord(record) || !this.#isOfThisDocument(record)) continue;
+        const { origin } = record;
+        if (origin === USER || origin === STORAGE) continue;
+        if (this.#undo.has(origin) && !replace) continue;
+        const places = new Map<string, { readonly where: Path; readonly now: SavedWritten }>();
+        for (const { steps } of [...record.done, ...record.undone]) {
+          for (const step of steps) {
+            const where = writePathOf(step.patch.path);
+            places.set(keyOf(where), { where, now: step.now });
+            marksNow(where);
+          }
+        }
+        const serial = this.#serial;
+        const toEntry = (saved: SavedEntry, index: number): UndoEntry => ({
+          serial: serial + index + 1,
           steps: saved.steps.map((step) => ({
             patch: step.patch,
             inverse: step.inverse,
@@ -1216,37 +1250,74 @@ export class ProjectStore {
           facts: saved.facts ?? undefined,
           danglingBefore: saved.danglingBefore,
           danglingAfter: saved.danglingAfter,
+        });
+        const all = [...record.done, ...record.undone].map(toEntry);
+        this.#serial += all.length;
+        const log: UndoLog = {
+          done: all.slice(0, record.done.length),
+          undone: all.slice(record.done.length),
         };
-      };
-      const log: UndoLog = { done: record.done.map(toEntry), undone: record.undone.map(toEntry) };
-      // What was written where when it was saved, as far as the steps go, the outer places first.
-      const steps = [...record.done, ...record.undone].flatMap(({ steps: each }) => each);
-      const places = new Map<string, { readonly where: Path; readonly now: SavedWritten }>();
-      for (const step of steps) {
-        const where = writePathOf(step.patch.path);
-        places.set(keyOf(where), { where, now: step.now });
+        const marks = new Map(record.marks.map(([path, mark]) => [keyOf(path), mark]));
+        taken.push({ origin, at: record.at, log, marks, places });
+        this.#savedAt = Math.max(this.#savedAt, record.at);
+      } catch {
+        // One that cannot be taken up stays out; the rest still count.
       }
-      for (const { where, now } of [...places.values()].toSorted(byDepth((place) => place.where))) {
-        writes.put(where, this.#readWritten(now));
+    }
+    if (taken.length === 0) return [];
+    // The one saved last counts the most, whatever order they came in.
+    taken.sort((a, b) => a.at - b.at);
+
+    // Whether a record knew a place as the document has it now: around it, nothing was written since.
+    const isUnder = (path: Path, where: Path) => where.every((key, index) => path[index] === key);
+    const knows = ({ marks }: Taken, where: Path): boolean => {
+      for (const [key, { mark }] of marksNow(where)) if (marks.get(key) !== mark) return false;
+      const now = marksNow(where);
+      for (const key of marks.keys()) {
+        if (!now.has(key) && isUnder(key.split("\n"), placePathOf(where))) return false;
       }
-      // Whatever has another mark now was written since, by somebody else.
-      const marks: Marks = new Map();
-      for (const { where } of places.values()) marksAround(this.#root, where, marks);
-      const saved = new Map(record.marks.map(([path, mark]) => [keyOf(path), mark]));
-      const changed: Path[] = [];
-      for (const [key, { path, mark }] of marks) if (saved.get(key) !== mark) changed.push(path);
-      for (const [path] of record.marks) if (!marks.has(keyOf(path))) changed.push(path);
-      for (const path of changed.toSorted(byDepth((each) => each))) {
-        writes.put(path, { by: Symbol("write") });
+      return true;
+    };
+    const writes = new WriteTree(this.#written);
+    const wheres = new Map<string, Path>();
+    for (const { places } of taken) for (const [key, { where }] of places) wheres.set(key, where);
+    const changed = new Map<string, Path>();
+    const sure: Path[] = [];
+    for (const where of [...wheres.values()].toSorted(byDepth((each) => each))) {
+      const key = keyOf(where);
+      const holding = taken.filter(({ places }) => places.has(key));
+      const known = holding.findLast((each) => knows(each, where));
+      // A place in one that a record knew as it is now is as that record had it, all of it.
+      const isCovered = [...sure].some((above) => isUnder(where, above));
+      if (isCovered && !known) continue;
+      const from = known ?? (holding.at(-1) as Taken);
+      writes.put(where, this.#readWritten((from.places.get(key) as { now: SavedWritten }).now));
+      if (known) {
+        sure.push(placePathOf(where));
+        continue;
       }
+      // Nobody knew it like this: what has a mark no record has was written by somebody else.
+      for (const [inner, { path, mark }] of marksNow(where)) {
+        if (!taken.some(({ marks }) => marks.get(inner) === mark)) changed.set(inner, path);
+      }
+      for (const [inner] of from.marks) {
+        const path = inner.split("\n");
+        if (!marksNow(where).has(inner) && isUnder(path, placePathOf(where))) {
+          changed.set(inner, path);
+        }
+      }
+    }
+    for (const path of [...changed.values()].toSorted(byDepth((each) => each))) {
+      writes.put(path, { by: Symbol("write") });
+    }
+    for (const { origin, log } of taken) {
       this.#undo.set(origin, log);
       if (isFileBatch(origin)) this.#rememberBatch(origin);
-      restored.push(origin);
     }
     this.#written = writes.root;
     // What was written where is different now, for every origin.
     this.#outlooks.clear();
-    return restored;
+    return taken.map(({ origin }) => origin);
   }
 
   /**
@@ -1255,7 +1326,10 @@ export class ProjectStore {
    * were not saved, is still the same: the marks of the places it lacks are different.
    */
   #isOfThisDocument(record: UndoRecord): boolean {
-    return record.doc.manifest === documentMark(this.#root);
+    return (
+      record.doc.manifest === documentMark(this.#root) &&
+      record.doc.formatVersion === CURRENT_FORMAT_VERSION
+    );
   }
 
   #saveWritten(written: Written): SavedWritten {
