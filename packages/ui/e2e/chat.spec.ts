@@ -705,6 +705,8 @@ test("what a conversation took: in the bar on top, and a line under each turn", 
   await expect(line).toContainText("Claude Opus 5");
   await expect(line).toContainText("↑380k ↓1.1k");
   await expect(line).toContainText("$0.24");
+  // The parts do not run into each other: the cost has its separator before it.
+  await expect(line).toContainText(/↓1\.1k · \$0\.24/);
   await total.click();
   const panel = chat(page).getByTestId("chat-usage-panel");
   await expect(panel).toContainText("380k / 1M");

@@ -479,7 +479,17 @@ function UsageLine({
   ];
   return (
     <p className={styles.usageLine} data-testid="chat-usage">
-      {parts}
+      {parts.flatMap((part, at) =>
+        at === 0
+          ? [part]
+          : [
+              // A word of its own between the parts, so that a line reads "…↓198 · $0.0115 · 16 秒".
+              <span key={`dot${at}`} aria-hidden>
+                {" · "}
+              </span>,
+              part,
+            ],
+      )}
     </p>
   );
 }

@@ -13,6 +13,9 @@ import { content, expect, tab, test } from "./support.ts";
  * Four turns at most: add a clip (there is nothing to read in a new project), read, look, plan.
  */
 
+/** The name of a function called, in an answer of Chat Completions, streamed or whole. */
+const CALL = /"function"\s*:\s*\{\s*"name"\s*:\s*"([^"]+)"/g;
+
 const BASE = process.env["AQ_REAL_AI_URL"];
 const KEY = process.env["AQ_REAL_AI_KEY"];
 const MODEL = process.env["AQ_REAL_AI_MODEL"] ?? "gpt-6.1-sol";
@@ -28,7 +31,7 @@ const note = (what: string) => console.log(`[real-ai] ${hide(what)}`);
 
 /** Every request that went to the service: what it was for and how it ended. */
 const seen: string[] = [];
-/** The tools the model called, in order, as the last request told. */
+/** The tools the model called, in order, as its answers said. */
 const called: string[] = [];
 
 async function forward(route: Route) {
@@ -51,17 +54,10 @@ async function forward(route: Route) {
     const sent = request.postData() ?? "";
     let tools = "";
     try {
-      const asked = JSON.parse(sent) as {
-        tools?: unknown[];
-        messages?: { tool_calls?: { function?: { name?: string } }[] }[];
-      };
-      tools = String(asked.tools?.length ?? 0);
-      // What the model has called so far, as the conversation it was sent says.
-      called.length = 0;
-      for (const message of asked.messages ?? [])
-        for (const call of message.tool_calls ?? [])
-          if (call.function?.name) called.push(call.function.name);
+      tools = String((JSON.parse(sent) as { tools?: unknown[] }).tools?.length ?? 0);
     } catch {}
+    // What the model calls shows in its answer, streamed or not: a call is a name of a function.
+    for (const call of body.toString().matchAll(CALL)) called.push(call[1] as string);
     seen.push(
       `${request.method()} ${new URL(request.url()).pathname} ${answer.status} ` +
         `${Date.now() - started}ms out=${sent.length}B in=${body.length}B tools=${tools}`,
