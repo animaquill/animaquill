@@ -50,7 +50,13 @@
                   "interp": "spring",
                   "spring": { "stiffness": 180, "damping": 12 }
                 },
-                { "time": "2", "value": 192, "interp": "preset", "preset": "back-out" },
+                {
+                  "time": "2",
+                  "value": 192,
+                  "interp": "preset",
+                  "preset": "elasticOut",
+                  "presetParams": { "amplitude": 1.2, "period": 0.4 }
+                },
                 { "time": "3", "value": 0 }
               ],
               "before": "hold",

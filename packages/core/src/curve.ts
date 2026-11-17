@@ -1,5 +1,7 @@
 import {
   COLOR_PATTERN,
+  EASE_PRESET_NAMES,
+  STEP_PRESETS,
   VECTOR_LENGTHS,
   isAnimation,
   type ValueType,
@@ -22,9 +24,17 @@ type Extrapolation = NonNullable<Animation["before"]>;
 const LINEAR = 0;
 const HOLD = 1;
 const BEZIER = 2;
+const SPRING = 3;
+const PRESET = 4;
 
 /** What `shapes` of a channel hold, for drawing a curve the way it is worked out. */
-export const SHAPE = { linear: LINEAR, hold: HOLD, bezier: BEZIER } as const;
+export const SHAPE = {
+  linear: LINEAR,
+  hold: HOLD,
+  bezier: BEZIER,
+  spring: SPRING,
+  preset: PRESET,
+} as const;
 
 /** A property that stays the same. */
 export interface StillChannel {
@@ -44,10 +54,16 @@ export interface CurveChannel {
   readonly values: Float64Array | readonly Value[];
   /** How each key gets to the next one. */
   readonly shapes: Uint8Array;
-  /** Four numbers for every key but the last, as soon as one of them is a bezier. */
-  readonly handles: Float64Array;
+  /**
+   * Four numbers for every key but the last, as soon as one of them is a bezier, a spring or a
+   * preset: the handles x1, y1, x2, y2 of a bezier; ω0 and ζ of a spring; for a preset its place in
+   * `EASE_PRESET_NAMES`, then amplitude, period and steps.
+   */
+  readonly params: Float64Array;
   readonly before: Extrapolation;
   readonly after: Extrapolation;
+  /** Shaking on top, three numbers each: amount, frequency and seed. Empty for none. */
+  readonly noise: Float64Array;
   /** Where the clock was last, since playing moves on to the next key at most. Only saves time. */
   segment: number;
 }
@@ -459,9 +475,34 @@ export function secondsOf(time: string): number {
   return time.includes("/") ? toSeconds(parseTime(time)) : Number(time);
 }
 
+/** Where a preset is in `EASE_PRESET_NAMES`, or -1 for a name this editor does not know. */
+const presetIndexOf = (name: string | undefined): number =>
+  name === undefined ? -1 : (EASE_PRESET_NAMES as readonly string[]).indexOf(name);
+
+/** Whether a preset of a key can be worked out: a name of the table, with what it needs. */
+export function knowsPreset(key: Pick<Key, "preset" | "presetParams">): boolean {
+  if (presetIndexOf(key.preset) < 0) return false;
+  const steps = key.presetParams?.steps;
+  return (
+    !STEP_PRESETS.has(key.preset as string) || (Number.isInteger(steps) && (steps as number) > 0)
+  );
+}
+
+const isSpring = (spring: Key["spring"]): spring is NonNullable<Key["spring"]> =>
+  spring !== undefined &&
+  spring.stiffness > 0 &&
+  Number.isFinite(spring.stiffness) &&
+  spring.damping >= 0 &&
+  Number.isFinite(spring.damping) &&
+  (spring.mass === undefined || (spring.mass > 0 && Number.isFinite(spring.mass)));
+
+/** A spring or a preset that cannot be worked out goes linearly, as the format says. */
 function shapeOf(key: Key, mixes: boolean): number {
   if (!mixes || key.interp === "hold") return HOLD;
-  return key.interp === "bezier" && key.out ? BEZIER : LINEAR;
+  if (key.interp === "bezier" && key.out) return BEZIER;
+  if (key.interp === "spring" && isSpring(key.spring)) return SPRING;
+  if (key.interp === "preset" && knowsPreset(key)) return PRESET;
+  return LINEAR;
 }
 
 /** Whether values of a type change gradually from one key to the next. */
@@ -481,18 +522,63 @@ function timesOf(keys: readonly Key[]): Float64Array | undefined {
 }
 
 /** Shared, because a copy for a sandbox has to go through every array it finds. */
-const NO_HANDLES = new Float64Array(0);
+const NO_PARAMS = new Float64Array(0);
+const NO_NOISE = new Float64Array(0);
 
-function handlesOf(keys: readonly Key[], shapes: Uint8Array): Float64Array {
-  if (!shapes.includes(BEZIER)) return NO_HANDLES;
-  const handles = new Float64Array(shapes.length * 4);
+/** What a preset takes when it does not say: see the project format. */
+const AMPLITUDE = 1;
+const PERIOD = 0.3;
+
+/** The numbers of each stretch that has any, see `CurveChannel.params`. */
+function paramsOf(keys: readonly Key[], shapes: Uint8Array): Float64Array {
+  if (shapes.every((shape) => shape === LINEAR || shape === HOLD)) return NO_PARAMS;
+  const params = new Float64Array(shapes.length * 4);
   shapes.forEach((shape, index) => {
-    if (shape !== BEZIER) return;
-    const [x1 = 0, y1 = 0] = (keys[index] as Key).out ?? [];
-    const [x2 = 1, y2 = 1] = (keys[index + 1] as Key).in ?? [];
-    handles.set([x1, y1, x2, y2], index * 4);
+    const key = keys[index] as Key;
+    if (shape === BEZIER) {
+      const [x1 = 0, y1 = 0] = key.out ?? [];
+      const [x2 = 1, y2 = 1] = (keys[index + 1] as Key).in ?? [];
+      params.set([x1, y1, x2, y2], index * 4);
+    } else if (shape === SPRING) {
+      const { stiffness, damping, mass = 1 } = key.spring as NonNullable<Key["spring"]>;
+      params.set(
+        [Math.sqrt(stiffness / mass), damping / (2 * Math.sqrt(stiffness * mass)), 0, 0],
+        index * 4,
+      );
+    } else if (shape === PRESET) {
+      const { amplitude = AMPLITUDE, period = PERIOD, steps = 1 } = key.presetParams ?? {};
+      params.set([presetIndexOf(key.preset), amplitude, period, steps], index * 4);
+    }
   });
-  return handles;
+  return params;
+}
+
+/** Types whose values are numbers that shaking can add to, one each. */
+const SHAKES: ReadonlySet<ValueType> = new Set<ValueType>([
+  "number",
+  "angle",
+  "vec2",
+  "vec3",
+  "vec4",
+  "numbers",
+]);
+
+/** Whether shaking (`noise`) does something to values of a type. */
+export const canShake = (type: ValueType): boolean => SHAKES.has(type);
+
+function noiseOf(value: Animation, type: ValueType): Float64Array {
+  const noises = (value.modifiers ?? []).filter(
+    (modifier) =>
+      modifier.type === "noise" &&
+      Number.isFinite(modifier.amount) &&
+      Number.isInteger(modifier.seed) &&
+      (modifier.frequency === undefined ||
+        (modifier.frequency > 0 && Number.isFinite(modifier.frequency))),
+  );
+  if (noises.length === 0 || !canShake(type)) return NO_NOISE;
+  return Float64Array.from(
+    noises.flatMap(({ amount, frequency = 1, seed }) => [amount, frequency, seed]),
+  );
 }
 
 /** Going around needs something to go around, and going on needs numbers. */
@@ -520,7 +606,8 @@ export function compileChannel(
   const { keys } = value;
   const [first] = keys;
   if (!first || !keys.every((key) => rule.accepts(key.value))) return undefined;
-  if (keys.length === 1) return { kind: "still", value: first.value };
+  const noise = noiseOf(value, type);
+  if (keys.length === 1 && noise.length === 0) return { kind: "still", value: first.value };
   const times = timesOf(keys);
   if (!times) return undefined;
   const numeric = rule.numeric === true;
@@ -533,9 +620,10 @@ export function compileChannel(
       ? Float64Array.from(keys, (key) => key.value as number)
       : keys.map((key) => key.value),
     shapes,
-    handles: handlesOf(keys, shapes),
+    params: paramsOf(keys, shapes),
     before: extrapolationOf(value.before, times, numeric),
     after: extrapolationOf(value.after, times, numeric),
+    noise,
     segment: 0,
   };
 }
@@ -563,23 +651,136 @@ function segmentAt(channel: CurveChannel, clock: number): number {
   return low;
 }
 
-const handlesAt = (handles: Float64Array, index: number): Handles => [
-  handles[index * 4] as number,
-  handles[index * 4 + 1] as number,
-  handles[index * 4 + 2] as number,
-  handles[index * 4 + 3] as number,
+const handlesAt = (params: Float64Array, index: number): Handles => [
+  params[index * 4] as number,
+  params[index * 4 + 1] as number,
+  params[index * 4 + 2] as number,
+  params[index * 4 + 3] as number,
 ];
 
+const TAU = 2 * Math.PI;
+
+/** Penner's elastic easing out, with ends that are exactly 0 and 1. */
+function elasticOut(s: number, amplitude: number, period: number): number {
+  if (s <= 0) return 0;
+  if (s >= 1) return 1;
+  const shift = (period / TAU) * Math.asin(1 / amplitude);
+  return 1 + amplitude * 2 ** (-10 * s) * Math.sin(((s - shift) * TAU) / period);
+}
+
+const elasticIn = (s: number, amplitude: number, period: number) =>
+  1 - elasticOut(1 - s, amplitude, period);
+
+const BOUNCE = 7.5625;
+const BOUNCE_WIDTH = 2.75;
+
+/** Penner's bounce out: four parabolas, with ends that are exactly 0 and 1. */
+function bounceOut(s: number): number {
+  if (s <= 0) return 0;
+  if (s >= 1) return 1;
+  if (s < 1 / BOUNCE_WIDTH) return BOUNCE * s * s;
+  if (s < 2 / BOUNCE_WIDTH) {
+    const u = s - 1.5 / BOUNCE_WIDTH;
+    return BOUNCE * u * u + 0.75;
+  }
+  if (s < 2.5 / BOUNCE_WIDTH) {
+    const u = s - 2.25 / BOUNCE_WIDTH;
+    return BOUNCE * u * u + 0.9375;
+  }
+  const u = s - 2.625 / BOUNCE_WIDTH;
+  return BOUNCE * u * u + 0.984375;
+}
+
+const bounceIn = (s: number) => 1 - bounceOut(1 - s);
+
+/** How far along a preset of the project format is when a share `s` of its stretch has passed. */
+export function presetProgress(
+  preset: number,
+  amplitude: number,
+  period: number,
+  steps: number,
+  s: number,
+): number {
+  if (s <= 0) return 0;
+  if (s >= 1) return 1;
+  const a = Math.max(amplitude, 1);
+  switch (EASE_PRESET_NAMES[preset]) {
+    case "elasticOut":
+      return elasticOut(s, a, period);
+    case "elasticIn":
+      return elasticIn(s, a, period);
+    case "elasticInOut":
+      return s < 0.5 ? elasticIn(2 * s, a, period) / 2 : 0.5 + elasticOut(2 * s - 1, a, period) / 2;
+    case "bounceOut":
+      return bounceOut(s);
+    case "bounceIn":
+      return bounceIn(s);
+    case "bounceInOut":
+      return s < 0.5 ? bounceIn(2 * s) / 2 : 0.5 + bounceOut(2 * s - 1) / 2;
+    case "stepsEnd":
+      return Math.floor(s * steps + TOLERANCE) / steps;
+    case "stepsStart":
+      return Math.min(1, (Math.floor(s * steps + TOLERANCE) + 1) / steps);
+    default:
+      return s;
+  }
+}
+
+/**
+ * How far along a damped spring that starts at rest is, `seconds` after it lets go, from 0 towards
+ * 1: `omega` is ω0 = √(stiffness / mass), `zeta` is ζ = damping / (2 √(stiffness · mass)).
+ */
+export function springProgress(omega: number, zeta: number, seconds: number): number {
+  if (seconds <= 0) return 0;
+  if (zeta < 1) {
+    const damped = omega * Math.sqrt(1 - zeta * zeta);
+    return (
+      1 -
+      Math.exp(-zeta * omega * seconds) *
+        (Math.cos(damped * seconds) + ((zeta * omega) / damped) * Math.sin(damped * seconds))
+    );
+  }
+  if (zeta === 1) return 1 - Math.exp(-omega * seconds) * (1 + omega * seconds);
+  const spread = zeta + Math.sqrt(zeta * zeta - 1);
+  const slow = -omega / spread;
+  const fast = -omega * spread;
+  return 1 - (fast * Math.exp(slow * seconds) - slow * Math.exp(fast * seconds)) / (fast - slow);
+}
+
+/**
+ * How far from one key to the next a stretch of a channel is, `elapsed` seconds after its key, as
+ * the progress that values mix by: 0 at its key, and past 0 or 1 where a curve overshoots.
+ */
+export function segmentProgress(channel: CurveChannel, index: number, elapsed: number): number {
+  const { times, shapes, params } = channel;
+  const shape = shapes[index];
+  if (shape === undefined || shape === HOLD) return 0;
+  if (shape === SPRING) {
+    return springProgress(params[index * 4] as number, params[index * 4 + 1] as number, elapsed);
+  }
+  const length = (times[index + 1] as number) - (times[index] as number);
+  const share = length > 0 ? clampToUnit(elapsed / length) : 0;
+  if (shape === BEZIER) return bezierProgress(...handlesAt(params, index), share);
+  if (shape === PRESET) {
+    const at = index * 4;
+    return presetProgress(
+      params[at] as number,
+      params[at + 1] as number,
+      params[at + 2] as number,
+      params[at + 3] as number,
+      share,
+    );
+  }
+  return share;
+}
+
 function within(channel: CurveChannel, clock: number): Value {
-  const { times, values, shapes, handles, type } = channel;
+  const { times, values, shapes, type } = channel;
   const index = segmentAt(channel, clock);
   const from = values[index] as Value;
   const shape = shapes[index];
   if (shape === undefined || shape === HOLD) return from;
-  const start = times[index] as number;
-  const length = (times[index + 1] as number) - start;
-  const share = length > 0 ? clampToUnit((clock - start) / length) : 0;
-  const progress = shape === BEZIER ? bezierProgress(...handlesAt(handles, index), share) : share;
+  const progress = segmentProgress(channel, index, clock - (times[index] as number));
   const { mix } = VALUE_TYPES[type];
   return mix ? mix(from, values[index + 1] as Value, progress) : from;
 }
@@ -599,22 +800,24 @@ function wrapped(channel: CurveChannel, clock: number, mode: "loop" | "pingpong"
   return first + (phase > period ? period * 2 - phase : phase);
 }
 
-/** How fast a number changes in the segment at one end of the keys, in units per second. */
+/**
+ * How fast a number changes in the segment at one end of the keys, in units per second. A spring
+ * and a preset count as still there: they come to rest, or go in steps.
+ */
 function speedAtEnd(channel: CurveChannel, index: number, end: "start" | "end"): number {
-  const { times, values, shapes, handles } = channel;
+  const { times, values, shapes, params } = channel;
   const shape = shapes[index];
-  if (shape === undefined || shape === HOLD) return 0;
+  if (shape === undefined || shape === HOLD || shape === SPRING || shape === PRESET) return 0;
   const length = (times[index + 1] as number) - (times[index] as number);
   if (length <= 0) return 0;
   const speed = ((values[index + 1] as number) - (values[index] as number)) / length;
   if (shape !== BEZIER) return speed;
   const slope = end === "start" ? slopeAtStart : slopeAtEnd;
-  return speed * slope(...handlesAt(handles, index));
+  return speed * slope(...handlesAt(params, index));
 }
 
-/** The value of a channel at a reading of its clock. */
-export function sample(channel: Channel, clock: number): Value {
-  if (channel.kind === "still") return channel.value;
+/** The value of the keys at a reading of the clock, before shaking. */
+function keyedAt(channel: CurveChannel, clock: number): Value {
   const { times, values, shapes, before, after } = channel;
   const lastIndex = times.length - 1;
   const first = times[0] as number;
@@ -635,6 +838,55 @@ export function sample(channel: Channel, clock: number): Value {
     return within(channel, wrapped(channel, clock, after));
   }
   return within(channel, clock);
+}
+
+/** murmur3's finalizer: 32 bits in, 32 well mixed bits out, as an unsigned integer. */
+function fmix32(input: number): number {
+  let h = input;
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return h >>> 0;
+}
+
+/** The slope of the noise at a whole number `k`, from −1 to 1. Both go to 32 bits first. */
+const slopeAt = (seed: number, k: number) => fmix32(Math.imul(k, 0x9e3779b1) ^ seed) / 2 ** 31 - 1;
+
+/**
+ * One-dimensional gradient noise, as the project format defines it to the bit: from −1 to 1, 0 on
+ * whole numbers, smooth everywhere, the same for the same seed anywhere.
+ */
+export function noiseAt(seed: number, x: number): number {
+  const whole = Math.floor(x);
+  const f = x - whole;
+  const a = slopeAt(seed, whole) * f;
+  const b = slopeAt(seed, whole + 1) * (f - 1);
+  const fade = f * f * f * (f * (f * 6 - 15) + 10);
+  return 2 * (a + (b - a) * fade);
+}
+
+/** How far the shaking of a channel moves a number of it (its `part`, 0 for a number) at a moment. */
+export function shakeAt(noise: Float64Array, part: number, clock: number): number {
+  let sum = 0;
+  for (let at = 0; at < noise.length; at += 3) {
+    const amount = noise[at] as number;
+    const seed = (noise[at + 2] as number) + part;
+    sum += amount * noiseAt(seed, clock * (noise[at + 1] as number));
+  }
+  return sum;
+}
+
+/** The value of a channel at a reading of its clock. */
+export function sample(channel: Channel, clock: number): Value {
+  if (channel.kind === "still") return channel.value;
+  const value = keyedAt(channel, clock);
+  const { noise } = channel;
+  if (noise.length === 0) return value;
+  if (typeof value === "number") return value + shakeAt(noise, 0, clock);
+  if (!Array.isArray(value)) return value;
+  return (value as readonly number[]).map((part, index) => part + shakeAt(noise, index, clock));
 }
 
 /** A number from a channel that may not be there. */

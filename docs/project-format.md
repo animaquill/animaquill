@@ -429,9 +429,7 @@ assets/                            素材文件
 
 关键帧的时间是片段时钟的读数，见上一节。`interp` 是 `linear`、`bezier`、`hold`、`spring` 或 `preset`，描述到下一个关键帧的变化。`before` 和 `after` 是前后的延伸方式：`hold`、`loop`、`pingpong`、`continue`。`modifiers` 目前有带种子的 `noise`，种子是必填的，这样渲染结果可以重复。
 
-一组关键帧至少有一个，按时间从小到大排，同一时刻只能有一个。`interp` 是 `bezier` 时必须写 `out`；是 `preset` 时写 `preset`（预设的名字）；是 `spring` 时写 `"spring": { "stiffness": …, "damping": …, "mass": … }`，`stiffness` 和 `mass` 大于 0，`damping` 不小于 0，`mass` 可以不写。`noise` 写成 `{ "type": "noise", "amount": …, "frequency": …, "seed": 整数 }`，`frequency` 大于 0，可以不写。`noise` 的 `amount` 和属性同一个单位。
-
-这一版 `spring` 和 `preset` 按线性算，`noise` 不生效。
+一组关键帧至少有一个，按时间从小到大排，同一时刻只能有一个。`interp` 是 `bezier` 时必须写 `out`；是 `preset` 时写 `preset`（预设的名字，见[曲线怎么求值](#曲线怎么求值)的表），可以写 `presetParams`：`{ "amplitude": …, "period": …, "steps": … }`，都可以不写，`amplitude` 不小于 1，`period` 大于 0，`steps` 是正整数，阶梯（`stepsStart`、`stepsEnd`）必须写 `steps`；是 `spring` 时写 `"spring": { "stiffness": …, "damping": …, "mass": … }`，`stiffness` 和 `mass` 大于 0，`damping` 不小于 0，`mass` 可以不写。`noise` 写成 `{ "type": "noise", "amount": …, "frequency": …, "seed": 整数 }`，`frequency` 大于 0，可以不写。`noise` 的 `amount` 和属性同一个单位。
 
 内置属性：
 
@@ -471,9 +469,50 @@ assets/                            素材文件
 - 值的类型不能插值时，整段保持，忽略 `interp`。数字线性混合。角度也是线性，不走最短路径，这样能转多圈。
 - 颜色写成 `#rrggbb` 或 `#rrggbbaa`，在 Oklab 空间线性混合，透明度也线性，颜色按透明度加权，和 CSS 的 `color-mix` 一样：完全透明的一端不带进自己的颜色。混合出来不透明时写成 `#rrggbb`。
 - 向量（`vec2`、`vec3`、`vec4`）和数字列表（`numbers`）逐个数字线性混合，全部分量共用一组关键帧和缓动。两个列表长度不同时整段保持。`continue` 对它们按 `hold`。
-- 只有一个关键帧时是常量。
+- 只有一个关键帧时是常量（有 `noise` 时是常量加抖动）。
 - 比较时刻有 1e-9 秒的容差，正好落在帧上的 `hold` 关键帧不会早一帧或晚一帧。
-- `modifiers` 在延伸之后叠加。
+- 每一段两头必定是两个关键帧的值：进度在这一段的关键帧上是 0，到下一个关键帧那一刻（按上面的容差）取下一个关键帧的值。所以弹簧到下一个关键帧还没停稳时，值在那一刻跳过去。
+- `continue` 的斜率：线性按这一段的变化除以时长，贝塞尔再乘手柄在端点的斜率；`spring` 和 `preset` 的一段按 0 算，所以那一头和 `hold` 一样。
+- 抖动和越过终点的缓动可能让值超出属性的范围，用的时候照各属性原来的规则截：不透明度截到 0 到 1，宽高不小于 0。
+
+#### 预设
+
+`s` 是这一段走过的比例：`(时钟 − 这个关键帧的时间) / (下一个关键帧的时间 − 这个关键帧的时间)`，截在 0 到 1 之间。每个公式（包括组合里用到的 `elasticIn(…)` 这类）都先判断两头：`s ≤ 0` 是 0，`s ≥ 1` 是 1。
+
+| `preset` | 进度 |
+| --- | --- |
+| `elasticOut` | `1 + a · 2^(−10s) · sin((s − p/(2π) · asin(1/a)) · 2π/p)`，`a` 是 `amplitude`（不写是 1），`p` 是 `period`（不写是 0.3） |
+| `elasticIn` | `1 − elasticOut(1 − s)` |
+| `elasticInOut` | `s < 0.5` 时 `elasticIn(2s) / 2`，否则 `0.5 + elasticOut(2s − 1) / 2` |
+| `bounceOut` | `n = 7.5625`，`d = 2.75`：`s < 1/d` 时 `n · s²`；`s < 2/d` 时 `n · (s − 1.5/d)² + 0.75`；`s < 2.5/d` 时 `n · (s − 2.25/d)² + 0.9375`；否则 `n · (s − 2.625/d)² + 0.984375` |
+| `bounceIn` | `1 − bounceOut(1 − s)` |
+| `bounceInOut` | `s < 0.5` 时 `bounceIn(2s) / 2`，否则 `0.5 + bounceOut(2s − 1) / 2` |
+| `stepsEnd` | `floor(s · n + 1e-9) / n`，`n` 是 `steps`（CSS 的 `steps(n, jump-end)`） |
+| `stepsStart` | `min(1, (floor(s · n + 1e-9) + 1) / n)`（CSS 的 `steps(n, jump-start)`，只是在这一段的关键帧上照上面的规则是 0） |
+
+弹性、弹跳只用 `amplitude`、`period`，阶梯只用 `steps`，别的参数写了也不起作用。名字不在表里的按线性算，并列入问题（`unknown-ease-preset`），文件照常能用。贝塞尔能表达的缓动（缓入、缓出、回弹）不进这张表，照旧写成贝塞尔。
+
+#### 弹簧
+
+从静止开始、从 0 走向 1 的有阻尼弹簧。`t` 是真实的秒：片段时钟减这个关键帧的时间，不按这一段的长短伸缩，同样的参数在长段短段里一样快。`t ≤ 0` 时进度是 0。
+
+- `m` 是 `mass`（不写是 1），`ω0 = √(stiffness / m)`，`ζ = damping / (2 · √(stiffness · m))`。
+- `ζ < 1`：`1 − e^(−ζ·ω0·t) · (cos(ωd·t) + ζ·ω0/ωd · sin(ωd·t))`，`ωd = ω0 · √(1 − ζ²)`。
+- `ζ = 1`：`1 − e^(−ω0·t) · (1 + ω0·t)`。
+- `ζ > 1`：`r1 = −ω0 / (ζ + √(ζ² − 1))`，`r2 = −ω0 · (ζ + √(ζ² − 1))`，进度是 `1 − (r2 · e^(r1·t) − r1 · e^(r2·t)) / (r2 − r1)`。
+
+#### 抖动
+
+`modifiers` 在延伸之后叠加，几个 `noise` 依次相加：值 = 曲线的值 + `amount · n(seed, c × frequency)`，`c` 是片段时钟的读数（所以片段挪动、切开时抖动跟着内容走），`frequency` 不写是 1。
+
+- 只加在 `number`、`angle`、向量和数字列表上。向量和数字列表的第 `i` 个数（从 0 数）用种子 `seed + i`，`amount` 和 `frequency` 相同。其他类型不加，并列入问题（`noise-not-applicable`）。
+- `n(seed, x)` 是一维梯度噪声，在 −1 到 1 之间，整数点上是 0，处处连续，导数也连续：
+  - `i = floor(x)`，`f = x − i`；
+  - 斜率 `g(k) = fmix32(imul(k, 0x9E3779B1) XOR seed) / 2^31 − 1`；
+  - `n = 2 · (A + (B − A) · u)`，`A = g(i) · f`，`B = g(i + 1) · (f − 1)`，`u = 6f⁵ − 15f⁴ + 10f³`。
+- 整数运算都是 32 位的，和 JavaScript 相同：`k`、`seed`（包括 `seed + i`）先对 2^32 取模换成 32 位整数（`x | 0`）；`imul` 是两个 32 位整数相乘取低 32 位（`Math.imul`）；`fmix32` 是 MurmurHash3 的收尾，`h ^= h >>> 16; h = imul(h, 0x85EBCA6B); h ^= h >>> 13; h = imul(h, 0xC2B2AE35); h ^= h >>> 16`，`>>>` 是无符号右移，结果当无符号整数（0 到 2^32 − 1）除以 2^31。
+
+`packages/schema/fixtures/curves.json` 是一张对照表：一组关键帧在一些时刻的值，到 1e-9。别的工具照这些公式实现后可以拿它核对。
 
 ### 世界坐标
 
@@ -711,6 +750,8 @@ k = 1080 / min(format.width, format.height)
 - 语言和画幅的差异不生效，预览和导出都用母版（`unsupported-override`）；导出那个画幅时导出前会停下。
 
 清单和文件对不上时也列入问题，项目照常打开：差异文件属于清单里没有的语言或画幅（`version-unlisted`），字符串表属于清单里没有的语言（`strings-unlisted`），母版以外的语言没有字符串表（`language-without-strings`，它的文字都用母版的）。两个人同时改画幅或语言时可能留下这些。
+
+关键帧里写了用不上的东西时也列入问题，项目照常打开：`preset` 的名字不在表里，那一段按线性算（`unknown-ease-preset`，写它的工具可能另有算法，导出前会停下）；`noise` 加在颜色、开关这类不能抖动的值上，不起作用（`noise-not-applicable`）。
 
 还有一类问题和做不到无关，只是提醒：时间不落在剪辑帧率（`fps`）的格子上（`time-off-grid`），每个片段一条（它的开头、结尾和关键帧），每条时间轴一条（段落的分界和标记）。多半是换了帧率以后，按原来的帧对齐的时间。播放和导出照常，不会因为它停下。
 

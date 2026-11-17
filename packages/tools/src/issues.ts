@@ -31,6 +31,8 @@ const RULES: Readonly<Record<string, string>> = {
   "贝塞尔关键帧要有 out 手柄": 'an "out" handle, for a key with interp "bezier"',
   "预设关键帧要写 preset 名称": 'a "preset" name, for a key with interp "preset"',
   "弹簧关键帧要写 spring 参数": 'the "spring" values, for a key with interp "spring"',
+  "阶梯预设要写 presetParams.steps":
+    'presetParams.steps, a whole number above 0, for a key with preset "stepsStart" or "stepsEnd"',
   "属性路径要写成 transform.x 这样，用点分隔，每一段只能用英文字母、数字、下划线和连字符":
     'a property path such as "transform.x": parts of letters, digits, _ and -, joined by dots',
   "scope 至少要有 language 或 format": "a scope with a language or a format",

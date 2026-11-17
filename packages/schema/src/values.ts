@@ -2,6 +2,7 @@ import { z } from "zod";
 import { Id, RelativePath, Time, sortKeys } from "./basics.ts";
 import {
   RETIRED_PROPERTIES,
+  STEP_PRESETS,
   isAnimation,
   isKnownProperty,
   propertyValueProblem,
@@ -42,6 +43,14 @@ export const Key = z
     in: Handle.optional(),
     tangent: z.enum(["auto", "aligned", "broken"]).optional(),
     preset: z.string().min(1).optional(),
+    /** What a preset takes, see the project format. Only steps have to say something. */
+    presetParams: z
+      .strictObject({
+        amplitude: z.number().min(1).optional(),
+        period: z.number().positive().optional(),
+        steps: z.number().int().positive().optional(),
+      })
+      .optional(),
     spring: z
       .strictObject({
         stiffness: z.number().positive(),
@@ -56,6 +65,13 @@ export const Key = z
     };
     if (key.interp === "bezier") needs("out", "贝塞尔关键帧要有 out 手柄");
     if (key.interp === "preset") needs("preset", "预设关键帧要写 preset 名称");
+    if (key.interp === "preset" && STEP_PRESETS.has(key.preset ?? "") && !key.presetParams?.steps) {
+      context.addIssue({
+        code: "custom",
+        path: ["presetParams", "steps"],
+        message: "阶梯预设要写 presetParams.steps",
+      });
+    }
     if (key.interp === "spring") needs("spring", "弹簧关键帧要写 spring 参数");
   });
 

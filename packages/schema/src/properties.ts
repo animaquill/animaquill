@@ -28,6 +28,30 @@ export const VECTOR_LENGTHS: Readonly<Partial<Record<ValueType, number>>> = {
 /** What the parts of a vector are called when its description does not say. */
 export const VECTOR_COMPONENTS: readonly string[] = ["x", "y", "z", "w"];
 
+/**
+ * The names a key with `interp: "preset"` can have, as the project format lists them with their
+ * formulas. A name not among them goes linearly, and is a problem, not an error, so that an editor
+ * that knows fewer names can still open what a newer one wrote.
+ */
+export const EASE_PRESET_NAMES = [
+  "elasticIn",
+  "elasticOut",
+  "elasticInOut",
+  "bounceIn",
+  "bounceOut",
+  "bounceInOut",
+  "stepsStart",
+  "stepsEnd",
+] as const;
+
+export type EasePresetName = (typeof EASE_PRESET_NAMES)[number];
+
+/** The presets that go in steps, which have to say how many: `presetParams.steps`. */
+export const STEP_PRESETS: ReadonlySet<string> = new Set<EasePresetName>([
+  "stepsStart",
+  "stepsEnd",
+]);
+
 /** `#rrggbb` or `#rrggbbaa`, the way colors are written everywhere in a project. */
 export const COLOR_PATTERN = /^#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
 

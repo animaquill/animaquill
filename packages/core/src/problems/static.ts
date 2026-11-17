@@ -1,6 +1,7 @@
 import { toSeconds } from "@animaquill/schema";
 import { clipEnd, clipStart, entryOf, type ProjectState } from "../model.ts";
 import { compareProblems, type ProjectProblem } from "./model.ts";
+import { curveProblems } from "./curves.ts";
 import { propertyProblems, type PropertyInputs } from "./properties.ts";
 import { referenceProblems } from "./references.ts";
 import { manifestProblems } from "./manifest.ts";
@@ -29,6 +30,7 @@ export function staticProblems(
     ...unsupportedProblems(state),
     ...timingProblems(state),
     ...manifestProblems(state),
+    ...curveProblems(state, describe),
     ...properties,
   ].toSorted(compareProblems);
 }

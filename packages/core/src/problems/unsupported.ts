@@ -129,7 +129,7 @@ function loopMatters(state: ProjectState, clip: ClipState): boolean {
 }
 
 /** Which tracks are seen and heard: an export has nothing of the others, so they change nothing. */
-function outputsOf(timeline: TimelineState) {
+export function outputsOf(timeline: TimelineState) {
   const tracks = orderedTracks(timeline);
   const soloing = tracks.some((track) => track.kind === "audio" && track.solo === true);
   const heard = (track: TrackState) =>

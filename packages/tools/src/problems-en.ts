@@ -1,4 +1,5 @@
 import {
+  CURVE_CODES,
   PROPERTY_CODES,
   REFERENCE_CODES,
   MANIFEST_CODES,
@@ -72,6 +73,10 @@ export const PROBLEM_TEXTS: Readonly<Record<string, (params: Params) => string>>
     `${str(p.from)} is now ${str(p.to)}; the keyframes still work under the old path`,
   "property-mismatch": (p) =>
     `the value of ${str(p.path)} is no ${str(p.type)}, so the default applies`,
+  "unknown-ease-preset": (p) =>
+    `${str(p.path)} has preset ${JSON.stringify(str(p.preset))}, which this editor version does not know: that stretch goes linearly`,
+  "noise-not-applicable": (p) =>
+    `${str(p.path)} is a ${str(p.type)}, which noise cannot shake: the noise does nothing`,
   "scene-param-id": (p) =>
     `the id of parameter ${JSON.stringify(str(p.name))} cannot be a property path, which has only letters, digits, _ and -`,
   "scene-registration": (p) =>
@@ -96,6 +101,7 @@ export const STATIC_PROBLEM_CODES: readonly string[] = [
   ...TIMING_CODES,
   ...MANIFEST_CODES,
   ...PROPERTY_CODES,
+  ...CURVE_CODES,
 ];
 
 const LETTERS = { error: "E", warning: "W", check: "C" } as const;

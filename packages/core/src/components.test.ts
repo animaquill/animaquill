@@ -8,7 +8,7 @@ import {
   keyWithComponent,
   withComponent,
 } from "./components.ts";
-import { sample } from "./curve.ts";
+import { compileChannel, sample, type Channel } from "./curve.ts";
 import { channelOf } from "./render-plan.ts";
 import { rowsOf } from "./property-tree.ts";
 
@@ -96,5 +96,28 @@ describe("parts of a vector", () => {
       out: [0.5, 0.3],
       tangent: "aligned",
     });
+  });
+});
+
+describe("a part of a vector that shakes", () => {
+  it("shakes the way that part of the vector does", () => {
+    const vector: Animation = {
+      keys: [
+        { time: "0", value: [0, 10, 20] },
+        { time: "2", value: [5, 0, 40], interp: "preset", preset: "bounceOut" },
+        { time: "3", value: [9, 9, 9] },
+      ],
+      modifiers: [{ type: "noise", amount: 3, frequency: 2, seed: 2_147_483_647 }],
+    };
+    const whole = compileChannel(vector, "vec3") as Channel;
+    for (const index of [0, 1, 2]) {
+      const part = compileChannel(componentOf(vector, index), "number") as Channel;
+      for (const clock of [-1, 0.3, 1.7, 2.4, 5]) {
+        expect(sample(part, clock)).toBeCloseTo(
+          (sample(whole, clock) as number[])[index] as number,
+          12,
+        );
+      }
+    }
   });
 });

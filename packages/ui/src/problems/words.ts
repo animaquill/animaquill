@@ -69,6 +69,7 @@ function wordsOf(
   const { code, params } = problem;
   switch (code) {
     case "property-mismatch":
+    case "noise-not-applicable":
       return {
         ...params,
         type: textOf(t, `problems.properties.types.${params["type"]}`, String(params["type"])),

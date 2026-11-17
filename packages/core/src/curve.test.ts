@@ -1,15 +1,27 @@
 import { readFileSync } from "node:fs";
-import type { Animation, Key, PropertyValue, Value, ValueType } from "@animaquill/schema";
+import {
+  EASE_PRESET_NAMES,
+  type Animation,
+  type Key,
+  type PropertyValue,
+  type Value,
+  type ValueType,
+} from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import {
   MAX_SPLIT_Y,
   MIN_SPLIT_Y,
   VALUE_TYPES,
   bezierProgress,
+  canShake,
   compileChannel,
   joinBezier,
+  knowsPreset,
+  noiseAt,
   numberAt,
+  presetProgress,
   sample,
+  springProgress,
   splitBezier,
   type Channel,
   type Handles,
@@ -337,24 +349,339 @@ describe("bezier", () => {
   });
 });
 
-describe("what is not worked out yet", () => {
-  it("counts spring and preset as linear", () => {
-    const spring: Key = {
-      time: "0",
-      value: 0,
-      interp: "spring",
-      spring: { stiffness: 100, damping: 10 },
-    };
-    const preset: Key = { time: "0", value: 0, interp: "preset", preset: "bounce" };
-    const last = { time: "2", value: 10 };
-    expect(at({ keys: [spring, last] }, 1)).toBeCloseTo(5, 9);
-    expect(at({ keys: [preset, last] }, 1)).toBeCloseTo(5, 9);
+interface GoldenCase {
+  readonly name: string;
+  readonly type: ValueType;
+  readonly value: Animation;
+  readonly samples: readonly (readonly [number, Value])[];
+}
+
+/** The table that the format and every way of working curves out have to agree with. */
+const golden = JSON.parse(
+  readFileSync(new URL("../../schema/fixtures/curves.json", import.meta.url), "utf8"),
+) as { readonly tolerance: number; readonly cases: readonly GoldenCase[] };
+
+const near = (found: Value, wanted: Value, tolerance: number): boolean => {
+  if (typeof wanted === "number") {
+    return typeof found === "number" && Math.abs(found - wanted) <= tolerance;
+  }
+  if (Array.isArray(wanted) && Array.isArray(found)) {
+    return (
+      found.length === wanted.length &&
+      wanted.every((part, index) => Math.abs((found[index] as number) - part) <= tolerance)
+    );
+  }
+  return found === wanted;
+};
+
+describe("the table of values in the project format", () => {
+  it.each(golden.cases.map((entry) => [entry.name, entry] as const))("%s", (_, entry) => {
+    const channel = compiled(entry.value, entry.type);
+    const misses = entry.samples.filter(
+      ([clock, wanted]) => !near(sample(channel, clock), wanted, golden.tolerance),
+    );
+    expect(misses.map(([clock, wanted]) => [clock, wanted, sample(channel, clock)])).toEqual([]);
   });
 
-  it("leaves noise out", () => {
-    const noisy: Animation = { ...ramp, modifiers: [{ type: "noise", amount: 5, seed: 1 }] };
-    expect(at(noisy, 2)).toBe(at(ramp, 2));
-    expect(at(noisy, 9)).toBe(at(ramp, 9));
+  it("covers every preset, three kinds of spring and noise", () => {
+    const keys = golden.cases.flatMap(({ value }) => value.keys);
+    const presets = new Set(keys.flatMap(({ preset }) => (preset ? [preset] : [])));
+    expect([...EASE_PRESET_NAMES].filter((name) => !presets.has(name))).toEqual([]);
+    const zetas = keys.flatMap(({ spring }) =>
+      spring ? [spring.damping / (2 * Math.sqrt(spring.stiffness * (spring.mass ?? 1)))] : [],
+    );
+    expect(zetas.some((zeta) => zeta < 1)).toBe(true);
+    expect(zetas.some((zeta) => zeta === 1)).toBe(true);
+    expect(zetas.some((zeta) => zeta > 1)).toBe(true);
+    expect(golden.cases.filter(({ value }) => value.modifiers).length).toBeGreaterThan(8);
+  });
+});
+
+/** Numbers that come out the same every time, so that what fails fails again. */
+function randomFrom(seed: number) {
+  let state = seed >>> 0;
+  const next = () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 2 ** 32;
+  };
+  return {
+    next,
+    between: (low: number, high: number) => low + (high - low) * next(),
+    int: (limit: number) => Math.floor(next() * limit),
+  };
+}
+
+type Random = ReturnType<typeof randomFrom>;
+
+const presetKey = (random: Random, name: string): Partial<Key> => {
+  if (name.startsWith("steps")) return { presetParams: { steps: 1 + random.int(12) } };
+  if (!name.startsWith("elastic") || random.next() < 0.3) return {};
+  return {
+    presetParams: { amplitude: random.between(1, 3), period: random.between(0.05, 1) },
+  };
+};
+
+/** A key with a random way of going on: any preset, a spring, a bezier, or a line. */
+function randomEase(random: Random): Partial<Key> {
+  const choice = random.int(4);
+  if (choice === 0) {
+    const name = EASE_PRESET_NAMES[random.int(EASE_PRESET_NAMES.length)] as string;
+    return { interp: "preset", preset: name, ...presetKey(random, name) };
+  }
+  if (choice === 1) {
+    const stiffness = random.between(1, 400);
+    const damping = random.between(0, 3) * Math.sqrt(stiffness);
+    return { interp: "spring", spring: { stiffness, damping } };
+  }
+  if (choice === 2) {
+    return { interp: "bezier", out: [random.next(), random.between(-1, 2)] };
+  }
+  return {};
+}
+
+function randomKeys(random: Random): Animation {
+  const count = 2 + random.int(6);
+  let time = random.between(-3, 3);
+  const keys: Key[] = [];
+  for (let index = 0; index < count; index += 1) {
+    keys.push({
+      time: String(Number(time.toFixed(4))),
+      value: Number(random.between(-500, 500).toFixed(3)),
+      ...randomEase(random),
+    });
+    time += random.between(0.05, 3);
+  }
+  return { keys };
+}
+
+describe("springs, presets and noise, whatever the keys and the parameters", () => {
+  const ROUNDS = 300;
+
+  it("go through the value of every key, right on it", () => {
+    for (let round = 0; round < ROUNDS; round += 1) {
+      const random = randomFrom(round + 1);
+      const animation = randomKeys(random);
+      const channel = compiled(animation);
+      for (const key of animation.keys) {
+        expect(sample(channel, Number(key.time))).toBe(key.value);
+      }
+    }
+  });
+
+  it("give the same answers in any order of asking", () => {
+    for (let round = 0; round < ROUNDS; round += 1) {
+      const random = randomFrom(round + 1000);
+      const animation: Animation = {
+        ...randomKeys(random),
+        before: (["hold", "loop", "pingpong", "continue"] as const)[random.int(4)],
+        after: (["hold", "loop", "pingpong", "continue"] as const)[random.int(4)],
+        modifiers: [{ type: "noise", amount: random.between(0, 50), seed: random.int(1e6) }],
+      };
+      const clocks = Array.from({ length: 40 }, () => random.between(-20, 20));
+      const inOrder = compiled(animation);
+      const ordered = clocks.toSorted((a, b) => a - b).map((clock) => sample(inOrder, clock));
+      const scattered = compiled(animation);
+      const byClock = new Map(clocks.map((clock) => [clock, sample(scattered, clock)]));
+      expect(clocks.toSorted((a, b) => a - b).map((clock) => byClock.get(clock))).toEqual(ordered);
+      for (const value of ordered) expect(Number.isFinite(value)).toBe(true);
+    }
+  });
+
+  it("go in steps that never go back, exactly as many as asked", () => {
+    for (let round = 0; round < ROUNDS; round += 1) {
+      const random = randomFrom(round + 2000);
+      const steps = 1 + random.int(20);
+      for (const name of ["stepsEnd", "stepsStart"]) {
+        let last = 0;
+        let jumps = 0;
+        let back = 0;
+        const preset = EASE_PRESET_NAMES.indexOf(name as never);
+        for (let step = 0; step <= 4000; step += 1) {
+          const progress = presetProgress(preset, 1, 0.3, steps, step / 4000);
+          if (progress < last) back += 1;
+          if (progress > last) jumps += 1;
+          last = progress;
+        }
+        expect([name, steps, back, jumps, last]).toEqual([name, steps, 0, steps, 1]);
+      }
+    }
+  });
+
+  it("bounce within the keys, and swing no further past them than the amplitude says", () => {
+    const index = (name: string) => EASE_PRESET_NAMES.indexOf(name as never);
+    for (let round = 0; round < ROUNDS; round += 1) {
+      const random = randomFrom(round + 3000);
+      const amplitude = random.between(1, 4);
+      const period = random.between(0.05, 1.5);
+      const outside: unknown[] = [];
+      for (let step = 0; step <= 500; step += 1) {
+        const s = step / 500 + random.between(-1e-3, 1e-3);
+        for (const name of ["bounceIn", "bounceOut", "bounceInOut"]) {
+          const progress = presetProgress(index(name), 1, 0.3, 1, s);
+          if (!(progress >= 0 && progress <= 1)) outside.push([name, s, progress]);
+        }
+        for (const name of ["elasticIn", "elasticOut", "elasticInOut"]) {
+          const progress = presetProgress(index(name), amplitude, period, 1, s);
+          // Within the keys it reaches no further than the amplitude from where it is going.
+          const reach = Math.min(Math.abs(progress), Math.abs(progress - 1));
+          if (!(reach <= amplitude + 1e-12)) outside.push([name, s, amplitude, progress]);
+        }
+      }
+      expect(outside).toEqual([]);
+    }
+  });
+
+  it("do not overshoot with a spring that is damped enough", () => {
+    for (let round = 0; round < ROUNDS; round += 1) {
+      const random = randomFrom(round + 4000);
+      const stiffness = random.between(0.5, 1000);
+      const mass = random.between(0.1, 10);
+      const zeta = round % 10 === 0 ? 1 : random.between(1, 20);
+      const omega = Math.sqrt(stiffness / mass);
+      let last = 0;
+      const wrong: unknown[] = [];
+      for (let step = 0; step <= 400; step += 1) {
+        const progress = springProgress(omega, zeta, (step / 400) * (20 / omega));
+        if (progress > 1 || progress < last - 1e-12) wrong.push([step, progress]);
+        last = progress;
+      }
+      expect([zeta, wrong]).toEqual([zeta, []]);
+    }
+  });
+
+  it("start a spring from rest, the same however long its stretch is", () => {
+    const spring = (length: string): Animation => ({
+      keys: [
+        { time: "0", value: 0, interp: "spring", spring: { stiffness: 200, damping: 10 } },
+        { time: length, value: 100 },
+      ],
+    });
+    expect(at(spring("2"), 0.3)).toBe(at(spring("20"), 0.3));
+    expect(at(spring("2"), 1e-4)).toBeLessThan(1e-3);
+    // Cut short, it jumps to the next key right on it.
+    expect(at(spring("0.05"), 0.05 - 1e-6)).toBeLessThan(90);
+    expect(at(spring("0.05"), 0.05)).toBe(100);
+  });
+});
+
+describe("noise", () => {
+  const ROUNDS = 200;
+  const shaking = (seed: number, amount = 1, frequency?: number): Animation => ({
+    keys: [{ time: "0", value: 0 }],
+    modifiers: [{ type: "noise", amount, seed, ...(frequency !== undefined && { frequency }) }],
+  });
+
+  it("is the same for the same seed, and something else for another", () => {
+    for (let round = 0; round < ROUNDS; round += 1) {
+      const random = randomFrom(round + 5000);
+      const seed = random.int(2 ** 31) - 2 ** 30;
+      const clock = random.between(-1000, 1000);
+      if (Number.isInteger(clock)) continue;
+      expect(noiseAt(seed, clock)).toBe(noiseAt(seed, clock));
+      const others = [1, 2, 3].map((step) => noiseAt(seed + step, clock));
+      expect(others.some((other) => other !== noiseAt(seed, clock))).toBe(true);
+    }
+  });
+
+  it("stays within its amount, is 0 on whole numbers", () => {
+    for (let round = 0; round < ROUNDS; round += 1) {
+      const random = randomFrom(round + 6000);
+      const seed = random.int(2 ** 32) - 2 ** 31;
+      const amount = random.between(-100, 100);
+      const frequency = random.between(0.01, 30);
+      const channel = compiled(shaking(seed, amount, frequency));
+      for (let step = 0; step < 50; step += 1) {
+        const clock = random.between(-100, 100);
+        expect(Math.abs(sample(channel, clock) as number)).toBeLessThanOrEqual(
+          Math.abs(amount) + 1e-12,
+        );
+      }
+      expect(Math.abs(noiseAt(seed, random.int(1000) - 500))).toBe(0);
+    }
+  });
+
+  /** How steep it is at most, for an amount of 1 at a frequency of 1: 2.69…, worked out. */
+  const STEEPEST = 2.7;
+
+  it("moves smoothly: a millisecond changes it by little, and so does its slope", () => {
+    const millisecond = 1e-3;
+    for (let round = 0; round < ROUNDS; round += 1) {
+      const random = randomFrom(round + 7000);
+      const seed = random.int(1e9);
+      const amount = random.between(0.1, 100);
+      const frequency = random.between(0.1, 10);
+      const channel = compiled(shaking(seed, amount, frequency));
+      const value = (clock: number) => sample(channel, clock) as number;
+      for (let step = 0; step < 20; step += 1) {
+        const clock = random.between(-50, 50);
+        expect(Math.abs(value(clock + millisecond) - value(clock))).toBeLessThanOrEqual(
+          amount * frequency * STEEPEST * millisecond,
+        );
+      }
+      // Its slope does not jump where one whole number of it gives way to the next.
+      const whole = (random.int(200) - 100) / frequency;
+      const h = 1e-6;
+      const left = (value(whole) - value(whole - h)) / h;
+      const right = (value(whole + h) - value(whole)) / h;
+      expect(Math.abs(right - left)).toBeLessThanOrEqual(amount * frequency * frequency * 1e-3);
+    }
+  });
+
+  it("follows the clock of the clip, before, between and after the keys", () => {
+    const loop: Animation = {
+      keys: [
+        { time: "0", value: 0, interp: "preset", preset: "bounceOut" },
+        { time: "1", value: 10 },
+      ],
+      before: "loop",
+      after: "pingpong",
+      modifiers: [{ type: "noise", amount: 3, frequency: 2, seed: 9 }],
+    };
+    const plain: Animation = { ...loop, modifiers: [] };
+    for (const clock of [-7.3, -0.25, 0.4, 0.75, 3.6, 12.2]) {
+      expect(at(loop, clock)).toBeCloseTo(
+        (at(plain, clock) as number) + 3 * noiseAt(9, clock * 2),
+        12,
+      );
+    }
+  });
+
+  it("shakes each part of a vector with a seed of its own", () => {
+    const vector: Animation = {
+      keys: [{ time: "0", value: [1, 2, 3] }],
+      modifiers: [{ type: "noise", amount: 5, seed: 40 }],
+    };
+    expect(at(vector, 0.3, "vec3")).toEqual([
+      1 + 5 * noiseAt(40, 0.3),
+      2 + 5 * noiseAt(41, 0.3),
+      3 + 5 * noiseAt(42, 0.3),
+    ]);
+  });
+
+  it("does nothing to what is not a number", () => {
+    const color: Animation = {
+      keys: [{ time: "0", value: "#336699" }],
+      modifiers: [{ type: "noise", amount: 5, seed: 1 }],
+    };
+    expect(compiled(color, "color")).toEqual({ kind: "still", value: "#336699" });
+    expect(canShake("color")).toBe(false);
+    expect(canShake("vec2")).toBe(true);
+  });
+
+  it("makes one key shake, which would be a value that stays without it", () => {
+    expect(compiled(shaking(3)).kind).toBe("curve");
+    expect(compiled({ keys: [{ time: "0", value: 0 }] }).kind).toBe("still");
+  });
+});
+
+describe("what is not in the table of presets", () => {
+  it("goes linearly", () => {
+    const unknown: Key = { time: "0", value: 0, interp: "preset", preset: "wobble" };
+    const last = { time: "2", value: 10 };
+    expect(at({ keys: [unknown, last] }, 1)).toBeCloseTo(5, 9);
+    expect(knowsPreset(unknown)).toBe(false);
+    expect(knowsPreset({ preset: "stepsEnd" })).toBe(false);
+    expect(knowsPreset({ preset: "stepsEnd", presetParams: { steps: 3 } })).toBe(true);
   });
 });
 
@@ -709,8 +1036,21 @@ describe("a channel", () => {
     }
   });
 
-  it("can be sent to a sandbox as it is", () => {
-    const channel = compiled({ ...ramp, after: "pingpong" });
+  it.each<[string, Animation]>([
+    ["linear", { ...ramp, after: "pingpong" }],
+    [
+      "with a spring, a preset and noise",
+      {
+        keys: [
+          { time: "0", value: 0, interp: "spring", spring: { stiffness: 50, damping: 2 } },
+          { time: "1", value: 5, interp: "preset", preset: "elasticOut" },
+          { time: "2", value: 9 },
+        ],
+        modifiers: [{ type: "noise", amount: 2, seed: 4 }],
+      },
+    ],
+  ])("can be sent to a sandbox as it is, %s", (_, animation) => {
+    const channel = compiled(animation);
     const copy = structuredClone(channel);
     expect(sample(copy, 3.5)).toBe(sample(channel, 3.5));
     expect(copy).toEqual(channel);

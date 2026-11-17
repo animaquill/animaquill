@@ -1,5 +1,19 @@
-import { SHAPE, channelOf, componentOf, sample, type Channel } from "@animaquill/core";
-import type { Animation, Key, PropertySpec } from "@animaquill/schema";
+import {
+  SHAPE,
+  channelOf,
+  componentOf,
+  segmentProgress,
+  sample,
+  type Channel,
+  type CurveChannel,
+} from "@animaquill/core";
+import {
+  EASE_PRESET_NAMES,
+  STEP_PRESETS,
+  type Animation,
+  type Key,
+  type PropertySpec,
+} from "@animaquill/schema";
 import { formatNumber } from "../properties/scrub.ts";
 import { RULER_HEIGHT } from "../timeline/editor.ts";
 import { forEachBetween, type ClipBox } from "../timeline/model.ts";
@@ -93,25 +107,42 @@ interface Band {
 }
 
 /** How the clock of a clip is on screen, and its values in a lane. */
-interface Place {
+export interface Place {
   x(clock: number): number;
   clockAt(x: number): number;
   y(value: number): number;
 }
 
+/** How many steps a preset in steps takes from one key to the next, or 0 for another shape. */
+function stepsOf(channel: CurveChannel, index: number): number {
+  if (channel.shapes[index] !== SHAPE.preset) return 0;
+  const name = EASE_PRESET_NAMES[channel.params[index * 4] as number];
+  return name !== undefined && STEP_PRESETS.has(name)
+    ? (channel.params[index * 4 + 3] as number)
+    : 0;
+}
+
 /**
  * The curve of a number from one side of the screen to the other, the way it is worked out: lines,
- * steps for what holds, and the beziers themselves. Keys closer than a pixel are a line from the
- * lowest to the highest of them, so that thousands of them cost what a few do.
+ * steps for what holds and for presets in steps, the beziers themselves, and springs and the other
+ * presets point by point. Keys closer than a pixel are a line from the lowest to the highest of
+ * them, so that thousands of them cost what a few do. What shakes is worked out point by point all
+ * the way.
  */
-function traceCurve(path: Path2D, channel: Channel, place: Place, left: number, right: number) {
+export function traceCurve(
+  path: Path2D,
+  channel: Channel,
+  place: Place,
+  left: number,
+  right: number,
+) {
   if (channel.kind === "still") {
     const y = place.y(channel.value as number);
     path.moveTo(left, y);
     path.lineTo(right, y);
     return;
   }
-  const { times, shapes, handles, before, after } = channel;
+  const { times, shapes, params, before, after } = channel;
   const values = channel.values as Float64Array;
   const last = times.length - 1;
   const xOf = (index: number) => place.x(times[index] as number);
@@ -127,6 +158,32 @@ function traceCurve(path: Path2D, channel: Channel, place: Place, left: number, 
       to(x, place.y(sample(channel, place.clockAt(x)) as number));
     }
     to(until, place.y(sample(channel, place.clockAt(until)) as number));
+  };
+  if (channel.noise.length > 0) {
+    sampled(left, right);
+    return;
+  }
+  /** A spring or a preset, from one key to the next, the way `sample` works it out. */
+  const progressed = (index: number, x0: number, x1: number) => {
+    const from = valueOf(index);
+    const change = valueOf(index + 1) - from;
+    const start = times[index] as number;
+    const yAt = (x: number) =>
+      place.y(from + change * segmentProgress(channel, index, place.clockAt(x) - start));
+    const steps = stepsOf(channel, index);
+    if (steps > 0 && (x1 - x0) / steps >= CURVE_STEP) {
+      for (let step = 0; step < steps; step += 1) {
+        const a = x0 + ((x1 - x0) * step) / steps;
+        const b = x0 + ((x1 - x0) * (step + 1)) / steps;
+        const y = yAt((a + b) / 2);
+        to(a, y);
+        to(b, y);
+      }
+    } else {
+      for (let x = x0 + CURVE_STEP; x < x1; x += CURVE_STEP) to(x, yAt(x));
+    }
+    to(x1, yAt(x1));
+    to(x1, place.y(valueOf(index + 1)));
   };
   const firstX = xOf(0);
   if (left < firstX) {
@@ -165,14 +222,15 @@ function traceCurve(path: Path2D, channel: Channel, place: Place, left: number, 
       const at = index * 4;
       const width = x1 - x0;
       path.bezierCurveTo(
-        x0 + (handles[at] as number) * width,
-        place.y(from + (handles[at + 1] as number) * change),
-        x0 + (handles[at + 2] as number) * width,
-        place.y(from + (handles[at + 3] as number) * change),
+        x0 + (params[at] as number) * width,
+        place.y(from + (params[at + 1] as number) * change),
+        x0 + (params[at + 2] as number) * width,
+        place.y(from + (params[at + 3] as number) * change),
         x1,
         place.y(into),
       );
-    } else to(x1, place.y(into));
+    } else if (shape === SHAPE.spring || shape === SHAPE.preset) progressed(index, x0, x1);
+    else to(x1, place.y(into));
     index += 1;
   }
   const lastX = xOf(last);

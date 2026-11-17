@@ -2734,6 +2734,23 @@
         "preset": {
          "type": "string"
         },
+        "presetParams": {
+         "type": "object",
+         "properties": {
+          "amplitude": {
+           "type": "number",
+           "minimum": 1
+          },
+          "period": {
+           "type": "number",
+           "exclusiveMinimum": 0
+          },
+          "steps": {
+           "type": "integer",
+           "exclusiveMinimum": 0
+          }
+         }
+        },
         "spring": {
          "type": "object",
          "properties": {

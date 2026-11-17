@@ -436,3 +436,93 @@ test.describe("a frame with a scene", () => {
     expect(downloads).toHaveLength(0);
   });
 });
+
+/** What the format says keys come to (schema/fixtures/curves.json), which an export has to show. */
+const CURVES = JSON.parse(
+  readFileSync(new URL("../../schema/fixtures/curves.json", import.meta.url), "utf8"),
+) as { cases: { name: string; samples: [number, number][] }[] };
+
+/** Where the left and right edges of what is red are, on a row of a picture. */
+const redAcross = (page: Page, png: Buffer, row: number) =>
+  page.evaluate(
+    async ({ base64, top }) => {
+      const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+      const bitmap = await createImageBitmap(new Blob([bytes]));
+      const frame = new VideoFrame(bitmap, { timestamp: 0 });
+      const pixels = new Uint8Array(frame.allocationSize({ format: "RGBA" }));
+      await frame.copyTo(pixels, { format: "RGBA" });
+      const width = frame.displayWidth;
+      frame.close();
+      let left = -1;
+      let right = -1;
+      for (let x = 0; x < width; x += 1) {
+        const at = (top * width + x) * 4;
+        const isRed = (pixels[at] ?? 0) > 128 && (pixels[at + 1] ?? 0) < 128;
+        if (isRed && left < 0) left = x;
+        if (isRed) right = x;
+      }
+      return { left, right };
+    },
+    { base64: png.toString("base64"), top: row },
+  );
+
+test.describe("a frame of keys that bounce", () => {
+  test("has the clip where the table of the format says", async ({ page, devPage }) => {
+    test.skip(!devPage, needsDevPage("window.aqExecute"));
+    const track = await page.evaluate(() => {
+      const state = (
+        window as unknown as {
+          aqState: () => {
+            timelines: Record<string, { tracks: Record<string, { kind: string }> }>;
+          };
+        }
+      ).aqState();
+      const tracks = state.timelines["main"]?.tracks ?? {};
+      return Object.keys(tracks).find((id) => tracks[id]?.kind === "video");
+    });
+    // A square 200 wide that bounces from 600 left of the middle to 600 right of it in a second.
+    const added = await page.evaluate(
+      (call) =>
+        (window as unknown as { aqExecute: (call: unknown) => { ok: boolean } }).aqExecute(call).ok,
+      {
+        type: "clip.add",
+        params: {
+          timeline: "main",
+          track,
+          id: "bouncing",
+          start: "0",
+          duration: "2",
+          source: { kind: "color", color: "#ff0000" },
+          properties: {
+            "transform.width": 200,
+            "transform.height": 200,
+            "transform.x": {
+              keys: [
+                { time: "0", value: -600, interp: "preset", preset: "bounceOut" },
+                { time: "1", value: 600 },
+              ],
+            },
+          },
+        },
+      },
+    );
+    expect(added).toBe(true);
+    const bounce = CURVES.cases.find(({ name }) => name === "bounceOut");
+    if (!bounce) throw new Error("No bounceOut in the table");
+    for (const frame of [3, 9, 12, 21, 27]) {
+      const seconds = frame / 30;
+      const progress = bounce.samples.find(([clock]) => Math.abs(clock - seconds) < 1e-9)?.[1];
+      if (progress === undefined) throw new Error(`No bounceOut at ${seconds} in the table`);
+      await goTo(page, `0:00/${String(frame).padStart(2, "0")}`);
+      const png = await exportFrame(page);
+      const { left, right } = await redAcross(page, png, HEIGHT / 2);
+      // 1920 by 1080 is the stage, so a unit of the world is a pixel; the middle is at 960.
+      const middle = (left + right + 1) / 2;
+      expect(
+        Math.abs(middle - (960 - 600 + 1200 * progress)),
+        `frame ${frame}`,
+      ).toBeLessThanOrEqual(1);
+      expect(Math.abs(right + 1 - left - 200)).toBeLessThanOrEqual(1);
+    }
+  });
+});

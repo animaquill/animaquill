@@ -281,9 +281,9 @@
           "type": "object",
           "properties": {
             "keys": { "$ref": "#/$defs/__schema26" },
-            "before": { "$ref": "#/$defs/__schema36" },
-            "after": { "$ref": "#/$defs/__schema38" },
-            "modifiers": { "$ref": "#/$defs/__schema39" }
+            "before": { "$ref": "#/$defs/__schema37" },
+            "after": { "$ref": "#/$defs/__schema39" },
+            "modifiers": { "$ref": "#/$defs/__schema40" }
           },
           "required": ["keys"],
           "additionalProperties": false
@@ -306,7 +306,8 @@
         "in": { "$ref": "#/$defs/__schema32" },
         "tangent": { "$ref": "#/$defs/__schema33" },
         "preset": { "$ref": "#/$defs/__schema34" },
-        "spring": { "$ref": "#/$defs/__schema35" }
+        "presetParams": { "$ref": "#/$defs/__schema35" },
+        "spring": { "$ref": "#/$defs/__schema36" }
       },
       "required": ["time", "value"],
       "additionalProperties": false
@@ -342,6 +343,15 @@
     "__schema35": {
       "type": "object",
       "properties": {
+        "amplitude": { "type": "number", "minimum": 1 },
+        "period": { "type": "number", "exclusiveMinimum": 0 },
+        "steps": { "type": "integer", "exclusiveMinimum": 0, "maximum": 9007199254740991 }
+      },
+      "additionalProperties": false
+    },
+    "__schema36": {
+      "type": "object",
+      "properties": {
         "stiffness": { "type": "number", "exclusiveMinimum": 0 },
         "damping": { "type": "number", "minimum": 0 },
         "mass": { "type": "number", "exclusiveMinimum": 0 }
@@ -349,10 +359,10 @@
       "required": ["stiffness", "damping"],
       "additionalProperties": false
     },
-    "__schema36": { "$ref": "#/$defs/__schema37" },
-    "__schema37": { "type": "string", "enum": ["hold", "loop", "pingpong", "continue"] },
-    "__schema38": { "$ref": "#/$defs/__schema37" },
-    "__schema39": {
+    "__schema37": { "$ref": "#/$defs/__schema38" },
+    "__schema38": { "type": "string", "enum": ["hold", "loop", "pingpong", "continue"] },
+    "__schema39": { "$ref": "#/$defs/__schema38" },
+    "__schema40": {
       "type": "array",
       "items": {
         "type": "object",

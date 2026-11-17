@@ -1,4 +1,4 @@
-import { SHAPE, type Channel, type CurveChannel } from "@animaquill/core";
+import { SHAPE, segmentProgress, type Channel, type CurveChannel } from "@animaquill/core";
 import type { PropertySpec } from "@animaquill/schema";
 
 /**
@@ -106,10 +106,32 @@ function bezierTurns(
   for (const s of roots) if (s > 0 && s < 1) visit(valueAt(s));
 }
 
+/** How many points of a spring or a preset are looked at for how far it swings. */
+const SWING_SAMPLES = 128;
+
+/** What a spring or a preset goes through on its way from one key to the next. */
+function swings(channel: CurveChannel, index: number, visit: (value: number) => void): void {
+  const { times, values } = channel;
+  const from = values[index] as number;
+  const change = (values[index + 1] as number) - from;
+  const length = (times[index + 1] as number) - (times[index] as number);
+  for (let step = 1; step < SWING_SAMPLES; step += 1) {
+    visit(from + change * segmentProgress(channel, index, (length * step) / SWING_SAMPLES));
+  }
+}
+
+/** How far shaking reaches at most: noise stays within its amount. */
+const shakeReach = (noise: Float64Array): number => {
+  let reach = 0;
+  for (let at = 0; at < noise.length; at += 3) reach += Math.abs(noise[at] as number);
+  return reach;
+};
+
 const ranges = new WeakMap<CurveChannel, ValueRange | undefined>();
 
 /**
- * What a property covers: all of its keys, and where a bezier between them goes further. Undefined
+ * What a property covers: all of its keys, where a bezier, a spring or a preset between them goes
+ * further, and as far as it shakes. Undefined
  * when it is not a number.
  */
 export function rangeOfChannel(channel: Channel): ValueRange | undefined {
@@ -118,7 +140,7 @@ export function rangeOfChannel(channel: Channel): ValueRange | undefined {
     return typeof value === "number" ? { min: value, max: value } : undefined;
   }
   if (ranges.has(channel)) return ranges.get(channel);
-  const { values, shapes, handles } = channel;
+  const { values, shapes, params, noise } = channel;
   let range: ValueRange | undefined;
   if (values instanceof Float64Array) {
     let min = Number.POSITIVE_INFINITY;
@@ -129,12 +151,17 @@ export function rangeOfChannel(channel: Channel): ValueRange | undefined {
     };
     values.forEach(visit);
     shapes.forEach((shape, index) => {
+      if (shape === SHAPE.spring || shape === SHAPE.preset) swings(channel, index, visit);
       if (shape !== SHAPE.bezier) return;
-      const y1 = handles[index * 4 + 1] as number;
-      const y2 = handles[index * 4 + 3] as number;
+      const y1 = params[index * 4 + 1] as number;
+      const y2 = params[index * 4 + 3] as number;
       bezierTurns(values[index] as number, values[index + 1] as number, y1, y2, visit);
     });
-    range = Number.isFinite(min) && Number.isFinite(max) ? { min, max } : undefined;
+    const reach = shakeReach(noise);
+    range =
+      Number.isFinite(min) && Number.isFinite(max)
+        ? { min: min - reach, max: max + reach }
+        : undefined;
   }
   ranges.set(channel, range);
   return range;

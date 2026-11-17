@@ -13,6 +13,7 @@ export {
   type ProjectProblem,
   type ReportedSource,
 } from "./model.ts";
+export { CURVE_CODES, curveProblems } from "./curves.ts";
 export { PROPERTY_CODES, propertyProblems, type PropertyInputs } from "./properties.ts";
 export { REFERENCE_CODES, referenceProblems, type ReferenceCode } from "./references.ts";
 export { ProblemSet, type ProblemSetOptions } from "./set.ts";

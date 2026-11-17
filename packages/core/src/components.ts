@@ -80,6 +80,13 @@ export function componentKeys(keys: readonly Key[], index: number): readonly Key
 
 const animations = new WeakMap<Animation, (Animation | null)[]>();
 
+/** Each part of a vector shakes with a seed of its own: the seed plus its index (project format). */
+function shakingOf(value: Animation, index: number): Pick<Animation, "modifiers"> {
+  const { modifiers } = value;
+  if (!modifiers || index === 0) return {};
+  return { modifiers: modifiers.map((modifier) => ({ ...modifier, seed: modifier.seed + index })) };
+}
+
 /**
  * One part of a vector, as a value of its own: a number, or keys of a number at the times of the
  * keys of the vector. The same object for the same keys, so that what is worked out from it once
@@ -97,7 +104,7 @@ export function componentOf(
   if (known !== undefined) return known ?? undefined;
   const keys = componentKeys(value.keys, index);
   // Nothing changes keys in place: a change is a new list.
-  const found = keys ? { ...value, keys: keys as Key[] } : null;
+  const found = keys ? { ...value, keys: keys as Key[], ...shakingOf(value, index) } : null;
   byIndex[index] = found;
   return found ?? undefined;
 }

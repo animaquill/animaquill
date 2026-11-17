@@ -100,3 +100,39 @@ describe("what a row covers", () => {
     expect(rangeOfChannel({ kind: "still", value: "a" })).toBeUndefined();
   });
 });
+
+describe("the range of springs, presets and noise", () => {
+  const keys = (first: object): Animation => ({
+    keys: [
+      { time: "0", value: 0, ...first },
+      { time: "1", value: 100 },
+    ],
+  });
+
+  it("takes in how far a swing goes past the keys, and no further", () => {
+    const swing = channel(keys({ interp: "preset", preset: "elasticOut" }));
+    const range = rangeOfChannel(swing) as { min: number; max: number };
+    let highest = 0;
+    for (let at = 0; at <= 10_000; at += 1) {
+      highest = Math.max(highest, sample(swing, at / 10_000) as number);
+    }
+    expect(range.min).toBe(0);
+    expect(range.max).toBeGreaterThan(130);
+    expect(range.max).toBeCloseTo(highest, 0);
+    const spring = keys({ interp: "spring", spring: { stiffness: 200, damping: 4 } });
+    expect(rangeOfChannel(channel(spring))?.max).toBeGreaterThan(150);
+    const bounce = keys({ interp: "preset", preset: "bounceOut" });
+    expect(rangeOfChannel(channel(bounce))).toEqual({ min: 0, max: 100 });
+  });
+
+  it("takes in as far as noise shakes", () => {
+    const shaking: Animation = {
+      ...keys({}),
+      modifiers: [
+        { type: "noise", amount: 5, seed: 1 },
+        { type: "noise", amount: -2, seed: 2 },
+      ],
+    };
+    expect(rangeOfChannel(channel(shaking))).toEqual({ min: -7, max: 107 });
+  });
+});
