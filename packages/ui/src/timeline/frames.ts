@@ -70,3 +70,13 @@ export function parseTimecode(text: string, rate: FrameRate): number | undefined
   const [seconds = 0, minutes = 0, hours = 0] = match[1].split(":").map(Number).toReversed();
   return Number(match[2] ?? 0) + rate.nominal * (seconds + 60 * minutes + 3600 * hours);
 }
+
+/** A whole number of frames in an exact time, rounded: how far a drag went, as people count it. */
+export function framesIn(time: Rational, rate: FrameRate): number {
+  const { n, d } = multiply(time, rate.exact);
+  return Math.round(Number(n) / Number(d));
+}
+
+/** The last frame before a moment, in seconds: what shows just before a cut there. */
+export const lastFrameBefore = (moment: Rational, rate: FrameRate): number =>
+  frameSeconds(Math.max(frameAt(toSeconds(moment), rate) - 1, 0), rate);

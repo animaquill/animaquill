@@ -99,12 +99,15 @@ import {
   type ClipCopy,
   type Gesture,
   type GestureHost,
+  type HeldPreview,
   type CoveredSpan,
   type Placed,
   type Pointer,
   type Preview,
 } from "./gestures.ts";
 import { snapPointsOf } from "./snap.ts";
+import { RollGesture, SlideGesture, SlipGesture } from "./slip-drag.ts";
+import { TOOL_CURSORS } from "./tool-shapes.ts";
 import {
   EDGES,
   NO_ROOM_BELOW,
@@ -199,8 +202,11 @@ export function expanderBox(left: number, width: number, edgeReach: number): num
   return fits ? x : undefined;
 }
 
-/** What the mouse does: select and move, cut, or trim with ripple at the edges of clips. */
-export type Tool = "select" | "razor" | "ripple";
+/**
+ * What the mouse does: select and move, cut, trim with ripple at the edges of clips, roll the cut
+ * between two clips, slip what a clip shows, or slide a clip between its neighbours.
+ */
+export type Tool = "select" | "razor" | "ripple" | "roll" | "slip" | "slide";
 
 /** Where something dragged here goes. */
 export interface DropPlace {
@@ -379,6 +385,14 @@ export interface AddedEffects {
   /** When, by `Date.now()`. */
   readonly time: number;
 }
+
+/** What stops keys that nudge, slip or slide: it lights up instead of a message. */
+const NUDGE_STOPS: ReadonlySet<string> = new Set([
+  "overlap",
+  "source-start",
+  "source-end",
+  "invalid-value",
+]);
 
 /** How long clips light up when something happened to them, see `TimelineEditor.flash`. */
 export const FLASH_MS = 700;
@@ -2049,6 +2063,109 @@ export class TimelineEditor implements TouchTarget {
     if (edge === "start") this.seek(frameAt(box.start, model.rate));
   }
 
+  /* Nudging, slipping and sliding the selected clips by frames, with the keys of Premiere. */
+
+  /** Whether keys have selected clips to nudge, slip or slide: ones that can change. */
+  get canNudge(): boolean {
+    return this.#changeable(this.#snapshot.selection, this.model).length > 0;
+  }
+
+  /**
+   * Runs what a key does to the selected clips. When something is in the way, or a clip has no more
+   * to show, that lights up red and nothing changes: a key pressed again and again, or held, would
+   * otherwise fill the screen with messages. Partners on locked tracks stay, and people hear so.
+   */
+  #runNudge(model: TimelineModel, call: CommandCall, clips: readonly string[]): void {
+    const done = this.#run([call], (failure) => {
+      if (!NUDGE_STOPS.has(failure.code)) return false;
+      const named = (failure.params["clips"] ?? []) as readonly { readonly id: string }[];
+      const one = failure.params["clip"];
+      const ids = [...named.map(({ id }) => id), ...(typeof one === "string" ? [one] : [])];
+      this.flash({ blocked: new Set(ids.length > 0 ? ids : clips) });
+      return true;
+    });
+    if (done) this.#tellLockedLeft(new Set(clips), model);
+  }
+
+  /**
+   * Moves the selected clips by frames, later for more than zero. What is in the way gets covered
+   * with overwriting on; otherwise nothing moves, as with a drag that would not fit.
+   */
+  nudge(frames: number): void {
+    const { model } = this;
+    if (!model) return;
+    const clips = this.#changeable(this.#snapshot.selection, model);
+    if (clips.length === 0) return;
+    const by = frameTime(frames, model.rate);
+    const moved = clips.map((clip) => {
+      const box = model.boxes.get(clip) as ClipBox;
+      return { clip, start: add(clipStart(box.clip), by) };
+    });
+    const early = moved.filter(({ start }) => compare(start, ZERO) < 0);
+    if (early.length > 0) {
+      this.flash({ blocked: new Set(early.map(({ clip }) => clip)) });
+      return;
+    }
+    const params = {
+      timeline: model.id,
+      clips: moved.map(({ clip, start }) => ({ clip, start: formatTime(start) })),
+      ...(this.#snapshot.overwriting && { overlap: "overwrite" }),
+    };
+    this.#runNudge(model, { type: "clip.move", params }, clips);
+  }
+
+  /**
+   * Moves the selected clips to the next track of their kind up or down, past locked ones: a clip
+   * with none there stays, so that a picture can go up while its sound has nowhere to go.
+   */
+  moveToTrack(direction: -1 | 1): void {
+    const { model } = this;
+    if (!model) return;
+    const clips = this.#changeable(this.#snapshot.selection, model);
+    const moved = clips.flatMap((clip) => {
+      const row = model.rowOfClip.get(clip);
+      if (!row || row.gone) return [];
+      const rows = model.rows.filter(
+        (other) => other.track.kind === row.track.kind && !other.gone && !other.track.locked,
+      );
+      const to = rows[rows.indexOf(row) + direction];
+      return to ? [{ clip, track: to.id }] : [];
+    });
+    if (moved.length === 0) {
+      if (clips.length > 0) this.flash({ blocked: new Set(clips) });
+      return;
+    }
+    const params = {
+      timeline: model.id,
+      clips: moved,
+      ...(this.#snapshot.overwriting && { overlap: "overwrite" }),
+    };
+    this.#runNudge(model, { type: "clip.move", params }, clips);
+  }
+
+  /**
+   * Slips the selected clips by frames: what they show goes that way, as with the slip tool, so
+   * to the right they show what is earlier.
+   */
+  slip(frames: number): void {
+    const { model } = this;
+    if (!model) return;
+    const clips = this.#changeable(this.#snapshot.selection, model);
+    if (clips.length === 0) return;
+    const by = formatTime(frameTime(-frames, model.rate));
+    this.#runNudge(model, { type: "clip.slip", params: { timeline: model.id, clips, by } }, clips);
+  }
+
+  /** Slides the selected clips by frames, between what is right next to them. */
+  slide(frames: number): void {
+    const { model } = this;
+    if (!model) return;
+    const clips = this.#changeable(this.#snapshot.selection, model);
+    if (clips.length === 0) return;
+    const by = formatTime(frameTime(frames, model.rate));
+    this.#runNudge(model, { type: "clip.slide", params: { timeline: model.id, clips, by } }, clips);
+  }
+
   /** Whether there is a marked part to lift or extract, and a track that is not locked. */
   get canLift(): boolean {
     const { model } = this;
@@ -2900,8 +3017,9 @@ export class TimelineEditor implements TouchTarget {
     const fromEnd = this.xAt(box.end) - x;
     if (this.#onExpander(box, row, x, y)) return { kind: "clip", row, box, expander: true };
     const block = inBand ? this.#transitionAt(box, x) : undefined;
-    // The ripple tool has the edges of clips and nothing else: they are what it trims.
-    if (!row.track.locked && this.#snapshot.tool === "ripple") {
+    const { tool } = this.#snapshot;
+    // The ripple and roll tools have the edges of clips and nothing else: they are what they trim.
+    if (!row.track.locked && (tool === "ripple" || tool === "roll")) {
       if (fromStart <= reach) return { kind: "clip", row, box, edge: "start" };
       if (fromEnd <= reach) return { kind: "clip", row, box, edge: "end" };
       return { kind: "clip", row, box };
@@ -3489,7 +3607,10 @@ export class TimelineEditor implements TouchTarget {
     if (hit.kind === "join") return hit.edge ? "col-resize" : "default";
     if (hit.kind !== "clip") return "default";
     if (hit.expander) return "pointer";
-    if (this.#snapshot.tool === "razor") return "crosshair";
+    const { tool } = this.#snapshot;
+    if (tool === "razor") return "crosshair";
+    const own = tool !== "select" && !hit.row.track.locked && TOOL_CURSORS[tool];
+    if (own && (tool === "slip" || tool === "slide" || hit.edge)) return own;
     if (hit.handle) return "col-resize";
     return hit.edge ? "ew-resize" : "default";
   }
@@ -3500,7 +3621,14 @@ export class TimelineEditor implements TouchTarget {
 
   /** The cursor while dragging. */
   get dragCursor(): string {
-    return this.#preview?.copying ? "copy" : "";
+    if (this.#preview?.copying) return "copy";
+    const { tool } = this.#snapshot;
+    return (this.#gesture && tool !== "select" && tool !== "razor" && TOOL_CURSORS[tool]) || "";
+  }
+
+  /** Clips as a drag holds them, which the preview shows before anything is written. */
+  get held(): HeldPreview | undefined {
+    return this.#preview?.held;
   }
 
   /** What a finger starts by landing here. A locked clip goes nowhere, so that moves the view. */
@@ -3619,10 +3747,12 @@ export class TimelineEditor implements TouchTarget {
 
   #pressClip(hit: Extract<Hit, { kind: "clip" }>, pointer: Pointer): void {
     const { box, row, edge, handle, transition } = hit;
-    if (this.#snapshot.tool === "razor") {
+    const { tool } = this.#snapshot;
+    if (tool === "razor") {
       this.#gesture = new RazorGesture(this.#host, row, pointer);
       return;
     }
+    if (this.#pressWithTool(hit, pointer)) return;
     if (handle) {
       this.#gesture = new TransitionGesture(this.#host, box, handle, pointer);
       return;
@@ -3670,6 +3800,31 @@ export class TimelineEditor implements TouchTarget {
     // Alt takes the clip out of what was selected with it, so that a drag moves it alone.
     if (!wasSelected || (alone && !adding)) this.#select(selected);
     this.#gesture = new MoveGesture(this.#host, box, row, pointer, onClick);
+  }
+
+  /**
+   * What the roll, slip and slide tools do with a press on a clip: the clip and its partners get
+   * selected, as with Alt only the clip, and a drag edits them. A locked one can only be looked at.
+   */
+  #pressWithTool(hit: Extract<Hit, { kind: "clip" }>, pointer: Pointer): boolean {
+    const { tool } = this.#snapshot;
+    const { box, row, edge } = hit;
+    if (tool !== "roll" && tool !== "slip" && tool !== "slide") return false;
+    const own = pointer.alt ? new Set([box.id]) : this.#withLinked(new Set([box.id]));
+    const onClick = () => this.#select(own);
+    if (row.track.locked || (tool === "roll" && !edge)) {
+      this.#gesture = new MarqueeGesture(this.#host, pointer, onClick);
+      return true;
+    }
+    this.#select(own);
+    const host = this.#host;
+    this.#gesture =
+      tool === "roll"
+        ? new RollGesture(host, box, row, edge as "start" | "end", pointer)
+        : tool === "slip"
+          ? new SlipGesture(host, box, row, pointer)
+          : new SlideGesture(host, box, row, pointer);
+    return true;
   }
 
   drag(pointer: Pointer): void {

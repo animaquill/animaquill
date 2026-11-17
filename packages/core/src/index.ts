@@ -158,6 +158,7 @@ export {
   samePlan,
   transitionsNotDone,
   type AudioPlan,
+  type HeldClip,
   type LayerSource,
   type PlannedTransition,
   type RenderJoin,

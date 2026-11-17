@@ -84,6 +84,9 @@ ops/clip.remove — removes clips; with ripple, what follows moves back into the
 ops/clip.update — changes the name, source, offset, loop, hidden, draft, link or section fit of a clip
 ops/clip.move — moves clips to other starts or tracks, in one step
 ops/clip.trim — moves the start or end of a clip; what it shows stays in place; with ripple, what follows moves along
+ops/clip.slip — slips clips: where they are and how long stay, what they show goes later or earlier within them
+ops/clip.slide — slides clips; the clips right next to them on their track get longer and shorter to make up
+ops/clip.roll — moves the cut between two clips: one gets longer and the other shorter, together as long
 ops/clip.split — cuts a clip in two at a moment of the timeline
 ops/clip.link — links clips into a group of their own, like the picture and sound of a video
 ops/clip.unlink — takes clips out of their linked groups

@@ -42,7 +42,7 @@ import {
   type JoinState,
   type TrackState,
 } from "./model.ts";
-import type { ProjectState } from "./model.ts";
+import type { ProjectState, TimelineState } from "./model.ts";
 import { isSceneOwned } from "./registration.ts";
 import { sceneSourceOf, type SceneSource } from "./scene-plan.ts";
 import type { SoundFade } from "./sound-fades.ts";
@@ -605,13 +605,41 @@ export function formatOf(state: ProjectState, version?: Version) {
     : formats.find(({ id }) => id === version.format);
 }
 
-/** What a timeline shows: a compositor needs nothing else. */
+/**
+ * Where a clip is while people drag it, and what it shows then: the exact times it would have, as
+ * the project writes them. Nothing of it is in the project.
+ */
+export interface HeldClip {
+  readonly start: string;
+  readonly duration: string;
+  readonly offset?: string;
+}
+
+/** A timeline with some of its clips where a drag holds them, see `HeldClip`. */
+function withHeld(timeline: TimelineState, held: ReadonlyMap<string, HeldClip>): TimelineState {
+  const clips = { ...timeline.clips };
+  for (const [id, { start, duration, offset }] of held) {
+    const clip = entryOf(timeline.clips, id);
+    if (!clip) continue;
+    const { offset: _offset, ...rest } = clip;
+    clips[id] = { ...rest, start, duration, ...(offset !== undefined && { offset }) };
+  }
+  return { ...timeline, clips };
+}
+
+/**
+ * What a timeline shows: a compositor needs nothing else. Clips that a drag holds (`held`) are drawn where it
+ * holds them, so that the picture follows a slip or a roll before anything is written: the same
+ * way as what people try on properties goes on top of a plan.
+ */
 export function buildRenderPlan(
   state: ProjectState,
   timelineId: string,
   version?: Version,
+  held?: ReadonlyMap<string, HeldClip>,
 ): RenderPlan | undefined {
-  const timeline = entryOf(state.timelines, timelineId);
+  const stored = entryOf(state.timelines, timelineId);
+  const timeline = stored && held && held.size > 0 ? withHeld(stored, held) : stored;
   const format = formatOf(state, version);
   if (!timeline || !format) return undefined;
   const { n, d } = parseTime(format.fps);

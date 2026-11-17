@@ -8,6 +8,7 @@ import {
   timelineLength,
   type ClipState,
   type CommandCall,
+  type HeldClip,
   type WholeJoin,
 } from "@animaquill/core";
 import {
@@ -23,7 +24,7 @@ import {
   type Clip,
   type Rational,
 } from "@animaquill/schema";
-import { frameAt, frameSeconds, frameTime } from "./frames.ts";
+import { frameAt, frameSeconds, frameTime, framesIn, lastFrameBefore } from "./frames.ts";
 import {
   clipAt,
   edgesOf,
@@ -119,6 +120,28 @@ export interface Preview {
   };
   /** Where the boundary after a section is while it is dragged, in seconds. */
   readonly boundary?: { readonly section: string; readonly seconds: number };
+  /** What the picture shows while the drag goes on, see `HeldPreview`. */
+  readonly held?: HeldPreview;
+  /** How far the drag went, in frames, over the clip it is about: a number, never words. */
+  readonly delta?: PreviewDelta;
+}
+
+/**
+ * Clips as a drag holds them, for the preview to show before anything is written (slip, slide,
+ * roll, ripple trim), and the moment it shows meanwhile: the edit point, not the playhead.
+ */
+export interface HeldPreview {
+  readonly clips: ReadonlyMap<string, HeldClip>;
+  /** In seconds of the timeline. */
+  readonly seconds: number;
+}
+
+/** A count of frames shown over a clip while it is dragged, such as "+12". */
+export interface PreviewDelta {
+  readonly row: Row;
+  /** Where its middle is, in seconds. */
+  readonly seconds: number;
+  readonly frames: number;
 }
 
 /** Something people do with the mouse, from pressing the button to letting go. */
@@ -690,7 +713,69 @@ export class TrimGesture implements Gesture {
     for (const { box, row } of [{ box: this.#box, row: this.#row }, ...this.#partners]) {
       clips.set(box.id, { row, ...this.#trimmed(box, by) });
     }
-    this.#host.setPreview({ clips, ...this.#shiftAfter(seconds), ...lineOf(this.#landing) });
+    const exactBy = subtract(this.#landing.exact(), this.#exactEdge());
+    const { model } = this.#host;
+    const trimmed = this.#trimmed(this.#box, by);
+    this.#host.setPreview({
+      clips,
+      ...this.#shiftAfter(seconds),
+      ...lineOf(this.#landing),
+      ...(this.#ripple && { held: this.#held(exactBy) }),
+      delta: {
+        row: this.#row,
+        seconds: (trimmed.start + trimmed.end) / 2,
+        frames: framesIn(exactBy, model.rate),
+      },
+    });
+  }
+
+  /**
+   * What the picture shows during a ripple trim: the trimmed clips as they would be, and what moves
+   * along with them where it shows at the edit or did, at the last frame of a clip whose end is
+   * trimmed, or the first of one whose start is.
+   */
+  #held(by: Rational): HeldPreview {
+    const { model } = this.#host;
+    const trimmed = [{ box: this.#box, row: this.#row }, ...this.#partners];
+    const clips = new Map<string, HeldClip>();
+    const timing = (start: Rational, end: Rational, offset: Rational): HeldClip => ({
+      start: formatTime(start),
+      duration: formatTime(subtract(end, start)),
+      ...(compare(offset, ZERO) === 0 ? {} : { offset: formatTime(offset) }),
+    });
+    for (const { box } of trimmed) {
+      const { clip } = box;
+      const [start, end, offset] =
+        this.#edge === "end"
+          ? [clipStart(clip), add(clipEnd(clip), by), clipOffset(clip)]
+          : [clipStart(clip), subtract(clipEnd(clip), by), add(clipOffset(clip), by)];
+      clips.set(box.id, timing(start, end, offset));
+    }
+    const main = clips.get(this.#box.id) as HeldClip;
+    const seconds =
+      this.#edge === "end"
+        ? lastFrameBefore(add(parseTime(main.start), parseTime(main.duration)), model.rate)
+        : this.#box.start;
+    // What follows goes along by as much as the clips get longer, and at the start that is less
+    // for more.
+    const along = this.#edge === "end" ? by : subtract(ZERO, by);
+    const rows = new Set([...rippleRows(this.#host), ...trimmed.map(({ row }) => row.id)]);
+    const at = this.#exactEdge();
+    const shift = toSeconds(along);
+    for (const row of model.rows) {
+      if (!rows.has(row.id)) continue;
+      for (const box of row.clips) {
+        if (clips.has(box.id) || compare(clipStart(box.clip), at) < 0) continue;
+        const shows = (from: number, to: number) => from <= seconds && seconds < to;
+        if (!shows(box.start, box.end) && !shows(box.start + shift, box.end + shift)) continue;
+        const { clip } = box;
+        clips.set(
+          box.id,
+          timing(add(clipStart(clip), along), add(clipEnd(clip), along), clipOffset(clip)),
+        );
+      }
+    }
+    return { clips, seconds };
   }
 
   /** Where a clip of the trim would be with its edge `by` seconds on. */

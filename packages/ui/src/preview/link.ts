@@ -110,6 +110,24 @@ function changesOf(
   return { channels, ...(fit === undefined ? {} : { fit }), ...(forScene && { content }) };
 }
 
+/** Whether two drags hold the same clips at the same places, so that the plan stays as it is. */
+function sameHeld(a: TimelineEditor["held"], b: TimelineEditor["held"]): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.clips.size !== b.clips.size) return false;
+  for (const [id, clip] of a.clips) {
+    const other = b.clips.get(id);
+    if (
+      !other ||
+      other.start !== clip.start ||
+      other.duration !== clip.duration ||
+      other.offset !== clip.offset
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /** A plan with something on top of it, for the compositor to start from. */
 export function withShown(plan: RenderPlan, shown: PreviewedValues): RenderPlan {
   if (shown.size === 0) return plan;
@@ -420,7 +438,10 @@ export class PreviewLink {
     if (!this.#ready || !model) return;
     const state = this.#store.getState();
     this.#planned = state;
-    const plan = buildRenderPlan(state, model.id);
+    // Clips that a drag holds show where it holds them, see `TimelineEditor.held`.
+    const held = this.#timeline.held;
+    this.#held = held;
+    const plan = buildRenderPlan(state, model.id, undefined, held?.clips);
     const { scale } = this.#quality.getSnapshot();
     if (!plan || (this.#plan && samePlan(plan, this.#plan) && scale === this.#scale)) return;
     this.#plan = plan;
@@ -460,20 +481,25 @@ export class PreviewLink {
 
   #lastSeconds: number | undefined;
   #lastPlayback: TimelineEditor["playbackStart"];
+  /** What a drag held when the plan was made, see `TimelineEditor.held`. */
+  #held: TimelineEditor["held"];
   /** When the compositor last heard what time it is, while time goes on. */
   #playingSince: number | undefined;
 
   #sendTime = (): void => {
-    const { model, frame, playbackStart } = this.#timeline;
+    const { model, frame, playbackStart, held } = this.#timeline;
     if (!this.#ready || !model) return;
+    // A drag that holds clips somewhere shows them there, at the edit it is about, and once it
+    // lets go the plan of the project and the playhead come back.
+    if (!sameHeld(held, this.#held)) this.#sendPlan();
     // Moving the playhead while playing starts playing over from there.
     const { playing: moving, rate } = this.#timeline.getSnapshot();
     // Backwards and slower than normal, the picture follows the playhead frame by frame, as when
     // people drag it: scenes cannot run backwards, and their timers would run at another speed.
-    const playing = moving && rate >= 1;
+    const playing = moving && rate >= 1 && !held;
     const carried = playing && playbackStart && playbackStart === this.#lastPlayback;
     this.#lastPlayback = playbackStart;
-    const seconds = frame / model.rate.fps;
+    const seconds = held ? held.seconds : frame / model.rate.fps;
     if (seconds !== this.#lastSeconds) {
       this.#lastSeconds = seconds;
       this.#send({ type: "seek", seconds, jump: !carried });

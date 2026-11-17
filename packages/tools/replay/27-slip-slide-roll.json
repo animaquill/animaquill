@@ -1,0 +1,62 @@
+{
+  "about": "Slip, slide and roll (pro-editing P5): a slip keeps where the clip is and changes what it shows; a slide moves a clip and its neighbour gives the time; a roll moves the cut between two clips and keeps them as long together; a slip past the end of the media fails and writes nothing.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [{ "op": "clip.slip", "timeline": "main", "clips": ["clip_bed"], "by": "2" }]
+      },
+      "expect": { "ok": true, "lines": ["clip_bed: offset none→2"] }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          { "op": "clip.slide", "timeline": "main", "clips": ["clip_idea"], "by": "-1" }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": ["clip_lottie: duration 4→3", "clip_idea \"样片：换个开场\": start 10→9"]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.roll",
+            "timeline": "main",
+            "edges": [{ "clip": "clip_lottie", "edge": "end" }],
+            "at": "8.5"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": [
+          "clip_lottie: duration 3→2.5",
+          "clip_idea \"样片：换个开场\": duration 2→2.5; start 9→8.5"
+        ]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          { "op": "clip.slip", "timeline": "main", "clips": ["clip_voice"], "by": "1" }
+        ]
+      },
+      "expect": { "error": "source-end", "lines": ["nothing was written"] }
+    }
+  ],
+  "end": {
+    "undoAll": true
+  }
+}

@@ -995,6 +995,75 @@ export const OPERATION_TEXTS = {
     },
   ],
 
+  "ops.clip.slip.summary":
+    "slips clips: where they are and how long stay, what they show goes later or earlier within them",
+  "ops.clip.slip.description":
+    "Slips clips, as video editors do: each stays where it is on the timeline and as long, and shows what is by seconds later in its media (earlier for less than 0), as if its media moved the other way under it: its offset goes up by by. Keyframes are on the clip's clock and go with what it shows. Effects and transitions stay with the clip. Clips that are linked change only when listed; list the picture and the sound of a video together to keep them in step. Video and sound cannot slip to before their media starts nor past its end, and when one of the clips cannot, none changes. Colors, images and captions show the same at any moment: their keyframes go along by as much.",
+  "ops.clip.slip.params.clips": "Clip ids (aq_timeline_read), each once; the linked clips too.",
+  "ops.clip.slip.params.by":
+    'Seconds as a string, such as "1.5"; less than 0 shows what is earlier.',
+  "ops.clip.slip.errors.not-found": "There is no timeline or clip with this id.",
+  "ops.clip.slip.errors.source-start":
+    "A clip would show from before its media starts (the error names it).",
+  "ops.clip.slip.errors.source-end":
+    "A clip would show past the end of its media (the error names it); only a clip with loop: true goes on past it.",
+  "ops.clip.slip.examples": [
+    {
+      title: "The music bed plays from 2 seconds further into its file, where it is",
+      params: { timeline: "main", clips: ["clip_bed"], by: "2" },
+    },
+  ],
+
+  "ops.clip.slide.summary":
+    "slides clips; the clips right next to them on their track get longer and shorter to make up",
+  "ops.clip.slide.description":
+    "Slides clips, as video editors do: each moves by by seconds as it is, with what it shows, its keyframes and effects, and the clip right before it on its track ends by as much later (earlier for less than 0) and the clip right after it starts by as much later, so that together they take the same time as before; what those two show stays where it is. Listed clips right next to each other on a track slide as one block. Where a block has empty time on a side, that gets shorter or longer instead; a clip past it in the way makes it fail with overlap, and so does a clip next to it that would have no time left. A clip that gets longer cannot show from before its media starts nor past its end. Linked clips change only when listed; list the picture and the sound of a video together to keep them in step. Joins at the edges stay, shorter if they have to be; one that has no room left is removed, and the result lists it.",
+  "ops.clip.slide.params.clips": "Clip ids (aq_timeline_read), each once; the linked clips too.",
+  "ops.clip.slide.params.by": 'Seconds as a string, such as "0.5"; less than 0 slides earlier.',
+  "ops.clip.slide.errors.not-found": "There is no timeline or clip with this id.",
+  "ops.clip.slide.errors.invalid-value": "A clip would start before 0.",
+  "ops.clip.slide.errors.source-start":
+    "A clip right next to them would start before its media starts (the error names it).",
+  "ops.clip.slide.errors.source-end":
+    "A clip right next to them would go on past the end of its media (the error names it).",
+  "ops.clip.slide.errors.overlap":
+    "A clip would run into another one, or a clip right next to them would have no time left (the error names both).",
+  "ops.clip.slide.examples": [
+    {
+      title: "The color card a second earlier: the clip before it ends a second earlier",
+      params: { timeline: "main", clips: ["clip_idea"], by: "-1" },
+    },
+  ],
+
+  "ops.clip.roll.summary":
+    "moves the cut between two clips: one gets longer and the other shorter, together as long",
+  "ops.clip.roll.description":
+    "A roll edit, as video editors have it: the first of edges goes to at, and the edge of the clip right next to it on its track goes there too, so that one clip gets longer and the other shorter and the two take the same time as before; what each shows stays where it is on the timeline. The other edges move by as much as the first, each with the clip next to it, such as the sound linked to a picture where it ends elsewhere; list the linked clips there to keep them in step. An edge with no clip right next to it is trimmed as clip.trim does, and a clip in the way makes it fail with overlap. A clip cannot show from before its media starts nor past its end, nor get to no time. A join on the cut goes along, shorter if it has to be; one that has no room left is removed, and the result lists it.",
+  "ops.clip.roll.params.edges":
+    'Each {"clip":id,"edge":"start"|"end"}; the first goes to at, the others by as much.',
+  "ops.clip.roll.fields.edges.clip": "Clip id (aq_timeline_read).",
+  "ops.clip.roll.fields.edges.edge": '"start" or "end" of the clip.',
+  "ops.clip.roll.params.at": "Moment of the timeline the first edge goes to, seconds.",
+  "ops.clip.roll.errors.not-found": "There is no timeline or clip with this id.",
+  "ops.clip.roll.errors.invalid-value":
+    "A clip would start before 0, or its end would not be after its start.",
+  "ops.clip.roll.errors.source-start":
+    "A clip would start before its media starts (the error names it).",
+  "ops.clip.roll.errors.source-end":
+    "A clip would go on past the end of its media (the error names it).",
+  "ops.clip.roll.errors.overlap":
+    "An edge with nothing right next to it would run into another clip (the error names both).",
+  "ops.clip.roll.examples": [
+    {
+      title: "The cut between the animation and the color card half a second earlier",
+      params: {
+        timeline: "main",
+        edges: [{ clip: "clip_lottie", edge: "end" }],
+        at: "9.5",
+      },
+    },
+  ],
+
   "ops.clip.split.summary": "cuts a clip in two at a moment of the timeline",
   "ops.clip.split.description":
     "Cuts a clip in two at at, a moment of the timeline inside it. The first part keeps the id; the part after the cut is a new clip, with the id piece if given. Both parts keep all keyframes; the first keeps the enter transition and the second the exit one. Clips linked to it (same link) are cut at the same moment too, except those in keep, and the parts after the cut get a new link of their own.",

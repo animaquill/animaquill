@@ -85,7 +85,7 @@ describe("the table of texts", () => {
     const edit = (texts?: TextTable) => listOf(texts).find(({ name }) => name === "aq_edit");
     const names = edit();
     expect(names?.description).toContain(
-      "clip: source.replace, clip.add, clip.remove, clip.update, clip.move, clip.trim, clip.split",
+      "clip: source.replace, clip.add, clip.remove, clip.update, clip.move, clip.trim, clip.slip, clip.slide, clip.roll, clip.split",
     );
     expect(names?.description).not.toContain("clip.move {");
     const signatures = edit({ ...DEFAULT_TEXTS, "edit.list": "signatures" });

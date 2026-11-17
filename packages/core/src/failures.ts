@@ -85,6 +85,8 @@ export const InvalidValue = z.discriminatedUnion("rule", [
   z.strictObject({ rule: z.literal("moved-twice"), clip: z.string() }),
   /** The end of a clip has to come after its start. */
   z.strictObject({ rule: z.literal("end-before-start"), clip: z.string() }),
+  /** A clip would start before the timeline does. */
+  z.strictObject({ rule: z.literal("before-zero"), clip: z.string() }),
   /** A cut has to be inside the clip. */
   z.strictObject({ rule: z.literal("cut-outside"), clip: z.string(), at: z.string() }),
   /** Two keys at one moment. */

@@ -37,10 +37,11 @@ import type { Tool } from "./types.ts";
  * changes only the clips it lists, and took 66 656 (2026-11-17); 2026.12 added timeline.closeGap
  * and timeline.removeRange and gave clip.remove ripple and rippleTracks, and took 68 485
  * (2026-11-17); 2026.13 added timeline.openGap, gave clip.add and clip.move overlap "insert" with
- * rippleTracks, and clip.trim together, ripple and rippleTracks, and took 70 037 (2026-11-17). It is
- * a ceiling, so that the list does not grow unnoticed.
+ * rippleTracks, and clip.trim together, ripple and rippleTracks, and took 70 037 (2026-11-17);
+ * 2026.14 added clip.slip, clip.slide and clip.roll, and took 72 022 (2026-11-17). It is a ceiling,
+ * so that the list does not grow unnoticed.
  */
-const MOST_CHARACTERS = 70_200;
+const MOST_CHARACTERS = 72_200;
 
 const listOf = (tools: Iterable<Tool>) =>
   [...tools].map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));

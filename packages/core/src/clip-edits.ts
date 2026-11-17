@@ -141,7 +141,7 @@ function fitFreed(
  * Whether a clip shows something before its clock reads zero. A picture looks the same at any
  * moment. Everything else has a beginning, and anything unknown is treated that way to be safe.
  */
-const isTimeless = (clip: ClipState) =>
+export const isTimeless = (clip: ClipState): boolean =>
   clip.source.kind === "color" || clip.source.kind === "image" || clip.source.kind === "caption";
 
 function laterKeys(animation: Animation, by: Rational): Animation {
@@ -160,7 +160,12 @@ export const laterValue = (value: PropertyValue, by: Rational): PropertyValue =>
  * Moves everything on the clock of a clip later. Only needed when a clip grows past the point where
  * its clock reads zero, which is the one thing its clock cannot do by itself.
  */
-function moveClockForward(draft: Draft, timeline: string, clip: ClipState, by: Rational): void {
+export function moveClockForward(
+  draft: Draft,
+  timeline: string,
+  clip: ClipState,
+  by: Rational,
+): void {
   draft.note({ kind: "clock", clip: clip.id, by: formatTime(by) });
   const path = clipPath(timeline, clip.id);
   for (const [name, value] of Object.entries(clip.properties ?? {})) {
@@ -291,7 +296,7 @@ export function fitEffects(
   if (gone.length > 0) dropEffects(draft, timeline, clip, gone);
 }
 
-function setOffset(draft: Draft, timeline: string, clip: ClipState, offset: Rational): void {
+export function setOffset(draft: Draft, timeline: string, clip: ClipState, offset: Rational): void {
   const path = [...clipPath(timeline, clip.id), "offset"];
   if (compare(offset, ZERO) !== 0) draft.set(path, formatTime(offset));
   else if (clip.offset !== undefined) draft.delete(path);
@@ -385,6 +390,18 @@ export function fitTransitions(
   }
 }
 
+/** The joins in effect at the edges of every clip that has one, by clip. */
+export function joinsAtEdges(timeline: TimelineState): ReadonlyMap<string, JoinedEdges> {
+  const joined = new Map<string, { enter?: WholeJoin; exit?: WholeJoin }>();
+  const of = (clip: string) => joined.get(clip) ?? joined.set(clip, {}).get(clip)!;
+  for (const { join, place } of placedJoins(timeline).values()) {
+    if (place.kind !== "cut") continue;
+    of(join.to).enter = join;
+    of(join.from).exit = join;
+  }
+  return joined;
+}
+
 /** The joins in effect at the edges of a clip, by the edge they win over. */
 export function joinsAtEdgesOf(timeline: TimelineState, clip: string): JoinedEdges {
   const joined: { enter?: WholeJoin; exit?: WholeJoin } = {};
@@ -402,6 +419,8 @@ export function joinsAtEdgesOf(timeline: TimelineState, clip: string): JoinedEdg
  * at its edges go along with them, and get shorter when they no longer fit: see `fitTransitions`.
  * A join at an edge that moves no longer has its two clips next to each other, see `followJoins`,
  * unless a ripple brings them together again (`rippling`): then it gets shorter too where needed.
+ * An edit that trims several clips next to each other gives the joins at their edges as they were
+ * before any of them moved (`joinedBefore`): in between, the two sides of one are apart.
  */
 export function trimClip(
   draft: Draft,
@@ -409,10 +428,11 @@ export function trimClip(
   clip: ClipState,
   span: Span,
   rippling = false,
+  joinedBefore?: JoinedEdges,
 ): void {
   const path = clipPath(timeline, clip.id);
   const moved = subtract(span.from, clipStart(clip));
-  const { enter, exit } = joinsAtEdgesOf(timelineOf(draft, timeline), clip.id);
+  const { enter, exit } = joinedBefore ?? joinsAtEdgesOf(timelineOf(draft, timeline), clip.id);
   const startStays = compare(moved, ZERO) === 0;
   const endStays = compare(span.to, clipEnd(clip)) === 0;
   const joined = {
@@ -447,16 +467,25 @@ const nextTo = (from: ClipState | undefined, to: ClipState | undefined, track?: 
   (track === undefined || from.track === track) &&
   compare(clipEnd(from), clipStart(to)) === 0;
 
+/** A join whose clips are next to each other, with them, before a change: see `joinsTogether`. */
+export interface TogetherJoin {
+  readonly id: string;
+  readonly from: string;
+  readonly to: string;
+}
+
 /**
- * The joins whose clips are next to each other on their track, by id, before a change that can take
- * them apart: what `followJoins` looks at afterwards. A hidden side makes no difference to that.
+ * The joins whose clips are next to each other on their track, before a change that can take them
+ * apart: what `followJoins` looks at afterwards. A hidden side makes no difference to that.
  */
-export function joinsTogether(timeline: TimelineState): readonly string[] {
-  const together: string[] = [];
+export function joinsTogether(timeline: TimelineState): readonly TogetherJoin[] {
+  const together: TogetherJoin[] = [];
   for (const [id, state] of Object.entries(timeline.joins ?? {})) {
     const join = wholeJoin(id, state);
     const sides = join && [entryOf(timeline.clips, join.from), entryOf(timeline.clips, join.to)];
-    if (join && sides && nextTo(sides[0], sides[1], join.track)) together.push(id);
+    if (join && sides && nextTo(sides[0], sides[1], join.track)) {
+      together.push({ id, from: join.from, to: join.to });
+    }
   }
   return together;
 }
@@ -464,24 +493,32 @@ export function joinsTogether(timeline: TimelineState): readonly string[] {
 /**
  * What a change did to joins whose clips were next to each other: a join goes along while both of
  * them still are, also to another track, and goes in the same step when they no longer are. That
- * can be taken back as a whole. Joins that two windows or a file left between clips that are apart
- * are not about this: they stay as they are, doing nothing, until somebody fixes them. Says which
- * joins went.
+ * can be taken back as a whole. One that went because a clip of it got too short to have any of
+ * it, while both are still there, is gone as well. Joins that two windows or a file left between
+ * clips that are apart are not about this: they stay as they are, doing nothing, until somebody
+ * fixes them. Says which joins went.
  */
 export function followJoins(
   draft: Draft,
   timeline: string,
-  together: readonly string[],
+  together: readonly TogetherJoin[],
 ): readonly string[] {
   const gone: string[] = [];
   // The edges of the clips of each join: one that stays has to fit them as they are now, and where
   // one went, the transitions there work again and have to fit.
   const edges: (readonly [string, "start" | "end"])[] = [];
-  for (const id of together) {
+  for (const { id, from: wasFrom, to: wasTo } of together) {
     const now = timelineOf(draft, timeline);
-    // One that went along with a clip of it is no matter.
     const join = wholeJoin(id, entryOf(now.joins, id));
-    if (!join) continue;
+    if (!join) {
+      // One that went along with a clip of it is no matter; one that got too short is.
+      const sides = [entryOf(now.clips, wasFrom), entryOf(now.clips, wasTo)];
+      if (sides[0] && sides[1]) {
+        edges.push([wasFrom, "end"], [wasTo, "start"]);
+        gone.push(id);
+      }
+      continue;
+    }
     const from = entryOf(now.clips, join.from);
     const to = entryOf(now.clips, join.to);
     if (from) edges.push([from.id, "end"]);
@@ -494,7 +531,25 @@ export function followJoins(
     gone.push(id);
   }
   fitFreed(draft, timeline, edges);
-  return gone;
+  // Making one edge fit can leave a join on the other edge of a clip without any time, which goes
+  // then; the transitions where it was have to fit in turn.
+  for (;;) {
+    const now = timelineOf(draft, timeline);
+    const went = together.filter(
+      ({ id, from, to }) =>
+        !gone.includes(id) &&
+        !entryOf(now.joins, id) &&
+        entryOf(now.clips, from) !== undefined &&
+        entryOf(now.clips, to) !== undefined,
+    );
+    if (went.length === 0) return gone;
+    gone.push(...went.map(({ id }) => id));
+    fitFreed(
+      draft,
+      timeline,
+      went.flatMap(({ from, to }) => [[from, "end"] as const, [to, "start"] as const]),
+    );
+  }
 }
 
 /**

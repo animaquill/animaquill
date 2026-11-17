@@ -47,6 +47,8 @@ const TOUCHING = 1e-9;
 const INSERT_LINE = 2;
 /** Room around the frames that a clip out of step with its partner says. */
 const SYNC_PADDING = 3;
+/** Room on each side of the number of frames that a drag went. */
+const DELTA_PADDING = 5;
 const EDGE_HANDLE = 6;
 /** The mark of a clip with effects. */
 /** The band of effects along the bottom of a clip, and a thin one on a low track. */
@@ -396,6 +398,37 @@ export class TimelinePainter extends StagePainter {
     context.globalAlpha = 1;
     this.#paintAdding(model, preview.adding);
     this.#paintTransitionDrop(model, preview.transitionDrop);
+    this.#paintDelta(preview.delta);
+  }
+
+  /**
+   * How far a drag went, in frames, as "+12" over the middle of the clip it is about: above it where
+   * there is room, otherwise along its top. A number, not words.
+   */
+  #paintDelta(delta: Preview["delta"]): void {
+    if (!delta) return;
+    const editor = this.#editor;
+    const { context } = this;
+    const { frames } = delta;
+    const text = frames > 0 ? `+${frames}` : frames < 0 ? `\u2212${-frames}` : "0";
+    const scale = this.theme.fontScale;
+    context.save();
+    context.font = `600 ${11 * scale}px ${this.theme.font}`;
+    const width = context.measureText(text).width + DELTA_PADDING * 2;
+    const height = Math.round(16 * scale);
+    const rowTop = this.#rowTop(delta.row) + ROW_INSET;
+    const above = rowTop - height - 2;
+    const top = above >= RULER_HEIGHT ? above : rowTop + 2;
+    const middle = editor.xAt(delta.seconds);
+    const left = Math.min(Math.max(middle - width / 2, 2), editor.width - width - 2);
+    context.fillStyle = this.theme.selected;
+    context.beginPath();
+    context.roundRect(left, top, width, height, 3);
+    context.fill();
+    context.fillStyle = readableOn(this.theme.selected);
+    context.textBaseline = "middle";
+    context.fillText(text, left + DELTA_PADDING, top + height / 2 + 0.5);
+    context.restore();
   }
 
   /**

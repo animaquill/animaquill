@@ -80,8 +80,20 @@ const RESERVED = new Set(["tab", "shift+tab", "escape", "enter"]);
 
 export const isBindable = (combo: KeyCombo): boolean => !RESERVED.has(combo);
 
-/** Text boxes need these for themselves, whatever they are bound to. */
-const TEXT_EDITING = new Set(["mod+a", "mod+c", "mod+v", "mod+x", "mod+y", "mod+z", "mod+shift+z"]);
+/**
+ * Text boxes need these for themselves, whatever they are bound to: Option and the arrows move by
+ * words on a Mac, and Option with a comma or a full stop writes ≤ and ≥.
+ */
+const TEXT_EDITING = new Set([
+  "mod+a",
+  "mod+c",
+  "mod+v",
+  "mod+x",
+  "mod+y",
+  "mod+z",
+  "mod+shift+z",
+  ...["left", "right", "up", "down", ",", "."].flatMap((key) => [`alt+${key}`, `alt+shift+${key}`]),
+]);
 
 /** Whether a combination still means a shortcut while the focus is in a text box. */
 export function worksWhileTyping(combo: KeyCombo): boolean {

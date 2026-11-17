@@ -116,6 +116,12 @@ export const DIRECTIVE_OVERRIDES = {
   "ops.clip.move.summary": "move clips to other starts or tracks, in one step",
   "ops.clip.trim.summary":
     "move the start or end of a clip; what it shows stays in place; with ripple, what follows moves along",
+  "ops.clip.slip.summary":
+    "slip clips: keep where they are and how long, and show what is later or earlier in them",
+  "ops.clip.slide.summary":
+    "slide clips; the clips right next to them get longer and shorter to make up",
+  "ops.clip.roll.summary":
+    "move the cut between two clips; one gets longer, the other shorter, together as long",
   "ops.clip.split.summary": "cut a clip in two at a moment of the timeline",
   "ops.clip.link.summary": "link clips into a group, like the picture and sound of a video",
   "ops.clip.unlink.summary": "take clips out of their linked groups",

@@ -79,6 +79,7 @@ export const INVALID_VALUE_TEXTS: RuleTexts = {
   "track-settings": ({ trackKind }) => `${an(trackKind, true)} track does not have these settings.`,
   "moved-twice": ({ clip }) => `The same clip cannot be moved twice in one step: ${clip}.`,
   "end-before-start": ({ clip }) => `The end of clip ${clip} has to come after its start.`,
+  "before-zero": ({ clip }) => `Clip ${clip} would start before the timeline starts, at 0.`,
   "cut-outside": ({ clip, at }) => `${at} is not inside clip ${clip}: a cut has to be within it.`,
   "key-taken": ({ time }) => `There can be only one key at a time: two at ${time}.`,
   "key-moved-twice": ({ time }) => `The same key cannot be moved twice in one step: ${time}.`,

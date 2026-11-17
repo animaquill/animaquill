@@ -6,7 +6,7 @@ import {
   type ClipState,
   type CommandFailure,
 } from "@animaquill/core";
-import { formatTime, parseTime, toSeconds } from "@animaquill/schema";
+import { compare, formatTime, parseTime, toSeconds } from "@animaquill/schema";
 import type { SettingsStore } from "@animaquill/host";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryLibrary, memoryAddress, memoryWindow } from "../workbench/memory-library.ts";
@@ -5150,5 +5150,364 @@ describe("inserting and ripple trims", () => {
     expect(failure.params["clips"]).toEqual([{ id: "s" }]);
     onlyThese();
     expect([clip("a").duration, clip("b").start, clip("s").start]).toEqual(["3", "5", "2"]);
+  });
+});
+
+describe("nudging, slipping, sliding and rolling", () => {
+  function actionsOf(
+    editor: TimelineEditor,
+    keys: Partial<Parameters<typeof registerTimelineActions>[2]> = {},
+  ) {
+    const actions = new ActionRegistry();
+    registerTimelineActions(actions, editor, {
+      hasSelection: false,
+      canChangeSelection: false,
+      hasClipboard: false,
+      nudge: () => {},
+      deleteSelected: () => {},
+      copySelected: () => {},
+      cutSelected: () => {},
+      paste: () => {},
+      ...keys,
+    });
+    return {
+      run: (id: string) => actions.get(`timeline.${id}`)?.run(),
+      enabled: (id: string) => actions.get(`timeline.${id}`)?.enabled?.() !== false,
+      keys: (id: string) => actions.get(`timeline.${id}`)?.keys,
+    };
+  }
+  const edge = (pointer: Pointer, by: number): Pointer => ({ ...pointer, x: pointer.x + by });
+  /** A video of 10 seconds, with clips of it on the first video track. */
+  const withFilm = async () => {
+    const context = await setup();
+    context.store.execute({
+      type: "asset.add",
+      params: {
+        id: "film",
+        asset: { path: "assets/film", storage: "local", kind: "video", info: { duration: "10" } },
+      },
+    });
+    const film = (id: string, start: number, duration: number, offset = 0, extra = {}) =>
+      context.addClip(id, start, duration, context.video, {
+        source: { kind: "video", media: { asset: "film" } },
+        ...(offset > 0 && { offset: String(offset) }),
+        ...extra,
+      });
+    return { ...context, film };
+  };
+  const span = (clip: ClipState) => `${clip.start}+${clip.duration}@${clip.offset ?? "0"}`;
+
+  it("nudges the selected clips a frame or five with Alt and the arrows, in one step each", async () => {
+    const { editor, addClip, clip, store, commandFailed } = await setup();
+    addClip("a", 1, 2);
+    addClip("b", 4, 1);
+    const { run, keys, enabled } = actionsOf(editor);
+    expect([keys("nudgeLeft"), keys("nudgeRight")]).toEqual([["alt+left"], ["alt+right"]]);
+    expect([keys("nudgeLeftFive"), keys("nudgeRightFive")]).toEqual([
+      ["alt+shift+left"],
+      ["alt+shift+right"],
+    ]);
+    // Nothing selected: the key stays taken, so that the browser does not go back, and does nothing.
+    expect(enabled("nudgeLeft")).toBe(true);
+    run("nudgeLeft");
+    expect(clip("a").start).toBe("1");
+    editor.selectOnly("a");
+    run("nudgeRight");
+    expect(clip("a").start).toBe(formatTime(parseTime("31/30")));
+    run("nudgeRightFive");
+    expect(clip("a").start).toBe("1.2");
+    store.undo();
+    expect(clip("a").start).toBe(formatTime(parseTime("31/30")));
+    // In the way without overwriting: nothing moves, it lights up, and no message.
+    run("nudgeRightFive");
+    for (let index = 0; index < 30; index++) run("nudgeRight");
+    const stopped = clip("a").start;
+    expect(compare(parseTime(stopped), parseTime("2"))).toBeLessThanOrEqual(0);
+    run("nudgeRight");
+    expect(clip("a").start).toBe(stopped);
+    expect(editor.flashOf("blocked", "b")).toBeGreaterThan(0);
+    expect(commandFailed).not.toHaveBeenCalled();
+    // With overwriting, it covers what is there.
+    editor.toggleOverwriting();
+    run("nudgeRight");
+    expect(clip("a").start).not.toBe(stopped);
+    expect(clip("b").start).not.toBe("4");
+  });
+
+  it("nudges selected keys first, and a linked group together, apart from what is locked", async () => {
+    const { editor, addClip, clip, audio, lockedLeft, store } = await setup();
+    const nudged: number[] = [];
+    addClip("v", 1, 2, undefined, { link: "L" });
+    addClip("s", 1, 2, audio, { link: "L" });
+    const withKeys = actionsOf(editor, {
+      canChangeSelection: true,
+      nudge: (frames) => void nudged.push(frames),
+    });
+    editor.selectOnly("v");
+    withKeys.run("nudgeLeftFive");
+    expect(nudged).toEqual([-5]);
+    expect(clip("v").start).toBe("1");
+    const { run } = actionsOf(editor);
+    run("nudgeLeftFive");
+    expect([clip("v").start, clip("s").start]).toEqual(["5/6", "5/6"]);
+    store.execute({
+      type: "track.update",
+      params: { timeline: "main", track: audio, changes: { locked: true } },
+    });
+    run("nudgeRightFive");
+    expect([clip("v").start, clip("s").start]).toEqual(["1", "5/6"]);
+    expect(lockedLeft).toHaveBeenCalledWith(1);
+  });
+
+  it("moves clips to the next track of their kind with Alt up and down, and no further", async () => {
+    const { editor, addClip, clip, video, main, store } = await setup();
+    editor.addTrack("video");
+    const tracks = editor.model!.rows.filter(({ track }) => track.kind === "video");
+    const [top, bottom] = tracks.map(({ id }) => id);
+    expect(bottom).toBe(video);
+    addClip("a", 1, 2);
+    editor.selectOnly("a");
+    const { run, keys, enabled } = actionsOf(editor);
+    expect([keys("moveTrackUp"), keys("moveTrackDown")]).toEqual([["alt+up"], ["alt+down"]]);
+    run("moveTrackUp");
+    expect(clip("a").track).toBe(top);
+    run("moveTrackUp");
+    expect(clip("a").track).toBe(top);
+    run("moveTrackDown");
+    expect(clip("a").track).toBe(bottom);
+    store.undo();
+    expect(main().clips["a"]?.track).toBe(top);
+    editor.selectOnly("none");
+    expect(enabled("moveTrackUp")).toBe(false);
+  });
+
+  it("slips with Ctrl+Alt and the arrows: to the right shows what is earlier, up to the start of the file", async () => {
+    const { editor, film, clip, commandFailed } = await withFilm();
+    film("f", 1, 2, 0.1);
+    editor.selectOnly("f");
+    const { run, keys } = actionsOf(editor);
+    expect([keys("slipLeft"), keys("slipRight")]).toEqual([["mod+alt+left"], ["mod+alt+right"]]);
+    expect([keys("slipLeftFive"), keys("slipRightFive")]).toEqual([
+      ["mod+alt+shift+left"],
+      ["mod+alt+shift+right"],
+    ]);
+    run("slipLeft");
+    expect(span(clip("f"))).toBe(`1+2@${formatTime(parseTime("2/15"))}`);
+    run("slipRight");
+    expect(span(clip("f"))).toBe("1+2@0.1");
+    // Five frames earlier would be before the file starts.
+    run("slipRightFive");
+    expect(span(clip("f"))).toBe("1+2@0.1");
+    expect(editor.flashOf("blocked", "f")).toBeGreaterThan(0);
+    expect(commandFailed).not.toHaveBeenCalled();
+  });
+
+  it("slides with Alt and the comma or the full stop, between what is right next to it", async () => {
+    const { editor, addClip, clip } = await setup();
+    addClip("a", 0, 2);
+    addClip("b", 2, 1);
+    addClip("c", 3, 2);
+    editor.selectOnly("b");
+    const { run, keys } = actionsOf(editor);
+    expect([keys("slideLeft"), keys("slideRight")]).toEqual([["alt+,"], ["alt+."]]);
+    expect([keys("slideLeftFive"), keys("slideRightFive")]).toEqual([
+      ["alt+shift+,"],
+      ["alt+shift+."],
+    ]);
+    run("slideRightFive");
+    expect([clip("a").duration, clip("b").start, clip("c").start, clip("c").duration]).toEqual([
+      "13/6",
+      "13/6",
+      "19/6",
+      "11/6",
+    ]);
+    run("slideLeft");
+    expect(clip("b").start).toBe("32/15");
+  });
+
+  it("has keys for the three tools, and their own cursors over what they change", async () => {
+    const { editor, addClip, at } = await setup();
+    addClip("a", 0, 2);
+    addClip("b", 2, 2);
+    const { run, keys } = actionsOf(editor);
+    expect([keys("toolRoll"), keys("toolSlip"), keys("toolSlide")]).toEqual([
+      ["n"],
+      ["y"],
+      ["shift+y"],
+    ]);
+    run("toolRoll");
+    expect(editor.getSnapshot().tool).toBe("roll");
+    expect(editor.hover(edge(at(2), -2))).toMatch(/^url\("data:image\/svg\+xml,.+ew-resize$/);
+    expect(editor.hover(at(1))).toBe("default");
+    run("toolSlip");
+    const slip = editor.hover(at(1));
+    expect(slip).toMatch(/^url\(/);
+    run("toolSlide");
+    const slide = editor.hover(at(1));
+    expect(slide).toMatch(/^url\(/);
+    expect(slide).not.toBe(slip);
+  });
+
+  it("slips with the tool: the clip stays, what it shows follows the pointer, and the picture shows its ends", async () => {
+    const { editor, film, at, clip, store, audio, addClip } = await withFilm();
+    film("f", 2, 2, 1, { link: "L" });
+    addClip("s", 2, 2, audio, { link: "L", offset: "1" });
+    editor.setTool("slip");
+    editor.press(at(2.5));
+    editor.drag(at(2.3));
+    editor.drag(at(2.0));
+    // Half a second to the left shows half a second later in the file, the sound too.
+    expect(editor.held?.clips.get("f")).toEqual({ start: "2", duration: "2", offset: "1.5" });
+    expect(editor.held?.clips.get("s")).toEqual({ start: "2", duration: "2", offset: "1.5" });
+    expect(editor.held?.seconds).toBe(2);
+    expect(editor.preview?.delta?.frames).toBe(-15);
+    // Over the second half, the last frame.
+    editor.drag(at(3.5));
+    expect(editor.held?.seconds).toBeCloseTo(4 - 1 / 30, 6);
+    // Nothing is written yet.
+    expect(span(clip("f"))).toBe("2+2@1");
+    editor.drag(at(2.0));
+    editor.release(at(2.0));
+    expect([span(clip("f")), span(clip("s"))]).toEqual(["2+2@1.5", "2+2@1.5"]);
+    expect(editor.held).toBeUndefined();
+    store.undo();
+    expect(span(clip("f"))).toBe("2+2@1");
+    // It goes no further than the file: from its start.
+    editor.press(at(2.5));
+    editor.drag(at(9));
+    expect(editor.held?.clips.get("f")).toEqual({ start: "2", duration: "2" });
+    expect(editor.preview?.delta?.frames).toBe(30);
+    // Back where it started is no change.
+    const before = structuredClone(store.getState());
+    editor.drag(at(2.5));
+    editor.release(at(2.5));
+    expect(store.getState()).toEqual(before);
+    // With Alt, the picture alone.
+    editor.press({ ...at(2.5), alt: true });
+    editor.drag({ ...at(2.0), alt: true });
+    editor.release({ ...at(2.0), alt: true });
+    expect([span(clip("f")), span(clip("s"))]).toEqual(["2+2@1.5", "2+2@1"]);
+  });
+
+  it("slides with the tool between its neighbours, which snap and stop at what they have", async () => {
+    const { editor, film, at, clip, store, addClip } = await withFilm();
+    addClip("a", 0, 2);
+    film("b", 2, 1, 3);
+    film("c", 3, 2, 3);
+    editor.setTool("slide");
+    editor.press(at(2.5));
+    editor.drag(at(2.7));
+    editor.drag(at(3.0));
+    expect(editor.preview?.clips?.get("b")).toMatchObject({ start: 2.5, end: 3.5 });
+    expect(editor.preview?.clips?.get("a")).toMatchObject({ start: 0, end: 2.5 });
+    expect(editor.preview?.clips?.get("c")).toMatchObject({ start: 3.5, end: 5 });
+    expect(editor.held?.clips.get("c")).toEqual({ start: "3.5", duration: "1.5", offset: "3.5" });
+    expect(editor.held?.seconds).toBe(2.5);
+    expect(editor.preview?.delta?.frames).toBe(15);
+    editor.release(at(3.0));
+    expect([span(clip("a")), span(clip("b")), span(clip("c"))]).toEqual([
+      "0+2.5@0",
+      "2.5+1@3",
+      "3.5+1.5@3.5",
+    ]);
+    store.undo();
+    // Earlier, c starts no earlier than its file lets it: 3 seconds in.
+    editor.press(at(2.5));
+    editor.drag(at(0.5));
+    editor.drag(at(0.1));
+    expect(editor.preview?.clips?.get("b")?.start).toBeCloseTo(1 / 30, 6);
+    editor.release(at(0.1));
+    expect(span(clip("c"))).toBe(
+      `${formatTime(parseTime("31/30"))}+${formatTime(parseTime("119/30"))}@${formatTime(parseTime("31/30"))}`,
+    );
+  });
+
+  it("rolls the cut with the tool: one side longer, the other shorter, the partner by as much", async () => {
+    const { editor, addClip, at, clip, store, audio } = await setup();
+    addClip("a", 0, 2, undefined, { link: "L" });
+    addClip("b", 2, 2);
+    addClip("sa", 0, 3, audio, { link: "L" });
+    addClip("sb", 3, 2, audio);
+    editor.setTool("roll");
+    const grab = edge(at(2), -2);
+    editor.press(grab);
+    editor.drag(edge(at(2.2), -2));
+    editor.drag(edge(at(2.5), -2));
+    expect(editor.preview?.clips?.get("a")).toMatchObject({ start: 0, end: 2.5 });
+    expect(editor.preview?.clips?.get("b")).toMatchObject({ start: 2.5, end: 4 });
+    expect(editor.preview?.clips?.get("sb")).toMatchObject({ start: 3.5, end: 5 });
+    expect(editor.held?.seconds).toBe(2.5);
+    expect(editor.preview?.delta?.frames).toBe(15);
+    editor.release(edge(at(2.5), -2));
+    expect([span(clip("a")), span(clip("b")), span(clip("sa")), span(clip("sb"))]).toEqual([
+      "0+2.5@0",
+      "2.5+1.5@0.5",
+      "0+3.5@0",
+      "3.5+1.5@0.5",
+    ]);
+    store.undo();
+    expect([span(clip("a")), span(clip("b"))]).toEqual(["0+2@0", "2+2@0"]);
+    // The other side keeps a frame at least.
+    editor.press(grab);
+    editor.drag(edge(at(3), -2));
+    editor.drag(edge(at(9), -2));
+    expect(editor.preview?.clips?.get("b")?.start).toBeCloseTo(4 - 1 / 30, 6);
+    editor.release(edge(at(9), -2));
+    expect(clip("b").duration).toBe(formatTime(parseTime("1/30")));
+    store.undo();
+    // With Alt the picture alone, and back where it started is nothing.
+    const before = structuredClone(store.getState());
+    editor.press({ ...grab, alt: true });
+    editor.drag({ ...edge(at(2.5), -2), alt: true });
+    editor.drag({ ...grab, alt: true });
+    editor.release({ ...grab, alt: true });
+    expect(store.getState()).toEqual(before);
+  });
+
+  it("snaps the cut and the slid clip to the playhead, and leaves partners on locked tracks", async () => {
+    const { editor, addClip, at, clip, store, audio } = await setup();
+    addClip("a", 0, 2, undefined, { link: "L" });
+    addClip("b", 2, 2);
+    addClip("s", 0, 2, audio, { link: "L" });
+    addClip("t", 2, 2, audio);
+    store.execute({
+      type: "track.update",
+      params: { timeline: "main", track: audio, changes: { locked: true } },
+    });
+    editor.seek(frameAt(2.5, editor.model!.rate));
+    editor.setTool("roll");
+    editor.press(edge(at(2), -2));
+    editor.drag(edge(at(2.3), -2));
+    editor.drag(edge(at(2.52), -2));
+    expect(editor.preview?.snap).toBe(2.5);
+    editor.release(edge(at(2.52), -2));
+    expect([span(clip("a")), span(clip("b"))]).toEqual(["0+2.5@0", "2.5+1.5@0.5"]);
+    expect([span(clip("s")), span(clip("t"))]).toEqual(["0+2@0", "2+2@0"]);
+    store.undo();
+    editor.seek(frameAt(1.5, editor.model!.rate));
+    editor.setTool("slide");
+    editor.press(at(3));
+    editor.drag(at(2.8));
+    editor.drag(at(2.52));
+    expect(editor.preview?.snap).toBe(1.5);
+    editor.release(at(2.52));
+    expect([span(clip("a")), span(clip("b"))]).toEqual(["0+1.5@0", "1.5+2@0"]);
+  });
+
+  it("shows the picture at the edit while a ripple trim is dragged, and the playhead afterwards", async () => {
+    const { editor, addClip, at } = await setup();
+    addClip("a", 0, 4);
+    addClip("b", 4, 2);
+    editor.setTool("ripple");
+    editor.press(edge(at(4), -2));
+    editor.drag(edge(at(3.5), -2));
+    editor.drag(edge(at(3), -2));
+    expect(editor.held?.clips.get("a")).toEqual({ start: "0", duration: "3" });
+    // What moved along is not at the edit, so it can stay as it is for the picture.
+    expect(editor.held?.clips.has("b")).toBe(false);
+    expect(editor.held?.seconds).toBeCloseTo(3 - 1 / 30, 6);
+    expect(editor.preview?.delta?.frames).toBe(-30);
+    editor.release(edge(at(3), -2));
+    expect(editor.held).toBeUndefined();
   });
 });

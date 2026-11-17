@@ -170,6 +170,42 @@ export function registerTimelineActions(
     group: "clipboard",
   });
 
+  // Nudging clips by frames, with the keys of Premiere. Alt+Left is Back in a browser on Windows:
+  // it stays taken as long as there is a timeline, also with nothing selected, so that a slip of
+  // the hand does not leave the page (Chrome and Firefox give it to the page first, tried with real
+  // key presses, 2026-11-17). Selected keys go first, as with the arrows alone.
+  const nudge = (frames: number) => () => {
+    if (keys.canChangeSelection) keys.nudge(frames);
+    else editor.nudge(frames);
+  };
+  add("nudgeLeft", nudge(-1), { keys: ["alt+left"], repeats: true, group: "nudge" });
+  add("nudgeRight", nudge(1), { keys: ["alt+right"], repeats: true, group: "nudge" });
+  add("nudgeLeftFive", nudge(-5), { keys: ["alt+shift+left"], repeats: true });
+  add("nudgeRightFive", nudge(5), { keys: ["alt+shift+right"], repeats: true });
+  const canNudge = () => hasTimeline() && editor.canNudge;
+  add("moveTrackUp", () => editor.moveToTrack(-1), {
+    keys: ["alt+up"],
+    enabled: canNudge,
+    group: "nudge",
+  });
+  add("moveTrackDown", () => editor.moveToTrack(1), {
+    keys: ["alt+down"],
+    enabled: canNudge,
+    group: "nudge",
+  });
+  for (const [id, run, key, group] of [
+    ["slipLeft", () => editor.slip(-1), "mod+alt+left", "nudge"],
+    ["slipRight", () => editor.slip(1), "mod+alt+right", "nudge"],
+    ["slipLeftFive", () => editor.slip(-5), "mod+alt+shift+left", undefined],
+    ["slipRightFive", () => editor.slip(5), "mod+alt+shift+right", undefined],
+    ["slideLeft", () => editor.slide(-1), "alt+,", "nudge"],
+    ["slideRight", () => editor.slide(1), "alt+.", "nudge"],
+    ["slideLeftFive", () => editor.slide(-5), "alt+shift+,", undefined],
+    ["slideRightFive", () => editor.slide(5), "alt+shift+.", undefined],
+  ] as const) {
+    add(id, run, { keys: [key], repeats: true, enabled: canNudge, ...(group && { group }) });
+  }
+
   add("toolSelect", () => editor.setTool("select"), {
     keys: ["v"],
     selected: () => editor.getSnapshot().tool === "select",
@@ -183,6 +219,23 @@ export function registerTimelineActions(
   add("toolRipple", () => editor.setTool("ripple"), {
     keys: ["b"],
     selected: () => editor.getSnapshot().tool === "ripple",
+    group: "tools",
+  });
+  // Roll and slip with the keys of Premiere. Its key for slide is U, which shows properties here:
+  // Shift+Y goes with slip.
+  add("toolRoll", () => editor.setTool("roll"), {
+    keys: ["n"],
+    selected: () => editor.getSnapshot().tool === "roll",
+    group: "tools",
+  });
+  add("toolSlip", () => editor.setTool("slip"), {
+    keys: ["y"],
+    selected: () => editor.getSnapshot().tool === "slip",
+    group: "tools",
+  });
+  add("toolSlide", () => editor.setTool("slide"), {
+    keys: ["shift+y"],
+    selected: () => editor.getSnapshot().tool === "slide",
     group: "tools",
   });
   add("toggleSnapping", () => editor.toggleSnapping(), { keys: ["s"], group: "tools" });

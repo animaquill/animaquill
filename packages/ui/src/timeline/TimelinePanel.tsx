@@ -12,7 +12,6 @@ import {
   Replace,
   Scissors,
   SquareSplitHorizontal,
-  UnfoldHorizontal,
   Volume2,
   VolumeX,
   ZoomIn,
@@ -61,6 +60,7 @@ import { TRANSITION_DRAG_TYPE, transitionDrag } from "./transition-drag.ts";
 import { transitionName } from "./transition-names.ts";
 import { pointerOf, useStage } from "./stage.ts";
 import { ToolButton } from "./ToolButton.tsx";
+import { RippleToolIcon, RollToolIcon, SlideToolIcon, SlipToolIcon } from "./ToolIcons.tsx";
 import {
   MarkerBubble,
   MarkerList,
@@ -151,9 +151,33 @@ function Toolbar({ editor }: { editor: TimelineEditor }) {
               name={t("timeline.action.toolRipple")}
               usage={t("timeline.help.toolRipple")}
               action="toolRipple"
-              icon={UnfoldHorizontal}
+              icon={RippleToolIcon}
               pressed={tool === "ripple"}
               onClick={() => editor.setTool("ripple")}
+            />
+            <ToolButton
+              name={t("timeline.action.toolRoll")}
+              usage={t("timeline.help.toolRoll")}
+              action="toolRoll"
+              icon={RollToolIcon}
+              pressed={tool === "roll"}
+              onClick={() => editor.setTool("roll")}
+            />
+            <ToolButton
+              name={t("timeline.action.toolSlip")}
+              usage={t("timeline.help.toolSlip")}
+              action="toolSlip"
+              icon={SlipToolIcon}
+              pressed={tool === "slip"}
+              onClick={() => editor.setTool("slip")}
+            />
+            <ToolButton
+              name={t("timeline.action.toolSlide")}
+              usage={t("timeline.help.toolSlide")}
+              action="toolSlide"
+              icon={SlideToolIcon}
+              pressed={tool === "slide"}
+              onClick={() => editor.setTool("slide")}
             />
           </div>
           <div className={styles.zone} role="group" aria-label={t("timeline.zone.switches")}>

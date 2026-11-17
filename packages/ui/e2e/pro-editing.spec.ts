@@ -1108,3 +1108,176 @@ test.describe("inserting and ripple trims in light colours", () => {
     await page.keyboard.up("Shift");
   });
 });
+
+/* Nudging, slip, slide and roll (pro-editing P5 of AnimaQuill Cloud). */
+
+const preview = (page: Page) => content(page, "preview").locator("iframe");
+const startOf = async (what: Locator) =>
+  /，(\S+) 到 /.exec((await what.getAttribute("aria-label")) ?? "")?.[1];
+
+/** What the preview shows, as pixels, once it has stopped changing. */
+async function settledPicture(page: Page): Promise<Buffer> {
+  let last = await preview(page).screenshot();
+  await expect
+    .poll(async () => {
+      await page.waitForTimeout(150);
+      const now = await preview(page).screenshot();
+      const same = now.equals(last);
+      last = now;
+      return same;
+    })
+    .toBe(true);
+  return last;
+}
+
+/** The toolbar and the preview with the tracks, for people to look at. */
+async function shootWindow(page: Page, name: string) {
+  await page.screenshot({ path: test.info().outputPath(name) });
+}
+
+test.describe("nudging", () => {
+  test("Alt+Right moves the selected clips a frame on, and the browser does not go back", async ({
+    page,
+  }) => {
+    await placeVideo(page);
+    // Somewhere to go back to, as people come from another page.
+    const url = page.url();
+    await page.evaluate(() => history.pushState({ step: 2 }, "", location.href));
+    await expect(picture(page)).toHaveAttribute("aria-selected", "true");
+    expect(await startOf(picture(page))).toBe("0:00/00");
+    await page.keyboard.press("Alt+ArrowRight");
+    await expect.poll(() => startOf(picture(page))).toBe("0:00/01");
+    expect(await startOf(sound(page))).toBe("0:00/01");
+    await page.keyboard.press("Alt+Shift+ArrowRight");
+    await expect.poll(() => startOf(picture(page))).toBe("0:00/06");
+    await page.keyboard.press("Alt+ArrowLeft");
+    await expect.poll(() => startOf(picture(page))).toBe("0:00/05");
+    // With nothing selected it does nothing, and the page is still the page.
+    await page.keyboard.press("Escape");
+    await page.mouse.click((await rightOf(picture(page))) + 200, (await middleOf(picture(page))).y);
+    await page.keyboard.press("Alt+ArrowLeft");
+    await page.waitForTimeout(300);
+    expect(page.url()).toBe(url);
+    await expect(stage(page)).toBeVisible();
+    expect(await startOf(picture(page))).toBe("0:00/05");
+    await page.keyboard.press("Control+z");
+    await expect.poll(() => startOf(picture(page))).toBe("0:00/06");
+  });
+
+  test("stops at the next clip with overwriting off, and covers it with overwriting on", async ({
+    page,
+  }) => {
+    await twoVideos(page, 3);
+    const next = await startOf(picture(page).nth(1));
+    await clickOn(page, picture(page).nth(0));
+    for (let index = 0; index < 3; index++) await page.keyboard.press("Alt+ArrowRight");
+    await expect.poll(() => startOf(picture(page).nth(0))).toBe("0:00/03");
+    // Touching the next one: one more is in the way, and only lights up.
+    await page.keyboard.press("Alt+ArrowRight");
+    await expect(picture(page).nth(1)).toHaveAttribute("data-blocked", "true");
+    expect(await startOf(picture(page).nth(0))).toBe("0:00/03");
+    expect(await startOf(picture(page).nth(1))).toBe(next);
+    await switchNamed(page, "覆盖模式").click();
+    await stage(page).focus();
+    await page.keyboard.press("Alt+ArrowRight");
+    await expect.poll(() => startOf(picture(page).nth(0))).toBe("0:00/04");
+    // What was under it went: the second video starts a frame later now.
+    await expect.poll(() => startOf(picture(page).nth(1))).not.toBe(next);
+    await switchNamed(page, "覆盖模式").click();
+  });
+});
+
+test.describe("slip, slide and roll", () => {
+  test("are tools next to ripple, with their keys", async ({ page }) => {
+    for (const [name, key] of [
+      ["滚动编辑工具", "KeyN"],
+      ["滑移工具", "KeyY"],
+      ["滑动工具", "Shift+KeyY"],
+    ] as const) {
+      await page.keyboard.press(key);
+      await expect(toolbar(page).getByRole("button", { name, exact: true })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    }
+    await shootToolbar(page, "tools-dark.png");
+    await page.keyboard.press("KeyV");
+  });
+
+  test("the slip tool shows the frame at the edit while it drags, and the playhead after", async ({
+    page,
+  }) => {
+    await placeVideo(page);
+    // Half a second of the two: room to slip either way.
+    await page.keyboard.press("Home");
+    await stepRight(page, 15);
+    await page.keyboard.press("KeyW");
+    await page.keyboard.press("Home");
+    await stepRight(page, 10);
+    const before = await settledPicture(page);
+    await page.keyboard.press("KeyY");
+    const from = await middleOf(picture(page));
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x - 20, from.y, { steps: 4 });
+    await page.mouse.move(from.x - 40, from.y, { steps: 4 });
+    const during = await settledPicture(page);
+    expect(during.equals(before)).toBe(false);
+    await shootWindow(page, "slip-drag-dark.png");
+    await page.mouse.up();
+    const after = await settledPicture(page);
+    expect(after.equals(during)).toBe(false);
+    // The playhead again: the same as going there afresh.
+    await page.keyboard.press("ArrowRight");
+    await page.keyboard.press("ArrowLeft");
+    expect((await settledPicture(page)).equals(after)).toBe(true);
+    await page.keyboard.press("Control+z");
+    expect((await settledPicture(page)).equals(before)).toBe(true);
+  });
+
+  test("the roll tool moves the cut between two videos, and one undo takes it back", async ({
+    page,
+  }) => {
+    await twoVideos(page, 0);
+    // The first video a second and a half long: room to roll the cut later.
+    await page.keyboard.press("Home");
+    await stepRight(page, 45);
+    await page.keyboard.press("KeyW");
+    const cut = await leftOf(picture(page).nth(1));
+    expect(await rightOf(picture(page).nth(0))).toBeCloseTo(cut, 0);
+    await page.keyboard.press("KeyN");
+    const { y } = await middleOf(picture(page).nth(0));
+    await page.mouse.move(cut - 2, y);
+    await page.mouse.down();
+    await page.mouse.move(cut + 10, y, { steps: 4 });
+    await page.mouse.move(cut + 30, y, { steps: 4 });
+    await page.mouse.up();
+    await expect.poll(() => leftOf(picture(page).nth(1))).toBeGreaterThan(cut + 20);
+    expect(await rightOf(picture(page).nth(0))).toBeCloseTo(await leftOf(picture(page).nth(1)), 0);
+    // The sound of both goes along.
+    await expect.poll(() => leftOf(sound(page).nth(1))).toBeGreaterThan(cut + 20);
+    await page.keyboard.press("Control+z");
+    await expect.poll(() => leftOf(picture(page).nth(1))).toBeCloseTo(cut, 0);
+    await expect.poll(() => leftOf(sound(page).nth(1))).toBeCloseTo(cut, 0);
+  });
+});
+
+test.describe("slip, slide and roll in light colours", () => {
+  test.use({ colorScheme: "light" });
+
+  test("look as they do in the dark", async ({ page }) => {
+    await placeVideo(page);
+    await page.keyboard.press("Home");
+    await stepRight(page, 15);
+    await page.keyboard.press("KeyW");
+    await page.keyboard.press("KeyY");
+    await shootToolbar(page, "tools-light.png");
+    const from = await middleOf(picture(page));
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(from.x - 40, from.y, { steps: 6 });
+    await settledPicture(page);
+    await shootWindow(page, "slip-drag-light.png");
+    await page.mouse.up();
+  });
+});

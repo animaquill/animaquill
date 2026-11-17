@@ -15,6 +15,7 @@ import {
   Time,
   Track,
   Transition,
+  TIME_PATTERN,
   ZERO,
   add,
   canHold,
@@ -27,6 +28,7 @@ import {
   isSupported,
   mediaOfTrack,
   newId,
+  normalizeTime,
   parseTime,
   subtract,
 } from "@animaquill/schema";
@@ -95,6 +97,7 @@ import {
 } from "./model.ts";
 import { STORAGE, type Origin } from "./origin.ts";
 import { moveBoundary, removeSection, splitSection } from "./section-edits.ts";
+import { rollEdges, slideClips, slipClips } from "./slip-edits.ts";
 import {
   checkSpan,
   checkTracks,
@@ -331,6 +334,12 @@ const Range = z.strictObject({ from: Time, to: Time });
  * that people locked, as video editors do with sync lock.
  */
 const RippleTracks = z.array(Id).min(1).optional();
+
+/** A length of time either way: later for more than zero, earlier for less. */
+const Shift = z
+  .string()
+  .regex(TIME_PATTERN, '时间要写成字符串，单位是秒，往前是负数，比如 "-0.5" 或 "1/30"')
+  .overwrite(normalizeTime);
 
 const trackPath = (timeline: string, track: string) => ["timelines", timeline, "tracks", track];
 
@@ -1821,6 +1830,60 @@ export const OPERATIONS = [
         "overlap",
         "ripple-blocked",
       ],
+    },
+  ),
+
+  /**
+   * Slip, as video editors have it: the clips stay where they are and as long, and what they show
+   * goes by `by` within them. Linked clips are listed by whoever slips, see `slipClips`.
+   */
+  define(
+    "clip.slip",
+    "滑移：片段的位置和长短不变，里面的内容整体前后滑动 by（改 offset），关键帧随内容一起滑。",
+    z.strictObject({ timeline: Id, clips: DistinctClips.min(1), by: Shift }),
+    (draft, { timeline, clips, by }) => {
+      slipClips(draft, timeline, clips, parseTime(by));
+    },
+    {
+      group: "clip",
+      result: Nothing,
+      failures: ["not-found", "source-start", "source-end"],
+    },
+  ),
+
+  /**
+   * Slide, as video editors have it: the clips move by `by`, and their neighbours on each track give
+   * and take that time, see `slideClips`.
+   */
+  define(
+    "clip.slide",
+    "滑动：片段整体移动 by，同一轨道上紧贴着的前一个片段修结尾、后一个修开头，合起来的范围不变；一侧是空隙时空隙变长变短。",
+    z.strictObject({ timeline: Id, clips: DistinctClips.min(1), by: Shift }),
+    (draft, { timeline, clips, by }) => apart(slideClips(draft, timeline, clips, parseTime(by))),
+    {
+      group: "clip",
+      result: MaybeApart,
+      failures: ["not-found", "invalid-value", "source-start", "source-end", "overlap"],
+    },
+  ),
+
+  /**
+   * A roll edit, as video editors have it: an edge and the edge right next to it move together, so
+   * that the two clips are as long together as before, see `rollEdges`.
+   */
+  define(
+    "clip.roll",
+    "滚动编辑：把片段的一条边和紧贴着它的邻居的那条边一起移到 at，两段总长不变；edges 里其余的边移同样的量；没有紧贴的邻居时就是普通修剪。",
+    z.strictObject({
+      timeline: Id,
+      edges: z.array(z.strictObject({ clip: Id, edge: z.enum(["start", "end"]) })).min(1),
+      at: Time,
+    }),
+    (draft, { timeline, edges, at }) => apart(rollEdges(draft, timeline, edges, parseTime(at))),
+    {
+      group: "clip",
+      result: MaybeApart,
+      failures: ["not-found", "invalid-value", "source-start", "source-end", "overlap"],
     },
   ),
 

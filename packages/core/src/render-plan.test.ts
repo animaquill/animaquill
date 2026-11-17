@@ -84,6 +84,36 @@ describe("the render plan", () => {
   });
 });
 
+describe("a render plan with clips that a drag holds", () => {
+  it("draws them where the drag has them, and keeps the project and every other layer as it is", () => {
+    const { addClip, plan, store, lower } = setup();
+    addClip("c", lower, { offset: "1/2", source: { kind: "video", media: { asset: "a" } } });
+    addClip("other", "upper", red);
+    const before = plan();
+    const held = new Map([["c", { start: "2", duration: "1", offset: "1" }]]);
+    const holding = buildRenderPlan(store.getState(), "main", undefined, held);
+    expect(holding?.layers.find(({ id }) => id === "c")).toMatchObject({
+      start: 2,
+      end: 3,
+      offset: 1,
+    });
+    expect(holding?.layers.find(({ id }) => id === "other")).toBe(
+      before.layers.find(({ id }) => id === "other"),
+    );
+    expect(store.getState().timelines["main"]?.clips["c"]).toMatchObject({ start: "1" });
+    // Without an offset there, the clip starts at the start of its file.
+    const none = buildRenderPlan(
+      store.getState(),
+      "main",
+      undefined,
+      new Map([["c", { start: "1", duration: "2" }]]),
+    );
+    expect(none?.layers.find(({ id }) => id === "c")?.offset).toBe(0);
+    // Let go, the plan is what it was: the same layers, so nothing is sent again.
+    expect(samePlan(plan(), before)).toBe(true);
+  });
+});
+
 describe("a layer of the render plan", () => {
   const keys = (...times: readonly string[]): PropertyValue => ({
     keys: times.map((time, index) => ({ time, value: index * 10 })),

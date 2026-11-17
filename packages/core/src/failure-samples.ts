@@ -23,6 +23,7 @@ const RULES: { readonly [R in InvalidValue["rule"]]: Extract<InvalidValue, { rul
   "track-settings": { rule: "track-settings", trackKind: "video" },
   "moved-twice": { rule: "moved-twice", clip: "c1" },
   "end-before-start": { rule: "end-before-start", clip: "c1" },
+  "before-zero": { rule: "before-zero", clip: "c1" },
   "cut-outside": { rule: "cut-outside", clip: "c1", at: "9" },
   "key-taken": { rule: "key-taken", time: "1" },
   "key-moved-twice": { rule: "key-moved-twice", time: "1" },
