@@ -41,7 +41,8 @@ export const PARAM_TEXTS = {
   "params.properties":
     "Properties by path: values, or keyframes (aq_object_read lists a scene's paths).",
   "params.effects": "Effects, in the order they work.",
-  "params.overlap": '"overwrite" cuts away clips in the way; default "reject" fails.',
+  "params.overlap":
+    '"overwrite" cuts away clips in the way; "insert" moves what follows on to make room; default "reject" fails.',
   "params.clips": "Clip ids (aq_timeline_read).",
   "params.type": 'Kind of transition or effect, such as "fade" or "blur".',
   "params.transition": "Id of a transition of the project, instead of type.",
@@ -56,7 +57,7 @@ export const PARAM_TEXTS = {
   "params.at": "Moment of the timeline to cut at, seconds.",
   "params.piece": "Id for the part after the cut; leave out for a new one.",
   "params.keep": "Linked clip ids that stay whole.",
-  "params.rippleTracks": "Track ids (aq_timeline_read) whose clips move back; without, all tracks.",
+  "params.rippleTracks": "Track ids (aq_timeline_read) whose clips move; without, all tracks.",
   "params.edits":
     'Each {"owner":{"clip":id},"path",…,"op"}: "set" a value or keyframes, "clear", "write" at a time, or "setKey", "removeKey", "moveKey", "putKeys", "setInterp".',
   "params.renames": 'Each {"owner":{"clip":id},"from","to"}; paths may end in ".*".',

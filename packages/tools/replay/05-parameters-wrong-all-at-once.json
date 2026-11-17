@@ -35,8 +35,8 @@
         "lines": [
           "error invalid-params in operations[0] (clip.move)",
           "clips[0].start: expected a time: seconds as a string, such as \"12.5\", got the number 12",
-          "overlap: expected \"reject\" or \"overwrite\", got the string \"replace\"",
-          "shape: clip.move {timeline, clips:[{clip, start?, track?}], overlap?}",
+          "overlap: expected \"reject\" or \"overwrite\" or \"insert\", got the string \"replace\"",
+          "shape: clip.move {timeline, clips:[{clip, start?, track?}], overlap?, rippleTracks?:[string]}",
           "error invalid-params in operations[1] (marker.add)",
           "unknown parameter \"colour\"; did you mean \"color\"?",
           "nothing was written"

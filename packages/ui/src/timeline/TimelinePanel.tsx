@@ -1,4 +1,5 @@
 import {
+  BetweenVerticalStart,
   Eye,
   EyeOff,
   FoldHorizontal,
@@ -11,6 +12,7 @@ import {
   Replace,
   Scissors,
   SquareSplitHorizontal,
+  UnfoldHorizontal,
   Volume2,
   VolumeX,
   ZoomIn,
@@ -115,10 +117,8 @@ function useTrackName() {
 
 function Toolbar({ editor }: { editor: TimelineEditor }) {
   const { t } = useTranslation();
-  const { tool, snapping, overwriting, multiSelecting, headerWidth } = useSyncExternalStore(
-    editor.subscribe,
-    editor.getSnapshot,
-  );
+  const { tool, snapping, overwriting, inserting, multiSelecting, headerWidth } =
+    useSyncExternalStore(editor.subscribe, editor.getSnapshot);
   const zoom = useEditorView(editor, () => editor.zoomLevel);
   const canSplit = useEditorView(editor, () => editor.canSplit);
 
@@ -147,6 +147,14 @@ function Toolbar({ editor }: { editor: TimelineEditor }) {
               pressed={tool === "razor"}
               onClick={() => editor.setTool("razor")}
             />
+            <ToolButton
+              name={t("timeline.action.toolRipple")}
+              usage={t("timeline.help.toolRipple")}
+              action="toolRipple"
+              icon={UnfoldHorizontal}
+              pressed={tool === "ripple"}
+              onClick={() => editor.setTool("ripple")}
+            />
           </div>
           <div className={styles.zone} role="group" aria-label={t("timeline.zone.switches")}>
             <ToolButton
@@ -166,6 +174,15 @@ function Toolbar({ editor }: { editor: TimelineEditor }) {
               pressed={overwriting}
               isSwitch
               onClick={() => editor.toggleOverwriting()}
+            />
+            <ToolButton
+              name={t("timeline.inserting")}
+              usage={t("timeline.help.inserting")}
+              action="toggleInserting"
+              icon={BetweenVerticalStart}
+              pressed={inserting}
+              isSwitch
+              onClick={() => editor.toggleInserting()}
             />
             <ToolButton
               name={t("timeline.multiSelecting")}

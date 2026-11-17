@@ -4835,3 +4835,269 @@ describe("ripple edits", () => {
     expect(clip("w").start).toBe("5");
   });
 });
+
+describe("inserting and ripple trims", () => {
+  function actionsOf(editor: TimelineEditor) {
+    const actions = new ActionRegistry();
+    const noKeys = {
+      hasSelection: false,
+      canChangeSelection: false,
+      hasClipboard: false,
+      nudge: () => {},
+      deleteSelected: () => {},
+      copySelected: () => {},
+      cutSelected: () => {},
+      paste: () => {},
+    };
+    registerTimelineActions(actions, editor, noKeys);
+    return {
+      run: (id: string) => actions.get(`timeline.${id}`)?.run(),
+      enabled: (id: string) => actions.get(`timeline.${id}`)?.enabled?.() !== false,
+      keys: (id: string) => actions.get(`timeline.${id}`)?.keys,
+    };
+  }
+  const edge = (pointer: Pointer, by: number): Pointer => ({ ...pointer, x: pointer.x + by });
+  const seekTo = (editor: TimelineEditor, seconds: number) =>
+    editor.seek(frameAt(seconds, editor.model?.rate as never));
+
+  it("has a switch for inserting, which is never on with overwriting, and is remembered", async () => {
+    const { editor, saved } = await setup();
+    const { keys, run } = actionsOf(editor);
+    expect(keys("toggleInserting")).toBeUndefined();
+    editor.toggleOverwriting();
+    run("toggleInserting");
+    expect(editor.getSnapshot()).toMatchObject({ inserting: true, overwriting: false });
+    editor.toggleOverwriting();
+    expect(editor.getSnapshot()).toMatchObject({ inserting: false, overwriting: true });
+    editor.toggleInserting();
+    await vi.runAllTimersAsync();
+    expect(saved.get("timeline")).toMatchObject({ inserting: true, overwriting: false });
+  });
+
+  it("inserts while Shift is held during a drag, and goes back to the free place when it is let go", async () => {
+    const { editor, addClip, at, clip, audio, store } = await setup();
+    addClip("a", 0, 2);
+    addClip("b", 2, 2);
+    addClip("c", 4, 2);
+    addClip("s", 3, 2, audio);
+    const from = at(1);
+    editor.press(from);
+    editor.drag({ ...at(2.5), shift: true });
+    // Where c lands, what follows moves on, on every track; b and the sound are cut at the moment.
+    expect(editor.preview?.shift).toMatchObject({ at: 1.5, by: 2 });
+    expect(editor.preview?.shift?.rows.has(audio)).toBe(true);
+    editor.drag({ ...at(2.5), shift: false });
+    expect(editor.preview?.shift).toBeUndefined();
+    editor.drag({ ...at(4.5), shift: true });
+    editor.release({ ...at(4.5), shift: true });
+    // a lands at 3.5 inside b, which is cut there; where a was stays empty.
+    expect(clip("a").start).toBe("3.5");
+    expect([clip("b").start, clip("b").duration, clip("c").start]).toEqual(["2", "1.5", "6"]);
+    expect(clip("s").duration).toBe("0.5");
+    store.undo();
+    expect([clip("a").start, clip("c").start, clip("c").duration]).toEqual(["0", "4", "2"]);
+  });
+
+  it("inserts with the switch on, without Shift", async () => {
+    const { editor, addClip, at, clip, drag } = await setup();
+    addClip("a", 0, 2);
+    addClip("b", 3, 2);
+    editor.toggleInserting();
+    drag(at(1), at(4));
+    expect([clip("a").start, clip("b").start]).toEqual(["3", "5"]);
+  });
+
+  it("pastes in at the playhead with Ctrl+Shift+V, pushing what follows and cutting what is across", async () => {
+    const { editor, addClip, clip, main, store } = await setup();
+    addClip("a", 0, 4);
+    addClip("b", 4, 2);
+    const { keys, run, enabled } = actionsOf(editor);
+    expect(keys("pasteInsert")).toEqual(["mod+shift+v"]);
+    expect(enabled("pasteInsert")).toBe(false);
+    editor.selectOnly("b");
+    editor.copySelection();
+    seekTo(editor, 1);
+    run("pasteInsert");
+    const pieces = Object.values(main().clips)
+      .map(({ start, duration }) => `${start}+${duration}`)
+      .toSorted();
+    expect(pieces).toEqual(["0+1", "1+2", "3+3", "6+2"]);
+    expect(clip("b").start).toBe("6");
+    store.undo();
+    expect(Object.keys(main().clips).toSorted()).toEqual(["a", "b"]);
+  });
+
+  describe("what is chosen in the assets tab", () => {
+    const withFilm = async () => {
+      const context = await setup();
+      context.store.execute({
+        type: "asset.add",
+        params: {
+          id: "film",
+          asset: {
+            path: "assets/film",
+            storage: "local",
+            name: "film",
+            kind: "video",
+            info: { duration: "4", hasAudio: true },
+          },
+        },
+      });
+      return context;
+    };
+
+    it("goes in at the playhead with , and over what is there with .", async () => {
+      const { editor, addClip, clip, main } = await withFilm();
+      addClip("a", 0, 6);
+      const { run, enabled, keys } = actionsOf(editor);
+      expect([keys("insertChosen"), keys("overwriteChosen")]).toEqual([[","], ["."]]);
+      expect(enabled("insertChosen")).toBe(false);
+      editor.chooseMedia({ kind: "asset", id: "film" });
+      expect(enabled("insertChosen")).toBe(true);
+      seekTo(editor, 2);
+      run("insertChosen");
+      const film = () =>
+        Object.values(main().clips).filter(({ source }) => source.kind !== "color");
+      expect(film().map(({ start, duration }) => `${start}+${duration}`)).toEqual(["2+4", "2+4"]);
+      expect(clip("a").duration).toBe("2");
+      expect(editor.frame).toBe(frameAt(6, editor.model?.rate as never));
+      run("overwriteChosen");
+      // Over the part of a after the cut, which went to 6.
+      expect(film()).toHaveLength(4);
+      expect(Object.values(main().clips).filter(({ start }) => start === "6")).toHaveLength(2);
+    });
+
+    it("goes in where it is dropped with Shift, or anywhere with the switch on", async () => {
+      const { editor, addClip, clip, main, audio } = await withFilm();
+      addClip("a", 0, 6);
+      addClip("s", 1, 4, audio);
+      editor.addAsset("film", { seconds: 2, insert: true });
+      expect([clip("a").duration, clip("s").duration]).toEqual(["2", "1"]);
+      const after = Object.values(main().clips).filter(({ start }) => start === "6");
+      expect(after).toHaveLength(2);
+      editor.toggleInserting();
+      seekTo(editor, 0);
+      editor.addAsset("film");
+      expect(clip("a").start).toBe("4");
+    });
+
+    it("goes from in for as long as in to out, or the file where that is shorter, and uses up the marks", async () => {
+      const { editor, addClip, main } = await withFilm();
+      addClip("a", 0, 10);
+      editor.chooseMedia({ kind: "asset", id: "film" });
+      const rate = editor.model?.rate as never;
+      editor.setMarks({ in: frameAt(1, rate), out: frameAt(3, rate) - 1 });
+      editor.putChosen("insert");
+      const film = () =>
+        Object.values(main().clips).filter(({ source }) => source.kind !== "color");
+      expect(film().map(({ start, duration }) => `${start}+${duration}`)).toEqual(["1+2", "1+2"]);
+      expect(editor.marks).toEqual({});
+      editor.setMarks({ in: frameAt(5, rate), out: frameAt(15, rate) });
+      editor.putChosen("overwrite");
+      expect(
+        film()
+          .filter(({ start }) => start === "5")
+          .map(({ duration }) => duration),
+      ).toEqual(["4", "4"]);
+    });
+  });
+
+  it("trims with Q and W from the playhead and closes the time, on the clip there", async () => {
+    const { editor, addClip, clip, audio } = await setup();
+    addClip("a", 0, 4);
+    addClip("b", 4, 2);
+    const { run, enabled, keys } = actionsOf(editor);
+    expect([keys("rippleTrimStart"), keys("rippleTrimEnd")]).toEqual([["q"], ["w"]]);
+    seekTo(editor, 3);
+    expect(enabled("rippleTrimEnd")).toBe(true);
+    run("rippleTrimEnd");
+    expect([clip("a").duration, clip("b").start]).toEqual(["3", "3"]);
+    seekTo(editor, 3.5);
+    run("rippleTrimStart");
+    // b stays where it starts and shows from half a second in; the playhead goes to it.
+    expect([clip("b").start, clip("b").duration, clip("b").offset]).toEqual(["3", "1.5", "0.5"]);
+    expect(editor.frame).toBe(frameAt(3, editor.model?.rate as never));
+    // Something on another track in the time that would go stops it and says so.
+    addClip("s", 1, 4, audio);
+    seekTo(editor, 2);
+    run("rippleTrimEnd");
+    expect(clip("a").duration).toBe("3");
+    seekTo(editor, 10);
+    expect(enabled("rippleTrimEnd")).toBe(false);
+  });
+
+  it("trims with ripple with the tool B: what follows moves along, in one step, also back", async () => {
+    const { editor, addClip, at, clip, store } = await setup();
+    addClip("a", 0, 4);
+    addClip("b", 6, 2);
+    const { keys, run } = actionsOf(editor);
+    expect(keys("toolRipple")).toEqual(["b"]);
+    run("toolRipple");
+    expect(editor.getSnapshot().tool).toBe("ripple");
+    const grab = edge(at(4), -2);
+    const found = editor.hitAt(grab);
+    expect(found.kind === "clip" && found.edge).toBe("end");
+    editor.press(grab);
+    editor.drag(edge(at(3.5), -2));
+    editor.drag(edge(at(3), -2));
+    expect(editor.preview?.clips?.get("a")).toMatchObject({ start: 0, end: 3 });
+    expect(editor.preview?.shift).toMatchObject({ at: 4, by: -1 });
+    editor.release(edge(at(3), -2));
+    expect([clip("a").duration, clip("b").start]).toEqual(["3", "5"]);
+    store.undo();
+    expect([clip("a").duration, clip("b").start]).toEqual(["4", "6"]);
+    // Past the next clip: it moves on instead of stopping the edge.
+    editor.press(grab);
+    editor.drag(edge(at(7), -2));
+    editor.release(edge(at(7), -2));
+    expect([clip("a").duration, clip("b").start]).toEqual(["7", "9"]);
+    store.undo();
+    // At the start, the clip stays where it starts.
+    editor.press(edge(at(6), 2));
+    editor.drag(edge(at(6.5), 2));
+    editor.drag(edge(at(7), 2));
+    expect(editor.preview?.clips?.get("b")).toMatchObject({ start: 6, end: 7 });
+    editor.release(edge(at(7), 2));
+    expect([clip("b").start, clip("b").duration, clip("b").offset]).toEqual(["6", "1", "1"]);
+  });
+
+  it("snaps with the tool, and back where it came from is no change", async () => {
+    const { editor, addClip, at, clip, store } = await setup();
+    addClip("a", 0, 4);
+    addClip("b", 6, 2);
+    editor.setTool("ripple");
+    seekTo(editor, 3);
+    const grab = edge(at(4), -2);
+    editor.press(grab);
+    editor.drag(at(3.5));
+    editor.drag(edge(at(3), 3));
+    editor.release(edge(at(3), 3));
+    expect(clip("a").duration).toBe("3");
+    store.undo();
+    const before = structuredClone(store.getState());
+    editor.press(grab);
+    editor.drag(at(3));
+    editor.drag(edge(at(4), -1));
+    editor.release(edge(at(4), -1));
+    expect(store.getState()).toEqual(before);
+    expect(store.undo().ok).toBe(true);
+    expect(clip("a").duration).toBe("4");
+  });
+
+  it("tells what is in the way of a ripple trim, and offers to do it on its own tracks", async () => {
+    const { editor, addClip, at, clip, audio, rippleBlocked } = await setup();
+    addClip("a", 0, 4);
+    addClip("b", 6, 2);
+    addClip("s", 2, 4, audio);
+    editor.setTool("ripple");
+    editor.press(edge(at(4), -2));
+    editor.drag(edge(at(3.5), -2));
+    editor.release(edge(at(3), -2));
+    expect(clip("a").duration).toBe("4");
+    expect(rippleBlocked).toHaveBeenCalledTimes(1);
+    const [failure, onlyThese] = rippleBlocked.mock.calls[0]!;
+    expect(failure.params["clips"]).toEqual([{ id: "s" }]);
+    onlyThese();
+    expect([clip("a").duration, clip("b").start, clip("s").start]).toEqual(["3", "5", "2"]);
+  });
+});

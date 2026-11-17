@@ -477,3 +477,294 @@ describe("cutting clips away under a drop", () => {
     ]);
   });
 });
+
+describe("timeline.openGap", () => {
+  it("puts time in: what starts there or later moves on, a clip across it is cut in two", () => {
+    const { run, main, startOf, spanOf, sections, markers } = project({
+      video: [picture("a", "0", "4", "l"), picture("b", "4", "2")],
+      audio: [sound("sa", "0", "4", "l"), sound("sb", "6", "2")],
+      sections: [
+        { id: "s1", duration: "3" },
+        { id: "s2", duration: "17" },
+      ],
+      markers: [
+        { id: "m1", time: "1" },
+        { id: "m2", time: "2", duration: "2" },
+        { id: "m3", time: "5" },
+      ],
+    });
+    const result = success(run("timeline.openGap", { at: "3", duration: "2" }));
+    const { moved, split } = result.results[0] as {
+      moved: string[];
+      split: { clip: string; piece: string }[];
+    };
+    expect(moved.toSorted()).toEqual(["b", "sb"]);
+    expect(split.map(({ clip }) => clip).toSorted()).toEqual(["a", "sa"]);
+    const piece = (clip: string) => split.find((each) => each.clip === clip)!.piece;
+    expect([spanOf("a"), spanOf(piece("a")), startOf("b")]).toEqual(["0+3", "5+1", "6"]);
+    expect([spanOf("sa"), spanOf(piece("sa")), startOf("sb")]).toEqual(["0+3", "5+1", "8"]);
+    expect(main().clips[piece("a")]?.offset).toBe("3");
+    // Both parts after the cut of the group are a group of their own.
+    const links = [piece("a"), piece("sa")].map((id) => main().clips[id]?.link);
+    expect(links[0]).toBeDefined();
+    expect(links[0]).toBe(links[1]);
+    expect(links[0]).not.toBe("l");
+    // At a boundary, the section after it gets longer: what comes in belongs with what follows.
+    expect(sections()).toEqual(["s1:3", "s2:19"]);
+    expect(markers()).toEqual(["m1@1", "m2@2+4", "m3@7"]);
+  });
+
+  it("makes the timeline longer when what moved on ends past its end, also with a track left out", () => {
+    const { run, sections, spanOf } = project({
+      video: [color("a", "0", "8")],
+      audio: [sound("s", "2", "8")],
+      sections: [{ id: "s1", duration: "10" }],
+    });
+    success(run("timeline.openGap", { at: "1", duration: "3", rippleTracks: ["A1"] }));
+    // V1 stays and has something after the moment, so sections stay; the end follows the sound.
+    expect([spanOf("a"), spanOf("s")]).toEqual(["0+8", "5+8"]);
+    expect(sections()).toEqual(["s1:13"]);
+  });
+
+  it("takes a join apart whose clips it puts time between", () => {
+    const { run, main } = project({
+      video: [color("a", "0", "2"), color("b", "2", "2")],
+      joins: [{ id: "j", from: "a", to: "b", type: "fade", duration: "0.5" }],
+    });
+    const result = success(run("timeline.openGap", { at: "2", duration: "1" }));
+    expect(result.results[0]).toEqual({ moved: ["b"], joinsRemoved: ["j"] });
+    expect(main().joins?.["j"]).toBeUndefined();
+  });
+
+  it("checks where and how long", () => {
+    const { run, store } = project({ video: [color("a", "0", "2")] });
+    const before = structuredClone(store.getState());
+    const late = run("timeline.openGap", { at: "21", duration: "1" });
+    expect(!late.ok && late.error.params).toEqual({
+      rule: "range-outside",
+      path: "at",
+      to: "21",
+      length: "20",
+    });
+    expect(run("timeline.openGap", { at: "1", duration: "0" }).ok).toBe(false);
+    expect(run("timeline.openGap", { at: "1", duration: "1", rippleTracks: ["X"] }).ok).toBe(false);
+    expect(store.getState()).toEqual(before);
+    // At the very end there is nothing to push, and the last section gets longer.
+    expect(run("timeline.openGap", { at: "20", duration: "1" }).ok).toBe(true);
+  });
+});
+
+describe("clip.add with insert", () => {
+  it("makes room on every track, cutting what is across where it lands", () => {
+    const { run, spanOf, startOf, sections } = project({
+      video: [color("a", "0", "4"), color("b", "4", "2")],
+      audio: [sound("s", "1", "6")],
+    });
+    const result = success(
+      run("clip.add", {
+        track: "V1",
+        id: "n",
+        start: "2",
+        duration: "3",
+        source: { kind: "color", color: "#00ff00" },
+        overlap: "insert",
+      }),
+    );
+    const { split } = result.results[0] as { split: { clip: string; piece: string }[] };
+    const piece = (clip: string) => split.find((each) => each.clip === clip)!.piece;
+    expect([spanOf("a"), spanOf("n"), spanOf(piece("a")), startOf("b")]).toEqual([
+      "0+2",
+      "2+3",
+      "5+2",
+      "7",
+    ]);
+    expect([spanOf("s"), spanOf(piece("s"))]).toEqual(["1+1", "5+5"]);
+    expect(sections()).toEqual(["s1:23"]);
+  });
+
+  it("always makes room on its own track, also when the tracks listed leave it out", () => {
+    const { run, spanOf, startOf } = project({
+      video: [color("a", "0", "4")],
+      audio: [sound("s", "0", "4")],
+    });
+    success(
+      run("clip.add", {
+        track: "V1",
+        id: "n",
+        start: "0",
+        duration: "1",
+        source: { kind: "color", color: "#00ff00" },
+        overlap: "insert",
+        rippleTracks: ["V2"],
+      }),
+    );
+    expect([spanOf("n"), startOf("a"), startOf("s")]).toEqual(["0+1", "1", "0"]);
+  });
+});
+
+describe("clip.move with insert", () => {
+  it("lands between two clips and pushes what follows, leaving where it was empty", () => {
+    const { run, startOf, spanOf } = project({
+      video: [color("a", "0", "2"), color("b", "2", "3"), color("c", "5", "2")],
+      audio: [sound("s", "6", "2")],
+    });
+    const result = success(
+      run("clip.move", { clips: [{ clip: "a", start: "5" }], overlap: "insert" }),
+    );
+    expect(result.results[0]).toEqual({ moved: ["c", "s"] });
+    expect([spanOf("a"), startOf("b"), startOf("c"), startOf("s")]).toEqual(["5+2", "2", "7", "8"]);
+  });
+
+  it("cuts a clip that it lands inside, and moves its partners with a group on several tracks", () => {
+    const { run, spanOf, main } = project({
+      video: [picture("v", "0", "4", "l"), color("x", "6", "2")],
+      audio: [sound("a", "0", "4", "l"), sound("y", "6", "2", "m")],
+      overlay: [color("o", "6", "2", { link: "m" })],
+    });
+    const result = success(
+      run("clip.move", {
+        clips: [
+          { clip: "o", start: "2" },
+          { clip: "y", start: "2" },
+        ],
+        overlap: "insert",
+      }),
+    );
+    const { split } = result.results[0] as { split: { clip: string; piece: string }[] };
+    expect(split.map(({ clip }) => clip).toSorted()).toEqual(["a", "v"]);
+    const piece = (clip: string) => split.find((each) => each.clip === clip)!.piece;
+    expect([spanOf("v"), spanOf(piece("v")), spanOf("x")]).toEqual(["0+2", "4+2", "8+2"]);
+    expect([spanOf("a"), spanOf(piece("a")), spanOf("y"), spanOf("o")]).toEqual([
+      "0+2",
+      "4+2",
+      "2+2",
+      "2+2",
+    ]);
+    expect(main().clips[piece("v")]?.link).toBe(main().clips[piece("a")]?.link);
+    expect(main().clips[piece("v")]?.link).not.toBe("l");
+  });
+
+  it("always makes room on the track it lands on, also when the tracks listed leave it out", () => {
+    const { run, store } = project({
+      video: [color("a", "0", "4")],
+      overlay: [color("b", "5", "2")],
+    });
+    const before = structuredClone(store.getState());
+    const result = run("clip.move", {
+      clips: [{ clip: "b", start: "1", track: "V1" }],
+      overlap: "insert",
+      rippleTracks: ["V2"],
+    });
+    // V1 is where it lands, so it makes room all the same: a is cut and pushed.
+    expect(result.ok).toBe(true);
+    const { split } = (result.ok && result.results[0]) as { split: { piece: string }[] };
+    expect(split).toHaveLength(1);
+    store.undo();
+    expect(store.getState().timelines).toEqual(before.timelines);
+  });
+});
+
+describe("clip.trim with ripple", () => {
+  const layout = () =>
+    project({
+      video: [picture("v", "2", "4", "l"), color("n", "6", "2")],
+      audio: [sound("a", "2", "4", "l"), sound("m", "7", "2")],
+      sections: [{ id: "s1", duration: "10" }],
+      markers: [{ id: "k", time: "8" }],
+    });
+
+  it("shortens the end and closes the time after it, with its partner", () => {
+    const { run, spanOf, startOf, sections, markers, store } = layout();
+    const before = structuredClone(store.getState().timelines);
+    const result = success(
+      run("clip.trim", { clip: "v", end: "5", together: ["a"], ripple: true }),
+    );
+    expect(result.results[0]).toEqual({ moved: ["n", "m"] });
+    expect([spanOf("v"), spanOf("a"), startOf("n"), startOf("m")]).toEqual([
+      "2+3",
+      "2+3",
+      "5",
+      "6",
+    ]);
+    expect([sections(), markers()]).toEqual([["s1:9"], ["k@7"]]);
+    store.undo();
+    expect(store.getState().timelines).toEqual(before);
+  });
+
+  it("lengthens the end and pushes what follows", () => {
+    const { run, spanOf, startOf, sections } = layout();
+    success(run("clip.trim", { clip: "v", end: "7", together: ["a"], ripple: true }));
+    expect([spanOf("v"), spanOf("a"), startOf("n"), startOf("m")]).toEqual([
+      "2+5",
+      "2+5",
+      "7",
+      "8",
+    ]);
+    expect(sections()).toEqual(["s1:11"]);
+  });
+
+  it("shortens the start: the clips stay where they start, what they show and what follows moves back", () => {
+    const { run, main, spanOf, startOf } = layout();
+    success(run("clip.trim", { clip: "v", start: "3", together: ["a"], ripple: true }));
+    expect([spanOf("v"), spanOf("a"), startOf("n"), startOf("m")]).toEqual([
+      "2+3",
+      "2+3",
+      "5",
+      "6",
+    ]);
+    expect([main().clips["v"]?.offset, main().clips["a"]?.offset]).toEqual(["1", "1"]);
+  });
+
+  it("lengthens the start from what the media has before, and pushes what follows", () => {
+    const { run, main, spanOf, startOf, store } = project({
+      video: [{ ...picture("v", "5", "4"), offset: "3" }, color("n", "9", "2")],
+    });
+    // Not before the media starts, and nothing moves then.
+    const before = structuredClone(store.getState());
+    const early = run("clip.trim", { clip: "v", start: "1", ripple: true });
+    expect(!early.ok && early.error.code).toBe("source-start");
+    expect(store.getState()).toEqual(before);
+    success(run("clip.trim", { clip: "v", start: "3", ripple: true }));
+    expect([spanOf("v"), main().clips["v"]?.offset, startOf("n")]).toEqual(["5+6", "1", "11"]);
+  });
+
+  it("is blocked by a partner left out, and by anything else in the time it closes", () => {
+    const { run, store } = layout();
+    const before = structuredClone(store.getState());
+    const alone = run("clip.trim", { clip: "v", end: "5", ripple: true });
+    expect(!alone.ok && alone.error.code).toBe("ripple-blocked");
+    expect(!alone.ok && alone.error.params["tracks"]).toEqual(["A1"]);
+    expect(store.getState()).toEqual(before);
+    // Without the track of the sound, the picture goes alone.
+    success(run("clip.trim", { clip: "v", end: "5", ripple: true, rippleTracks: ["V1"] }));
+  });
+
+  it("refuses clips trimmed together whose edge is elsewhere", () => {
+    const { run } = layout();
+    const result = run("clip.trim", { clip: "v", end: "5", together: ["m"], ripple: true });
+    expect(!result.ok && result.error.params).toEqual({
+      rule: "edges-apart",
+      path: "together",
+      clip: "m",
+    });
+  });
+
+  it("keeps a join at the edge that moves, shorter where the clip got too short for it", () => {
+    const { run, main } = project({
+      video: [color("a", "0", "2"), color("b", "2", "2")],
+      joins: [{ id: "j", from: "a", to: "b", type: "dissolve", duration: "1" }],
+    });
+    const result = success(run("clip.trim", { clip: "a", end: "0.4", ripple: true }));
+    expect(result.results[0]).toEqual({ moved: ["b"] });
+    const join = main().joins?.["j"];
+    expect(join && [join.from, join.to]).toEqual(["a", "b"]);
+    expect(main().clips["b"]?.start).toBe("0.4");
+  });
+
+  it("without ripple trims clips together, as before", () => {
+    const { run, spanOf, startOf } = layout();
+    expect(run("clip.trim", { clip: "v", end: "7", together: ["a"] }).ok).toBe(false);
+    success(run("clip.trim", { clip: "v", end: "5", together: ["a"] }));
+    expect([spanOf("v"), spanOf("a"), startOf("n")]).toEqual(["2+3", "2+3", "6"]);
+  });
+});

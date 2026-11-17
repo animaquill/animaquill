@@ -98,6 +98,7 @@ export const DIRECTIVE_OVERRIDES = {
   "ops.clip.remove.summary": "remove clips; with ripple, move what follows back into their place",
   "ops.timeline.closeGap.summary":
     "take empty stretches out of a timeline; what follows moves back",
+  "ops.timeline.openGap.summary": "put empty time into a timeline; what follows moves on",
   "ops.timeline.removeRange.summary":
     "take away what is on tracks between two moments; with ripple, close that time too",
   "ops.clip.update.summary":
@@ -113,7 +114,8 @@ export const DIRECTIVE_OVERRIDES = {
   "ops.join.update.summary": "change the type, duration, align, curve or values of a join",
   "ops.join.remove.summary": "remove joins",
   "ops.clip.move.summary": "move clips to other starts or tracks, in one step",
-  "ops.clip.trim.summary": "move the start or end of a clip; what it shows stays in place",
+  "ops.clip.trim.summary":
+    "move the start or end of a clip; what it shows stays in place; with ripple, what follows moves along",
   "ops.clip.split.summary": "cut a clip in two at a moment of the timeline",
   "ops.clip.link.summary": "link clips into a group, like the picture and sound of a video",
   "ops.clip.unlink.summary": "take clips out of their linked groups",

@@ -1200,8 +1200,8 @@ test.describe("the toolbar", () => {
 
   test("keeps tools, switches and actions apart", async ({ page }) => {
     const zone = (name: string) => panel(page).getByRole("group", { name, exact: true });
-    await expect(zone("工具").getByRole("button")).toHaveCount(2);
-    await expect(zone("开关").getByRole("button")).toHaveCount(3);
+    await expect(zone("工具").getByRole("button")).toHaveCount(3);
+    await expect(zone("开关").getByRole("button")).toHaveCount(4);
     await expect(zone("操作").getByRole("button", { name: "在播放头切割" })).toBeVisible();
   });
 

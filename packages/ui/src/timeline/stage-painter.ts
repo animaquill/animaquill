@@ -18,6 +18,8 @@ export interface Theme {
   readonly sound: string;
   readonly caption: string;
   readonly selected: string;
+  /** Where time goes in while inserting: the accent of the theme. */
+  readonly insert: string;
   readonly snap: string;
   readonly covered: string;
   readonly outside: string;
@@ -64,6 +66,7 @@ export function readTheme(element: Element): Theme {
     sound: color("sound"),
     caption: color("caption"),
     selected: color("selected"),
+    insert: style.getPropertyValue("--aq-accent").trim(),
     snap: color("snap"),
     covered: color("covered"),
     outside: color("outside"),

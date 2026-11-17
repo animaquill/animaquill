@@ -90,7 +90,7 @@ describe("the table of texts", () => {
     expect(names?.description).not.toContain("clip.move {");
     const signatures = edit({ ...DEFAULT_TEXTS, "edit.list": "signatures" });
     expect(signatures?.description).toContain(
-      "clip.move {timeline, clips:[{clip, start?, track?}], overlap?} — moves clips to other starts or tracks, in one step",
+      "clip.move {timeline, clips:[{clip, start?, track?}], overlap?, rippleTracks?:[string]} — moves clips to other starts or tracks, in one step",
     );
     // The summaries are in the branches of the schema only where the description has no list of them.
     expect(JSON.stringify(names?.inputSchema)).toContain(

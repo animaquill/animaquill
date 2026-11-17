@@ -5,6 +5,7 @@ import {
   clipStart,
   longestJoin,
   takenAt,
+  timelineLength,
   type ClipState,
   type CommandCall,
   type WholeJoin,
@@ -59,6 +60,19 @@ export interface CoveredSpan {
   readonly to: number;
 }
 
+/**
+ * Time that an edit puts in or takes out while it is dragged: on the rows that take part, clips from
+ * `at` on show `by` seconds later (earlier for less than zero), apart from those `aside`, which the
+ * edit puts somewhere itself. Putting time in cuts what is across `at`, which shows as two parts,
+ * with a line at `at` across the rows.
+ */
+export interface PreviewShift {
+  readonly at: number;
+  readonly by: number;
+  readonly rows: ReadonlySet<string>;
+  readonly aside: ReadonlySet<string>;
+}
+
 /** An area of the timeline: seconds across, pixels from the top of the first row down. */
 export interface Marquee {
   readonly from: number;
@@ -95,6 +109,8 @@ export interface Preview {
   }[];
   /** Where a transition dragged from the transitions tab would go, in seconds on a track. */
   readonly transitionDrop?: { readonly row: string; readonly start: number; readonly end: number };
+  /** What follows moves on or back, as inserting and ripple trims make it. */
+  readonly shift?: PreviewShift;
   /** Where a marker is while it is dragged, in seconds; `end` for one with a duration. */
   readonly marker?: {
     readonly id: string;
@@ -124,6 +140,8 @@ export interface GestureHost {
   readonly selection: ReadonlySet<string>;
   /** Whether a drop covers what is in the way. Otherwise it goes to the nearest free place. */
   readonly overwriting: boolean;
+  /** Whether a drop makes room by moving what follows on, as `overlap: "insert"` does. */
+  readonly inserting: boolean;
   /** Whether clicks add to the selection. */
   readonly multiSelecting: boolean;
   timeAt(x: number): number;
@@ -141,6 +159,42 @@ export interface GestureHost {
   selectJoin(join: string): void;
   seek(frame: number): void;
   run(calls: readonly CommandCall[]): boolean;
+  /** The tracks that ripple and insert move: those not locked, see `TimelineEditor`. */
+  rippleTracks(): readonly string[];
+  /**
+   * Runs a ripple edit, which tells about what is in the way when it is blocked and offers to do it
+   * again on only these tracks.
+   */
+  runRipple(
+    call: { readonly type: string; readonly params: Readonly<Record<string, unknown>> },
+    onlyThese: readonly string[],
+  ): boolean;
+}
+
+/** The rows that ripple edits move, by id, as `GestureHost.rippleTracks` has them. */
+export function rippleRows(host: Pick<GestureHost, "rippleTracks">): ReadonlySet<string> {
+  return new Set(host.rippleTracks());
+}
+
+/**
+ * What makes room for clips that land from `from` to `to` (exact), as one stretch, before they are
+ * added: nothing past the end of the timeline, where there is nothing to push.
+ */
+export function openGapCall(
+  model: TimelineModel,
+  from: Rational,
+  to: Rational,
+  rippleTracks: readonly string[],
+): CommandCall[] {
+  const length = subtract(to, from);
+  if (compare(from, timelineLength(model.state)) > 0 || compare(length, ZERO) <= 0) return [];
+  const params = {
+    timeline: model.id,
+    at: formatTime(from),
+    duration: formatTime(length),
+    rippleTracks,
+  };
+  return [{ type: "timeline.openGap", params }];
 }
 
 /** A press is a click until the pointer has moved this far, so that a click never moves a clip. */
@@ -253,7 +307,8 @@ function nearestRow(rows: readonly Row[], lane: number): Row | undefined {
 
 /**
  * Moves the selected clips together, or copies them with Ctrl held. What is in the way stays: they
- * go to the nearest free place, unless people turned on overwriting.
+ * go to the nearest free place, unless people turned on overwriting, or insert: with the switch, or
+ * for as long as Shift is held, what follows where they land moves on to make room.
  */
 export class MoveGesture implements Gesture {
   readonly reachesRows = true;
@@ -271,6 +326,7 @@ export class MoveGesture implements Gesture {
   readonly #onClick: () => void;
   #dragging = false;
   #copying = false;
+  #inserting = false;
   #shift = 0;
   #landing: Landing | undefined;
 
@@ -297,6 +353,7 @@ export class MoveGesture implements Gesture {
     if (!this.#dragging && !hasMoved(this.#press, pointer)) return;
     this.#dragging = true;
     this.#copying = pointer.mod;
+    this.#inserting = pointer.shift || this.#host.inserting;
     this.#shift = this.#allowedShift(pointer);
     this.#landing = this.#avoidOthers(this.#land(pointer)) ?? this.#landing;
     this.#showPreview();
@@ -324,6 +381,7 @@ export class MoveGesture implements Gesture {
   }
 
   #overlap() {
+    if (this.#inserting) return { overlap: "insert", rippleTracks: this.#host.rippleTracks() };
     return this.#host.overwriting ? { overlap: "overwrite" } : {};
   }
 
@@ -342,19 +400,31 @@ export class MoveGesture implements Gesture {
 
   #commitCopies(delta: Rational): void {
     const copies = copiesOf(this.#moving.map(({ box }) => box.clip));
+    // Copies that go in make room once, for all of them, and then land where it is free.
+    const overlap = this.#inserting ? {} : this.#overlap();
     const calls = this.#moving.map(({ box, row }, index) => {
       const copy = copies[index] as ClipCopy;
       const clip = { ...copy, start: formatTime(add(clipStart(box.clip), delta)) };
       const { id: timeline } = this.#host.model;
       const track = this.#targetRow(row).id;
-      return { type: "clip.add", params: { timeline, track, ...clip, ...this.#overlap() } };
+      return { type: "clip.add", params: { timeline, track, ...clip, ...overlap } };
     });
     const originals = this.#moving.map(({ box }) => box.id);
     const { model } = this.#host;
     const joins = copiedJoins(model.id, joinsAmong(model, originals), originals, copies);
-    if (this.#host.run([...calls, ...joins])) {
+    const room = this.#inserting ? this.#roomFor(delta) : [];
+    if (this.#host.run([...room, ...calls, ...joins])) {
       this.#host.select(new Set(copies.map(({ id }) => id)));
     }
+  }
+
+  /** Room for copies that go in, from the first of them to the end of the last. */
+  #roomFor(delta: Rational): CommandCall[] {
+    const starts = this.#moving.map(({ box }) => add(clipStart(box.clip), delta));
+    const ends = this.#moving.map(({ box }) => add(clipEnd(box.clip), delta));
+    const from = starts.reduce((a, b) => (compare(a, b) <= 0 ? a : b));
+    const to = ends.reduce((a, b) => (compare(a, b) >= 0 ? a : b));
+    return openGapCall(this.#host.model, from, to, this.#host.rippleTracks());
   }
 
   cancel(): void {
@@ -413,7 +483,7 @@ export class MoveGesture implements Gesture {
 
   /** The nearest place from a landing where nothing gets covered. */
   #avoidOthers(landing: Landing): Landing | undefined {
-    if (this.#host.overwriting) return landing;
+    if (this.#host.overwriting || this.#inserting) return landing;
     const delta = landing.seconds - this.#grabbed.start;
     const exactDelta = () => subtract(landing.exact(), clipStart(this.#grabbed.clip));
     const placed = this.#moving.map(({ box, row }): Placed => ({
@@ -450,12 +520,18 @@ export class MoveGesture implements Gesture {
     const delta = landing.seconds - this.#grabbed.start;
     const clips = new Map<string, PreviewClip>();
     const covered: CoveredSpan[] = [];
+    let first = Number.POSITIVE_INFINITY;
+    let last = Number.NEGATIVE_INFINITY;
+    const rows = new Set(rippleRows(this.#host));
     for (const { box, row } of this.#moving) {
       const target = this.#targetRow(row);
       const start = box.start + delta;
       const end = box.end + delta;
       clips.set(box.id, { row: target, start, end });
-      if (!this.#host.overwriting) continue;
+      first = Math.min(first, start);
+      last = Math.max(last, end);
+      rows.add(target.id);
+      if (this.#inserting || !this.#host.overwriting) continue;
       forEachBetween(target, start, end, (other) => {
         if (!this.#copying && this.#ids.has(other.id)) return;
         const from = Math.max(start, other.start);
@@ -464,16 +540,23 @@ export class MoveGesture implements Gesture {
       });
     }
     const copying = this.#copying ? { copying: true } : {};
-    this.#host.setPreview({ clips, covered, ...copying, ...lineOf(landing) });
+    const aside = this.#copying ? new Set<string>() : this.#ids;
+    const shift = this.#inserting ? { shift: { at: first, by: last - first, rows, aside } } : {};
+    this.#host.setPreview({ clips, covered, ...copying, ...shift, ...lineOf(landing) });
   }
 }
 
-/** Moves one edge of a clip. Unlike a move, it stops at its neighbours. */
+/**
+ * Moves one edge of a clip. Unlike a move, it stops at its neighbours. As a ripple trim, what follows
+ * the edge moves along instead, so that nothing stops it but what the clip can show; at the start,
+ * the clip stays where it starts and what it shows moves, as in Premiere.
+ */
 export class TrimGesture implements Gesture {
   readonly #host: GestureHost;
   readonly #box: ClipBox;
   readonly #row: Row;
   readonly #edge: "start" | "end";
+  readonly #ripple: boolean;
   readonly #press: Pointer;
   readonly #grabTime: number;
   readonly #points: SnapPoints;
@@ -483,11 +566,19 @@ export class TrimGesture implements Gesture {
   readonly #partners: readonly { readonly box: ClipBox; readonly row: Row }[];
   #landing: Landing | undefined;
 
-  constructor(host: GestureHost, box: ClipBox, row: Row, edge: "start" | "end", press: Pointer) {
+  constructor(
+    host: GestureHost,
+    box: ClipBox,
+    row: Row,
+    edge: "start" | "end",
+    press: Pointer,
+    ripple = false,
+  ) {
     this.#host = host;
     this.#box = box;
     this.#row = row;
     this.#edge = edge;
+    this.#ripple = ripple;
     this.#press = press;
     this.#grabTime = host.timeAt(press.x);
     this.#partners = this.#findPartners();
@@ -529,13 +620,15 @@ export class TrimGesture implements Gesture {
     const before = row.clips[index - 1];
     const after = row.clips[index + 1];
     const frame = frameTime(1, rate);
+    // What follows moves along in a ripple trim: neighbours are no limit then.
+    const next = this.#ripple ? undefined : after;
     if (this.#edge === "end") {
       const lower = {
         seconds: start + 1 / rate.fps,
         exact: () => add(clipStart(clip), frame),
       };
-      const neighbour = after
-        ? { seconds: after.start, exact: () => clipStart(after.clip) }
+      const neighbour = next
+        ? { seconds: next.start, exact: () => clipStart(next.clip) }
         : { seconds: Number.POSITIVE_INFINITY, exact: () => ZERO };
       const length = this.#host.sourceLength(clip);
       if (!length) return [lower, neighbour];
@@ -555,7 +648,7 @@ export class TrimGesture implements Gesture {
       compare(beginning, ZERO) < 0
         ? { seconds: 0, exact: () => ZERO }
         : { seconds: toSeconds(beginning), exact: () => beginning };
-    const neighbour = before && before.end > floor.seconds ? before : undefined;
+    const neighbour = !this.#ripple && before && before.end > floor.seconds ? before : undefined;
     const lower = neighbour
       ? { seconds: neighbour.end, exact: () => clipEnd(neighbour.clip) }
       : floor;
@@ -574,19 +667,31 @@ export class TrimGesture implements Gesture {
         : this.#points.nearest(wanted, within);
     const landing = landOn(this.#host, wanted, point);
     this.#landing = this.#clamped(landing);
-    const { start, end } = this.#box;
     const { seconds } = this.#landing;
-    const moved = this.#edge === "start" ? { start: seconds, end } : { start, end: seconds };
-    const clips = new Map([[this.#box.id, { row: this.#row, ...moved }]]);
-    for (const partner of this.#partners) {
-      const { box, row } = partner;
-      const own =
-        this.#edge === "start"
-          ? { start: seconds, end: box.end }
-          : { start: box.start, end: seconds };
-      clips.set(box.id, { row, ...own });
+    const clips = new Map<string, PreviewClip>();
+    for (const { box, row } of [{ box: this.#box, row: this.#row }, ...this.#partners]) {
+      clips.set(box.id, { row, ...this.#trimmed(box, seconds) });
     }
-    this.#host.setPreview({ clips, ...lineOf(this.#landing) });
+    this.#host.setPreview({ clips, ...this.#shiftAfter(seconds), ...lineOf(this.#landing) });
+  }
+
+  /** Where a clip of the trim would be with the edge at `seconds`. */
+  #trimmed(box: ClipBox, seconds: number): { readonly start: number; readonly end: number } {
+    if (this.#edge === "end") return { start: box.start, end: seconds };
+    // A ripple trim at the start keeps the clip where it starts, and what follows moves instead.
+    if (this.#ripple) return { start: box.start, end: box.end - (seconds - box.start) };
+    return { start: seconds, end: box.end };
+  }
+
+  /** What follows the edge in a ripple trim, moving along with it. */
+  #shiftAfter(seconds: number): Pick<Preview, "shift"> {
+    if (!this.#ripple) return {};
+    const edge = this.#box[this.#edge];
+    const by = this.#edge === "end" ? seconds - edge : edge - seconds;
+    const trimmed = [{ box: this.#box, row: this.#row }, ...this.#partners];
+    const rows = new Set([...rippleRows(this.#host), ...trimmed.map(({ row }) => row.id)]);
+    const aside = new Set(trimmed.map(({ box }) => box.id));
+    return { shift: { at: edge, by, rows, aside } };
   }
 
   end(pointer: Pointer): void {
@@ -602,10 +707,25 @@ export class TrimGesture implements Gesture {
     const exact = landing.exact();
     if (compare(exact, this.#exactEdge()) === 0) return;
     const ids = [clip.id, ...this.#partners.map(({ box }) => box.id)];
+    const timeline = this.#host.model.id;
+    if (this.#ripple) {
+      const together = ids.slice(1);
+      const params = {
+        timeline,
+        clip: clip.id,
+        [this.#edge]: formatTime(exact),
+        ...(together.length > 0 && { together }),
+        ripple: true,
+        rippleTracks: this.#host.rippleTracks(),
+      };
+      const own = [this.#box, ...this.#partners.map(({ box }) => box)].map((box) => box.clip.track);
+      this.#host.runRipple({ type: "clip.trim", params }, [...new Set(own)]);
+      return;
+    }
     this.#host.run(
       ids.map((id) => ({
         type: "clip.trim",
-        params: { timeline: this.#host.model.id, clip: id, [this.#edge]: formatTime(exact) },
+        params: { timeline, clip: id, [this.#edge]: formatTime(exact) },
       })),
     );
   }

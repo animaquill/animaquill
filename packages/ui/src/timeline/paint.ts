@@ -40,6 +40,9 @@ const CLIP_RADIUS = 3;
 const LABEL_MIN_WIDTH = 28;
 const LABEL_PADDING = 6;
 const LABEL_PLATE_PADDING = 3;
+
+/** Clips that touch differ by this much as floats, and that is not across a moment. */
+const TOUCHING = 1e-9;
 /** Room around the frames that a clip out of step with its partner says. */
 const SYNC_PADDING = 3;
 const EDGE_HANDLE = 6;
@@ -292,22 +295,66 @@ export class TimelinePainter extends StagePainter {
     for (const row of model.rows) {
       const top = this.#rowTop(row);
       if (top + row.height < RULER_HEIGHT || top > editor.height) continue;
-      forEachBetween(row, from, to, (box) => {
+      // What moves on or back with an insert or a ripple trim shows where it would be.
+      const span = this.#shiftedSpan();
+      forEachBetween(row, Math.min(from, from - span), Math.max(to, to + span), (box) => {
         const isMoved = moved?.has(box.id) === true;
         const over = hovered.kind === "clip" && hovered.box === box ? hovered : undefined;
         this.context.globalAlpha = isMoved || cut.has(box.id) ? 0.35 : 1;
-        this.#paintClip(box, {
-          row,
-          start: box.start,
-          end: box.end,
-          selected: !isMoved && selection.has(box.id),
-          edge: over?.edge,
-          hovered: over !== undefined && !isMoved,
-          handle: over?.handle,
-          transition: over?.transition,
-        });
+        for (const part of (!isMoved && this.#shiftedParts(box, row)) || [box]) {
+          this.#paintClip(box, {
+            row,
+            start: part.start,
+            end: part.end,
+            selected: !isMoved && selection.has(box.id),
+            edge: over?.edge,
+            hovered: over !== undefined && !isMoved,
+            handle: over?.handle,
+            transition: over?.transition,
+          });
+        }
         this.context.globalAlpha = 1;
       });
+    }
+  }
+
+  /** How far what follows moves while it is dragged, in seconds either way. */
+  #shiftedSpan(): number {
+    return Math.abs(this.#editor.preview?.shift?.by ?? 0);
+  }
+
+  /**
+   * Where a clip would be while an insert or a ripple trim is dragged: later or earlier from the
+   * moment on, in two parts when time goes in across it. Undefined when it stays.
+   */
+  #shiftedParts(
+    box: ClipBox,
+    row: Row,
+  ): readonly { readonly start: number; readonly end: number }[] | undefined {
+    const shift = this.#editor.preview?.shift;
+    if (!shift || !shift.rows.has(row.id) || shift.aside.has(box.id)) return undefined;
+    const { at, by } = shift;
+    if (box.start >= at - TOUCHING) return [{ start: box.start + by, end: box.end + by }];
+    if (by > 0 && box.end > at + TOUCHING) {
+      return [
+        { start: box.start, end: at },
+        { start: at + by, end: box.end + by },
+      ];
+    }
+    return undefined;
+  }
+
+  /** Where time goes in: a line in the colour of the theme across the rows that make room. */
+  #paintInsertLine(model: TimelineModel): void {
+    const editor = this.#editor;
+    const shift = editor.preview?.shift;
+    if (!shift || shift.by <= 0) return;
+    const x = this.sharp(editor.xAt(shift.at));
+    if (x < -2 || x > editor.width + 2) return;
+    this.context.fillStyle = this.theme.insert;
+    for (const row of model.rows) {
+      if (!shift.rows.has(row.id)) continue;
+      this.context.fillRect(x - 1, this.#rowTop(row), 2, row.height);
     }
   }
 
@@ -316,6 +363,7 @@ export class TimelinePainter extends StagePainter {
     const { model, preview } = editor;
     if (!model || !preview) return;
     const { context } = this;
+    this.#paintInsertLine(model);
     const first = editor.timeAt(0);
     const last = editor.timeAt(editor.width);
     for (const [id, { row, start, end }] of preview.clips ?? []) {
@@ -588,6 +636,8 @@ export class TimelinePainter extends StagePainter {
         continue;
       for (const join of row.joins) {
         if (moved?.has(join.from.id) || moved?.has(join.to.id)) continue;
+        // A join whose clips move on or back while a drag goes on shows again where they land.
+        if (this.#shiftedParts(join.from, row) || this.#shiftedParts(join.to, row)) continue;
         const span = dragged?.id === join.id ? dragged : join;
         if (span.end < first || span.start > last) continue;
         const left = editor.xAt(span.start);

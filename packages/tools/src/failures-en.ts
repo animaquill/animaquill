@@ -104,7 +104,9 @@ export const INVALID_VALUE_TEXTS: RuleTexts = {
   "range-backwards": ({ path, from, to }) =>
     `${path} goes from ${from} to ${to}: a stretch has to start before it ends.`,
   "range-outside": ({ path, to, length }) =>
-    `${path} ${to} is past the end of the timeline, which is ${length} seconds long: a stretch ends at the end at the latest.`,
+    `${path} ${to} is past the end of the timeline, which is ${length} seconds long: a stretch has to be within it.`,
+  "edges-apart": ({ path, clip }) =>
+    `${path}: the edge of clip ${clip} that moves is not where the one of the clip is; clips trimmed together have it at the same moment.`,
 };
 
 function invalidValue(params: InvalidValue): string {

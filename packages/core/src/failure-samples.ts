@@ -40,6 +40,7 @@ const RULES: { readonly [R in InvalidValue["rule"]]: Extract<InvalidValue, { rul
   "no-next-section": { rule: "no-next-section", section: "s1" },
   "range-backwards": { rule: "range-backwards", path: "ranges.0", from: "8", to: "6" },
   "range-outside": { rule: "range-outside", path: "to", to: "40", length: "30.005" },
+  "edges-apart": { rule: "edges-apart", path: "together", clip: "c2" },
 };
 
 const CODES: { readonly [C in FailureCode]: CommandFailure & { readonly code: C } } = {

@@ -1,0 +1,82 @@
+{
+  "about": "Ripple trims and inserting (pro-editing P3b): a ripple trim that would take time out where clips on other tracks are moves nothing and names them; with rippleTracks only those tracks move. Inserting a clip pushes everything after it on all tracks, cuts what is across the moment, and makes the section there longer.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.trim",
+            "timeline": "main",
+            "clip": "clip_interview",
+            "end": "16",
+            "ripple": true
+          }
+        ]
+      },
+      "expect": {
+        "error": "ripple-blocked",
+        "lines": ["nothing was written"]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.trim",
+            "timeline": "main",
+            "clip": "clip_interview",
+            "end": "16",
+            "ripple": true,
+            "rippleTracks": ["track_video"]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": [
+          "clip_interview \"采访\": duration 12.5→11",
+          "clip_logo: start 17.5→16",
+          "clip_card: start 25→23.5"
+        ],
+        "absent": ["section_end"]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "clip.add",
+            "timeline": "main",
+            "track": "track_overlay",
+            "start": "10",
+            "duration": "1",
+            "source": { "kind": "color", "color": "#000000" },
+            "overlap": "insert"
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": [
+          "clip_idea \"样片：换个开场\": start 10→11",
+          "clip_voice: duration 20→10",
+          "clip_interview_audio: start 20→21",
+          "clip_logo: start 16→17",
+          "section_body \"讲解\": duration 20→21"
+        ]
+      }
+    }
+  ],
+  "end": {
+    "undoAll": true
+  }
+}

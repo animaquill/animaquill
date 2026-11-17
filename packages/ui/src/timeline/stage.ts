@@ -208,6 +208,30 @@ export function useStage(
     };
   }, [canvas, editor, input, playhead, stage]);
 
+  // Shift, Ctrl and Alt change what a drag does, such as inserting or copying: pressed or let go
+  // while the mouse stands still, the preview follows right away.
+  useLayoutEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const pointer = lastPointer.current;
+      if (!pointer || !editor.isDragging) return;
+      if (!["Shift", "Control", "Meta", "Alt"].includes(event.key)) return;
+      const next = {
+        ...pointer,
+        shift: event.shiftKey,
+        alt: event.altKey,
+        mod: event.ctrlKey || event.metaKey,
+      };
+      lastPointer.current = next;
+      editor.drag(next);
+    };
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("keyup", onKey, true);
+    return () => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keyup", onKey, true);
+    };
+  }, [editor]);
+
   /** Dragging near an edge keeps going, also when the mouse does not move. */
   const scrollWhileNearEdge = (now: number, before = now) => {
     scrolling.current = undefined;

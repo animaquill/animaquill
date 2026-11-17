@@ -41,7 +41,7 @@ function longTimeline(): ProjectStore {
 }
 
 /**
- * A ripple edit near the start moves nearly every clip of the timeline, which is what moving all
+ * A ripple edit near the start, or inserting there, moves nearly every clip of the timeline, which is what moving all
  * of them with `clip.move` takes: it has to stay in that league (pro-editing.md, rule 10), and not
  * look at every clip again for each one.
  */
@@ -71,7 +71,19 @@ describe("ripple edits", () => {
       const extract = timed(() =>
         run("timeline.removeRange", { from: "0.5", to: "1.5", ripple: true }),
       );
-      for (const took of [remove, close, extract]) expect(took).toBeLessThan(move * 2);
+      const open = timed(() => run("timeline.openGap", { at: "0.5", duration: "1" }));
+      const insert = timed(() =>
+        run("clip.move", { clips: [{ clip: "v1", start: "0.5" }], overlap: "insert" }),
+      );
+      const trim = timed(() =>
+        run("clip.trim", { clip: "v0", end: "0.5", together: ["s0"], ripple: true }),
+      );
+      const longer = timed(() =>
+        run("clip.trim", { clip: "v0", end: "1.5", together: ["s0"], ripple: true }),
+      );
+      for (const took of [remove, close, extract, open, insert, trim, longer]) {
+        expect(took).toBeLessThan(move * 2);
+      }
     },
   );
 });

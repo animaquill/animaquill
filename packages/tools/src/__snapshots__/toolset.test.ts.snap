@@ -72,6 +72,7 @@ ops/section.split — splits a section in two at a moment; the length stays
 ops/section.moveBoundary — moves the boundary after a section; the length stays
 ops/section.remove — removes a section; its time goes to the one before it
 ops/timeline.closeGap — takes empty stretches out of a timeline; what follows moves back
+ops/timeline.openGap — puts empty time into a timeline; what follows moves on
 ops/timeline.removeRange — takes away what is on tracks between two moments; with ripple, closes that time too
 ops/track.add — adds a video, audio or caption track
 ops/track.update — changes the name, hidden, muted, solo, locked, group or role of a track
@@ -82,7 +83,7 @@ ops/clip.add — puts a clip on a track: an asset, a scene, a sound, a color or 
 ops/clip.remove — removes clips; with ripple, what follows moves back into their place
 ops/clip.update — changes the name, source, offset, loop, hidden, draft, link or section fit of a clip
 ops/clip.move — moves clips to other starts or tracks, in one step
-ops/clip.trim — moves the start or end of a clip; what it shows stays in place
+ops/clip.trim — moves the start or end of a clip; what it shows stays in place; with ripple, what follows moves along
 ops/clip.split — cuts a clip in two at a moment of the timeline
 ops/clip.link — links clips into a group of their own, like the picture and sound of a video
 ops/clip.unlink — takes clips out of their linked groups

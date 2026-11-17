@@ -220,13 +220,133 @@ function freeStretches(timeline: TimelineState, tracks: readonly string[] | unde
   return free;
 }
 
-type Step = { readonly call: CommandCall; readonly kind: "close" | "remove" | "range" | "other" };
+type Step = {
+  readonly call: CommandCall;
+  readonly kind: "close" | "remove" | "range" | "other" | "open" | "add" | "moveInsert" | "trim";
+};
+
+/** Ids of a clip and, mostly, of its partners, as the editor lists them. */
+function withPartners(timeline: TimelineState, random: Random, first: string): string[] {
+  const link = timeline.clips[first]?.link;
+  if (!link || !random.chance(0.7)) return [first];
+  const ids = Object.keys(timeline.clips).toSorted();
+  return ids.filter((id) => id === first || timeline.clips[id]?.link === link);
+}
+
+/** Inserting and ripple trimming, which put time in or take it out around what they change. */
+function randomRoomStep(store: ProjectStore, random: Random, choice: number): Step {
+  const timeline = main(store);
+  const rippleTracks = someTracks(random);
+  const tracksParam = rippleTracks ? { rippleTracks } : {};
+  const ids = Object.keys(timeline.clips).toSorted();
+  const length = timelineLength(timeline);
+  if (choice === 0) {
+    return {
+      kind: "open",
+      call: {
+        type: "timeline.openGap",
+        params: {
+          timeline: "main",
+          at: t(random.chance(0.05) ? add(length, frames(1)) : momentIn(random, timeline)),
+          duration: t(frames(1 + random.int(90))),
+          ...tracksParam,
+        },
+      },
+    };
+  }
+  if (choice === 1) {
+    const track = random.pick(TRACKS)!;
+    const past = random.chance(0.1) ? add(length, frames(random.int(30))) : undefined;
+    return {
+      kind: "add",
+      call: {
+        type: "clip.add",
+        params: {
+          timeline: "main",
+          track,
+          start: t(past ?? momentIn(random, timeline)),
+          duration: t(frames(1 + random.int(60))),
+          source: isSound(track) ? { kind: "audio", media } : { kind: "color", color: "#884422" },
+          overlap: "insert",
+          ...tracksParam,
+        },
+      },
+    };
+  }
+  if (choice === 2) {
+    const group = withPartners(timeline, random, random.pick(ids) ?? "none");
+    const by = frames(random.int(121) - 60);
+    // Now and then a single clip to the other track of its kind.
+    const across = group.length === 1 && random.chance(0.3);
+    return {
+      kind: "moveInsert",
+      call: {
+        type: "clip.move",
+        params: {
+          timeline: "main",
+          clips: group.map((id) => {
+            const clip = timeline.clips[id];
+            const other = clip && { V1: "V2", V2: "V1", A1: "A2", A2: "A1" }[clip.track];
+            return {
+              clip: id,
+              start: t(maxOf(ZERO, add(parseTime(clip?.start ?? "0"), by))),
+              ...(across && other && { track: other }),
+            };
+          }),
+          overlap: "insert",
+          ...tracksParam,
+        },
+      },
+    };
+  }
+  // A ripple trim of one edge, with the partners whose edge is there too, as the editor lists them.
+  const first = random.pick(ids) ?? "none";
+  const clip = timeline.clips[first];
+  const edge = random.chance(0.5) ? "start" : "end";
+  const edgeOf = (each: ClipState) => (edge === "start" ? clipStart(each) : clipEnd(each));
+  const partners = clip
+    ? withPartners(timeline, random, first).filter(
+        (id) => id !== first && compare(edgeOf(timeline.clips[id]!), edgeOf(clip)) === 0,
+      )
+    : [];
+  // Sometimes one whose edge is elsewhere, which is refused.
+  const stray = random.chance(0.05) ? [random.pick(ids) ?? first] : [];
+  const together = [...new Set([...partners, ...stray])].filter((id) => id !== first);
+  let at = ZERO;
+  if (clip) {
+    const by = frames(random.int(121) - 60);
+    at = add(edgeOf(clip), by);
+    const [low, high] =
+      edge === "start"
+        ? [ZERO, subtract(clipEnd(clip), frames(1))]
+        : [add(clipStart(clip), frames(1)), add(clipEnd(clip), frames(120))];
+    at = maxOf(low, minOf(high, at));
+  }
+  return {
+    kind: "trim",
+    call: {
+      type: "clip.trim",
+      params: {
+        timeline: "main",
+        clip: first,
+        [edge]: t(at),
+        ...(together.length > 0 && { together }),
+        ripple: true,
+        ...tracksParam,
+      },
+    },
+  };
+}
+
+/** Edits that put time in or take it out around what they change themselves, see `checkRoom`. */
+const ROOM = new Set<Step["kind"]>(["open", "add", "moveInsert", "trim"]);
 
 function randomStep(store: ProjectStore, random: Random): Step {
   const timeline = main(store);
   const rippleTracks = someTracks(random);
   const tracksParam = rippleTracks ? { rippleTracks } : {};
-  const choice = random.int(10);
+  const choice = random.int(18);
+  if (choice >= 10) return randomRoomStep(store, random, Math.floor((choice - 10) / 2));
   if (choice < 4) {
     const free = freeStretches(timeline, rippleTracks);
     const ranges = Array.from({ length: 1 + random.int(3) }, () => {
@@ -604,10 +724,12 @@ function checkGroups(
   before: TimelineState,
   after: TimelineState,
   takesPart: ((track: string) => boolean) | undefined,
+  ignored: ReadonlySet<string> = new Set(),
 ): void {
   const groups = groupBy(
     Object.values(after.clips).filter(
-      ({ link, track }) => link !== undefined && takesPart?.(track) === true,
+      ({ id, link, track }) =>
+        link !== undefined && takesPart?.(track) === true && !ignored.has(id),
     ),
     ({ link }) => link!,
   );
@@ -635,12 +757,326 @@ function checkGroups(
   for (const [key, same] of fresh) expect(same.length, `parts ${key} kept their link`).toBe(1);
 }
 
+/** Sources that have no beginning, whose clock moves forward instead, see `trimClip`. */
+const isTimeless = (clip: ClipState) => clip.source.kind === "color";
+
+/**
+ * Checks one edit that put time in or took it out around clips that it changes itself: inserting
+ * (`timeline.openGap`, `clip.add` and `clip.move` with insert) and ripple trims. The same as
+ * `checkEdit` asks, with the clips that it changes itself where it put them.
+ */
+function checkRoom(step: Step, before: TimelineState, after: TimelineState, result: any): void {
+  const params = step.call.params as any;
+  const own: string[] = [];
+  const special = new Set<string>();
+  let open: { at: Rational; length: Rational } | undefined;
+  let close: { from: Rational; to: Rational } | undefined;
+  /** What the clips it changes itself have to look like. */
+  const wanted = new Map<
+    string,
+    { start: Rational; duration: Rational; offset: Rational; track: string; clockMoved?: boolean }
+  >();
+  if (step.kind === "open") {
+    open = { at: parseTime(params.at), length: parseTime(params.duration) };
+  } else if (step.kind === "add") {
+    open = { at: parseTime(params.start), length: parseTime(params.duration) };
+    own.push(params.track);
+    const added = after.clips[result.id];
+    expect(added).toBeDefined();
+    expect([added!.track, added!.start, added!.duration]).toEqual([
+      params.track,
+      params.start,
+      params.duration,
+    ]);
+  } else if (step.kind === "moveInsert") {
+    const landed = (params.clips as { clip: string; start: string; track?: string }[]).map(
+      ({ clip, start, track }) => {
+        const was = before.clips[clip]!;
+        special.add(clip);
+        own.push(track ?? was.track);
+        const from = parseTime(start);
+        wanted.set(clip, {
+          start: from,
+          duration: parseTime(was.duration),
+          offset: clipOffset(was),
+          track: track ?? was.track,
+        });
+        return { from, to: add(from, parseTime(was.duration)) };
+      },
+    );
+    const from = landed.reduce((a, b) => minOf(a, b.from), landed[0]!.from);
+    const to = landed.reduce((a, b) => maxOf(a, b.to), landed[0]!.to);
+    open = { at: from, length: subtract(to, from) };
+  } else {
+    const ids = [params.clip as string, ...((params.together ?? []) as string[])];
+    const trimmed = before.clips[params.clip]!;
+    for (const id of ids) {
+      const was = before.clips[id]!;
+      special.add(id);
+      own.push(was.track);
+      let start = clipStart(was);
+      let duration = subtract(clipEnd(was), clipStart(was));
+      let offset = clipOffset(was);
+      let clockMoved = false;
+      if (params.end !== undefined) {
+        const [from, to] = [parseTime(params.end), clipEnd(trimmed)];
+        if (compare(from, to) < 0) close = { from, to };
+        else if (compare(from, to) > 0) open = { at: to, length: subtract(from, to) };
+        // An edge that stays where it is moves nothing, of any clip.
+        if (compare(from, to) !== 0) duration = subtract(parseTime(params.end), start);
+      } else {
+        const [s, s2] = [clipStart(trimmed), parseTime(params.start)];
+        if (compare(s2, s) > 0) close = { from: s, to: s2 };
+        else if (compare(s2, s) < 0) open = { at: s, length: subtract(s, s2) };
+        if (compare(s2, s) !== 0) {
+          const by = subtract(s2, s);
+          duration = subtract(duration, by);
+          offset = add(offset, by);
+          start = s;
+          // A picture has no beginning: its clock moves forward instead.
+          if (compare(offset, ZERO) < 0 && isTimeless(was)) {
+            offset = ZERO;
+            clockMoved = true;
+          }
+        }
+      }
+      wanted.set(id, { start, duration, offset, track: was.track, clockMoved });
+    }
+  }
+  const listed: readonly string[] | undefined = params.rippleTracks;
+  const tracks = listed && [...new Set([...listed, ...own])];
+  const takesPart = (track: string) => tracks === undefined || tracks.includes(track);
+  const pieces = new Map<string, string>(
+    (result?.split ?? []).map(({ clip, piece }: { clip: string; piece: string }) => [clip, piece]),
+  );
+  const added = step.kind === "add" ? result.id : undefined;
+
+  // 2. No new overlaps.
+  const was = overlapsOn(before);
+  for (const [track, shared] of overlapsOn(after)) {
+    expect(compare(shared, was.get(track) ?? ZERO), `overlap on ${track}`).toBeLessThanOrEqual(0);
+  }
+
+  // 3, 5, 6, 9. Every clip there, with what it showed, where it should be.
+  const accounted = new Set<string>(added ? [added] : []);
+  const untouched = new Set<string>();
+  for (const clip of Object.values(before.clips)) {
+    const now = after.clips[clip.id];
+    expect(now, clip.id).toBeDefined();
+    accounted.add(clip.id);
+    const want = wanted.get(clip.id);
+    if (want) {
+      expect(
+        [t(clipStart(now!)), t(parseTime(now!.duration)), now!.track],
+        JSON.stringify(step.call),
+      ).toEqual([t(want.start), t(want.duration), want.track]);
+      // A picture that grew in front moved its clock: its keys are later, the rest is the same.
+      expect(t(clipOffset(now!))).toBe(t(want.offset));
+      if (!want.clockMoved) {
+        const { properties: _p, track: _t, ...rest } = without(now!);
+        const { properties: _q, track: _u, ...restBefore } = without(clip);
+        expect(rest).toEqual(restBefore);
+        expect(now!.properties).toEqual(clip.properties);
+      }
+      continue;
+    }
+    if (!takesPart(clip.track)) {
+      expect(now).toEqual(clip);
+      continue;
+    }
+    const from = clipStart(clip);
+    const to = clipEnd(clip);
+    let parts: Part[] = [{ from, to, clock: clipOffset(clip) }];
+    if (open) {
+      const { at, length } = open;
+      if (compare(from, at) >= 0)
+        parts = [{ from: add(from, length), to: add(to, length), clock: clipOffset(clip) }];
+      else if (compare(to, at) > 0) {
+        parts = [
+          { from, to: at, clock: clipOffset(clip) },
+          {
+            from: add(at, length),
+            to: add(to, length),
+            clock: add(clipOffset(clip), subtract(at, from)),
+          },
+        ];
+      }
+    } else if (close) {
+      // Nothing was in there, or nothing would have happened.
+      expect(compare(to, close.from) <= 0 || compare(from, close.to) >= 0, clip.id).toBe(true);
+      if (compare(from, close.to) >= 0) {
+        const by = subtract(close.to, close.from);
+        parts = [{ from: subtract(from, by), to: subtract(to, by), clock: clipOffset(clip) }];
+      }
+    }
+    const ids = parts.length === 2 ? [clip.id, pieces.get(clip.id)] : [clip.id];
+    parts.forEach((part, index) => {
+      const id = ids[index];
+      expect(id, `${clip.id} cut`).toBeDefined();
+      const there = after.clips[id!];
+      expect(there, `${clip.id} part ${index}`).toBeDefined();
+      accounted.add(id!);
+      expect(t(clipStart(there!))).toBe(t(part.from));
+      expect(t(clipEnd(there!))).toBe(t(part.to));
+      expect(t(clipOffset(there!))).toBe(t(part.clock));
+      expect(there!.track).toBe(clip.track);
+      expect(without(there!)).toEqual({ ...without(clip), id: id! });
+    });
+    if (parts.length === 1) {
+      untouched.add(clip.id);
+      expect([now!.enter, now!.exit]).toEqual([clip.enter, clip.exit]);
+    }
+  }
+  for (const id of Object.keys(after.clips)) expect(accounted.has(id), id).toBe(true);
+
+  // 6. Order on each track, apart from what the edit put somewhere itself.
+  const kept = Object.values(before.clips).filter((clip) => !special.has(clip.id));
+  for (const a of kept) {
+    for (const b of kept) {
+      if (a.track !== b.track || compare(clipStart(a), clipStart(b)) >= 0) continue;
+      expect(
+        compare(clipStart(after.clips[a.id]!), clipStart(after.clips[b.id]!)),
+      ).toBeLessThanOrEqual(0);
+    }
+  }
+
+  // 4. Partners in step stay in step; what a move puts elsewhere is up to it.
+  const clockOf = (clip: ClipState) => subtract(clipStart(clip), clipOffset(clip));
+  const moving = step.kind === "moveInsert" ? special : new Set<string>();
+  for (const a of Object.values(before.clips)) {
+    for (const b of Object.values(before.clips)) {
+      if (a.id >= b.id || !a.link || a.link !== b.link) continue;
+      if (!takesPart(a.track) || !takesPart(b.track) || moving.has(a.id) || moving.has(b.id)) {
+        continue;
+      }
+      const together =
+        compare(clipStart(a), clipEnd(b)) < 0 && compare(clipStart(b), clipEnd(a)) < 0;
+      if (!together || compare(clockOf(a), clockOf(b)) !== 0) continue;
+      // A picture whose clock moved forward in front shows something else there now.
+      if (wanted.has(a.id) && isTimeless(a)) continue;
+      if (wanted.has(b.id) && isTimeless(b)) continue;
+      const partsOf = (id: string) =>
+        [after.clips[id], after.clips[pieces.get(id) ?? ""]].filter(
+          (clip): clip is ClipState => clip !== undefined,
+        );
+      for (const x of partsOf(a.id)) {
+        for (const y of partsOf(b.id)) {
+          const length = (clip: ClipState) => subtract(clipEnd(clip), clipStart(clip));
+          const shares =
+            compare(clipOffset(x), add(clipOffset(y), length(y))) < 0 &&
+            compare(clipOffset(y), add(clipOffset(x), length(x))) < 0;
+          if (!shares) continue;
+          expect(t(clockOf(x)), JSON.stringify({ call: step.call, a, b })).toBe(t(clockOf(y)));
+        }
+      }
+    }
+  }
+  checkGroups(before, after, takesPart, special);
+
+  // 7. Sections and markers make room or close up, when all of the timeline from there on moves.
+  const from = open ? open.at : close?.from;
+  const stays =
+    from !== undefined &&
+    Object.values(before.clips).some(
+      (clip) => !moving.has(clip.id) && !takesPart(clip.track) && compare(clipEnd(clip), from) > 0,
+    );
+  const lengthBefore = timelineLength(before);
+  const placedBefore = placedSections(before);
+  let plain = placedBefore.map(({ id, duration }) => ({ id, length: duration }));
+  const markersWanted = new Map(
+    Object.values(before.markers).map((marker) => [
+      marker.id,
+      {
+        time: parseTime(marker.time),
+        duration: marker.duration === undefined ? undefined : parseTime(marker.duration),
+      },
+    ]),
+  );
+  if (!stays && open && compare(open.at, lengthBefore) <= 0) {
+    const { at, length } = open;
+    const into =
+      placedBefore.find(({ start, end }) => compare(start, at) <= 0 && compare(at, end) < 0) ??
+      placedBefore.at(-1)!;
+    plain = plain.map((each) =>
+      each.id === into.id ? { id: each.id, length: add(each.length, length) } : each,
+    );
+    for (const [id, marker] of markersWanted) {
+      if (compare(marker.time, at) >= 0)
+        markersWanted.set(id, { ...marker, time: add(marker.time, length) });
+      else if (marker.duration && compare(add(marker.time, marker.duration), at) > 0) {
+        markersWanted.set(id, { ...marker, duration: add(marker.duration, length) });
+      }
+    }
+  } else if (!stays && close) {
+    const gaps = [close];
+    plain = placedBefore
+      .map(({ id, start, end }) => ({
+        id,
+        length: subtract(closedMoment(gaps, end), closedMoment(gaps, start)),
+      }))
+      .filter(({ length }) => compare(length, ZERO) > 0);
+    if (plain.length === 0) plain = [{ id: placedBefore[0]!.id, length: frames(1) }];
+    for (const [id, marker] of markersWanted) {
+      const time = closedMoment(gaps, marker.time);
+      if (marker.duration === undefined) markersWanted.set(id, { time, duration: undefined });
+      else {
+        const left = subtract(closedMoment(gaps, add(marker.time, marker.duration)), time);
+        markersWanted.set(id, { time, duration: compare(left, ZERO) > 0 ? left : undefined });
+      }
+    }
+  }
+  let reach = ZERO;
+  for (const clip of Object.values(after.clips)) reach = maxOf(reach, clipEnd(clip));
+  const plainLength = plain.reduce((sum, { length }) => add(sum, length), ZERO);
+  const total = maxOf(plainLength, reach);
+  const last = plain.at(-1)!;
+  const grown = [
+    ...plain.slice(0, -1),
+    { id: last.id, length: add(last.length, subtract(total, plainLength)) },
+  ];
+  expect(placedSections(after).map(({ id, duration }) => `${id}:${t(duration)}`)).toEqual(
+    grown.map(({ id, length }) => `${id}:${t(length)}`),
+  );
+  for (const [id, { time, duration }] of markersWanted) {
+    const now = after.markers[id]!;
+    expect([now.time, now.duration]).toEqual([t(time), duration && t(duration)]);
+  }
+  expect(Object.keys(after.markers)).toHaveLength(markersWanted.size);
+  // The timeline ends no earlier than the last of what is on it.
+  expect(compare(timelineLength(after), reach)).toBeGreaterThanOrEqual(0);
+
+  // 8. Joins still join, or are said to be gone, or went with a clip of theirs.
+  const said = new Set<string>(result?.joinsRemoved ?? []);
+  for (const [id, join] of Object.entries(after.joins ?? {})) {
+    const wasJoined = before.joins?.[id];
+    const [a, b] = [after.clips[join.from ?? ""], after.clips[join.to ?? ""]];
+    if (!wasJoined || !a || !b) continue;
+    const fromBefore = before.clips[wasJoined.from ?? ""];
+    const toBefore = before.clips[wasJoined.to ?? ""];
+    if (fromBefore && toBefore && compare(clipEnd(fromBefore), clipStart(toBefore)) === 0) {
+      expect(t(clipEnd(a))).toBe(t(clipStart(b)));
+    }
+    const sides = [wasJoined.from ?? "", wasJoined.to ?? ""];
+    if (sides.every((side) => untouched.has(side) || !takesPart(before.clips[side]?.track ?? ""))) {
+      expect(join).toEqual(wasJoined);
+    }
+  }
+  for (const id of Object.keys(before.joins ?? {})) {
+    if (after.joins?.[id]) continue;
+    const join = before.joins![id]!;
+    if (after.clips[join.from ?? ""] && after.clips[join.to ?? ""]) {
+      expect(said.has(id), `join ${id}`).toBe(true);
+    }
+  }
+}
+
 describe.each(SEEDS)("ripple edits at random, seed %i", FUZZ, (seed) => {
   it("do all or nothing, lose nothing and move what follows, sections and markers by as much", () => {
     seedIds(seed);
     const random = randomFrom(seed);
     const store = randomProject(random);
     let done = 0;
+    let made = 0;
     for (let round = 0; round < 60; round++) {
       const before = structuredClone(main(store));
       const step = randomStep(store, random);
@@ -652,7 +1088,10 @@ describe.each(SEEDS)("ripple edits at random, seed %i", FUZZ, (seed) => {
       }
       const after = structuredClone(main(store));
       if (step.kind === "other") checkGroups(before, after, undefined);
-      else {
+      else if (ROOM.has(step.kind)) {
+        made += 1;
+        checkRoom(step, before, after, result.results[0]);
+      } else {
         done += 1;
         checkEdit(step, before, after, result.results[0]);
       }
@@ -666,6 +1105,7 @@ describe.each(SEEDS)("ripple edits at random, seed %i", FUZZ, (seed) => {
       }
     }
     expect(done).toBeGreaterThan(0);
+    expect(made).toBeGreaterThan(0);
     expect(store.exportFiles().problems).toEqual([]);
   });
 
@@ -688,9 +1128,26 @@ describe.each(SEEDS)("ripple edits at random, seed %i", FUZZ, (seed) => {
           compare(clipEnd(clip), at) <= 0 || compare(clipStart(clip), add(at, length)) >= 0;
         expect(apart).toBe(true);
       }
+      // The timeline ends no earlier than what is on it, also where sections stayed.
+      let reach = ZERO;
+      for (const clip of Object.values(opened.clips)) reach = maxOf(reach, clipEnd(clip));
+      expect(compare(timelineLength(opened), reach)).toBeGreaterThanOrEqual(0);
       closeGaps(draft, "main", [{ from: at, to: add(at, length) }], tracks);
       const after = draft.state.timelines["main"]!;
-      expect(after.sections).toEqual(before.sections);
+      // Sections only grow at the end, where what moved on reached past it while they stayed.
+      const grown = subtract(maxOf(reach, timelineLength(before)), timelineLength(before));
+      const stays =
+        tracks !== undefined &&
+        Object.values(before.clips).some(
+          (clip) => !tracks.includes(clip.track) && compare(clipEnd(clip), at) > 0,
+        );
+      const lastBefore = placedSections(before).at(-1)!;
+      const sectionsWanted = placedSections(before).map(({ id, duration }) =>
+        id === lastBefore.id && stays ? `${id}:${t(add(duration, grown))}` : `${id}:${t(duration)}`,
+      );
+      expect(placedSections(after).map(({ id, duration }) => `${id}:${t(duration)}`)).toEqual(
+        sectionsWanted,
+      );
       expect(after.markers).toEqual(before.markers);
       const pieces = new Map(split.map(({ clip, piece }) => [clip, piece]));
       for (const clip of Object.values(before.clips)) {

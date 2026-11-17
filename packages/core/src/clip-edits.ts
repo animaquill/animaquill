@@ -377,15 +377,25 @@ export function joinsAtEdgesOf(timeline: TimelineState, clip: string): JoinedEdg
  * Moves the edges of a clip. Its content stays where it is on the timeline, and so do keys: they are
  * on the clock of the clip, which only has to read differently at the new first frame. Transitions
  * at its edges go along with them, and get shorter when they no longer fit: see `fitTransitions`.
- * A join at an edge that moves no longer has its two clips next to each other, see `followJoins`.
+ * A join at an edge that moves no longer has its two clips next to each other, see `followJoins`,
+ * unless a ripple brings them together again (`rippling`): then it gets shorter too where needed.
  */
-export function trimClip(draft: Draft, timeline: string, clip: ClipState, span: Span): void {
+export function trimClip(
+  draft: Draft,
+  timeline: string,
+  clip: ClipState,
+  span: Span,
+  rippling = false,
+): void {
   const path = clipPath(timeline, clip.id);
   const moved = subtract(span.from, clipStart(clip));
   const { enter, exit } = joinsAtEdgesOf(timelineOf(draft, timeline), clip.id);
   const startStays = compare(moved, ZERO) === 0;
   const endStays = compare(span.to, clipEnd(clip)) === 0;
-  const joined = { ...(startStays && enter && { enter }), ...(endStays && exit && { exit }) };
+  const joined = {
+    ...((startStays || rippling) && enter && { enter }),
+    ...((endStays || rippling) && exit && { exit }),
+  };
   // Only what changes gets written. Somebody else can move this clip while its end is trimmed.
   if (!startStays) {
     const offset = add(clipOffset(clip), moved);

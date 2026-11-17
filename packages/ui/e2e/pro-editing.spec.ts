@@ -906,3 +906,205 @@ test.describe("ripple edits in light colours", () => {
     await shootNotice(page, "ripple-blocked-light.png");
   });
 });
+
+/* Inserting and ripple trims (pro-editing P3b of AnimaQuill Cloud). */
+
+const toolbar = (page: Page) => panel(page).getByRole("toolbar", { name: "时间轴工具" });
+const switchNamed = (page: Page, name: string) =>
+  toolbar(page).getByRole("button", { name, exact: true });
+
+/** The toolbar, for people to look at. */
+async function shootToolbar(page: Page, name: string) {
+  const box = await toolbar(page).boundingBox();
+  if (!box) return;
+  await page.screenshot({
+    path: test.info().outputPath(name),
+    clip: { x: box.x, y: box.y, width: Math.min(box.width, 900), height: box.height },
+  });
+}
+
+/** Presses on the end of a clip and drags it, leaving the button down for a look. */
+async function grabEnd(page: Page, what: Locator, pixels: number, alt = false) {
+  const right = await rightOf(what);
+  const { y } = await middleOf(what);
+  if (alt) await page.keyboard.down("Alt");
+  await page.mouse.move(right - 2, y);
+  await page.mouse.down();
+  await page.mouse.move(right - 2 + pixels / 2, y, { steps: 4 });
+  await page.mouse.move(right - 2 + pixels, y, { steps: 4 });
+}
+
+test.describe("inserting", () => {
+  test("has a switch next to overwriting, and only one of them is on", async ({ page }) => {
+    const inserting = switchNamed(page, "插入模式");
+    const overwriting = switchNamed(page, "覆盖模式");
+    await expect(inserting).toHaveAttribute("aria-pressed", "false");
+    await overwriting.click();
+    await inserting.click();
+    await expect(inserting).toHaveAttribute("aria-pressed", "true");
+    await expect(overwriting).toHaveAttribute("aria-pressed", "false");
+    await shootToolbar(page, "insert-switch-dark.png");
+    await overwriting.click();
+    await expect(inserting).toHaveAttribute("aria-pressed", "false");
+  });
+
+  test("Shift while dragging puts a video in at the start, and what was there moves on", async ({
+    page,
+  }) => {
+    await twoVideos(page, 20);
+    const first = await leftOf(picture(page).nth(0));
+    const width = (await rightOf(picture(page).nth(0))) - first;
+    const second = await middleOf(picture(page).nth(1));
+    await page.mouse.move(second.x, second.y);
+    await page.mouse.down();
+    await page.mouse.move(second.x - 40, second.y, { steps: 4 });
+    // Shift on the way, without moving: inserting from now on, to the start of the first.
+    await page.keyboard.down("Shift");
+    await page.mouse.move(second.x - (second.left - first) - 1, second.y, { steps: 6 });
+    await shootTracks(page, "insert-drag-dark.png");
+    await page.mouse.up();
+    await page.keyboard.up("Shift");
+    await expect(clips(page)).toHaveCount(4);
+    // The first video moved on by as long as the second, picture and sound.
+    await expect.poll(() => leftOf(picture(page).nth(1))).toBeCloseTo(first + width, -1);
+    await expect.poll(() => leftOf(sound(page).nth(1))).toBeCloseTo(first + width, -1);
+    await expect.poll(() => leftOf(picture(page).nth(0))).toBeCloseTo(first, -1);
+    await page.keyboard.press("Control+z");
+    await expect.poll(() => leftOf(picture(page).nth(0))).toBeCloseTo(first, 0);
+    await expect.poll(() => leftOf(picture(page).nth(1))).toBeCloseTo(second.left, 0);
+  });
+
+  test("Ctrl+Shift+V pastes in at the playhead, and what follows moves on", async ({ page }) => {
+    await placeVideo(page);
+    const start = await leftOf(picture(page).first());
+    const width = (await rightOf(picture(page).first())) - start;
+    await clickOn(page, picture(page).first());
+    await page.keyboard.press("Control+c");
+    await page.keyboard.press("Home");
+    await page.keyboard.press("Control+Shift+v");
+    await expect(clips(page)).toHaveCount(4);
+    await expect.poll(() => leftOf(picture(page).nth(1))).toBeCloseTo(start + width, -1);
+    await page.keyboard.press("Control+z");
+    await expect(clips(page)).toHaveCount(2);
+  });
+
+  test(", puts the chosen asset in at the playhead, . over what is there", async ({ page }) => {
+    await placeVideo(page);
+    const start = await leftOf(picture(page).first());
+    const width = (await rightOf(picture(page).first())) - start;
+    // The card was clicked, so it is what is chosen.
+    await page.keyboard.press("Home");
+    await page.keyboard.press("Comma");
+    await expect(clips(page)).toHaveCount(4);
+    await expect.poll(() => leftOf(picture(page).nth(1))).toBeCloseTo(start + width, -1);
+    // The playhead went to the end of what went in: over the video after it now.
+    await page.keyboard.press("Period");
+    await expect(clips(page)).toHaveCount(4);
+    await page.keyboard.press("Control+z");
+    await page.keyboard.press("Control+z");
+    await expect(clips(page)).toHaveCount(2);
+  });
+});
+
+test.describe("ripple trims", () => {
+  test("W trims from the playhead to the end, Q from the start to it, and what follows closes up", async ({
+    page,
+  }) => {
+    await twoVideos(page, 0);
+    const start = await leftOf(picture(page).nth(0));
+    const later = await leftOf(picture(page).nth(1));
+    await page.keyboard.press("Home");
+    await stepRight(page, 10);
+    await page.keyboard.press("KeyW");
+    const end = await rightOf(picture(page).nth(0));
+    expect(end).toBeLessThan(later - 10);
+    await expect.poll(() => leftOf(picture(page).nth(1))).toBeCloseTo(end, 0);
+    await expect.poll(() => leftOf(sound(page).nth(1))).toBeCloseTo(end, 0);
+    await page.keyboard.press("Control+z");
+    await expect.poll(() => leftOf(picture(page).nth(1))).toBeCloseTo(later, 0);
+    await page.keyboard.press("KeyQ");
+    // The video stays where it starts; what it shows and what follows move back.
+    await expect.poll(() => leftOf(picture(page).nth(0))).toBeCloseTo(start, 0);
+    await expect.poll(() => leftOf(picture(page).nth(1))).toBeLessThan(later - 10);
+    expect(await frameOf(page)).toBe(0);
+  });
+
+  test("B is the tool that trims with ripple: what follows moves along, and one undo takes it back", async ({
+    page,
+  }) => {
+    await twoVideos(page, 20);
+    const later = await leftOf(picture(page).nth(1));
+    const laterSound = await leftOf(sound(page).nth(1));
+    await page.keyboard.press("KeyB");
+    await expect(toolbar(page).getByRole("button", { name: "波纹编辑工具" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    // The video is all of its file: shorter, with its sound, and both videos after it move back.
+    await grabEnd(page, picture(page).nth(0), -40);
+    await shootTracks(page, "ripple-tool-dark.png");
+    await page.mouse.up();
+    await expect.poll(() => leftOf(picture(page).nth(1))).toBeCloseTo(later - 40, -1);
+    await expect.poll(() => leftOf(sound(page).nth(1))).toBeCloseTo(laterSound - 40, -1);
+    await page.keyboard.press("Control+z");
+    await expect.poll(() => leftOf(picture(page).nth(1))).toBeCloseTo(later, 0);
+    await expect.poll(() => leftOf(sound(page).nth(1))).toBeCloseTo(laterSound, 0);
+  });
+
+  test("with the sound left in the way, nothing moves and it says so", async ({ page }) => {
+    await twoVideos(page, 20);
+    const later = await leftOf(picture(page).nth(1));
+    await page.keyboard.press("KeyB");
+    // Only the picture, with Alt: its sound is still in the time that would go.
+    await grabEnd(page, picture(page).nth(0), -30, true);
+    await page.mouse.up();
+    await page.keyboard.up("Alt");
+    await expect(notice(page)).toBeVisible();
+    await expect(sound(page).nth(0)).toHaveAttribute("data-blocked", "true");
+    expect(await leftOf(picture(page).nth(1))).toBeCloseTo(later, 0);
+  });
+
+  test("are in the menu, with their keys, and greyed out while there is nothing to do", async ({
+    page,
+  }) => {
+    await page.getByRole("button", { name: "时间轴", exact: true }).click();
+    const menu = page.getByRole("menu");
+    for (const [name, key] of [
+      ["波纹修剪开头到播放头", "Q"],
+      ["波纹修剪结尾到播放头", "W"],
+      ["插入粘贴", "V"],
+      ["插入选中的素材", ","],
+      ["覆盖选中的素材", "."],
+    ]) {
+      const item = menu.getByRole("menuitem", { name: new RegExp(`^${name}`) });
+      await expect(item).toBeDisabled();
+      await expect(item).toContainText(key as string);
+    }
+    await expect(menu.getByRole("menuitemradio", { name: /^波纹编辑工具/ })).toContainText("B");
+  });
+});
+
+test.describe("inserting and ripple trims in light colours", () => {
+  test.use({ colorScheme: "light" });
+
+  test("look as they do in the dark", async ({ page }) => {
+    await switchNamed(page, "插入模式").click();
+    await shootToolbar(page, "insert-switch-light.png");
+    await switchNamed(page, "插入模式").click();
+    await twoVideos(page, 20);
+    await page.keyboard.press("KeyB");
+    await grabEnd(page, picture(page).nth(0), -40);
+    await shootTracks(page, "ripple-tool-light.png");
+    await page.mouse.up();
+    const second = await middleOf(picture(page).nth(1));
+    const first = await leftOf(picture(page).nth(0));
+    await page.keyboard.press("KeyV");
+    await page.mouse.move(second.x, second.y);
+    await page.mouse.down();
+    await page.keyboard.down("Shift");
+    await page.mouse.move(second.x - (second.left - first) / 2, second.y, { steps: 6 });
+    await shootTracks(page, "insert-drag-light.png");
+    await page.mouse.up();
+    await page.keyboard.up("Shift");
+  });
+});

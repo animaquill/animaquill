@@ -17,6 +17,7 @@ import {
   expectCut,
   extendToFit,
   splitClip,
+  trimClip,
   followJoins,
   joinsTogether,
   spanOf,
@@ -152,6 +153,18 @@ export function closeGaps(
   spans: readonly Span[],
   tracks: RippleTracks,
 ): Rippled {
+  const together = joinsTogether(timelineOf(draft, timeline));
+  const closed = closeRoom(draft, timeline, spans, tracks);
+  return { ...closed, joinsRemoved: followJoins(draft, timeline, together) };
+}
+
+/** As `closeGaps`, apart from joins: whoever calls it follows them, see `followJoins`. */
+export function closeRoom(
+  draft: Draft,
+  timeline: string,
+  spans: readonly Span[],
+  tracks: RippleTracks,
+): Omit<Rippled, "joinsRemoved"> {
   const target = timelineOf(draft, timeline);
   const gaps = mergeSpans(spans);
   const rippling = isRippling(tracks);
@@ -178,7 +191,6 @@ export function closeGaps(
     back.push(total);
   }
   const length = timelineLength(target);
-  const together = joinsTogether(target);
   const moved: string[] = [];
   for (const clip of clips) {
     // The gaps that end at its start or before, which are all those before it.
@@ -207,15 +219,9 @@ export function closeGaps(
   }
 
   // What stayed where it was can now be past the end, which must not cut it off.
-  let reach = ZERO;
-  for (const clip of Object.values(timelineOf(draft, timeline).clips)) {
-    const end = clipEnd(clip);
-    if (compare(end, reach) > 0) reach = end;
-  }
+  const reach = reachOf(timelineOf(draft, timeline));
   extendToFit(draft, timeline, compare(reach, length) < 0 ? reach : length);
-
-  const joinsRemoved = followJoins(draft, timeline, together);
-  return { moved, joinsRemoved, sectionsRemoved };
+  return { moved, sectionsRemoved };
 }
 
 /** What taking a stretch out of tracks did to the clips on them. */
@@ -257,12 +263,16 @@ export interface Opened {
   readonly joinsRemoved: readonly string[];
 }
 
+const NONE: ReadonlySet<string> = new Set();
+
 /**
  * Puts a stretch of `length` into a timeline at `at`, as inserting does in an editor: on the tracks
  * that ripple, clips from `at` on move on by as much, and a clip across `at` is cut there, its part
  * after the cut moving on with them (linked parts get a link of their own, see `PieceLinks`).
- * Sections and markers make room too, see `openingPlan`, when all of the timeline from `at` on moves. Taking the same stretch out again with
- * `closeGaps` puts everything back where it was, apart from the cuts and joins across `at`.
+ * Clips `aside` take no part at all, such as those that a move puts there. Sections and markers
+ * make room too, see `openingPlan`, when all of the timeline from `at` on moves; and in any case the
+ * timeline ends no earlier than what is on it. Taking the same stretch out again with `closeGaps`
+ * puts every clip back where it was, apart from the cuts and joins across `at`.
  */
 export function openGap(
   draft: Draft,
@@ -270,22 +280,37 @@ export function openGap(
   at: Rational,
   length: Rational,
   tracks: RippleTracks,
+  aside: ReadonlySet<string> = NONE,
 ): Opened {
+  const together = joinsTogether(timelineOf(draft, timeline));
+  const opened = openRoom(draft, timeline, at, length, tracks, aside);
+  return { ...opened, joinsRemoved: followJoins(draft, timeline, together) };
+}
+
+/** As `openGap`, apart from joins: whoever calls it follows them, see `followJoins`. */
+export function openRoom(
+  draft: Draft,
+  timeline: string,
+  at: Rational,
+  length: Rational,
+  tracks: RippleTracks,
+  aside: ReadonlySet<string> = NONE,
+): Omit<Opened, "joinsRemoved"> {
   const target = timelineOf(draft, timeline);
   const rippling = isRippling(tracks);
-  const together = joinsTogether(target);
+  const takesPart = (clip: ClipState) => !aside.has(clip.id) && rippling(clip);
   const crossing = (clip: ClipState) =>
     compare(clipStart(clip), at) < 0 && compare(clipEnd(clip), at) > 0;
   const links = new PieceLinks();
   for (const clip of Object.values(target.clips)) {
-    if (rippling(clip) && crossing(clip)) links.expect(clip.link, at);
+    if (takesPart(clip) && crossing(clip)) links.expect(clip.link, at);
   }
   const moved: string[] = [];
   const split: { clip: string; piece: string }[] = [];
   const later = (clip: string, from: Rational) =>
     draft.set([...clipPath(timeline, clip), "start"], formatTime(add(from, length)));
   for (const clip of Object.values(target.clips)) {
-    if (!rippling(clip)) continue;
+    if (!takesPart(clip)) continue;
     if (compare(clipStart(clip), at) >= 0) {
       later(clip.id, clipStart(clip));
       moved.push(clip.id);
@@ -296,12 +321,98 @@ export function openGap(
       split.push({ clip: clip.id, piece });
     }
   }
-  // As `closeGaps`: sections and markers make room only when all of the timeline from `at` on moves.
-  // Then nothing makes the timeline longer either, and what moved on can end past its end. Nothing
-  // uses this yet: insert (P3b) has to make room for that first, as `extendToFit` does for drops.
+  // As `closeGaps`: sections and markers make room only when all of the timeline from `at` on
+  // moves. Past the end there is nothing to make room in.
   const stays = Object.values(target.clips).some(
-    (clip) => !rippling(clip) && compare(clipEnd(clip), at) > 0,
+    (clip) => !aside.has(clip.id) && !rippling(clip) && compare(clipEnd(clip), at) > 0,
   );
-  if (!stays) applyGapPlan(draft, timeline, openingPlan(timelineOf(draft, timeline), at, length));
-  return { moved, split, joinsRemoved: followJoins(draft, timeline, together) };
+  if (!stays && compare(at, timelineLength(target)) <= 0) {
+    applyGapPlan(draft, timeline, openingPlan(timelineOf(draft, timeline), at, length));
+  }
+  // What moved on can end past the end, when sections stayed or it was there already.
+  extendToFit(draft, timeline, reachOf(timelineOf(draft, timeline)));
+  return { moved, split };
+}
+
+/** Where the last clip of a timeline ends. */
+function reachOf(timeline: TimelineState): Rational {
+  let reach = ZERO;
+  for (const clip of Object.values(timeline.clips)) {
+    const end = clipEnd(clip);
+    if (compare(end, reach) > 0) reach = end;
+  }
+  return reach;
+}
+
+/** What a ripple trim did, apart from the trim: see `rippleTrim`. */
+export interface RippleTrimmed extends Rippled {
+  readonly split: readonly { readonly clip: string; readonly piece: string }[];
+}
+
+/**
+ * Trims clips as a ripple trim does in an editor: what follows the edge that moves goes along by as
+ * much as the clips got longer or shorter. At the start, the clips stay where they start, and what
+ * they show and everything after them moves instead. The clips have the edges that move at the
+ * same moment, as the picture and the sound of a video. Time that goes is taken out as `closeRoom`
+ * does, which fails with `ripple-blocked` when something on the tracks that ripple is in it; time
+ * that comes is put in as `openRoom` does. The tracks of the clips always ripple. The end goes
+ * first, then the start. A join at an edge that moves has its clips together again afterwards, so it
+ * stays, shorter where it has to be.
+ */
+export function rippleTrim(
+  draft: Draft,
+  timeline: string,
+  clips: readonly string[],
+  edges: { readonly start?: Rational | undefined; readonly end?: Rational | undefined },
+  tracks: RippleTracks,
+): RippleTrimmed {
+  const fresh = (id: string) => timelineOf(draft, timeline).clips[id] as ClipState;
+  const [first] = clips;
+  if (first === undefined) return { moved: [], split: [], joinsRemoved: [], sectionsRemoved: [] };
+  const together = joinsTogether(timelineOf(draft, timeline));
+  const own = tracks && [...new Set([...tracks, ...clips.map((id) => fresh(id).track)])];
+  const moved = new Set<string>();
+  const split: { clip: string; piece: string }[] = [];
+  const sectionsRemoved: string[] = [];
+  const trimEach = (span: (clip: ClipState) => Span) => {
+    for (const id of clips) trimClip(draft, timeline, fresh(id), span(fresh(id)), true);
+  };
+  const close = (from: Rational, to: Rational) => {
+    const closed = closeRoom(draft, timeline, [{ from, to }], own);
+    for (const id of closed.moved) moved.add(id);
+    sectionsRemoved.push(...closed.sectionsRemoved);
+  };
+  const open = (at: Rational, length: Rational) => {
+    const opened = openRoom(draft, timeline, at, length, own);
+    for (const id of opened.moved) moved.add(id);
+    split.push(...opened.split);
+  };
+
+  const { start, end } = edges;
+  if (end !== undefined) {
+    const was = clipEnd(fresh(first));
+    if (compare(end, was) < 0) {
+      trimEach((clip) => ({ from: clipStart(clip), to: end }));
+      close(end, was);
+    } else if (compare(end, was) > 0) {
+      open(was, subtract(end, was));
+      trimEach((clip) => ({ from: clipStart(clip), to: end }));
+    }
+  }
+  if (start !== undefined) {
+    const was = clipStart(fresh(first));
+    if (compare(start, was) > 0) {
+      // The part before the new start goes, and the clips move back to where they started.
+      trimEach((clip) => ({ from: start, to: clipEnd(clip) }));
+      close(was, start);
+    } else if (compare(start, was) < 0) {
+      // Room for what comes in front, with the clips at the far side of it, which then grow back.
+      open(was, subtract(was, start));
+      trimEach((clip) => ({ from: was, to: clipEnd(clip) }));
+    }
+  }
+  extendToFit(draft, timeline, reachOf(timelineOf(draft, timeline)));
+  for (const id of clips) moved.delete(id);
+  const joinsRemoved = followJoins(draft, timeline, together);
+  return { moved: [...moved], split, joinsRemoved, sectionsRemoved };
 }

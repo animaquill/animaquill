@@ -93,6 +93,7 @@ import {
   joinsAmong,
   cutAt,
   freeShift,
+  openGapCall,
   splitCall,
   transitionCall,
   type ClipCopy,
@@ -198,7 +199,8 @@ export function expanderBox(left: number, width: number, edgeReach: number): num
   return fits ? x : undefined;
 }
 
-export type Tool = "select" | "razor";
+/** What the mouse does: select and move, cut, or trim with ripple at the edges of clips. */
+export type Tool = "select" | "razor" | "ripple";
 
 /** Where something dragged here goes. */
 export interface DropPlace {
@@ -207,7 +209,12 @@ export interface DropPlace {
   readonly seconds: number;
   /** How close in seconds it snaps to the edges of clips, the playhead and the ends. */
   readonly snap?: number;
+  /** Shift was held: it goes in, and what follows moves on, whatever the switches say. */
+  readonly insert?: boolean;
 }
+
+/** What putting something down does with what is in the way. */
+type DropMode = "avoid" | "overwrite" | "insert";
 
 /** Something of the project that people put on the timeline, by what it is. */
 export interface MediaPick {
@@ -246,14 +253,22 @@ interface MediaWhat {
   readonly before: readonly CommandCall[];
 }
 
-type MediaWhere = DropPlace | "free" | "playhead";
+/**
+ * At a place it was dropped, right at the playhead where it is free, at the playhead on the first
+ * track of its kind, or exactly at a moment for at most so long (as with in and out) on that track.
+ */
+type MediaWhere =
+  | DropPlace
+  | "free"
+  | "playhead"
+  | { readonly at: Rational; readonly most?: Rational; readonly mode: DropMode };
 
 /** Where it would land, see `TimelineEditor.#planMedia`. */
 interface MediaPlan {
   readonly parts: readonly (MediaPart & { readonly row: Row | undefined })[];
   readonly at: Rational;
   readonly duration: Rational;
-  readonly overwriting: boolean;
+  readonly mode: DropMode;
   /** Where it snapped, or touches what it went after. */
   readonly line?: number;
 }
@@ -379,6 +394,8 @@ export interface TimelineSnapshot {
   readonly snapping: boolean;
   /** Whether a drop covers other clips. Off, clips go to the nearest free place. */
   readonly overwriting: boolean;
+  /** Whether a drop makes room: what follows moves on. Never with `overwriting`. */
+  readonly inserting: boolean;
   /** Whether a click adds to the selection, or takes away from it. For fingers above all. */
   readonly multiSelecting: boolean;
   readonly playing: boolean;
@@ -480,13 +497,15 @@ interface SavedPreferences {
   readonly version: typeof SETTINGS_VERSION;
   readonly snapping: boolean;
   readonly overwriting: boolean;
+  /** Since inserting came, and then never with overwriting. */
+  readonly inserting?: boolean;
   readonly multiSelecting: boolean;
   readonly headerWidth: number;
 }
 
 function parsePreferences(value: unknown): SavedPreferences | undefined {
   if (typeof value !== "object" || value === null) return undefined;
-  const { version, snapping, overwriting, multiSelecting, headerWidth } =
+  const { version, snapping, overwriting, inserting, multiSelecting, headerWidth } =
     value as Partial<SavedPreferences>;
   if (version !== SETTINGS_VERSION) return undefined;
   if (typeof snapping !== "boolean" || typeof overwriting !== "boolean") return undefined;
@@ -494,6 +513,7 @@ function parsePreferences(value: unknown): SavedPreferences | undefined {
     version,
     snapping,
     overwriting,
+    inserting: inserting === true && !overwriting,
     multiSelecting: multiSelecting === true,
     headerWidth: typeof headerWidth === "number" ? headerWidth : DEFAULT_HEADER_WIDTH,
   };
@@ -544,6 +564,7 @@ export class TimelineEditor implements TouchTarget {
     tool: "select",
     snapping: true,
     overwriting: false,
+    inserting: false,
     multiSelecting: false,
     playing: false,
     rate: 1,
@@ -630,14 +651,29 @@ export class TimelineEditor implements TouchTarget {
 
   #adoptPreferences(saved: SavedPreferences): void {
     const { snapping, overwriting, multiSelecting } = saved;
+    const inserting = saved.inserting === true;
     const headerWidth = clamp(saved.headerWidth, MIN_HEADER_WIDTH, MAX_HEADER_WIDTH);
-    this.#snapshot = { ...this.#snapshot, snapping, overwriting, multiSelecting, headerWidth };
+    this.#snapshot = {
+      ...this.#snapshot,
+      snapping,
+      overwriting,
+      inserting,
+      multiSelecting,
+      headerWidth,
+    };
     this.#emitter.emit();
   }
 
   #savePreferences(): void {
-    const { snapping, overwriting, multiSelecting, headerWidth } = this.#snapshot;
-    const saved = { version: SETTINGS_VERSION, snapping, overwriting, multiSelecting, headerWidth };
+    const { snapping, overwriting, inserting, multiSelecting, headerWidth } = this.#snapshot;
+    const saved = {
+      version: SETTINGS_VERSION,
+      snapping,
+      overwriting,
+      inserting,
+      multiSelecting,
+      headerWidth,
+    };
     this.#settings
       .save(SETTINGS_KEY, saved)
       .catch((error: unknown) => console.warn("Timeline settings could not be saved", error));
@@ -1116,8 +1152,25 @@ export class TimelineEditor implements TouchTarget {
     this.#savePreferences();
   }
 
+  /** Overwriting and inserting are what a drop does with what is in the way: one or the other. */
   toggleOverwriting(): void {
-    this.#snapshot = { ...this.#snapshot, overwriting: !this.#snapshot.overwriting };
+    const overwriting = !this.#snapshot.overwriting;
+    this.#snapshot = {
+      ...this.#snapshot,
+      overwriting,
+      inserting: overwriting ? false : this.#snapshot.inserting,
+    };
+    this.#emitter.emit();
+    this.#savePreferences();
+  }
+
+  toggleInserting(): void {
+    const inserting = !this.#snapshot.inserting;
+    this.#snapshot = {
+      ...this.#snapshot,
+      inserting,
+      overwriting: inserting ? false : this.#snapshot.overwriting,
+    };
     this.#emitter.emit();
     this.#savePreferences();
   }
@@ -1931,6 +1984,65 @@ export class TimelineEditor implements TouchTarget {
     if (this.#runRipple(model, call, own)) this.#tellLockedLeft(new Set(clips), model);
   }
 
+  /**
+   * What Q and W trim: a selected clip under the playhead, or else the one there on the first track
+   * that can change, with its partners whose edge is where its own is.
+   */
+  #trimmedAtPlayhead(model: TimelineModel, edge: "start" | "end"): readonly ClipBox[] | undefined {
+    const moment = frameTime(this.#frame, model.rate);
+    const seconds = frameSeconds(this.#frame, model.rate);
+    const there = model.rows.flatMap((row) => {
+      if (row.track.locked || row.gone) return [];
+      const box = clipAt(row, seconds);
+      return box && isInsideClip(box.clip, moment) ? [box] : [];
+    });
+    const { selection } = this.#snapshot;
+    const box = there.find(({ id }) => selection.has(id)) ?? there[0];
+    if (!box) return undefined;
+    const edgeOf = edge === "start" ? clipStart : clipEnd;
+    const { link } = box.clip;
+    const partners = (link === undefined ? [] : (model.links.get(link) ?? [])).flatMap((id) => {
+      const other = model.boxes.get(id);
+      const row = model.rowOfClip.get(id);
+      const usable = other && row && id !== box.id && !row.track.locked;
+      return usable && compare(edgeOf(other.clip), edgeOf(box.clip)) === 0 ? [other] : [];
+    });
+    return [box, ...partners];
+  }
+
+  get canRippleTrim(): boolean {
+    const { model } = this;
+    return model !== undefined && this.#trimmedAtPlayhead(model, "end") !== undefined;
+  }
+
+  /**
+   * Q and W, as in Premiere: what is before the playhead (start) or after it (end) of the clip there
+   * goes, and what follows moves back into that time. After Q the playhead is where the clip starts,
+   * which is where what it showed at the playhead is now.
+   */
+  rippleTrimToPlayhead(edge: "start" | "end"): void {
+    const { model } = this;
+    const clips = model && this.#trimmedAtPlayhead(model, edge);
+    const [box] = clips ?? [];
+    if (!model || !clips || !box) return;
+    const together = clips.slice(1).map(({ id }) => id);
+    const call = {
+      type: "clip.trim",
+      params: {
+        timeline: model.id,
+        clip: box.id,
+        [edge]: formatTime(frameTime(this.#frame, model.rate)),
+        ...(together.length > 0 && { together }),
+        ripple: true,
+        rippleTracks: this.#rippleTracks(model),
+      },
+    };
+    const own = [...new Set(clips.map(({ clip }) => clip.track))];
+    if (!this.#runRipple(model, call, own)) return;
+    this.#tellLockedLeft(new Set(clips.map(({ id }) => id)), model);
+    if (edge === "start") this.seek(frameAt(box.start, model.rate));
+  }
+
   /** Whether there is a marked part to lift or extract, and a track that is not locked. */
   get canLift(): boolean {
     const { model } = this;
@@ -2062,9 +2174,10 @@ export class TimelineEditor implements TouchTarget {
   /**
    * Puts copies at the playhead, as far apart as they were, and takes away what was cut, in one
    * step. They go on their own tracks where those can be used. What is there stays and the copies
-   * go after it, unless people overwrite. The playhead stays: people are watching that place.
+   * go after it, unless people overwrite, or insert: then what follows moves on to make room, as
+   * `insert` asks for this once. The playhead stays: people are watching that place.
    */
-  paste(): void {
+  paste(insert = this.#snapshot.inserting): void {
     const { model } = this;
     const [first] = this.#clipboard.toSorted((a, b) => compare(clipStart(a), clipStart(b)));
     if (!model || !first) return;
@@ -2086,8 +2199,8 @@ export class TimelineEditor implements TouchTarget {
       const exactEnd = () => add(clipEnd(clip), offset);
       return row ? [{ row, start, end, exactStart, exactEnd }] : [];
     });
-    const { overwriting } = this.#snapshot;
-    const shift = overwriting ? undefined : freeShift(placed, cut, 1);
+    const overwriting = !insert && this.#snapshot.overwriting;
+    const shift = overwriting || insert ? undefined : freeShift(placed, cut, 1);
     const moved = shift ? add(offset, shift.exact()) : offset;
 
     const trackCalls: CommandCall[] = [];
@@ -2119,7 +2232,12 @@ export class TimelineEditor implements TouchTarget {
     // Joins between what was copied come along, which is how cutting and pasting moves them too.
     const originals = this.#clipboard.map(({ id }) => id);
     const joins = copiedJoins(model.id, this.#clipboardJoins, originals, copies);
-    if (!this.#run([...removal, ...trackCalls, ...calls, ...joins])) return;
+    // Going in, they make room once for all of them: from the first to the end of the last.
+    const last = this.#clipboard.reduce((a, b) => (compare(clipEnd(a), clipEnd(b)) >= 0 ? a : b));
+    const room = insert
+      ? openGapCall(model, moment, add(clipEnd(last), offset), this.#rippleTracks(model))
+      : [];
+    if (!this.#run([...removal, ...trackCalls, ...room, ...calls, ...joins])) return;
     this.#setCut(new Set());
     this.#select(new Set(copies.map(({ id }) => id)));
   }
@@ -2198,6 +2316,45 @@ export class TimelineEditor implements TouchTarget {
     return this.#putMedia(model, what, place ?? "free");
   }
 
+  /** What is chosen in the assets tab, which `,` and `.` put on the timeline. */
+  #chosenMedia: MediaPick | undefined;
+
+  /** The assets tab says what is chosen there, or that nothing is. */
+  chooseMedia(pick: MediaPick | undefined): void {
+    this.#chosenMedia = pick;
+  }
+
+  get hasChosenMedia(): boolean {
+    const { model } = this;
+    const pick = this.#chosenMedia;
+    return (
+      model !== undefined && pick !== undefined && this.#mediaOf(model, pick, []) !== undefined
+    );
+  }
+
+  /**
+   * Puts what is chosen in the assets tab at the in, or at the playhead without one, on the first
+   * track of its kind: going in, or over what is there. With an in and an out it is at most as long
+   * as what they mark, as Premiere's three point edits without a source monitor. Then the marks are
+   * used up, and the playhead is at the end of what went there.
+   */
+  putChosen(mode: "insert" | "overwrite"): MediaAdded | undefined {
+    const { model } = this;
+    const pick = this.#chosenMedia;
+    const what = model && pick && this.#mediaOf(model, pick, []);
+    if (!model || !what) return undefined;
+    const { in: from, out } = this.#snapshot.marks;
+    const at = frameTime(from ?? this.#frame, model.rate);
+    const marked = from !== undefined && out !== undefined ? out + 1 - from : 0;
+    const most = marked > 0 ? frameTime(marked, model.rate) : undefined;
+    const added = this.#putMedia(model, what, { at, ...(most && { most }), mode });
+    if (!added) return undefined;
+    if (hasMarks(this.#snapshot.marks)) this.setMarks(NO_MARKS);
+    const length = most && compare(most, what.duration) < 0 ? most : what.duration;
+    this.seek(frameAt(toSeconds(add(at, length)), model.rate));
+    return added;
+  }
+
   /** A new scene from the template, on the timeline right away, to see it move and to change it. */
   createScene(place?: DropPlace): MediaAdded | undefined {
     const { model } = this;
@@ -2234,6 +2391,7 @@ export class TimelineEditor implements TouchTarget {
       lane: this.laneAt(pointer.y),
       seconds: this.timeAt(pointer.x),
       snap: this.#snapReach(pointer),
+      ...(pointer.shift && { insert: true }),
     };
   }
 
@@ -2318,34 +2476,46 @@ export class TimelineEditor implements TouchTarget {
 
   /**
    * Where something would land. At a place: on the track there or else the first one of its kind
-   * that can take it, snapped to what is near, and after what is there unless people overwrite.
-   * "free" is right at the playhead, see `#freeRow`, and "playhead" there on the first track.
-   * Without a track that can take a part, it goes on a new one.
+   * that can take it, snapped to what is near, and after what is there unless people overwrite or
+   * insert. "free" is right at the playhead, see `#freeRow`, unless people insert, and "playhead"
+   * there on the first track. Without a track that can take a part, it goes on a new one.
    */
   #planMedia(model: TimelineModel, what: MediaWhat, where: MediaWhere): MediaPlan {
     const { rate } = model;
-    const dropped = typeof where === "object" ? where : undefined;
-    const free = where === "free";
+    const exact = typeof where === "object" && "mode" in where ? where : undefined;
+    const dropped = typeof where === "object" && !("mode" in where) ? where : undefined;
+    const { inserting, overwriting } = this.#snapshot;
+    const mode: DropMode =
+      exact?.mode ??
+      (dropped?.insert === true || inserting
+        ? "insert"
+        : overwriting && where !== "free"
+          ? "overwrite"
+          : "avoid");
+    // Right at the playhead the rows are free where it goes, unless what is there moves on anyway.
+    const free = where === "free" && mode === "avoid";
     const seconds = Math.max(dropped?.seconds ?? frameSeconds(this.#frame, rate), 0);
-    let start = frameTime(frameAt(seconds, rate), rate);
+    let start = exact?.at ?? frameTime(frameAt(seconds, rate), rate);
+    const duration =
+      exact?.most && compare(exact.most, what.duration) < 0 ? exact.most : what.duration;
     let line: number | undefined;
     const within = dropped?.snap ?? 0;
     if (within > 0) {
       const points = snapPointsOf(model, this.#frame, new Set());
-      const length = toSeconds(what.duration);
+      const length = toSeconds(duration);
       const byStart = points.nearest(seconds, within);
       const byEnd = points.nearest(seconds + length, within);
       const startGap = byStart ? Math.abs(byStart.seconds - seconds) : Number.POSITIVE_INFINITY;
       const endGap = byEnd ? Math.abs(byEnd.seconds - seconds - length) : Number.POSITIVE_INFINITY;
-      if (byEnd && endGap < startGap && compare(byEnd.exact(), what.duration) >= 0) {
-        start = subtract(byEnd.exact(), what.duration);
+      if (byEnd && endGap < startGap && compare(byEnd.exact(), duration) >= 0) {
+        start = subtract(byEnd.exact(), duration);
         line = byEnd.seconds;
       } else if (byStart) {
         start = byStart.exact();
         line = byStart.seconds;
       }
     }
-    const end = add(start, what.duration);
+    const end = add(start, duration);
     const parts = what.parts.map((part) => ({
       ...part,
       row: free
@@ -2365,18 +2535,10 @@ export class TimelineEditor implements TouchTarget {
           ]
         : [],
     );
-    // Right at the playhead the rows are free where it goes, and nothing gets overwritten.
-    const overwriting = !free && this.#snapshot.overwriting;
-    const shift = overwriting || free ? undefined : freeShift(placed, new Set(), 1);
+    const shift = mode === "avoid" && !free ? freeShift(placed, new Set(), 1) : undefined;
     const at = shift ? add(start, shift.exact()) : start;
     if (shift && shift.seconds > 0) line = shift.contact;
-    return {
-      parts,
-      at,
-      duration: what.duration,
-      overwriting,
-      ...(line === undefined ? {} : { line }),
-    };
+    return { parts, at, duration, mode, ...(line === undefined ? {} : { line }) };
   }
 
   /** Puts it where `#planMedia` says, in one step, selects what it made and says where it went. */
@@ -2407,14 +2569,18 @@ export class TimelineEditor implements TouchTarget {
           source,
           ...(what.properties && { properties: what.properties }),
           ...link,
-          ...(plan.overwriting ? { overlap: "overwrite" } : {}),
+          ...(plan.mode === "overwrite" ? { overlap: "overwrite" } : {}),
         },
       };
     });
-    if (!this.#run([...what.before, ...trackCalls, ...calls])) return undefined;
+    // Going in, the picture and the sound make room once, together.
+    const end = add(plan.at, plan.duration);
+    const room =
+      plan.mode === "insert" ? openGapCall(model, plan.at, end, this.#rippleTracks(model)) : [];
+    if (!this.#run([...what.before, ...trackCalls, ...room, ...calls])) return undefined;
     this.#select(new Set(ids));
     const from = toSeconds(plan.at);
-    const to = toSeconds(add(plan.at, plan.duration));
+    const to = toSeconds(end);
     this.#bringIntoView(from, to, ids);
     this.flash({ clips: new Set(ids) });
     return { clips: ids, tracks, start: from, frame: frameAt(from, model.rate) };
@@ -2434,8 +2600,9 @@ export class TimelineEditor implements TouchTarget {
       const from = toSeconds(plan.at);
       const to = toSeconds(add(plan.at, plan.duration));
       const covered: CoveredSpan[] = [];
+      const rows = new Set(this.#rippleTracks(model));
       const adding = plan.parts.map(({ kind, row }) => {
-        if (row && plan.overwriting) {
+        if (row && plan.mode === "overwrite") {
           forEachBetween(row, from, to, (other) => {
             const left = Math.max(from, other.start);
             const right = Math.min(to, other.end);
@@ -2444,9 +2611,13 @@ export class TimelineEditor implements TouchTarget {
         }
         return { kind, row: row?.id, start: from, end: to, label: what.name ?? "" };
       });
+      const aside = new Set<string>();
+      const shift =
+        plan.mode === "insert" ? { shift: { at: from, by: to - from, rows, aside } } : {};
       this.#preview = {
         adding,
         covered,
+        ...shift,
         ...(plan.line === undefined ? {} : { snap: plan.line }),
       };
       this.#viewEmitter.emit();
@@ -2723,6 +2894,12 @@ export class TimelineEditor implements TouchTarget {
     const fromEnd = this.xAt(box.end) - x;
     if (this.#onExpander(box, row, x, y)) return { kind: "clip", row, box, expander: true };
     const block = inBand ? this.#transitionAt(box, x) : undefined;
+    // The ripple tool has the edges of clips and nothing else: they are what it trims.
+    if (!row.track.locked && this.#snapshot.tool === "ripple") {
+      if (fromStart <= reach) return { kind: "clip", row, box, edge: "start" };
+      if (fromEnd <= reach) return { kind: "clip", row, box, edge: "end" };
+      return { kind: "clip", row, box };
+    }
     if (row.track.locked || this.#snapshot.tool !== "select") {
       // A transition can be looked at wherever it is, also on a locked track.
       const look = this.#snapshot.tool === "select" ? block : undefined;
@@ -3331,7 +3508,7 @@ export class TimelineEditor implements TouchTarget {
       const chosen = isJoinChoice(transition) && transition.join === hit.join.id;
       return chosen && hit.edge ? "grab" : "plain";
     }
-    const usable = hit.kind === "clip" && !hit.row.track.locked && tool === "select";
+    const usable = hit.kind === "clip" && !hit.row.track.locked && tool !== "razor";
     const selected = usable && selection.has(hit.box.id);
     // The handles show while a transition of the clip is selected too, and then a finger takes them.
     const chosen =
@@ -3464,7 +3641,8 @@ export class TimelineEditor implements TouchTarget {
     const own = alone ? new Set([box.id]) : this.#withLinked(new Set([box.id]));
     if (edge) {
       this.#select(own);
-      this.#gesture = new TrimGesture(this.#host, box, row, edge, pointer);
+      const ripple = this.#snapshot.tool === "ripple";
+      this.#gesture = new TrimGesture(this.#host, box, row, edge, pointer, ripple);
       return;
     }
     const { selection } = this.#snapshot;
@@ -3534,6 +3712,9 @@ export class TimelineEditor implements TouchTarget {
       get overwriting() {
         return snapshot().overwriting;
       },
+      get inserting() {
+        return snapshot().inserting;
+      },
       get multiSelecting() {
         return snapshot().multiSelecting;
       },
@@ -3558,6 +3739,9 @@ export class TimelineEditor implements TouchTarget {
       selectJoin: (join) => this.selectJoin(join),
       seek: (frame) => this.seek(frame),
       run: (calls) => this.#run(calls),
+      rippleTracks: () => this.#rippleTracks(snapshot().model as TimelineModel),
+      runRipple: (call, onlyThese) =>
+        this.#runRipple(snapshot().model as TimelineModel, call, onlyThese),
     };
   }
 }

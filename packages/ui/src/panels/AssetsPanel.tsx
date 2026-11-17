@@ -267,6 +267,12 @@ export function AssetsPanel() {
           unavailable={unavailable}
           Icon={ProjectIcon}
           onActivate={(resource) => addToTimeline(resource)}
+          // What `,` and `.` put on the timeline, as Premiere's source does.
+          onSelect={({ data }) =>
+            timeline.chooseMedia(
+              canDragProjectItem(data) ? { kind: data.kind, id: data.id } : undefined,
+            )
+          }
           onPicture={halvesOf}
           menu={menuOf}
           notice={notice}

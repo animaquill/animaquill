@@ -213,7 +213,7 @@
  },
  {
   "name": "aq_edit",
-  "description": "Change the open project with a batch of operations — the same operations the editor's own commands use. All operations of one call succeed together or nothing is written, and the batch is one step the user can undo. Operations run in order, so a later one can refer to an object an earlier one created: give new objects ids of your own, such as \"clip_title2\", and use them in the same batch.\n\nUse it for everything about timelines, sections, tracks, clips, transitions, joins, effects, properties and keyframes, markers, scenes, sounds and assets. Do not use it for the text of code files: change code with aq_file_edit or aq_file_write. To create a scene or a sound, use scene.add or sound.add with its files in the same operation.\n\nTimes are strings in seconds, such as \"12.5\" or \"1001/30000\". Positions and sizes are in world units, with the origin at the center of the picture. Ids come from the reading tools; never invent ids of existing objects.\n\nBefore a batch that deletes several objects, send it with dry_run: true first to see everything it would remove, including what uses those objects. If the user changed something you are about to change after you last read it, the call fails with conflict and writes nothing: read it again, then decide. A failed call says which operation failed, why, the correct shape and an example.\n\nThe result lists the objects that changed, the ids of new objects, and the problems this batch introduced or resolved — fix the problems you introduced. Write summary as one short sentence that tells the user what the batch does, without your reasoning.\n\nOperations (every parameter, result and more examples: aq_guide topic \"ops/<operation>\"):\nproject.rename {name} — rename the project\nproject.setFrameRate {fps} — set the frame rate the timeline counts frames by\nproject.setDescription {description} — set the description of the project\nproject.setCredits {credits:[{role, name}]} — set the credits of the project\nproject.setFormats {formats:[{id, name, width, height, fps, safeArea?}]} — set the picture formats, the first the master\nproject.setLanguages {languages:[{id, name, font?}]} — set the languages, the first the master\nproject.setCover {cover} — set the moment the cover of the project shows\nasset.update {asset, changes:{name?, tags?:[string]}} — rename an asset or change its tags\nasset.remove {asset, withUses?} — remove an asset, and with withUses the clips that use it\nscene.add {id?, manifest, files:object} — create a scene (HTML, CSS and JavaScript that draw a picture) with its files\nscene.update {scene, changes:object, clear?:[\"description\"|\"params\"|\"presets\"|\"tags\"]} — change the manifest of a scene: name, entry, params, presets\nscene.remove {scene, withUses?} — remove a scene and its files, and with withUses the clips that use it\nsound.add {id?, manifest, files:object} — create a sound made by code, with its files\nsound.update {sound, changes:object, clear?:[\"description\"|\"params\"|\"outputs\"|\"tags\"]} — change the manifest of a sound: name, entry, params, outputs\nsound.remove {sound, withUses?} — remove a sound and its files, and with withUses the clips that use it\nsource.replace {kind, from, to} — make every clip that uses an asset, scene or sound use another one of the same kind\nclip.add {timeline, track, name?, start, duration, source, offset?, loop?, enter?, exit?, hidden?, draft?, link?, sectionFit?, properties?:object, effects?:[{id, type, enabled?, start?, end?}], id?, overlap?} — put a clip on a track: an asset, a scene, a sound, a color or a caption\nclip.remove {timeline, clips:[string], ripple?, rippleTracks?:[string]} — remove clips; with ripple, move what follows back into their place\nclip.update {timeline, clip, changes:{name?, source?, offset?, loop?, hidden?, draft?, link?, sectionFit?}, clear?:[\"name\"|\"offset\"|\"loop\"|\"hidden\"|\"draft\"|\"link\"|\"sectionFit\"]} — change the name, source, offset, loop, hidden, draft, link or section fit of a clip\nclip.move {timeline, clips:[{clip, start?, track?}], overlap?} — move clips to other starts or tracks, in one step\nclip.trim {timeline, clip, start?, end?} — move the start or end of a clip; what it shows stays in place\nclip.split {timeline, clip, at, piece?, keep?:[string]} — cut a clip in two at a moment of the timeline\nclip.link {timeline, clips:[string]} — link clips into a group, like the picture and sound of a video\nclip.unlink {timeline, clips:[string]} — take clips out of their linked groups\nfile.remove {path} — remove a code file that is no entry\nfile.rename {from, to} — rename or move a code file\ntimeline.rename {timeline, name} — rename a timeline\ntimeline.setBackground {timeline, background} — set the background color of a timeline\ntimeline.setDefault {timeline} — make a timeline open first\nsection.add {timeline, id?, duration, name?, before?} — add a section to a timeline, which makes it longer\nsection.update {timeline, section, duration?, name?, clear?:[\"name\"]} — change the duration or name of a section\nsection.split {timeline, at, id?, name?} — split a section in two at a moment; the length stays\nsection.moveBoundary {timeline, section, at} — move the boundary after a section; the length stays\nsection.remove {timeline, section} — remove a section; its time goes to the one before it\ntimeline.closeGap {timeline, ranges:[{from, to}], rippleTracks?:[string]} — take empty stretches out of a timeline; what follows moves back\ntimeline.removeRange {timeline, from, to, tracks?:[string], ripple?} — take away what is on tracks between two moments; with ripple, close that time too\ntrack.add {timeline, id?, kind, name?, before?} — add a video, audio or caption track\ntrack.update {timeline, track, changes:{name?, locked?, group?, hidden?, muted?, solo?, role?}} — change the name, hidden, muted, solo, locked, group or role of a track\ntrack.move {timeline, track, before?} — move a track before another one, or last\ntrack.remove {timeline, track} — remove a track with all its clips\nclip.setTransition {timeline, clip, enter?, exit?} — put a transition at the start (enter) or end (exit) of a clip, or take it away with null\njoin.add {type?, transition?, library?, resource?, duration?, curve?, values?:object, timeline, id?, from, to, align?} — put a transition on the cut between two clips that touch\njoin.update {timeline, join, changes:{type?, transition?, library?, resource?, duration?, curve?, values?, align?}} — change the type, duration, align, curve or values of a join\njoin.remove {timeline, joins:[string]} — remove joins\neffect.add {timeline, clip, id?, type, enabled?, index?, values?:object, start?, end?} — put an effect on a clip, with the values of its parameters\neffect.remove {timeline, clip, effects:[string]} — take effects off a clip\neffect.move {timeline, clip, effect, index} — move an effect in the list of its clip, which changes what it works on\neffect.update {timeline, clip, effect, enabled?, start?, end?} — turn an effect on or off, or change when it works\nproperty.edit {timeline, edits:[PropertyEdit]} — set properties of clips and their keyframes, in one step\nproperty.rename {timeline, renames:[PropertyRename]} — give properties of a clip another path, with their keyframes, after code renamed what they are about\nmarker.add {timeline, id?, time, name?, note?, color?, duration?} — add a marker to a timeline\nmarker.update {timeline, marker, changes:{time?, name?, note?, color?, duration?}, clear?:[\"name\"|\"note\"|\"color\"|\"duration\"]} — change the time, name, note, color or duration of a marker\nmarker.remove {timeline, marker} — remove a marker\n\nExamples of operations (illustrative; their ids come from a sample project, so use the ids you read):\n[{\"op\":\"clip.add\",\"timeline\":\"main\",\"track\":\"track_video\",\"id\":\"clip_title2\",\"start\":\"31\",\"duration\":\"4\",\"source\":{\"kind\":\"scene\",\"scene\":\"title\"}}]\n[{\"op\":\"clip.move\",\"timeline\":\"main\",\"clips\":[{\"clip\":\"clip_lottie\",\"start\":\"7\"},{\"clip\":\"clip_idea\",\"start\":\"12\"}]}]\n[{\"op\":\"clip.setTransition\",\"timeline\":\"main\",\"clip\":\"clip_logo\",\"enter\":{\"type\":\"fade\",\"duration\":\"0.5\"}}]\n[{\"op\":\"property.edit\",\"timeline\":\"main\",\"edits\":[{\"owner\":{\"clip\":\"clip_title\"},\"path\":\"transform.y\",\"op\":\"set\",\"value\":{\"keys\":[{\"time\":\"0\",\"value\":-200},{\"time\":\"0.6\",\"value\":0}]}}]}]\n[{\"op\":\"clip.remove\",\"timeline\":\"main\",\"clips\":[\"clip_idea\"]}]\n[{\"op\":\"scene.add\",\"id\":\"lower_third\",\"manifest\":{\"name\":\"Lower third\",\"entry\":\"index.html\",\"runtime\":1},\"files\":{\"index.html\":\"<!doctype html><p>Name</p>\"}},{\"op\":\"clip.add\",\"timeline\":\"main\",\"track\":\"track_overlay\",\"start\":\"0\",\"duration\":\"4\",\"source\":{\"kind\":\"scene\",\"scene\":\"lower_third\"}}]",
+  "description": "Change the open project with a batch of operations — the same operations the editor's own commands use. All operations of one call succeed together or nothing is written, and the batch is one step the user can undo. Operations run in order, so a later one can refer to an object an earlier one created: give new objects ids of your own, such as \"clip_title2\", and use them in the same batch.\n\nUse it for everything about timelines, sections, tracks, clips, transitions, joins, effects, properties and keyframes, markers, scenes, sounds and assets. Do not use it for the text of code files: change code with aq_file_edit or aq_file_write. To create a scene or a sound, use scene.add or sound.add with its files in the same operation.\n\nTimes are strings in seconds, such as \"12.5\" or \"1001/30000\". Positions and sizes are in world units, with the origin at the center of the picture. Ids come from the reading tools; never invent ids of existing objects.\n\nBefore a batch that deletes several objects, send it with dry_run: true first to see everything it would remove, including what uses those objects. If the user changed something you are about to change after you last read it, the call fails with conflict and writes nothing: read it again, then decide. A failed call says which operation failed, why, the correct shape and an example.\n\nThe result lists the objects that changed, the ids of new objects, and the problems this batch introduced or resolved — fix the problems you introduced. Write summary as one short sentence that tells the user what the batch does, without your reasoning.\n\nOperations (every parameter, result and more examples: aq_guide topic \"ops/<operation>\"):\nproject.rename {name} — rename the project\nproject.setFrameRate {fps} — set the frame rate the timeline counts frames by\nproject.setDescription {description} — set the description of the project\nproject.setCredits {credits:[{role, name}]} — set the credits of the project\nproject.setFormats {formats:[{id, name, width, height, fps, safeArea?}]} — set the picture formats, the first the master\nproject.setLanguages {languages:[{id, name, font?}]} — set the languages, the first the master\nproject.setCover {cover} — set the moment the cover of the project shows\nasset.update {asset, changes:{name?, tags?:[string]}} — rename an asset or change its tags\nasset.remove {asset, withUses?} — remove an asset, and with withUses the clips that use it\nscene.add {id?, manifest, files:object} — create a scene (HTML, CSS and JavaScript that draw a picture) with its files\nscene.update {scene, changes:object, clear?:[\"description\"|\"params\"|\"presets\"|\"tags\"]} — change the manifest of a scene: name, entry, params, presets\nscene.remove {scene, withUses?} — remove a scene and its files, and with withUses the clips that use it\nsound.add {id?, manifest, files:object} — create a sound made by code, with its files\nsound.update {sound, changes:object, clear?:[\"description\"|\"params\"|\"outputs\"|\"tags\"]} — change the manifest of a sound: name, entry, params, outputs\nsound.remove {sound, withUses?} — remove a sound and its files, and with withUses the clips that use it\nsource.replace {kind, from, to} — make every clip that uses an asset, scene or sound use another one of the same kind\nclip.add {timeline, track, name?, start, duration, source, offset?, loop?, enter?, exit?, hidden?, draft?, link?, sectionFit?, properties?:object, effects?:[{id, type, enabled?, start?, end?}], id?, overlap?, rippleTracks?:[string]} — put a clip on a track: an asset, a scene, a sound, a color or a caption\nclip.remove {timeline, clips:[string], ripple?, rippleTracks?:[string]} — remove clips; with ripple, move what follows back into their place\nclip.update {timeline, clip, changes:{name?, source?, offset?, loop?, hidden?, draft?, link?, sectionFit?}, clear?:[\"name\"|\"offset\"|\"loop\"|\"hidden\"|\"draft\"|\"link\"|\"sectionFit\"]} — change the name, source, offset, loop, hidden, draft, link or section fit of a clip\nclip.move {timeline, clips:[{clip, start?, track?}], overlap?, rippleTracks?:[string]} — move clips to other starts or tracks, in one step\nclip.trim {timeline, clip, start?, end?, together?:[string], ripple?, rippleTracks?:[string]} — move the start or end of a clip; what it shows stays in place; with ripple, what follows moves along\nclip.split {timeline, clip, at, piece?, keep?:[string]} — cut a clip in two at a moment of the timeline\nclip.link {timeline, clips:[string]} — link clips into a group, like the picture and sound of a video\nclip.unlink {timeline, clips:[string]} — take clips out of their linked groups\nfile.remove {path} — remove a code file that is no entry\nfile.rename {from, to} — rename or move a code file\ntimeline.rename {timeline, name} — rename a timeline\ntimeline.setBackground {timeline, background} — set the background color of a timeline\ntimeline.setDefault {timeline} — make a timeline open first\nsection.add {timeline, id?, duration, name?, before?} — add a section to a timeline, which makes it longer\nsection.update {timeline, section, duration?, name?, clear?:[\"name\"]} — change the duration or name of a section\nsection.split {timeline, at, id?, name?} — split a section in two at a moment; the length stays\nsection.moveBoundary {timeline, section, at} — move the boundary after a section; the length stays\nsection.remove {timeline, section} — remove a section; its time goes to the one before it\ntimeline.closeGap {timeline, ranges:[{from, to}], rippleTracks?:[string]} — take empty stretches out of a timeline; what follows moves back\ntimeline.openGap {timeline, at, duration, rippleTracks?:[string]} — put empty time into a timeline; what follows moves on\ntimeline.removeRange {timeline, from, to, tracks?:[string], ripple?} — take away what is on tracks between two moments; with ripple, close that time too\ntrack.add {timeline, id?, kind, name?, before?} — add a video, audio or caption track\ntrack.update {timeline, track, changes:{name?, locked?, group?, hidden?, muted?, solo?, role?}} — change the name, hidden, muted, solo, locked, group or role of a track\ntrack.move {timeline, track, before?} — move a track before another one, or last\ntrack.remove {timeline, track} — remove a track with all its clips\nclip.setTransition {timeline, clip, enter?, exit?} — put a transition at the start (enter) or end (exit) of a clip, or take it away with null\njoin.add {type?, transition?, library?, resource?, duration?, curve?, values?:object, timeline, id?, from, to, align?} — put a transition on the cut between two clips that touch\njoin.update {timeline, join, changes:{type?, transition?, library?, resource?, duration?, curve?, values?, align?}} — change the type, duration, align, curve or values of a join\njoin.remove {timeline, joins:[string]} — remove joins\neffect.add {timeline, clip, id?, type, enabled?, index?, values?:object, start?, end?} — put an effect on a clip, with the values of its parameters\neffect.remove {timeline, clip, effects:[string]} — take effects off a clip\neffect.move {timeline, clip, effect, index} — move an effect in the list of its clip, which changes what it works on\neffect.update {timeline, clip, effect, enabled?, start?, end?} — turn an effect on or off, or change when it works\nproperty.edit {timeline, edits:[PropertyEdit]} — set properties of clips and their keyframes, in one step\nproperty.rename {timeline, renames:[PropertyRename]} — give properties of a clip another path, with their keyframes, after code renamed what they are about\nmarker.add {timeline, id?, time, name?, note?, color?, duration?} — add a marker to a timeline\nmarker.update {timeline, marker, changes:{time?, name?, note?, color?, duration?}, clear?:[\"name\"|\"note\"|\"color\"|\"duration\"]} — change the time, name, note, color or duration of a marker\nmarker.remove {timeline, marker} — remove a marker\n\nExamples of operations (illustrative; their ids come from a sample project, so use the ids you read):\n[{\"op\":\"clip.add\",\"timeline\":\"main\",\"track\":\"track_video\",\"id\":\"clip_title2\",\"start\":\"31\",\"duration\":\"4\",\"source\":{\"kind\":\"scene\",\"scene\":\"title\"}}]\n[{\"op\":\"clip.move\",\"timeline\":\"main\",\"clips\":[{\"clip\":\"clip_lottie\",\"start\":\"7\"},{\"clip\":\"clip_idea\",\"start\":\"12\"}]}]\n[{\"op\":\"clip.setTransition\",\"timeline\":\"main\",\"clip\":\"clip_logo\",\"enter\":{\"type\":\"fade\",\"duration\":\"0.5\"}}]\n[{\"op\":\"property.edit\",\"timeline\":\"main\",\"edits\":[{\"owner\":{\"clip\":\"clip_title\"},\"path\":\"transform.y\",\"op\":\"set\",\"value\":{\"keys\":[{\"time\":\"0\",\"value\":-200},{\"time\":\"0.6\",\"value\":0}]}}]}]\n[{\"op\":\"clip.remove\",\"timeline\":\"main\",\"clips\":[\"clip_idea\"]}]\n[{\"op\":\"scene.add\",\"id\":\"lower_third\",\"manifest\":{\"name\":\"Lower third\",\"entry\":\"index.html\",\"runtime\":1},\"files\":{\"index.html\":\"<!doctype html><p>Name</p>\"}},{\"op\":\"clip.add\",\"timeline\":\"main\",\"track\":\"track_overlay\",\"start\":\"0\",\"duration\":\"4\",\"source\":{\"kind\":\"scene\",\"scene\":\"lower_third\"}}]",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -1226,12 +1226,21 @@
           "type": "string"
          },
          "overlap": {
-          "description": "\"overwrite\" cuts away clips in the way; default \"reject\" fails.",
+          "description": "\"overwrite\" cuts away clips in the way; \"insert\" moves what follows on to make room; default \"reject\" fails.",
           "type": "string",
           "enum": [
            "reject",
-           "overwrite"
+           "overwrite",
+           "insert"
           ]
+         },
+         "rippleTracks": {
+          "description": "Track ids (aq_timeline_read) whose clips move; without, all tracks.",
+          "minItems": 1,
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
          }
         },
         "required": [
@@ -1267,7 +1276,7 @@
           "type": "boolean"
          },
          "rippleTracks": {
-          "description": "Track ids (aq_timeline_read) whose clips move back; without, all tracks.",
+          "description": "Track ids (aq_timeline_read) whose clips move; without, all tracks.",
           "minItems": 1,
           "type": "array",
           "items": {
@@ -1313,7 +1322,7 @@
           }
          },
          "rippleTracks": {
-          "description": "Track ids (aq_timeline_read) whose clips move back; without, all tracks.",
+          "description": "Track ids (aq_timeline_read) whose clips move; without, all tracks.",
           "minItems": 1,
           "type": "array",
           "items": {
@@ -1325,6 +1334,41 @@
          "op",
          "timeline",
          "ranges"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "properties": {
+         "op": {
+          "const": "timeline.openGap"
+         },
+         "timeline": {
+          "description": "Timeline id (aq_project_status).",
+          "type": "string"
+         },
+         "at": {
+          "description": "Moment of the timeline, seconds; at its end at the latest.",
+          "type": "string"
+         },
+         "duration": {
+          "description": "How much time to put in, seconds, more than 0.",
+          "type": "string"
+         },
+         "rippleTracks": {
+          "description": "Track ids (aq_timeline_read) whose clips move; without, all tracks.",
+          "minItems": 1,
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         }
+        },
+        "required": [
+         "op",
+         "timeline",
+         "at",
+         "duration"
         ],
         "additionalProperties": false
        },
@@ -1867,12 +1911,21 @@
           }
          },
          "overlap": {
-          "description": "\"overwrite\" cuts away clips in the way; default \"reject\" fails.",
+          "description": "\"overwrite\" cuts away clips in the way; \"insert\" moves what follows on to make room; default \"reject\" fails.",
           "type": "string",
           "enum": [
            "reject",
-           "overwrite"
+           "overwrite",
+           "insert"
           ]
+         },
+         "rippleTracks": {
+          "description": "Track ids (aq_timeline_read) whose clips move; without, all tracks.",
+          "minItems": 1,
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
          }
         },
         "required": [
@@ -1903,6 +1956,26 @@
          "end": {
           "description": "New end.",
           "type": "string"
+         },
+         "together": {
+          "description": "Clip ids trimmed along to the same place, each once; their moving edges are where the clip's are.",
+          "minItems": 1,
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "ripple": {
+          "description": "true moves what follows along by as much as the clips get longer or shorter.",
+          "type": "boolean"
+         },
+         "rippleTracks": {
+          "description": "Track ids (aq_timeline_read) whose clips move; without, all tracks.",
+          "minItems": 1,
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
          }
         },
         "required": [

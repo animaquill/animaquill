@@ -116,6 +116,17 @@ export function registerTimelineActions(
     enabled: () => editor.canLift,
     group: "edit",
   });
+  // Ripple trims to the playhead, Q and W as in Premiere.
+  add("rippleTrimStart", () => editor.rippleTrimToPlayhead("start"), {
+    keys: ["q"],
+    enabled: () => editor.canRippleTrim,
+    group: "edit",
+  });
+  add("rippleTrimEnd", () => editor.rippleTrimToPlayhead("end"), {
+    keys: ["w"],
+    enabled: () => editor.canRippleTrim,
+    group: "edit",
+  });
   add("selectAll", () => editor.selectAll(), { keys: ["mod+a"], group: "edit" });
   add("toggleProperties", toggleProperties, { keys: ["u"], enabled: hasSelection, group: "edit" });
   const whileSelected = () => hasTimeline() && (hasSelection() || hasKeys());
@@ -152,6 +163,12 @@ export function registerTimelineActions(
       group: "clipboard",
     },
   );
+  // Premiere's paste insert: what follows the playhead moves on to make room.
+  add("pasteInsert", () => editor.paste(true), {
+    keys: ["mod+shift+v"],
+    enabled: () => hasTimeline() && editor.hasClipboard,
+    group: "clipboard",
+  });
 
   add("toolSelect", () => editor.setTool("select"), {
     keys: ["v"],
@@ -163,9 +180,15 @@ export function registerTimelineActions(
     selected: () => editor.getSnapshot().tool === "razor",
     group: "tools",
   });
+  add("toolRipple", () => editor.setTool("ripple"), {
+    keys: ["b"],
+    selected: () => editor.getSnapshot().tool === "ripple",
+    group: "tools",
+  });
   add("toggleSnapping", () => editor.toggleSnapping(), { keys: ["s"], group: "tools" });
   // O is for the out, as in Premiere, which has no such switch. People can give it a key.
   add("toggleOverwriting", () => editor.toggleOverwriting(), { group: "tools" });
+  add("toggleInserting", () => editor.toggleInserting(), { group: "tools" });
   add("toggleMultiSelecting", () => editor.toggleMultiSelecting(), { group: "tools" });
 
   add("zoomIn", () => editor.zoomIn(), { keys: ["="], repeats: true, group: "zoom" });
@@ -215,6 +238,22 @@ export function registerTimelineActions(
     release: () => shuttle.forwardUp(),
   });
   everywhere("playInToOut", () => editor.playInToOut(), { keys: ["mod+shift+space"] });
+
+  // What is chosen in the assets tab goes in, or over what is there, at the in or the playhead,
+  // with the keys of Premiere: wherever people are, as with in and out.
+  const hasChosen = () => hasTimeline() && editor.hasChosenMedia;
+  everywhere(
+    "insertChosen",
+    () => editor.putChosen("insert"),
+    { keys: [","], enabled: hasChosen },
+    "edit",
+  );
+  everywhere(
+    "overwriteChosen",
+    () => editor.putChosen("overwrite"),
+    { keys: ["."], enabled: hasChosen },
+    "edit",
+  );
 
   const hasIn = () => hasTimeline() && editor.marks.in !== undefined;
   const hasOut = () => hasTimeline() && editor.marks.out !== undefined;

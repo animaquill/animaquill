@@ -522,7 +522,7 @@ export const OPERATION_TEXTS = {
   "ops.clip.add.summary":
     "puts a clip on a track: an asset, a scene, a sound, a color or a caption",
   "ops.clip.add.description":
-    'Puts a new clip on a track, from start (on the timeline) for duration. source says what it shows or plays, and the kind of the track has to hold it (topic "types/ClipSource"). A scene, sound or asset that is not in the project fails with not-found (only the user adds assets). A clip past the end of the timeline makes its last section longer. Clips already in the way make it fail with overlap, unless overlap is "overwrite": then the parts in the way are cut away. properties sets values and keyframes from the start (paths: topic "howto/keyframes"); enter and exit are transitions at its edges; effects are the effects on its picture, whose parameters go in properties as effect.<effect id>.<parameter>. Sections, tracks and clips of one timeline share their ids; with id, later operations of the batch can name the clip.',
+    'Puts a new clip on a track, from start (on the timeline) for duration. source says what it shows or plays, and the kind of the track has to hold it (topic "types/ClipSource"). A scene, sound or asset that is not in the project fails with not-found (only the user adds assets). A clip past the end of the timeline makes its last section longer. Clips already in the way make it fail with overlap, unless overlap is "overwrite": then the parts in the way are cut away; or "insert": then room is made first as timeline.openGap does at start for duration, on rippleTracks and its own track (the result lists what moved and what was cut in two). properties sets values and keyframes from the start (paths: topic "howto/keyframes"); enter and exit are transitions at its edges; effects are the effects on its picture, whose parameters go in properties as effect.<effect id>.<parameter>. Sections, tracks and clips of one timeline share their ids; with id, later operations of the batch can name the clip.',
   "ops.clip.add.params.enter": "Transition at its start.",
   "ops.clip.add.params.exit": "Transition at its end.",
   "ops.clip.add.fields.properties":
@@ -540,7 +540,7 @@ export const OPERATION_TEXTS = {
   "ops.clip.add.errors.not-animatable":
     "A property in properties that cannot have keyframes has them, such as fit.",
   "ops.clip.add.errors.overlap":
-    'Clips on the track are in the way and overlap is not "overwrite" (the error names them).',
+    'Clips on the track are in the way and overlap is "reject" (the error names them).',
   "ops.clip.add.errors.not-moved":
     "Only for what people do in the editor; aq_edit does not give it.",
   "ops.clip.add.examples": [
@@ -565,6 +565,17 @@ export const OPERATION_TEXTS = {
         source: { kind: "scene", scene: "title" },
         properties: { "param.title": "Chapter 2" },
         enter: { type: "fade", duration: "0.5" },
+      },
+    },
+    {
+      title: "A color clip put in at 10 seconds, everything after it 2 seconds later",
+      params: {
+        timeline: "main",
+        track: "track_video",
+        start: "10",
+        duration: "2",
+        source: { kind: "color", color: "#000000" },
+        overlap: "insert",
       },
     },
   ],
@@ -611,6 +622,21 @@ export const OPERATION_TEXTS = {
         ranges: [{ from: "0", to: "6" }],
         rippleTracks: ["track_overlay"],
       },
+    },
+  ],
+
+  "ops.timeline.openGap.summary": "puts empty time into a timeline; what follows moves on",
+  "ops.timeline.openGap.description":
+    "Puts duration seconds of empty time into the timeline at at: on rippleTracks (all tracks without it), every clip from at on moves on by duration, and a clip across at is cut there, its part after the cut moving on with them (split lists both ids; linked parts after the cut get a new link). The section that at is in gets longer, on a boundary the one after it, and markers from at on move on; but sections and markers stay when a track that does not move has something after at. The timeline ends no earlier than its last clip. For several clips that go in at once, as with pasting, followed by clip.add.",
+  "ops.timeline.openGap.params.at": "Moment of the timeline, seconds; at its end at the latest.",
+  "ops.timeline.openGap.params.duration": "How much time to put in, seconds, more than 0.",
+  "ops.timeline.openGap.errors.not-found":
+    "There is no timeline with this id, or one of rippleTracks is not on it.",
+  "ops.timeline.openGap.errors.invalid-value": "at is past the end of the timeline.",
+  "ops.timeline.openGap.examples": [
+    {
+      title: "Two empty seconds at 10 seconds, on every track",
+      params: { timeline: "main", at: "10", duration: "2" },
     },
   ],
 
@@ -889,7 +915,7 @@ export const OPERATION_TEXTS = {
 
   "ops.clip.move.summary": "moves clips to other starts or tracks, in one step",
   "ops.clip.move.description":
-    'Moves clips to new start times on the timeline, to other tracks of the same timeline, or both, as one step: a place one clip leaves is free for another of the same batch. What a clip shows moves with it, and so do its keyframes, effects and transitions. Each clip appears once. Clips in the way make it fail with overlap, unless overlap is "overwrite": then the parts in the way are cut away. A clip past the end of the timeline makes its last section longer. Joins go along while their two clips stay together; a join whose clips come apart is removed, and the result lists it under changed.',
+    'Moves clips to new start times on the timeline, to other tracks of the same timeline, or both, as one step: a place one clip leaves is free for another of the same batch. What a clip shows moves with it, and so do its keyframes, effects and transitions. Each clip appears once. Clips in the way make it fail with overlap, unless overlap is "overwrite": then the parts in the way are cut away. A clip past the end of the timeline makes its last section longer. Joins go along while their two clips stay together; a join whose clips come apart is removed, and the result lists it under changed. With overlap "insert", room is made first as timeline.openGap does, from the earliest start the clips land at to the latest end, on rippleTracks and the tracks they land on; the clips themselves take no part in that, and where they were stays empty.',
   "ops.clip.move.params.clips": 'Each {"clip":id,"start"?,"track"?}.',
   "ops.clip.move.fields.clips.start":
     'New start on the timeline, seconds as a string: "12.5"; without it, the start stays.',
@@ -899,7 +925,7 @@ export const OPERATION_TEXTS = {
   "ops.clip.move.errors.invalid-value": "The same clip is in clips twice.",
   "ops.clip.move.errors.wrong-track": "The new track cannot hold the kind of the clip.",
   "ops.clip.move.errors.overlap":
-    'Moved clips would land on each other, or clips that stay are in the way and overlap is not "overwrite".',
+    'Moved clips would land on each other, or clips that stay are in the way and overlap is "reject".',
   "ops.clip.move.examples": [
     {
       title: "A clip 1 second later",
@@ -916,21 +942,38 @@ export const OPERATION_TEXTS = {
         overlap: "overwrite",
       },
     },
+    {
+      title: "A clip put in at 2 seconds, what follows there moving on",
+      params: {
+        timeline: "main",
+        clips: [{ clip: "clip_idea", start: "2" }],
+        overlap: "insert",
+      },
+    },
   ],
 
-  "ops.clip.trim.summary": "moves the start or end of a clip; what it shows stays in place",
+  "ops.clip.trim.summary":
+    "moves the start or end of a clip; what it shows stays in place; with ripple, what follows moves along",
   "ops.clip.trim.description":
-    "Moves the edges of a clip, as dragging them does: start and end are new times of its edges on the timeline, and what the clip shows stays where it is on the timeline (its offset follows the start). Keyframes stay with the picture; transitions at the edges get shorter when they no longer fit. A clip cannot start before its media starts, or end after its media ends unless it loops. A longer clip that runs into other clips fails with overlap. A join at an edge that moves is removed, and the result lists it under changed. clip.move moves a whole clip.",
+    "Moves the edges of a clip, as dragging them does: start and end are new times of its edges on the timeline, and what the clip shows stays where it is on the timeline (its offset follows the start). Keyframes stay with the picture; transitions at the edges get shorter when they no longer fit. A clip cannot start before its media starts, or end after its media ends unless it loops. A longer clip that runs into other clips fails with overlap. A join at an edge that moves is removed, and the result lists it under changed. clip.move moves a whole clip. together lists clips trimmed with it to the same place, such as the sound linked to a picture, whose edges that move are where the clip's are. With ripple: true, what follows the edge moves along by as much as the clips get longer or shorter, on rippleTracks and the tracks of the clips: time that goes is taken out as timeline.closeGap does, and fails with ripple-blocked when other clips are in it; time that comes in is put in as timeline.openGap does. At the start, the clips stay where they start: what they show and everything after them moves instead. A join at an edge that moves stays then, shorter if it has to be.",
   "ops.clip.trim.params.start": "New start; what it shows stays put.",
   "ops.clip.trim.params.end": "New end.",
-  "ops.clip.trim.errors.not-found": "There is no timeline or clip with this id.",
-  "ops.clip.trim.errors.invalid-value": "The end would not be after the start.",
+  "ops.clip.trim.params.together":
+    "Clip ids trimmed along to the same place, each once; their moving edges are where the clip's are.",
+  "ops.clip.trim.params.ripple":
+    "true moves what follows along by as much as the clips get longer or shorter.",
+  "ops.clip.trim.errors.not-found":
+    "There is no timeline or clip with this id, or one of rippleTracks is not on it.",
+  "ops.clip.trim.errors.invalid-value":
+    "The end would not be after the start, or an edge of a clip in together is elsewhere.",
   "ops.clip.trim.errors.source-end":
     "The clip would go on after its media ends; only a clip with loop: true goes on past it.",
   "ops.clip.trim.errors.source-start":
     "The clip would start before its media starts; colors, images and captions have no such limit.",
   "ops.clip.trim.errors.overlap":
     "The clip would run into other clips on its track (the error names them).",
+  "ops.clip.trim.errors.ripple-blocked":
+    "With ripple, other clips on the tracks that move are in the time that goes.",
   "ops.clip.trim.examples": [
     {
       title: "A clip that ends earlier",
@@ -939,6 +982,16 @@ export const OPERATION_TEXTS = {
     {
       title: "A clip that starts later",
       params: { timeline: "main", clip: "clip_interview", start: "6" },
+    },
+    {
+      title: "A clip that ends earlier, and what follows on its track moves back into the time",
+      params: {
+        timeline: "main",
+        clip: "clip_interview",
+        end: "16",
+        ripple: true,
+        rippleTracks: ["track_video"],
+      },
     },
   ],
 
