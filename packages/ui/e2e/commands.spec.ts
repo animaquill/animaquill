@@ -114,7 +114,8 @@ test.describe("command palette", () => {
 
   test("finds a command and runs it with Enter", async ({ page }) => {
     await openPalette(page);
-    await input(page).fill("关键帧");
+    // Only "打开选项卡：关键帧": "关键帧" alone also finds 关键帧：自动关键帧 (K5).
+    await input(page).fill("打开关键帧");
     await expect(options(page)).toHaveCount(1);
     await page.keyboard.press("Enter");
     await expect(palette(page)).toHaveCount(0);
