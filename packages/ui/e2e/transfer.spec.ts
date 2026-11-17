@@ -240,7 +240,10 @@ async function holdRealFolder(page: Page, folder: string) {
     }
     const got = await page
       .waitForFunction(() => window.realHandle !== undefined, undefined, { timeout: 3_000 })
-      .then(() => true, () => false);
+      .then(
+        () => true,
+        () => false,
+      );
     if (got) break;
   }
   await page.waitForFunction(() => window.realHandle !== undefined);

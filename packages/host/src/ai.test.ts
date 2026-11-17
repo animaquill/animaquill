@@ -1,4 +1,4 @@
-import { IDBFactory, IDBIndex, IDBObjectStore } from "fake-indexeddb";
+import { IDBFactory, IDBIndex, IDBObjectStore, IDBTransaction } from "fake-indexeddb";
 import { describe, expect, it } from "vitest";
 import {
   KEYS_DATABASE,
@@ -139,15 +139,17 @@ describe("conversations with AI", () => {
     expect((await chats.list("other")).map(({ id }) => id)).toEqual(["x"]);
   });
 
-  it("write a conversation before they read anything, so that a page that goes right after keeps it", async () => {
+  it("write a conversation and commit it before they read anything, so that a page that goes right after keeps it", async () => {
     const factory = new IDBFactory();
     const chats = browserChats(() => factory, 2);
     await chats.save(chat("warm", 1));
     const calls: string[] = [];
     const proto = IDBObjectStore.prototype;
     const index = IDBIndex.prototype;
+    const transaction = IDBTransaction.prototype;
     const put = proto.put;
     const getAll = index.getAll;
+    const commit = transaction.commit;
     proto.put = function (...args: Parameters<typeof put>) {
       calls.push("put");
       return put.apply(this, args);
@@ -156,13 +158,45 @@ describe("conversations with AI", () => {
       calls.push("getAll");
       return getAll.apply(this, args);
     };
+    transaction.commit = function () {
+      calls.push("commit");
+      commit.apply(this);
+    };
     try {
       await chats.save(chat("last", 2));
     } finally {
       proto.put = put;
       index.getAll = getAll;
+      transaction.commit = commit;
     }
-    expect(calls[0]).toBe("put");
+    expect(calls.slice(0, 2)).toEqual(["put", "commit"]);
+  });
+
+  it("keep a conversation whose write was under way as the page went, though the page never hears back", async () => {
+    const factory = new IDBFactory();
+    const chats = browserChats(() => factory, 2);
+    await chats.save(chat("warm", 1));
+    const proto = IDBObjectStore.prototype;
+    const put = proto.put;
+    proto.put = function (...args: Parameters<typeof put>) {
+      const request = put.apply(this, args);
+      const writing = this.transaction;
+      // The page goes right after the write starts: what it did not commit by then is taken back.
+      queueMicrotask(() => {
+        try {
+          writing.abort();
+        } catch {
+          // Committed already: it stays.
+        }
+      });
+      return request;
+    };
+    try {
+      await chats.save(chat("last", 2)).catch(() => {});
+    } finally {
+      proto.put = put;
+    }
+    expect(await chats.load("p", "last")).toEqual(chat("last", 2));
   });
 
   it("say how many there are of each project, and about how much they take", async () => {

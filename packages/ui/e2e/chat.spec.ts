@@ -523,6 +523,24 @@ test("keeps the last answer when the page goes right after it came", async ({ pa
   await expect(chat(page).getByText("这是最后一句。")).toBeVisible({ timeout: 20_000 });
 });
 
+test("keeps the last answer when the page goes the moment it shows", async ({ page }) => {
+  // As above, without waiting for the list: the reload comes as soon as the answer is on the
+  // screen, before any write has had the time to finish. The write has to be done by then, or
+  // last through the page going. A slow page (as on a busy computer) gives the reload the time to
+  // come before what the page would still do for the write.
+  test.slow();
+  await page.route(ANTHROPIC, (route) => answer(route, [{ text: "这是最后一句。" }]));
+  await setUpService(page);
+  const client = await page.context().newCDPSession(page);
+  await client.send("Emulation.setCPUThrottlingRate", { rate: 20 });
+  await send(page, "说一句话");
+  await expect(chat(page).getByText("这是最后一句。")).toBeVisible({ timeout: 30_000 });
+  await page.reload();
+  await client.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+  await tab(page, "chat").click();
+  await expect(chat(page).getByText("这是最后一句。")).toBeVisible({ timeout: 20_000 });
+});
+
 test("stopping ends the task right away, and the chat goes on", async ({ page }) => {
   const waiting: Route[] = [];
   await page.route(ANTHROPIC, async (route) => {

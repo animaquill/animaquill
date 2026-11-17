@@ -263,12 +263,17 @@ export function browserChats(
       return found as SavedChat | undefined;
     },
     async save(chat) {
-      // The write goes first, in the same turn as the transaction opens: a page that goes right
-      // after (the tab closes, a reload) takes the answer with it only if the write waits for a
-      // read to come back.
+      // The write goes on its own, committed in the same turn as it opens: a page that goes right
+      // after (the tab closes, a reload) takes the answer with it only if nothing of the write
+      // waits for the page any more, neither a read nor the answer to the write itself (without
+      // `commit`, the browser commits only once the page took the answer to the last request).
+      const writing = (await database()).transaction(CHATS, "readwrite");
+      writing.objectStore(CHATS).put(chat);
+      writing.commit?.();
+      await committed(writing);
+      // The oldest go after, in a transaction of their own.
       const transaction = (await database()).transaction(CHATS, "readwrite");
       const store = transaction.objectStore(CHATS);
-      store.put(chat);
       const all = (await resultOf(store.index(BY_PROJECT).getAll(chat.project))) as SavedChat[];
       // The oldest go, so that one project does not fill the disk with what nobody reads again.
       const others = all.filter(({ id }) => id !== chat.id);

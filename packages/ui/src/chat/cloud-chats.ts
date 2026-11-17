@@ -136,8 +136,12 @@ export class CloudChats implements ChatStore {
   /** Pictures that stayed in this browser as their conversation went, why, and when last tried. */
   readonly #held = new Map<string, { readonly why: ChatImageHeld; readonly at: number }>();
   /**
-   * What the account has of each conversation here, as it was last seen: a save does not wait for
-   * a read of it, so that a page that goes right after an answer takes the answer along.
+   * What the account has of each conversation here, as this window last saw it (read, written,
+   * taken): the revision what this window writes was made from. A save never reads it from this
+   * browser first: a page that goes right after an answer takes the answer along only if the write
+   * starts at once, and the revision there may be another window's, made from what this one never
+   * saw. A conversation this window never saw goes as never on the account (new ones are), and
+   * where it was after all, the account refuses it and it is kept as a copy (`#take`).
    */
   readonly #sync = new Map<string, { synced?: number; syncedAt?: number }>();
 
@@ -204,6 +208,7 @@ export class CloudChats implements ChatStore {
         // On the account before, and gone from it since: gone here too.
         if (chat?.synced !== undefined) {
           await local.remove(project, summary.id).catch(() => {});
+          this.#sync.delete(`${project}\n${summary.id}`);
           continue;
         }
         // Never on the account: it goes now.
@@ -246,9 +251,7 @@ export class CloudChats implements ChatStore {
 
   async save(chat: SavedChat): Promise<void> {
     const { local } = this.#options;
-    const key = `${chat.project}\n${chat.id}`;
-    const before =
-      this.#sync.get(key) ?? (await local.load(chat.project, chat.id).catch(() => undefined));
+    const before = this.#sync.get(`${chat.project}\n${chat.id}`);
     const saved: SavedChat = {
       ...chat,
       ...(before?.synced !== undefined && { synced: before.synced }),
@@ -490,6 +493,7 @@ export class CloudChats implements ChatStore {
 
   async remove(project: string, id: string): Promise<void> {
     await this.#options.local.remove(project, id);
+    this.#sync.delete(`${project}\n${id}`);
     const cloud = await this.#cloudOf(project);
     if (cloud !== undefined) await this.#options.remote.remove(cloud, id);
   }

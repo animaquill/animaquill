@@ -360,4 +360,61 @@ describe("conversations of projects of the platform", () => {
     await one.chats.save(chat("c1", ["第一句", "最后一句"], 2));
     expect(calls[0]).toBe("save");
   });
+
+  test("the first save of a new conversation writes while a read of this browser never comes back, as the page goes", async () => {
+    const platform = platformChats();
+    const one = await deviceOf(platform);
+    const { save } = one.local;
+    let written: SavedChat | undefined;
+    one.local.save = (value) => {
+      written = value;
+      return save.call(one.local, value);
+    };
+    // The page is on its way out: nothing read from this browser comes back any more.
+    one.local.load = () => new Promise(() => {});
+    void one.chats.save(chat("c1", ["说一句话", "这是最后一句。"], 1));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(JSON.stringify(written?.entries)).toContain("这是最后一句。");
+  });
+
+  test("a save goes over the revision this window saw, not one another window wrote here since", async () => {
+    const platform = platformChats();
+    const one = await deviceOf(platform);
+    await one.chats.save(chat("c1", ["a"], 1));
+    // Another window of this browser opens it, adds to it, and it goes.
+    const other = new CloudChats({
+      local: one.local,
+      remote: platform.access,
+      account: accountAs({ status: "signedIn", id: "u1", name: "u1", appInstalled: true }),
+      links: one.links,
+      platform: PLATFORM,
+    });
+    await other.load("local-1", "c1");
+    await other.save(chat("c1", ["a", "from the other window"], 2));
+    // This window goes on from what it had: the other window's words are not written over on the
+    // account, and this one's are kept as a copy.
+    await expect(one.chats.save(chat("c1", ["a", "from this window"], 3))).rejects.toBeInstanceOf(
+      ChatNewer,
+    );
+    expect(JSON.stringify(platform.kept.get("p1/c1")?.chat.entries)).toContain(
+      "from the other window",
+    );
+    const titles = (await one.local.list("local-1")).map(({ title }) => title);
+    expect(titles).toContain("《a》在这台设备上的副本");
+  });
+
+  test("a conversation gone from the account and written again goes as a new one", async () => {
+    const platform = platformChats();
+    const one = await deviceOf(platform);
+    await one.chats.save(chat("c1", ["a"], 1));
+    await one.chats.remove("local-1", "c1");
+    let base: number | null | undefined;
+    const { save } = platform.access;
+    platform.access.save = (project, value, from) => {
+      base = from;
+      return save.call(platform.access, project, value, from);
+    };
+    await one.chats.save(chat("c1", ["a", "again"], 2));
+    expect(base).toBeNull();
+  });
 });
