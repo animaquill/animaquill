@@ -108,9 +108,32 @@ export function removeClips(draft: Draft, timeline: string, clips: readonly stri
   const removed = new Set(clips);
   const { joins } = timelineOf(draft, timeline);
   for (const id of clips) draft.delete(clipPath(timeline, id));
+  const freed: (readonly [string, "start" | "end"])[] = [];
   for (const [id, { from, to }] of Object.entries(joins ?? {})) {
     const isSide = (clip: string | undefined) => clip !== undefined && removed.has(clip);
-    if (isSide(from) || isSide(to)) draft.delete(joinPath(timeline, id));
+    if (!isSide(from) && !isSide(to)) continue;
+    draft.delete(joinPath(timeline, id));
+    if (from !== undefined && !isSide(from)) freed.push([from, "end"]);
+    if (to !== undefined && !isSide(to)) freed.push([to, "start"]);
+  }
+  fitFreed(draft, timeline, freed);
+}
+
+/**
+ * Makes what is at edges of clips fit them again: their transitions, which work again where a join
+ * went, and the joins there, see `fitTransitions`. What fits stays as it is.
+ */
+function fitFreed(
+  draft: Draft,
+  timeline: string,
+  freed: readonly (readonly [string, "start" | "end"])[],
+): void {
+  for (const [id, moved] of freed) {
+    const now = timelineOf(draft, timeline);
+    const clip = entryOf(now.clips, id);
+    if (!clip) continue;
+    const length = subtract(clipEnd(clip), clipStart(clip));
+    fitTransitions(draft, timeline, clip, length, moved, joinsAtEdgesOf(now, id));
   }
 }
 
@@ -451,6 +474,9 @@ export function followJoins(
   together: readonly string[],
 ): readonly string[] {
   const gone: string[] = [];
+  // The edges of the clips of each join: one that stays has to fit them as they are now, and where
+  // one went, the transitions there work again and have to fit.
+  const edges: (readonly [string, "start" | "end"])[] = [];
   for (const id of together) {
     const now = timelineOf(draft, timeline);
     // One that went along with a clip of it is no matter.
@@ -458,6 +484,8 @@ export function followJoins(
     if (!join) continue;
     const from = entryOf(now.clips, join.from);
     const to = entryOf(now.clips, join.to);
+    if (from) edges.push([from.id, "end"]);
+    if (to) edges.push([to.id, "start"]);
     if (from && nextTo(from, to)) {
       if (from.track !== join.track) draft.set([...joinPath(timeline, id), "track"], from.track);
       continue;
@@ -465,6 +493,7 @@ export function followJoins(
     draft.delete(joinPath(timeline, id));
     gone.push(id);
   }
+  fitFreed(draft, timeline, edges);
   return gone;
 }
 

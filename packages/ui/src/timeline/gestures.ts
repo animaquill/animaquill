@@ -587,9 +587,18 @@ export class TrimGesture implements Gesture {
       host.frame,
       new Set([box.id, ...this.#partners.map((partner) => partner.box.id)]),
     );
-    const limits = [{ box, row }, ...this.#partners].map((item) =>
-      this.#limits(item.box, item.row),
-    );
+    // Each clip goes by as much as this one: its limits, as where this edge would be then.
+    const here = { seconds: box[edge], exact: () => this.#exactEdge() };
+    const limits = [{ box, row }, ...this.#partners].map((item) => {
+      const own = item.box[edge];
+      const ownExact = () => (edge === "start" ? clipStart : clipEnd)(item.box.clip);
+      const moved = (limit: SnapPoint): SnapPoint => ({
+        seconds: limit.seconds - own + here.seconds,
+        exact: () => add(subtract(limit.exact(), ownExact()), here.exact()),
+      });
+      const [lower, upper] = this.#limits(item.box, item.row);
+      return [moved(lower), moved(upper)] as const;
+    });
     this.#lower = limits.map(([lower]) => lower).reduce((a, b) => (a.seconds >= b.seconds ? a : b));
     this.#upper = limits
       .map(([, upper]) => upper)
@@ -608,7 +617,15 @@ export class TrimGesture implements Gesture {
       const box = model.boxes.get(id);
       const row = model.rowOfClip.get(id);
       const usable = box && row && id !== clip.id && !row.track.locked;
-      return usable && compare(edgeOf(box.clip), here) === 0 ? [{ box, row }] : [];
+      if (!usable) return [];
+      // A ripple trim takes along the partners at the same time on other tracks, wherever their
+      // edges are, such as a sound longer than its picture: they stay in step.
+      const along = this.#ripple
+        ? box.clip.track !== clip.track &&
+          compare(clipStart(box.clip), clipEnd(clip)) < 0 &&
+          compare(clipStart(clip), clipEnd(box.clip)) < 0
+        : compare(edgeOf(box.clip), here) === 0;
+      return along ? [{ box, row }] : [];
     });
   }
 
@@ -669,18 +686,19 @@ export class TrimGesture implements Gesture {
     this.#landing = this.#clamped(landing);
     const { seconds } = this.#landing;
     const clips = new Map<string, PreviewClip>();
+    const by = seconds - this.#box[this.#edge];
     for (const { box, row } of [{ box: this.#box, row: this.#row }, ...this.#partners]) {
-      clips.set(box.id, { row, ...this.#trimmed(box, seconds) });
+      clips.set(box.id, { row, ...this.#trimmed(box, by) });
     }
     this.#host.setPreview({ clips, ...this.#shiftAfter(seconds), ...lineOf(this.#landing) });
   }
 
-  /** Where a clip of the trim would be with the edge at `seconds`. */
-  #trimmed(box: ClipBox, seconds: number): { readonly start: number; readonly end: number } {
-    if (this.#edge === "end") return { start: box.start, end: seconds };
+  /** Where a clip of the trim would be with its edge `by` seconds on. */
+  #trimmed(box: ClipBox, by: number): { readonly start: number; readonly end: number } {
+    if (this.#edge === "end") return { start: box.start, end: box.end + by };
     // A ripple trim at the start keeps the clip where it starts, and what follows moves instead.
-    if (this.#ripple) return { start: box.start, end: box.end - (seconds - box.start) };
-    return { start: seconds, end: box.end };
+    if (this.#ripple) return { start: box.start, end: box.end - by };
+    return { start: box.start + by, end: box.end };
   }
 
   /** What follows the edge in a ripple trim, moving along with it. */

@@ -656,8 +656,7 @@
       "boundary-outside": "段落的分界要在 {{from}} 秒和 {{to}} 秒之间，{{time}} 秒不行",
       "no-next-section": "最后一段后面没有段落，它的结尾就是时间轴的结尾：改它的时长",
       "range-backwards": "时间段要先开始再结束：{{from}} 秒到 {{to}} 秒不行",
-      "range-outside": "{{to}} 秒超出了时间轴的结尾：时间轴只有 {{length}} 秒长",
-      "edges-apart": "一起修剪的片段 {{clip}} 要动的那条边和这个片段的不在同一时刻"
+      "range-outside": "{{to}} 秒超出了时间轴的结尾：时间轴只有 {{length}} 秒长"
     }
   },
   "panel": {

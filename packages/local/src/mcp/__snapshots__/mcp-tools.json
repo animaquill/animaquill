@@ -2050,7 +2050,7 @@
                     "type": "string"
                   },
                   "together": {
-                    "description": "Clip ids trimmed along to the same place, each once; their moving edges are where the clip's are.",
+                    "description": "Clip ids trimmed along, the same edges by the same amount, each once; the linked clips.",
                     "minItems": 1,
                     "type": "array",
                     "items": {

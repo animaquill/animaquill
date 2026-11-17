@@ -1047,6 +1047,7 @@ export class TimelineEditor implements TouchTarget {
     };
     this.#clipboard = [];
     this.#clipboardJoins = [];
+    this.#chosenMedia = undefined;
     this.#beforeFit = undefined;
     this.pause();
     this.#refresh();
@@ -1986,9 +1987,9 @@ export class TimelineEditor implements TouchTarget {
 
   /**
    * What Q and W trim: a selected clip under the playhead, or else the one there on the first track
-   * that can change, with its partners whose edge is where its own is.
+   * that can change, with its partners at the same time on other tracks.
    */
-  #trimmedAtPlayhead(model: TimelineModel, edge: "start" | "end"): readonly ClipBox[] | undefined {
+  #trimmedAtPlayhead(model: TimelineModel): readonly ClipBox[] | undefined {
     const moment = frameTime(this.#frame, model.rate);
     const seconds = frameSeconds(this.#frame, model.rate);
     const there = model.rows.flatMap((row) => {
@@ -1999,20 +2000,25 @@ export class TimelineEditor implements TouchTarget {
     const { selection } = this.#snapshot;
     const box = there.find(({ id }) => selection.has(id)) ?? there[0];
     if (!box) return undefined;
-    const edgeOf = edge === "start" ? clipStart : clipEnd;
+    // Its partners at the same time on other tracks, wherever their edges are: they go by as much.
     const { link } = box.clip;
     const partners = (link === undefined ? [] : (model.links.get(link) ?? [])).flatMap((id) => {
       const other = model.boxes.get(id);
       const row = model.rowOfClip.get(id);
       const usable = other && row && id !== box.id && !row.track.locked;
-      return usable && compare(edgeOf(other.clip), edgeOf(box.clip)) === 0 ? [other] : [];
+      const along =
+        usable &&
+        other.clip.track !== box.clip.track &&
+        compare(clipStart(other.clip), clipEnd(box.clip)) < 0 &&
+        compare(clipStart(box.clip), clipEnd(other.clip)) < 0;
+      return along ? [other] : [];
     });
     return [box, ...partners];
   }
 
   get canRippleTrim(): boolean {
     const { model } = this;
-    return model !== undefined && this.#trimmedAtPlayhead(model, "end") !== undefined;
+    return model !== undefined && this.#trimmedAtPlayhead(model) !== undefined;
   }
 
   /**
@@ -2022,7 +2028,7 @@ export class TimelineEditor implements TouchTarget {
    */
   rippleTrimToPlayhead(edge: "start" | "end"): void {
     const { model } = this;
-    const clips = model && this.#trimmedAtPlayhead(model, edge);
+    const clips = model && this.#trimmedAtPlayhead(model);
     const [box] = clips ?? [];
     if (!model || !clips || !box) return;
     const together = clips.slice(1).map(({ id }) => id);

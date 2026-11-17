@@ -146,8 +146,6 @@ export const InvalidValue = z.discriminatedUnion("rule", [
     to: z.string(),
     length: z.string(),
   }),
-  /** Clips trimmed together have the edges that move at the same moment. */
-  z.strictObject({ rule: z.literal("edges-apart"), path: z.string(), clip: z.string() }),
 ]);
 export type InvalidValue = z.output<typeof InvalidValue>;
 

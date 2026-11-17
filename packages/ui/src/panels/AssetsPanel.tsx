@@ -1,5 +1,5 @@
 import { AudioWaveform, Film, Plus, Upload } from "lucide-react";
-import { useMemo, useState, useSyncExternalStore, type DragEvent } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { MenuItem } from "../app/Menu.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
@@ -97,6 +97,8 @@ export function AssetsPanel() {
   const [reading] = progress.reading;
   const [over, setOver] = useState(false);
   const [notice, say] = useNotice();
+  // What `,` and `.` put on the timeline goes with the tab: closed, it is no longer chosen.
+  useEffect(() => () => timeline.chooseMedia(undefined), [timeline]);
 
   const resources = useMemo(
     () =>

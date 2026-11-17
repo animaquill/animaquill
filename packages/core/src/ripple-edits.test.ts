@@ -1,4 +1,4 @@
-import { createProject, writeProject } from "@animaquill/schema";
+import { createProject, formatTime, parseTime, subtract, writeProject } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import { ProjectStore, type CommandResult } from "./store.ts";
 
@@ -739,16 +739,22 @@ describe("clip.trim with ripple", () => {
     success(run("clip.trim", { clip: "v", end: "5", ripple: true, rippleTracks: ["V1"] }));
   });
 
-  it("refuses clips trimmed together whose edge is elsewhere", () => {
-    const { run } = layout();
-    const result = run("clip.trim", { clip: "v", end: "5", together: ["m"], ripple: true });
-    expect(!result.ok && result.error.params).toEqual({
-      rule: "edges-apart",
-      path: "together",
-      clip: "m",
+  it("does not cut and push a partner across the edge that it was not told about", () => {
+    const { run, store, main } = project({
+      video: [picture("v", "0", "5", "L")],
+      audio: [sound("a", "0", "8", "L")],
     });
+    const before = structuredClone(store.getState());
+    const result = run("clip.trim", { clip: "v", end: "7", ripple: true });
+    expect(!result.ok && result.error.code).toBe("ripple-blocked");
+    expect(!result.ok && result.error.params["clips"]).toEqual([{ id: "a" }]);
+    expect(store.getState()).toEqual(before);
+    // Told about it, both get as much longer, and stay in step.
+    success(run("clip.trim", { clip: "v", end: "7", together: ["a"], ripple: true }));
+    expect(
+      Object.values(main().clips).map(({ id, start, duration }) => `${id}:${start}+${duration}`),
+    ).toEqual(["v:0+7", "a:0+10"]);
   });
-
   it("keeps a join at the edge that moves, shorter where the clip got too short for it", () => {
     const { run, main } = project({
       video: [color("a", "0", "2"), color("b", "2", "2")],
@@ -766,5 +772,73 @@ describe("clip.trim with ripple", () => {
     expect(run("clip.trim", { clip: "v", end: "7", together: ["a"] }).ok).toBe(false);
     success(run("clip.trim", { clip: "v", end: "5", together: ["a"] }));
     expect([spanOf("v"), spanOf("a"), startOf("n")]).toEqual(["2+3", "2+3", "6"]);
+  });
+});
+
+describe("clip.trim with ripple and partners whose edges are elsewhere", () => {
+  /** A picture and a sound of one file in step (start − offset is 0), and a clip after each. */
+  const layout = (spans: { start: string; duration: string }) =>
+    project({
+      video: [{ ...picture("v", "2", "5", "L"), offset: "2" }, color("n", "8", "2")],
+      audio: [
+        { ...sound("a", spans.start, spans.duration, "L"), offset: spans.start },
+        sound("m", "10", "2"),
+      ],
+    });
+  const clockOf = (clip: { start: string; offset?: string | undefined }) =>
+    formatTime(subtract(parseTime(clip.start), parseTime(clip.offset ?? "0")));
+  const check = ({ main }: ReturnType<typeof layout>, want: Record<string, string>) => {
+    const clips = main().clips;
+    expect(
+      Object.fromEntries(
+        Object.values(clips).map(({ id, start, duration }) => [id, `${start}+${duration}`]),
+      ),
+    ).toEqual(want);
+    // In step as before: the same moment of the file at the same moment of the timeline.
+    expect(clockOf(clips["a"]!)).toBe(clockOf(clips["v"]!));
+  };
+
+  for (const [name, partner, cases] of [
+    [
+      "longer",
+      { start: "2", duration: "7" },
+      [
+        ["end", "8", { v: "2+6", a: "2+8", n: "9", m: "11" }],
+        ["end", "6", { v: "2+4", a: "2+6", n: "7", m: "9" }],
+        ["start", "1", { v: "2+6", a: "2+8", n: "9", m: "11" }],
+        ["start", "3", { v: "2+4", a: "2+6", n: "7", m: "9" }],
+      ],
+    ],
+    [
+      "shorter",
+      { start: "3", duration: "3" },
+      [
+        ["end", "8", { v: "2+6", a: "3+4", n: "9", m: "11" }],
+        ["end", "6", { v: "2+4", a: "3+2", n: "7", m: "9" }],
+        ["start", "1", { v: "2+6", a: "3+4", n: "9", m: "11" }],
+        ["start", "3", { v: "2+4", a: "3+2", n: "7", m: "9" }],
+      ],
+    ],
+  ] as const) {
+    for (const [edge, to, spans] of cases) {
+      it(`trims the ${edge} to ${to} with a sound that is ${name}, by as much, in step`, () => {
+        const made = layout(partner);
+        success(made.run("clip.trim", { clip: "v", [edge]: to, together: ["a"], ripple: true }));
+        const { n, m, ...trimmed } = spans as Record<string, string>;
+        const starts = { n: `${n}+2`, m: `${m}+2` };
+        check(made, { ...trimmed, ...starts });
+      });
+    }
+  }
+
+  it("is blocked where a partner that grows runs into a clip that stays", () => {
+    const { run, store } = project({
+      video: [picture("v", "2", "5", "L")],
+      audio: [sound("a", "2", "3", "L"), sound("m", "5.5", "1")],
+    });
+    const before = structuredClone(store.getState());
+    const result = run("clip.trim", { clip: "v", end: "8", together: ["a"], ripple: true });
+    expect(!result.ok && result.error.params["clips"]).toEqual([{ id: "m" }]);
+    expect(store.getState()).toEqual(before);
   });
 });

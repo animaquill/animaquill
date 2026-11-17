@@ -5084,6 +5084,57 @@ describe("inserting and ripple trims", () => {
     expect(clip("a").duration).toBe("4");
   });
 
+  it("trims a sound longer or shorter than its picture by as much, so that they stay in step", async () => {
+    const { editor, addClip, at, clip, audio, store } = await setup();
+    addClip("v", 0, 4, undefined, { link: "L" });
+    addClip("s", 0, 6, audio, { link: "L" });
+    addClip("n", 7, 1);
+    seekTo(editor, 3);
+    actionsOf(editor).run("rippleTrimEnd");
+    expect([clip("v").duration, clip("s").duration, clip("n").start]).toEqual(["3", "5", "6"]);
+    store.undo();
+    // With the tool: the end of the picture, and the sound goes along.
+    editor.setTool("ripple");
+    editor.press(edge(at(4), -2));
+    editor.drag(edge(at(3.5), -2));
+    expect(editor.preview?.clips?.get("s")).toMatchObject({ start: 0, end: 5.5 });
+    editor.release(edge(at(3), -2));
+    expect([clip("v").duration, clip("s").duration, clip("n").start]).toEqual(["3", "5", "6"]);
+    // With Alt the picture goes alone, and the sound across the time that would go stops it.
+    store.undo();
+    editor.press({ ...edge(at(4), -2), alt: true });
+    editor.drag({ ...edge(at(3.5), -2), alt: true });
+    editor.release({ ...edge(at(3), -2), alt: true });
+    expect(clip("v").duration).toBe("4");
+  });
+
+  it("forgets what was chosen in the assets tab with another project", async () => {
+    const { editor, store, session } = await setup();
+    store.execute({
+      type: "asset.add",
+      params: {
+        id: "pic",
+        asset: { path: "assets/pic", storage: "local", name: "pic", kind: "image" },
+      },
+    });
+    editor.chooseMedia({ kind: "asset", id: "pic" });
+    expect(editor.hasChosenMedia).toBe(true);
+    await session.create("另一个");
+    // The same id in the new project is not what was chosen.
+    session.store?.execute({
+      type: "asset.add",
+      params: {
+        id: "pic",
+        asset: { path: "assets/pic", storage: "local", name: "pic", kind: "image" },
+      },
+    });
+    expect(editor.hasChosenMedia).toBe(false);
+    editor.chooseMedia({ kind: "asset", id: "pic" });
+    expect(editor.hasChosenMedia).toBe(true);
+    editor.chooseMedia(undefined);
+    expect(editor.hasChosenMedia).toBe(false);
+  });
+
   it("tells what is in the way of a ripple trim, and offers to do it on its own tracks", async () => {
     const { editor, addClip, at, clip, audio, rippleBlocked } = await setup();
     addClip("a", 0, 4);

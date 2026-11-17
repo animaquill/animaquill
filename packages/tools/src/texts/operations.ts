@@ -955,17 +955,17 @@ export const OPERATION_TEXTS = {
   "ops.clip.trim.summary":
     "moves the start or end of a clip; what it shows stays in place; with ripple, what follows moves along",
   "ops.clip.trim.description":
-    "Moves the edges of a clip, as dragging them does: start and end are new times of its edges on the timeline, and what the clip shows stays where it is on the timeline (its offset follows the start). Keyframes stay with the picture; transitions at the edges get shorter when they no longer fit. A clip cannot start before its media starts, or end after its media ends unless it loops. A longer clip that runs into other clips fails with overlap. A join at an edge that moves is removed, and the result lists it under changed. clip.move moves a whole clip. together lists clips trimmed with it to the same place, such as the sound linked to a picture, whose edges that move are where the clip's are. With ripple: true, what follows the edge moves along by as much as the clips get longer or shorter, on rippleTracks and the tracks of the clips: time that goes is taken out as timeline.closeGap does, and fails with ripple-blocked when other clips are in it; time that comes in is put in as timeline.openGap does. At the start, the clips stay where they start: what they show and everything after them moves instead. A join at an edge that moves stays then, shorter if it has to be.",
+    "Moves the edges of a clip, as dragging them does: start and end are new times of its edges on the timeline, and what the clip shows stays where it is on the timeline (its offset follows the start). Keyframes stay with the picture; transitions at the edges get shorter when they no longer fit. A clip cannot start before its media starts, or end after its media ends unless it loops. A longer clip that runs into other clips fails with overlap. A join at an edge that moves is removed, and the result lists it under changed. clip.move moves a whole clip. together lists clips trimmed with it: the same edges by the same amount, such as the sound linked to a picture, also where it is longer or shorter, so that they stay in step; list the linked clips there. With ripple: true, what follows the clip's edge moves along by as much as it gets longer or shorter, on rippleTracks and the tracks of the clips: time that goes is taken out as timeline.closeGap does, and fails with ripple-blocked when other clips are in it; time that comes in is put in as timeline.openGap does. The clips of together are neither cut nor pushed; a clip linked to them across the edge that is not in together, or a clip in the way of one of them growing, makes it fail with ripple-blocked. At the start, the clips stay where they start: what they show and everything after them moves instead. A join at an edge that moves stays then, shorter if it has to be.",
   "ops.clip.trim.params.start": "New start; what it shows stays put.",
   "ops.clip.trim.params.end": "New end.",
   "ops.clip.trim.params.together":
-    "Clip ids trimmed along to the same place, each once; their moving edges are where the clip's are.",
+    "Clip ids trimmed along, the same edges by the same amount, each once; the linked clips.",
   "ops.clip.trim.params.ripple":
     "true moves what follows along by as much as the clips get longer or shorter.",
   "ops.clip.trim.errors.not-found":
     "There is no timeline or clip with this id, or one of rippleTracks is not on it.",
   "ops.clip.trim.errors.invalid-value":
-    "The end would not be after the start, or an edge of a clip in together is elsewhere.",
+    "The end of the clip or of one in together would not be after its start.",
   "ops.clip.trim.errors.source-end":
     "The clip would go on after its media ends; only a clip with loop: true goes on past it.",
   "ops.clip.trim.errors.source-start":
@@ -973,7 +973,7 @@ export const OPERATION_TEXTS = {
   "ops.clip.trim.errors.overlap":
     "The clip would run into other clips on its track (the error names them).",
   "ops.clip.trim.errors.ripple-blocked":
-    "With ripple, other clips on the tracks that move are in the time that goes.",
+    "With ripple, other clips on the tracks that move are in the time that goes, a clip linked to them across the edge is not in together, or a clip is in the way of one growing.",
   "ops.clip.trim.examples": [
     {
       title: "A clip that ends earlier",

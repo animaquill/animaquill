@@ -4,6 +4,7 @@ import {
   compare,
   createProject,
   formatTime,
+  joinParts,
   parseTime,
   rational,
   readProject,
@@ -88,9 +89,16 @@ function randomProject(random: Random): ProjectStore {
   const cursors: Record<string, number> = { V1: 0, V2: 0, A1: 0, A2: 0 };
   let made = 0;
   let links = 0;
-  const clipOn = (track: string, start: number, duration: number, link?: string): ClipFile => {
+  const clipOn = (
+    track: string,
+    start: number,
+    duration: number,
+    link?: string,
+    clock?: number,
+  ): ClipFile => {
     made += 1;
-    const offset = random.int(3) * 15;
+    // In a group, one clock for all: the same moment of the file at the same moment.
+    const offset = clock === undefined ? random.int(3) * 15 : start - clock;
     const kind = isSound(track) ? "audio" : random.chance(0.3) ? "color" : "video";
     const clip: ClipFile = {
       id: `c${made}`,
@@ -125,18 +133,22 @@ function randomProject(random: Random): ProjectStore {
     const gap = random.chance(0.4) ? 0 : 1 + random.int(25);
     const duration = 5 + random.int(50);
     if (random.chance(0.35)) {
-      // A linked group: a picture and its sound, sometimes a second sound, as long or not.
+      // A linked group: a picture and its sound, sometimes a second sound. A sound can start
+      // later and end earlier or later than the picture (J and L cuts), on the same clock.
       const [picture, sound] = random.chance(0.5) ? ["V1", "A1"] : ["V2", "A2"];
       const third = random.chance(0.2) ? (sound === "A1" ? "A2" : "A1") : undefined;
       const members = [picture, sound, ...(third ? [third] : [])] as string[];
       const start = Math.max(...members.map((track) => cursors[track]!)) + gap;
-      if (start + duration > lengthFrames) continue;
+      if (start + duration + 12 > lengthFrames) continue;
       links += 1;
       const link = `l${links}`;
+      const clock = start - random.int(3) * 15;
       for (const track of members) {
-        const own = track === third && random.chance(0.5) ? Math.max(3, duration - 7) : duration;
-        clipOn(track, start, own, link);
-        cursors[track] = start + own;
+        const later = track !== picture && random.chance(0.3) ? 1 + random.int(6) : 0;
+        const longer = track !== picture && random.chance(0.4) ? random.int(19) - 9 : 0;
+        const own = Math.max(3, duration - later + longer);
+        clipOn(track, start + later, own, link, clock);
+        cursors[track] = start + later + own;
       }
     } else {
       const track = random.pick(TRACKS)!;
@@ -155,7 +167,11 @@ function randomProject(random: Random): ProjectStore {
       const [from, to] = [list[index]!, list[index + 1]!];
       const touches =
         compare(add(parseTime(from.start), parseTime(from.duration)), parseTime(to.start)) === 0;
-      if (touches && random.chance(0.6)) {
+      // Room for a join on both sides and what else is at their edges, as the editor makes them.
+      const roomy = [from, to].every(
+        ({ duration }) => compare(parseTime(duration), frames(20)) >= 0,
+      );
+      if (touches && roomy && random.chance(0.6)) {
         joins.push({
           id: `j${joins.length}`,
           from: from.id,
@@ -299,17 +315,20 @@ function randomRoomStep(store: ProjectStore, random: Random, choice: number): St
       },
     };
   }
-  // A ripple trim of one edge, with the partners whose edge is there too, as the editor lists them.
-  const first = random.pick(ids) ?? "none";
+  // A ripple trim of one edge, with its partners as the editor lists them (their edges can be
+  // elsewhere, as a sound longer or shorter than its picture), or alone, as with Alt or an AI that
+  // leaves them out. Mostly a clip of a group: that is where they come apart if anything goes wrong.
+  const linked = ids.filter((id) => timeline.clips[id]?.link !== undefined);
+  const first = random.pick(random.chance(0.7) && linked.length > 0 ? linked : ids) ?? "none";
   const clip = timeline.clips[first];
   const edge = random.chance(0.5) ? "start" : "end";
   const edgeOf = (each: ClipState) => (edge === "start" ? clipStart(each) : clipEnd(each));
-  const partners = clip
-    ? withPartners(timeline, random, first).filter(
-        (id) => id !== first && compare(edgeOf(timeline.clips[id]!), edgeOf(clip)) === 0,
-      )
+  const group = clip?.link
+    ? ids.filter((id) => id !== first && timeline.clips[id]?.link === clip.link)
     : [];
-  // Sometimes one whose edge is elsewhere, which is refused.
+  // All of them, as the editor lists them, or some or none, as Alt or an AI that leaves them out.
+  const partners = random.chance(0.5) ? group : group.filter(() => random.chance(0.4));
+  // Sometimes another clip as well, which is trimmed by as much.
   const stray = random.chance(0.05) ? [random.pick(ids) ?? first] : [];
   const together = [...new Set([...partners, ...stray])].filter((id) => id !== first);
   let at = ZERO;
@@ -554,8 +573,11 @@ function checkEdit(step: Step, before: TimelineState, after: TimelineState, resu
       continue;
     }
     if (!takesPart(clip.track)) {
-      // Not a letter changed.
-      expect(after.clips[clip.id]).toEqual(clip);
+      // Not a letter changed, apart from a transition that works again where a join went.
+      const { enter: _e, exit: _x, ...rest } = after.clips[clip.id]!;
+      const { enter: _f, exit: _y, ...kept } = clip;
+      expect(rest).toEqual(kept);
+      checkKeptTransitions(before, after, clip, after.clips[clip.id]!);
       accounted.add(clip.id);
       continue;
     }
@@ -582,7 +604,7 @@ function checkEdit(step: Step, before: TimelineState, after: TimelineState, resu
         compare(part.to, clipEnd(clip)) === 0;
       if (whole) {
         untouched.add(clip.id);
-        expect([now!.enter, now!.exit]).toEqual([clip.enter, clip.exit]);
+        checkKeptTransitions(before, after, clip, now!);
       }
     });
   }
@@ -757,6 +779,61 @@ function checkGroups(
   for (const [key, same] of fresh) expect(same.length, `parts ${key} kept their link`).toBe(1);
 }
 
+/**
+ * The transitions at the edges of every clip fit in it: in at the start and out at the end take no
+ * more than the clip is long together. Where a join is at an edge, its part there counts instead.
+ */
+function checkTransitionsFit(after: TimelineState, about: unknown): void {
+  const joined = new Map<string, Rational>();
+  for (const join of Object.values(after.joins ?? {})) {
+    const from = after.clips[join.from ?? ""];
+    const to = after.clips[join.to ?? ""];
+    const transition = join.transition;
+    if (!from || !to || !transition || compare(clipEnd(from), clipStart(to)) !== 0) continue;
+    const [before, later] = joinParts(parseTime(transition.duration), transition.align);
+    joined.set(`${from.id} exit`, before);
+    joined.set(`${to.id} enter`, later);
+  }
+  for (const clip of Object.values(after.clips)) {
+    const edge = (name: "enter" | "exit") =>
+      joined.get(`${clip.id} ${name}`) ??
+      (clip[name] === undefined ? ZERO : parseTime(clip[name]!.duration));
+    const total = add(edge("enter"), edge("exit"));
+    const length = subtract(clipEnd(clip), clipStart(clip));
+    expect(compare(total, length), `${clip.id} ${JSON.stringify(about)}`).toBeLessThanOrEqual(0);
+  }
+}
+
+/**
+ * A clip that was not cut keeps its transitions as they were; where a join at an edge went (or
+ * moved to a part after a cut), the
+ * transition there works again and may have got shorter to fit, of the same kind.
+ */
+function checkKeptTransitions(
+  before: TimelineState,
+  after: TimelineState,
+  clip: ClipState,
+  now: ClipState,
+): void {
+  for (const [edge, side] of [
+    ["enter", "to"],
+    ["exit", "from"],
+  ] as const) {
+    const freed = Object.entries(before.joins ?? {}).some(
+      ([id, join]) => join[side] === clip.id && after.joins?.[id]?.[side] !== clip.id,
+    );
+    const was = clip[edge];
+    const is = now[edge];
+    if (!freed || was === undefined) {
+      expect(is).toEqual(was);
+      continue;
+    }
+    if (is === undefined) continue;
+    expect(is.type).toBe(was.type);
+    expect(compare(parseTime(is.duration), parseTime(was.duration))).toBeLessThanOrEqual(0);
+  }
+}
+
 /** Sources that have no beginning, whose clock moves forward instead, see `trimClip`. */
 const isTimeless = (clip: ClipState) => clip.source.kind === "color";
 
@@ -810,20 +887,20 @@ function checkRoom(step: Step, before: TimelineState, after: TimelineState, resu
   } else {
     const ids = [params.clip as string, ...((params.together ?? []) as string[])];
     const trimmed = before.clips[params.clip]!;
-    for (const id of ids) {
+    for (const id of new Set(ids)) {
       const was = before.clips[id]!;
       special.add(id);
       own.push(was.track);
-      let start = clipStart(was);
+      const start = clipStart(was);
       let duration = subtract(clipEnd(was), clipStart(was));
       let offset = clipOffset(was);
       let clockMoved = false;
+      // Every clip of the trim: the same edge by the same amount as the clip, where it starts.
       if (params.end !== undefined) {
         const [from, to] = [parseTime(params.end), clipEnd(trimmed)];
         if (compare(from, to) < 0) close = { from, to };
         else if (compare(from, to) > 0) open = { at: to, length: subtract(from, to) };
-        // An edge that stays where it is moves nothing, of any clip.
-        if (compare(from, to) !== 0) duration = subtract(parseTime(params.end), start);
+        duration = add(duration, subtract(from, to));
       } else {
         const [s, s2] = [clipStart(trimmed), parseTime(params.start)];
         if (compare(s2, s) > 0) close = { from: s, to: s2 };
@@ -832,7 +909,6 @@ function checkRoom(step: Step, before: TimelineState, after: TimelineState, resu
           const by = subtract(s2, s);
           duration = subtract(duration, by);
           offset = add(offset, by);
-          start = s;
           // A picture has no beginning: its clock moves forward instead.
           if (compare(offset, ZERO) < 0 && isTimeless(was)) {
             offset = ZERO;
@@ -881,7 +957,10 @@ function checkRoom(step: Step, before: TimelineState, after: TimelineState, resu
       continue;
     }
     if (!takesPart(clip.track)) {
-      expect(now).toEqual(clip);
+      const { enter: _e, exit: _x, ...rest } = now!;
+      const { enter: _f, exit: _y, ...kept } = clip;
+      expect(rest).toEqual(kept);
+      checkKeptTransitions(before, after, clip, now!);
       continue;
     }
     const from = clipStart(clip);
@@ -924,7 +1003,7 @@ function checkRoom(step: Step, before: TimelineState, after: TimelineState, resu
     });
     if (parts.length === 1) {
       untouched.add(clip.id);
-      expect([now!.enter, now!.exit]).toEqual([clip.enter, clip.exit]);
+      checkKeptTransitions(before, after, clip, now!);
     }
   }
   for (const id of Object.keys(after.clips)) expect(accounted.has(id), id).toBe(true);
@@ -1075,6 +1154,7 @@ describe.each(SEEDS)("ripple edits at random, seed %i", FUZZ, (seed) => {
     seedIds(seed);
     const random = randomFrom(seed);
     const store = randomProject(random);
+    checkTransitionsFit(main(store), "the project as it was made");
     let done = 0;
     let made = 0;
     for (let round = 0; round < 60; round++) {
@@ -1087,6 +1167,7 @@ describe.each(SEEDS)("ripple edits at random, seed %i", FUZZ, (seed) => {
         continue;
       }
       const after = structuredClone(main(store));
+      checkTransitionsFit(after, step.call);
       if (step.kind === "other") checkGroups(before, after, undefined);
       else if (ROOM.has(step.kind)) {
         made += 1;

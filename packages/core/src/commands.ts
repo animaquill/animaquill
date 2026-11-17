@@ -29,7 +29,6 @@ import {
   newId,
   parseTime,
   subtract,
-  type Rational,
 } from "@animaquill/schema";
 import { z } from "zod";
 import {
@@ -105,6 +104,7 @@ import {
   openRoom,
   rippleTrim,
   type Opened,
+  type RippleTrimmed,
   type Rippled,
 } from "./ripple-edits.ts";
 import {
@@ -1742,8 +1742,8 @@ export const OPERATIONS = [
       start: Time.optional(),
       end: Time.optional(),
       /**
-       * Clips whose edges that move are where those of the clip are, trimmed with it to the same
-       * place, as the sound linked to a picture: a ripple goes once for all of them.
+       * Clips trimmed with it, the same edges by the same amount, as the sound linked to a picture,
+       * also where it is longer or shorter: a ripple goes once for all of them, and they stay in step.
        */
       together: DistinctClips.min(1).optional(),
       ripple: z.boolean().optional(),
@@ -1752,25 +1752,17 @@ export const OPERATIONS = [
     (draft, { timeline, clip, start, end, together: others, ripple, rippleTracks }) => {
       const target = timelineOf(draft, timeline);
       const current = clipOf(target, clip);
-      const newStart = start === undefined ? undefined : parseTime(start);
-      const newEnd = end === undefined ? undefined : parseTime(end);
-      const startMoves = newStart !== undefined && compare(newStart, clipStart(current)) !== 0;
-      const endMoves = newEnd !== undefined && compare(newEnd, clipEnd(current)) !== 0;
+      // How far each edge moves: every clip of together moves its edges by as much.
+      const byStart = start === undefined ? ZERO : subtract(parseTime(start), clipStart(current));
+      const byEnd = end === undefined ? ZERO : subtract(parseTime(end), clipEnd(current));
       const all = [
         current,
         ...(others ?? []).filter((id) => id !== clip).map((id) => clipOf(target, id)),
       ];
-      const spans = all.map((each): Span => {
-        const apartAt =
-          (startMoves && compare(clipStart(each), clipStart(current)) !== 0) ||
-          (endMoves && compare(clipEnd(each), clipEnd(current)) !== 0);
-        if (apartAt)
-          fail("invalid-value", { rule: "edges-apart", path: "together", clip: each.id });
-        return {
-          from: startMoves ? (newStart as Rational) : clipStart(each),
-          to: endMoves ? (newEnd as Rational) : clipEnd(each),
-        };
-      });
+      const spans = all.map((each): Span => ({
+        from: add(clipStart(each), byStart),
+        to: add(clipEnd(each), byEnd),
+      }));
       all.forEach((each, index) => {
         const span = spans[index] as Span;
         if (compare(span.to, span.from) <= 0)
@@ -1784,12 +1776,31 @@ export const OPERATIONS = [
       const ids = all.map(({ id }) => id);
       if (ripple) {
         checkTracks(target, rippleTracks);
-        const edges = {
-          start: startMoves ? newStart : undefined,
-          end: endMoves ? newEnd : undefined,
+        // The end first, then the start, each a ripple of its own.
+        const done = [
+          ...(compare(byEnd, ZERO) === 0
+            ? []
+            : [rippleTrim(draft, timeline, ids, "end", parseTime(end as string), rippleTracks)]),
+          ...(compare(byStart, ZERO) === 0
+            ? []
+            : [
+                rippleTrim(draft, timeline, ids, "start", parseTime(start as string), rippleTracks),
+              ]),
+        ];
+        const union = (pick: (each: RippleTrimmed) => readonly string[]) => [
+          ...new Set(done.flatMap(pick)),
+        ];
+        const told = {
+          ...opened({
+            moved: union(({ moved }) => moved),
+            split: done.flatMap(({ split }) => split),
+          }),
+          ...rippled({
+            moved: [],
+            joinsRemoved: union(({ joinsRemoved }) => joinsRemoved),
+            sectionsRemoved: union(({ sectionsRemoved }) => sectionsRemoved),
+          }),
         };
-        const done = rippleTrim(draft, timeline, ids, edges, rippleTracks);
-        const told = { ...opened(done), ...rippled(done) };
         return Object.keys(told).length > 0 ? told : undefined;
       }
       const trimmed = new Set(ids);

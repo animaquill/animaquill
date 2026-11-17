@@ -43,6 +43,8 @@ const LABEL_PLATE_PADDING = 3;
 
 /** Clips that touch differ by this much as floats, and that is not across a moment. */
 const TOUCHING = 1e-9;
+/** How wide the line is where time goes in while inserting. */
+const INSERT_LINE = 2;
 /** Room around the frames that a clip out of step with its partner says. */
 const SYNC_PADDING = 3;
 const EDGE_HANDLE = 6;
@@ -238,6 +240,13 @@ export class TimelinePainter extends StagePainter {
 
     this.#paintRuler(model);
     this.#paintLines();
+    // Over the line of what it snapped to, which is often the same moment.
+    context.save();
+    context.beginPath();
+    context.rect(0, RULER_HEIGHT, width, height - RULER_HEIGHT);
+    context.clip();
+    this.#paintInsertLine(model);
+    context.restore();
   }
 
   #rowTop(row: Row): number {
@@ -344,17 +353,21 @@ export class TimelinePainter extends StagePainter {
     return undefined;
   }
 
-  /** Where time goes in: a line in the colour of the theme across the rows that make room. */
+  /**
+   * Where time goes in: a line in the accent of the theme across the rows that make room, over the
+   * clips and their outlines, and inside the view also at its very start.
+   */
   #paintInsertLine(model: TimelineModel): void {
     const editor = this.#editor;
     const shift = editor.preview?.shift;
     if (!shift || shift.by <= 0) return;
-    const x = this.sharp(editor.xAt(shift.at));
-    if (x < -2 || x > editor.width + 2) return;
+    const at = this.sharp(editor.xAt(shift.at));
+    if (at < -2 || at > editor.width + 2) return;
+    const x = Math.min(Math.max(at - 1, 0), editor.width - INSERT_LINE);
     this.context.fillStyle = this.theme.insert;
     for (const row of model.rows) {
       if (!shift.rows.has(row.id)) continue;
-      this.context.fillRect(x - 1, this.#rowTop(row), 2, row.height);
+      this.context.fillRect(x, this.#rowTop(row), INSERT_LINE, row.height);
     }
   }
 
@@ -363,7 +376,6 @@ export class TimelinePainter extends StagePainter {
     const { model, preview } = editor;
     if (!model || !preview) return;
     const { context } = this;
-    this.#paintInsertLine(model);
     const first = editor.timeAt(0);
     const last = editor.timeAt(editor.width);
     for (const [id, { row, start, end }] of preview.clips ?? []) {
