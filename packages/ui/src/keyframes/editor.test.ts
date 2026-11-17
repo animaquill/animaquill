@@ -2299,6 +2299,12 @@ describe("what the keys of the timeline are about", () => {
     timeline.seek(150);
     press("keyframes.toggleKey");
     expect(shownTimes("a", X)).toEqual(["2", "3"]);
+    // Only on a selected clip: the row of one that is not selected is no reason.
+    timeline.clearSelection();
+    writer.noteProperty("a", lane.node.spec);
+    press("keyframes.toggleKey");
+    expect(shownTimes("a", X)).toEqual(["2", "3"]);
+    timeline.selectOnly("a");
     writer.noteProperty("a", lane.node.spec);
     press("keyframes.toggleKey");
     expect(shownTimes("a", X)).toEqual(["2", "3", "4"]);
@@ -2306,6 +2312,13 @@ describe("what the keys of the timeline are about", () => {
     expect(shownTimes("a", X)).toEqual(["2", "3"]);
     // Where the clip is not, there is nothing to key.
     timeline.seek(0);
+    press("keyframes.toggleKey");
+    expect(shownTimes("a", X)).toEqual(["2", "3"]);
+    // Another selection forgets the row, also when the clip is selected again.
+    timeline.seek(150);
+    timeline.selectOnly("b");
+    expect(writer.lastProperty).toBeUndefined();
+    timeline.selectOnly("a");
     press("keyframes.toggleKey");
     expect(shownTimes("a", X)).toEqual(["2", "3"]);
   });

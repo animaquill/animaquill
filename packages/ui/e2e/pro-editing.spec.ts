@@ -188,6 +188,37 @@ test.describe("J, K and L", () => {
   });
 });
 
+test.describe("Alt+K", () => {
+  test("keys the row last worked with, on the selected clip only", async ({ page }) => {
+    await panel(page).getByRole("button", { name: "纯色片段" }).click();
+    // Into the clip, where its properties can change.
+    await stage(page).focus();
+    await page.keyboard.press("Home");
+    await stepRight(page, 30);
+    await tab(page, "properties").click();
+    const row = content(page, "properties").getByRole("group", { name: "位置 X", exact: true });
+    await row.getByRole("spinbutton").click();
+    await page.keyboard.press("Alt+KeyK");
+    await expect(row.getByRole("button", { name: "删除关键帧" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await page.keyboard.press("Alt+KeyK");
+    await expect(row.getByRole("button", { name: "添加关键帧" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    // Nothing selected: nothing to key, and the menu says so.
+    await tab(page, "timeline").click();
+    await stage(page).focus();
+    await page.keyboard.press("Escape");
+    await page.getByRole("button", { name: "时间轴", exact: true }).click();
+    await expect(
+      page.getByRole("menu").getByRole("menuitem", { name: /^在播放头添加或删除关键帧/ }),
+    ).toBeDisabled();
+  });
+});
+
 test.describe("in light colours", () => {
   test.use({ colorScheme: "light" });
 

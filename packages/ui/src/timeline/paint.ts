@@ -59,9 +59,12 @@ const CUT_LINE = "#ffffff80";
 /** Points along a speed curve, enough for it to look smooth at the size of a clip. */
 const CURVE_STEPS = 24;
 const END_HANDLE = 6;
-/** How tall the band of what is marked is along the bottom of the ruler, and the feet of its ends. */
-const MARK_BAND = 4;
-const MARK_FOOT = 6;
+/** The band of what is marked along the bottom of the ruler, and the handles at its ends. */
+const MARK_BAND = 9;
+const MARK_BAR = 3;
+const MARK_FOOT = 7;
+/** How far the handles reach down past the ruler. */
+const MARK_OVERHANG = 4;
 /** Zoomed far out a pixel covers minutes. A few samples of them look the same and cost far less. */
 const MAX_SLOTS_PER_BAR = 8;
 
@@ -1002,7 +1005,10 @@ export class TimelinePainter extends StagePainter {
     this.context.fillRect(left, RULER_HEIGHT, right - left, editor.height - RULER_HEIGHT);
   }
 
-  /** A band along the bottom of the ruler, between brackets at the in and the out. */
+  /**
+   * A light band along the bottom of the ruler, between two handles: a bold [ at the in and ] at the
+   * out, a little longer than the ruler, so that they look like something to take hold of.
+   */
   #paintMarks(): void {
     const editor = this.#editor;
     const span = editor.markedSpan;
@@ -1012,16 +1018,16 @@ export class TimelinePainter extends StagePainter {
     const left = this.sharp(editor.xAt(span.from));
     const right = this.sharp(editor.xAt(span.to));
     context.fillStyle = this.theme.marked;
-    context.globalAlpha = 0.16;
-    context.fillRect(left, 0, right - left, RULER_HEIGHT - 1);
+    context.globalAlpha = 0.3;
+    context.fillRect(left, RULER_HEIGHT - MARK_BAND, right - left, MARK_BAND - 1);
     context.globalAlpha = 1;
-    context.fillRect(left, RULER_HEIGHT - 1 - MARK_BAND, right - left, MARK_BAND);
-    // [ at the in and ] at the out, as tall as the ruler.
+    const bottom = RULER_HEIGHT + MARK_OVERHANG;
     const bracket = (x: number, toward: 1 | -1) => {
-      context.fillRect(toward > 0 ? x : x - 2, 1, 2, RULER_HEIGHT - 2);
+      const bar = toward > 0 ? x : x - MARK_BAR;
+      context.fillRect(bar, 0, MARK_BAR, bottom);
       const foot = toward > 0 ? x : x - MARK_FOOT;
-      context.fillRect(foot, 1, MARK_FOOT, 2);
-      context.fillRect(foot, RULER_HEIGHT - 3, MARK_FOOT, 2);
+      context.fillRect(foot, 0, MARK_FOOT, MARK_BAR);
+      context.fillRect(foot, bottom - MARK_BAR, MARK_FOOT, MARK_BAR);
     };
     if (from !== undefined) bracket(left, 1);
     if (out !== undefined) bracket(right, -1);

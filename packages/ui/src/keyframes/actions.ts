@@ -63,11 +63,13 @@ export function registerKeyframeActions(
   add("backFiveFrames", step(-5), { keys: ["shift+left"], repeats: true });
   add("forwardFiveFrames", step(5), { keys: ["shift+right"], repeats: true });
 
-  // A key at the playhead for the property people worked with last, wherever they are. Alt+K as in
-  // Final Cut Pro: Premiere has no key for it, and its letters are all taken, K by J, K and L.
+  // A key at the playhead for the property people worked with last, on a selected clip, wherever
+  // they are. Alt+K as in Final Cut Pro: Premiere has no key for it, and its letters are all taken,
+  // K by J, K and L.
   const keyNow = () => {
     const last = properties.lastProperty;
-    const box = last && timeline.model?.boxes.get(last.clip);
+    const selected = last !== undefined && timeline.getSnapshot().selection.has(last.clip);
+    const box = selected ? timeline.model?.boxes.get(last.clip) : undefined;
     const now = box && last && keyframes.inspect(box, last.spec);
     if (!last || !now || now.blocked !== undefined || last.spec.animatable === false) return;
     return keyEdit(last.clip, now.row, now.time);
@@ -81,5 +83,6 @@ export function registerKeyframeActions(
     },
     keys: ["alt+k"],
     enabled: () => keyNow() !== undefined,
+    menu: { name: "timeline", group: "keys", title: (t) => t("keyframes.action.toggleKey") },
   });
 }

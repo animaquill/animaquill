@@ -77,6 +77,11 @@ export class PropertyWriter {
     this.#trials = trials;
     this.#messages = messages;
     trials.subscribe(this.#refresh);
+    // A key for keyframes is about what is selected: another selection forgets the property.
+    timeline.subscribe(() => {
+      const last = this.#lastProperty;
+      if (last && !timeline.getSnapshot().selection.has(last.clip)) this.#lastProperty = undefined;
+    });
   }
 
   subscribe = this.#emitter.subscribe;
