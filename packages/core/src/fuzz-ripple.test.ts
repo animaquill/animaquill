@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 import { Draft } from "./draft.ts";
 import {
   FUZZ,
+  checkJoinsKept,
   randomCommand,
   randomFrom,
   replica,
@@ -56,8 +57,9 @@ const FPS = 30n;
 const frames = (count: number) => rational(BigInt(count), FPS);
 const t = (value: Rational) => formatTime(value);
 const media = { asset: "file" };
-const TRACKS = ["V1", "V2", "A1", "A2"] as const;
+const TRACKS = ["V1", "V2", "A1", "A2", "C1"] as const;
 const isSound = (track: string) => track.startsWith("A");
+const isCaption = (track: string) => track.startsWith("C");
 
 const main = (store: ProjectStore): TimelineState => store.getState().timelines["main"]!;
 const maxOf = (a: Rational, b: Rational) => (compare(a, b) >= 0 ? a : b);
@@ -85,8 +87,8 @@ function randomProject(random: Random): ProjectStore {
   }));
   const length = sections.reduce((sum, { duration }) => add(sum, parseTime(duration)), ZERO);
   const lengthFrames = Number((length.n * FPS) / length.d);
-  const clips: Record<string, ClipFile[]> = { V1: [], V2: [], A1: [], A2: [] };
-  const cursors: Record<string, number> = { V1: 0, V2: 0, A1: 0, A2: 0 };
+  const clips: Record<string, ClipFile[]> = { V1: [], V2: [], A1: [], A2: [], C1: [] };
+  const cursors: Record<string, number> = { V1: 0, V2: 0, A1: 0, A2: 0, C1: 0 };
   let made = 0;
   let links = 0;
   const clipOn = (
@@ -99,22 +101,41 @@ function randomProject(random: Random): ProjectStore {
     made += 1;
     // In a group, one clock for all: the same moment of the file at the same moment.
     const offset = clock === undefined ? random.int(3) * 15 : start - clock;
-    const kind = isSound(track) ? "audio" : random.chance(0.3) ? "color" : "video";
+    // Pictures of a group are videos; others can be colours or pictures, which have no beginning.
+    const choice = random.int(20);
+    const kind = isSound(track)
+      ? "audio"
+      : isCaption(track)
+        ? "caption"
+        : link !== undefined || choice >= 9
+          ? "video"
+          : choice < 6
+            ? "color"
+            : "image";
+    const source =
+      kind === "color"
+        ? { kind: "color", color: "#336699" }
+        : kind === "image"
+          ? { kind: "image", media: { asset: "pic" } }
+          : kind === "caption"
+            ? { kind: "caption", text: "字幕" }
+            : { kind, media };
     const clip: ClipFile = {
       id: `c${made}`,
       start: t(frames(start)),
       duration: t(frames(duration)),
-      ...(kind !== "color" && offset > 0 && { offset: t(frames(offset)) }),
-      source: kind === "color" ? { kind: "color", color: "#336699" } : { kind, media },
+      ...((kind === "video" || kind === "audio") && offset > 0 && { offset: t(frames(offset)) }),
+      source,
       ...(link && { link }),
     };
-    if (!isSound(track) && duration > 40 && random.chance(0.3)) {
+    const fades = !isSound(track) && !isCaption(track);
+    if (fades && duration > 40 && random.chance(0.3)) {
       clip.enter = { type: "fade", duration: "1/3" };
     }
-    if (!isSound(track) && duration > 40 && random.chance(0.3)) {
+    if (fades && duration > 40 && random.chance(0.3)) {
       clip.exit = { type: "fade", duration: "1/2" };
     }
-    if (random.chance(0.4)) {
+    if (!isCaption(track) && random.chance(0.4)) {
       const path = isSound(track) ? "audio.volume" : "opacity";
       const values = isSound(track) ? [0, -6] : [1, 0.5];
       clip.properties = {
@@ -161,7 +182,8 @@ function randomProject(random: Random): ProjectStore {
     }
   }
   const joins: object[] = [];
-  for (const track of ["V1", "V2"]) {
+  // Joins between pictures and between sounds, in the middle of their cut or all on one side.
+  for (const track of ["V1", "V2", "A1", "A2"]) {
     const list = clips[track]!;
     for (let index = 0; index + 1 < list.length; index++) {
       const [from, to] = [list[index]!, list[index + 1]!];
@@ -178,6 +200,7 @@ function randomProject(random: Random): ProjectStore {
           to: to.id,
           type: "fade",
           duration: "1/3",
+          ...(random.chance(0.4) && { align: random.chance(0.5) ? "before" : "after" }),
           track,
         });
       }
@@ -191,7 +214,7 @@ function randomProject(random: Random): ProjectStore {
   }));
   timeline.tracks = TRACKS.map((id) => ({
     id,
-    kind: isSound(id) ? "audio" : "video",
+    kind: isSound(id) ? "audio" : isCaption(id) ? "caption" : "video",
     clips: clips[id],
     ...(joins.some((join) => (join as { track: string }).track === id) && {
       joins: joins
@@ -200,6 +223,9 @@ function randomProject(random: Random): ProjectStore {
     }),
   }));
   files.set(MAIN, JSON.stringify(timeline));
+  const assets = JSON.parse(files.get("assets.json") ?? '{"assets":{}}');
+  assets.assets.pic = { kind: "image", path: "assets/pic.png", storage: "local", hash: "sha256-p" };
+  files.set("assets.json", JSON.stringify(assets));
   const { store, problems } = ProjectStore.open(files);
   if (!store) throw new Error(JSON.stringify(problems));
   return store;
@@ -835,7 +861,8 @@ function checkKeptTransitions(
 }
 
 /** Sources that have no beginning, whose clock moves forward instead, see `trimClip`. */
-const isTimeless = (clip: ClipState) => clip.source.kind === "color";
+const isTimeless = (clip: ClipState) =>
+  clip.source.kind === "color" || clip.source.kind === "image" || clip.source.kind === "caption";
 
 /**
  * Checks one edit that put time in or took it out around clips that it changes itself: inserting
@@ -1168,6 +1195,7 @@ describe.each(SEEDS)("ripple edits at random, seed %i", FUZZ, (seed) => {
       }
       const after = structuredClone(main(store));
       checkTransitionsFit(after, step.call);
+      checkJoinsKept(before, after, step.call.params);
       if (step.kind === "other") checkGroups(before, after, undefined);
       else if (ROOM.has(step.kind)) {
         made += 1;

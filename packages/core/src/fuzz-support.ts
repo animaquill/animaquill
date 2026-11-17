@@ -2,10 +2,19 @@
  * What the random tests share, `fuzz*.test.ts`. They are in several files so that they run at the
  * same time: in one, they took longer than all the other unit tests together.
  */
-import { add, compare, parseTime } from "@animaquill/schema";
-import { onTestFinished, vi } from "vitest";
+import {
+  ZERO,
+  add,
+  compare,
+  joinParts,
+  parseTime,
+  subtract,
+  type Rational,
+} from "@animaquill/schema";
+import { expect, onTestFinished, vi } from "vitest";
 import * as Y from "yjs";
 import { loadFixture } from "../../schema/scripts/fixture.ts";
+import { clipEnd, clipStart, type ClipState, type TimelineState } from "./model.ts";
 import type { KeyEase } from "./property-edit.ts";
 import { ProjectStore, type CommandCall } from "./store.ts";
 
@@ -463,3 +472,59 @@ export function randomTransition(random: Random): Record<string, unknown> {
 
 /** Many rounds each, which takes seconds on a busy machine, with every file at the same time. */
 export const FUZZ = { timeout: 60_000 };
+
+const maxOfTimes = (a: Rational, b: Rational) => (compare(a, b) >= 0 ? a : b);
+const lengthOfClip = (clip: ClipState) => subtract(clipEnd(clip), clipStart(clip));
+
+/**
+ * How much of each clip what is at its edges takes, by `${clip} enter` and `${clip} exit`: a join in
+ * effect, or else the clip's own transition.
+ */
+export function edgesTaken(timeline: TimelineState): Map<string, Rational> {
+  const taken = new Map<string, Rational>();
+  for (const clip of Object.values(timeline.clips)) {
+    for (const edge of ["enter", "exit"] as const) {
+      const own = clip[edge];
+      if (own) taken.set(`${clip.id} ${edge}`, parseTime(own.duration));
+    }
+  }
+  for (const join of Object.values(timeline.joins ?? {})) {
+    const from = timeline.clips[join.from ?? ""];
+    const to = timeline.clips[join.to ?? ""];
+    const transition = join.transition;
+    if (!from || !to || !transition || compare(clipEnd(from), clipStart(to)) !== 0) continue;
+    const [before, after] = joinParts(parseTime(transition.duration), transition.align);
+    taken.set(`${from.id} exit`, before);
+    taken.set(`${to.id} enter`, after);
+  }
+  return taken;
+}
+
+/**
+ * A join that still fits its clips keeps how long it is: with what was at their other edges
+ * before (or their own transitions there, which come back where a join goes), both of its parts
+ * fit in what the clips are now.
+ */
+export function checkJoinsKept(before: TimelineState, after: TimelineState, about: unknown): void {
+  const was = edgesTaken(before);
+  const own = (clip: ClipState, edge: "enter" | "exit") =>
+    clip[edge] ? parseTime(clip[edge]!.duration) : ZERO;
+  for (const [id, join] of Object.entries(before.joins ?? {})) {
+    const now = after.joins?.[id];
+    const [from, to] = [after.clips[now?.from ?? ""], after.clips[now?.to ?? ""]];
+    const [fromWas, toWas] = [before.clips[now?.from ?? ""], before.clips[now?.to ?? ""]];
+    if (!now || !join.transition || !now.transition || !from || !to || !fromWas || !toWas) continue;
+    if (compare(clipEnd(from), clipStart(to)) !== 0) continue;
+    const [part, rest] = joinParts(parseTime(join.transition.duration), join.transition.align);
+    const other = (clip: ClipState, edge: "enter" | "exit") =>
+      maxOfTimes(was.get(`${clip.id} ${edge}`) ?? ZERO, own(clip, edge));
+    const fits =
+      compare(add(part, other(fromWas, "enter")), lengthOfClip(from)) <= 0 &&
+      compare(add(rest, other(toWas, "exit")), lengthOfClip(to)) <= 0;
+    if (fits) {
+      expect(now.transition.duration, `join ${id} ${JSON.stringify(about)}`).toBe(
+        join.transition.duration,
+      );
+    }
+  }
+}

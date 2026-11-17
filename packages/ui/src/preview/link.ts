@@ -498,7 +498,8 @@ export class PreviewLink {
     // people drag it: scenes cannot run backwards, and their timers would run at another speed.
     const playing = moving && rate >= 1 && !held;
     const carried = playing && playbackStart && playbackStart === this.#lastPlayback;
-    this.#lastPlayback = playbackStart;
+    // What plays on under a drag is not where the picture is: once it lets go, that is a jump.
+    this.#lastPlayback = held ? undefined : playbackStart;
     const seconds = held ? held.seconds : frame / model.rate.fps;
     if (seconds !== this.#lastSeconds) {
       this.#lastSeconds = seconds;

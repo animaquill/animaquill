@@ -15,6 +15,7 @@ import {
 import { describe, expect, it } from "vitest";
 import {
   FUZZ,
+  checkJoinsKept,
   randomCommand,
   randomFrom,
   replica,
@@ -50,12 +51,16 @@ const MEDIA_FRAMES = 600;
 const frames = (count: number) => rational(BigInt(count), FPS);
 const t = (value: Rational) => formatTime(value);
 const media = { asset: "file" };
-const TRACKS = ["V1", "V2", "A1", "A2"] as const;
+const TRACKS = ["V1", "V2", "A1", "A2", "C1"] as const;
 const isSound = (track: string) => track.startsWith("A");
+const isCaption = (track: string) => track.startsWith("C");
+const kindOfTrack = (track: string) =>
+  isSound(track) ? "audio" : isCaption(track) ? "caption" : "video";
 const main = (store: ProjectStore): TimelineState => store.getState().timelines["main"]!;
 const maxOf = (a: Rational, b: Rational) => (compare(a, b) >= 0 ? a : b);
 const minOf = (a: Rational, b: Rational) => (compare(a, b) <= 0 ? a : b);
-const isTimeless = (clip: ClipState) => clip.source.kind === "color";
+const isTimeless = (clip: ClipState) =>
+  clip.source.kind === "color" || clip.source.kind === "image" || clip.source.kind === "caption";
 const clockOf = (clip: ClipState) => subtract(clipStart(clip), clipOffset(clip));
 const lengthOf = (clip: ClipState) => subtract(clipEnd(clip), clipStart(clip));
 
@@ -75,8 +80,8 @@ interface ClipFile {
 function randomProject(random: Random): ProjectStore {
   const files = writeProject(createProject({ name: "随机滑移" }));
   const timeline = JSON.parse(files.get(MAIN) as string);
-  const clips: Record<string, ClipFile[]> = { V1: [], V2: [], A1: [], A2: [] };
-  const cursors: Record<string, number> = { V1: 0, V2: 0, A1: 0, A2: 0 };
+  const clips: Record<string, ClipFile[]> = { V1: [], V2: [], A1: [], A2: [], C1: [] };
+  const cursors: Record<string, number> = { V1: 0, V2: 0, A1: 0, A2: 0, C1: 0 };
   let made = 0;
   let links = 0;
   /** Where a clip of so long starts on its media: anywhere, now and then right at an end. */
@@ -88,23 +93,43 @@ function randomProject(random: Random): ProjectStore {
   };
   const clipOn = (track: string, start: number, duration: number, link?: string, at?: number) => {
     made += 1;
-    const kind = isSound(track) ? "audio" : random.chance(0.3) ? "color" : "video";
-    const offset = at ?? (kind === "color" ? random.int(3) * 10 : randomClock(duration));
+    // Colours, pictures and captions look the same at any moment; the rest has a beginning and an end.
+    const choice = random.int(20);
+    const kind = isSound(track)
+      ? "audio"
+      : isCaption(track)
+        ? "caption"
+        : link !== undefined || choice >= 9
+          ? "video"
+          : choice < 6
+            ? "color"
+            : "image";
+    const timeless = kind === "color" || kind === "image" || kind === "caption";
+    const offset = at ?? (timeless ? random.int(3) * 10 : randomClock(duration));
+    const source =
+      kind === "color"
+        ? { kind: "color", color: "#336699" }
+        : kind === "image"
+          ? { kind: "image", media: { asset: "pic" } }
+          : kind === "caption"
+            ? { kind: "caption", text: "字幕" }
+            : { kind, media };
     const clip: ClipFile = {
       id: `c${made}`,
       start: t(frames(start)),
       duration: t(frames(duration)),
       ...(offset > 0 && { offset: t(frames(offset)) }),
-      source: kind === "color" ? { kind: "color", color: "#336699" } : { kind, media },
+      source,
       ...(link && { link }),
     };
-    if (!isSound(track) && duration > 40 && random.chance(0.3)) {
+    const fades = kindOfTrack(track) === "video";
+    if (fades && duration > 40 && random.chance(0.3)) {
       clip.enter = { type: "fade", duration: "1/3" };
     }
-    if (!isSound(track) && duration > 40 && random.chance(0.3)) {
+    if (fades && duration > 40 && random.chance(0.3)) {
       clip.exit = { type: "fade", duration: "1/2" };
     }
-    if (random.chance(0.4)) {
+    if (!isCaption(track) && random.chance(0.4)) {
       const path = isSound(track) ? "audio.volume" : "opacity";
       const values = isSound(track) ? [0, -6] : [1, 0.5];
       clip.properties = {
@@ -144,7 +169,8 @@ function randomProject(random: Random): ProjectStore {
     }
   }
   const joins: { track: string; [key: string]: unknown }[] = [];
-  for (const track of ["V1", "V2"]) {
+  // Joins between pictures and between sounds, in the middle of their cut or all on one side.
+  for (const track of ["V1", "V2", "A1", "A2"]) {
     const list = clips[track]!;
     for (let index = 0; index + 1 < list.length; index++) {
       const [from, to] = [list[index]!, list[index + 1]!];
@@ -155,7 +181,16 @@ function randomProject(random: Random): ProjectStore {
       );
       if (touches && roomy && random.chance(0.6)) {
         const id = `j${joins.length}`;
-        joins.push({ id, from: from.id, to: to.id, type: "fade", duration: "1/3", track });
+        const align = random.pick(["center", "before", "after"] as const);
+        joins.push({
+          id,
+          from: from.id,
+          to: to.id,
+          type: "fade",
+          duration: "1/3",
+          ...(align !== "center" && { align }),
+          track,
+        });
       }
     }
   }
@@ -165,7 +200,7 @@ function randomProject(random: Random): ProjectStore {
     const own = joins.filter((join) => join.track === id).map(({ track: _track, ...join }) => join);
     return {
       id,
-      kind: isSound(id) ? "audio" : "video",
+      kind: kindOfTrack(id),
       clips: clips[id],
       ...(own.length > 0 && { joins: own }),
     };
@@ -179,6 +214,7 @@ function randomProject(random: Random): ProjectStore {
     hash: "sha256-f",
     info: { duration: t(frames(MEDIA_FRAMES)) },
   };
+  assets.assets.pic = { kind: "image", path: "assets/pic.png", storage: "local", hash: "sha256-p" };
   files.set("assets.json", JSON.stringify(assets));
   const { store, problems } = ProjectStore.open(files);
   if (!store) throw new Error(JSON.stringify(problems));
@@ -463,6 +499,7 @@ describe.each(SEEDS)("slip, slide and roll at random, seed %i", FUZZ, (seed) => 
       const after = structuredClone(main(store));
       if (compare(step.by, ZERO) !== 0) done[step.kind] += 1;
       checkStep(step, before, after, result.results[0]);
+      checkJoinsKept(before, after, step.call.params);
       // 10. One step back is exactly where it was, and forward again where it got to.
       if (random.chance(0.4) && !deepEqual(before, after)) {
         expect(store.undo().ok).toBe(true);

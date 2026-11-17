@@ -106,7 +106,7 @@ import {
   type Preview,
 } from "./gestures.ts";
 import { snapPointsOf } from "./snap.ts";
-import { RollGesture, SlideGesture, SlipGesture } from "./slip-drag.ts";
+import { RollGesture, SlideGesture, SlipGesture, partnersOf } from "./slip-drag.ts";
 import { TOOL_CURSORS } from "./tool-shapes.ts";
 import {
   EDGES,
@@ -3818,12 +3818,19 @@ export class TimelineEditor implements TouchTarget {
     }
     this.#select(own);
     const host = this.#host;
+    const { model } = host;
+    // As with keys: partners on locked tracks stay where they are, and people hear so.
+    const going = new Set([
+      box.id,
+      ...partnersOf(model, box, pointer.alt).map((item) => item.box.id),
+    ]);
+    const done = pointer.alt ? undefined : () => this.#tellLockedLeft(going, model);
     this.#gesture =
       tool === "roll"
-        ? new RollGesture(host, box, row, edge as "start" | "end", pointer)
+        ? new RollGesture(host, box, row, edge as "start" | "end", pointer, done)
         : tool === "slip"
-          ? new SlipGesture(host, box, row, pointer)
-          : new SlideGesture(host, box, row, pointer);
+          ? new SlipGesture(host, box, row, pointer, done)
+          : new SlideGesture(host, box, row, pointer, done);
     return true;
   }
 

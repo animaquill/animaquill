@@ -5465,7 +5465,7 @@ describe("nudging, slipping, sliding and rolling", () => {
   });
 
   it("snaps the cut and the slid clip to the playhead, and leaves partners on locked tracks", async () => {
-    const { editor, addClip, at, clip, store, audio } = await setup();
+    const { editor, addClip, at, clip, store, audio, lockedLeft } = await setup();
     addClip("a", 0, 2, undefined, { link: "L" });
     addClip("b", 2, 2);
     addClip("s", 0, 2, audio, { link: "L" });
@@ -5483,6 +5483,19 @@ describe("nudging, slipping, sliding and rolling", () => {
     editor.release(edge(at(2.52), -2));
     expect([span(clip("a")), span(clip("b"))]).toEqual(["0+2.5@0", "2.5+1.5@0.5"]);
     expect([span(clip("s")), span(clip("t"))]).toEqual(["0+2@0", "2+2@0"]);
+    // Said, as with the keys.
+    expect(lockedLeft).toHaveBeenCalledTimes(1);
+    expect(lockedLeft).toHaveBeenLastCalledWith(1);
+    store.undo();
+    // Back where it started is nothing to say; with Alt, the clip alone is what people asked for.
+    editor.press(edge(at(2), -2));
+    editor.drag(edge(at(2.3), -2));
+    editor.drag(edge(at(2), -2));
+    editor.release(edge(at(2), -2));
+    editor.press({ ...edge(at(2), -2), alt: true });
+    editor.drag({ ...edge(at(2.3), -2), alt: true });
+    editor.release({ ...edge(at(2.3), -2), alt: true });
+    expect(lockedLeft).toHaveBeenCalledTimes(1);
     store.undo();
     editor.seek(frameAt(1.5, editor.model!.rate));
     editor.setTool("slide");

@@ -131,11 +131,14 @@ export class SlipGesture implements Gesture {
   readonly #bounds = new Bounds();
   #by: Rational | undefined;
 
-  constructor(host: GestureHost, box: ClipBox, row: Row, press: Pointer) {
+  readonly #done: (() => void) | undefined;
+
+  constructor(host: GestureHost, box: ClipBox, row: Row, press: Pointer, done?: () => void) {
     this.#host = host;
     this.#box = box;
     this.#row = row;
     this.#press = press;
+    this.#done = done;
     this.#items = [{ box, row }, ...partnersOf(host.model, box, press.alt)];
     for (const { box: item } of this.#items) {
       const { clip } = item;
@@ -182,9 +185,10 @@ export class SlipGesture implements Gesture {
     const by = this.#by;
     if (by !== undefined && compare(by, ZERO) !== 0) {
       const clips = this.#items.map(({ box }) => box.id);
-      this.#host.run([
+      const ran = this.#host.run([
         { type: "clip.slip", params: { timeline: this.#host.model.id, clips, by: formatTime(by) } },
       ]);
+      if (ran) this.#done?.();
     }
     this.#host.setPreview(undefined);
   }
@@ -219,11 +223,14 @@ export class SlideGesture implements Gesture {
   readonly #points: SnapPoints;
   #by: Rational | undefined;
 
-  constructor(host: GestureHost, box: ClipBox, row: Row, press: Pointer) {
+  readonly #done: (() => void) | undefined;
+
+  constructor(host: GestureHost, box: ClipBox, row: Row, press: Pointer, done?: () => void) {
     this.#host = host;
     this.#box = box;
     this.#row = row;
     this.#press = press;
+    this.#done = done;
     const { model } = host;
     const placed = [{ box, row }, ...partnersOf(model, box, press.alt)];
     const sliding = new Set(placed.map((item) => item.box.id));
@@ -316,12 +323,13 @@ export class SlideGesture implements Gesture {
     const by = this.#by;
     if (by !== undefined && compare(by, ZERO) !== 0) {
       const clips = this.#items.map(({ box }) => box.id);
-      this.#host.run([
+      const ran = this.#host.run([
         {
           type: "clip.slide",
           params: { timeline: this.#host.model.id, clips, by: formatTime(by) },
         },
       ]);
+      if (ran) this.#done?.();
     }
     this.#host.setPreview(undefined);
   }
@@ -365,10 +373,20 @@ export class RollGesture implements Gesture {
   readonly #points: SnapPoints;
   #by: Rational | undefined;
 
-  constructor(host: GestureHost, box: ClipBox, row: Row, edge: "start" | "end", press: Pointer) {
+  readonly #done: (() => void) | undefined;
+
+  constructor(
+    host: GestureHost,
+    box: ClipBox,
+    row: Row,
+    edge: "start" | "end",
+    press: Pointer,
+    done?: () => void,
+  ) {
     this.#host = host;
     this.#row = row;
     this.#press = press;
+    this.#done = done;
     const { model } = host;
     const placed = [{ box, row }, ...partnersOf(model, box, press.alt)];
     const frame = ONE_FRAME(model.rate);
@@ -460,7 +478,7 @@ export class RollGesture implements Gesture {
         edges: this.#cuts.map(({ edge }) => edge),
         at: formatTime(add(main.at, by)),
       };
-      this.#host.run([{ type: "clip.roll", params }]);
+      if (this.#host.run([{ type: "clip.roll", params }])) this.#done?.();
     }
     this.#host.setPreview(undefined);
   }

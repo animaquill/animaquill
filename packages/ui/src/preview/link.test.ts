@@ -100,6 +100,7 @@ function setup(
     rate: 1,
     frame: 0,
     playbackStart: undefined as { frame: number; since: number; rate: number } | undefined,
+    held: undefined as TimelineEditor["held"],
   };
   const timeline = {
     subscribe: () => () => {},
@@ -114,6 +115,9 @@ function setup(
     },
     get playbackStart() {
       return clock.playbackStart;
+    },
+    get held() {
+      return clock.held;
     },
   } as unknown as TimelineEditor;
   /** The playhead got here. */
@@ -680,6 +684,26 @@ describe("how time goes over", () => {
     vi.useRealTimers();
     expect(ofType("play")).toHaveLength(2);
     expect(ofType("play").at(-1)).toMatchObject({ seconds: 0.1, jump: false });
+  });
+
+  it("shows the edit while a drag holds clips, and jumps back to the playhead once it lets go", () => {
+    const { hello, clock, tick, ofType } = setup();
+    hello();
+    clock.playing = true;
+    clock.playbackStart = start;
+    tick(1);
+    tick(2);
+    // A slip that starts while playing: the picture stops at the edit.
+    clock.held = { clips: new Map(), seconds: 5 };
+    tick(3);
+    expect(ofType("seek").at(-1)).toEqual({ type: "seek", seconds: 5, jump: true });
+    expect(ofType("pause")).toHaveLength(1);
+    tick(4);
+    // Let go: back to where playing got to, as a jump, and playing again from there.
+    clock.held = undefined;
+    tick(5);
+    expect(ofType("seek").at(-1)).toEqual({ type: "seek", seconds: 5 / 30, jump: true });
+    expect(ofType("play").at(-1)).toMatchObject({ seconds: 5 / 30, jump: true });
   });
 
   it("moving the playhead while playing is a jump again", () => {
