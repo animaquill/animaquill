@@ -92,6 +92,15 @@ describe("dragging a number", () => {
     expect(scrubbed(pan, 0, 10, plain)).toBeCloseTo(0.1, 9);
   });
 
+  it("counts in whole numbers, one for about four pixels", () => {
+    const steps = { path: "steps", type: "number", unit: "count", min: 1, max: 100 } as const;
+    expect(scrubbed(steps, 4, 4, plain)).toBe(5);
+    expect(scrubbed(steps, 4, 41, plain)).toBe(14);
+    expect(scrubbed(steps, 4, 3, { shift: false, alt: true })).toBe(4);
+    expect(scrubbed(steps, 4, -100, plain)).toBe(1);
+    expect(parseNumber("6.4", steps)).toBe(6);
+  });
+
   it("stops at the limits", () => {
     expect(scrubbed(opacity, 0.9, 50, plain)).toBe(1);
     expect(scrubbed(opacity, 0.1, -50, plain)).toBe(0);

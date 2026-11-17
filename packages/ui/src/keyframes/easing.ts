@@ -53,15 +53,15 @@ export interface EaseTuning {
   readonly period: number;
   readonly steps: number;
   readonly jump: StepJump;
-  /** Spring: 0 does not overshoot, 1 swings for ever. */
-  readonly bounce: number;
-  /** Spring: how long one swing takes, in seconds. */
-  readonly swing: number;
+  /** Spring: how much it wobbles, 0 not at all; 1 would never stop, so it goes up to 0.95. */
+  readonly wobble: number;
+  /** Spring: how long one swing takes, in seconds: more is slower. */
+  readonly duration: number;
 }
 
 /**
  * Out is what people want most: it plays at the end. The steps are those of CSS `steps(4)`. A spring
- * with this bounce is still to less than 0.001 two swings after it starts, which is where the spring
+ * with this wobble is still to less than 0.001 two swings after it starts, which is where the spring
  * a stretch gets comes to its next key (see `springFor`), and overshoots by a tenth.
  */
 export const DEFAULT_TUNING: EaseTuning = {
@@ -70,8 +70,8 @@ export const DEFAULT_TUNING: EaseTuning = {
   period: 0.3,
   steps: 4,
   jump: "end",
-  bounce: 0.4,
-  swing: 0.5,
+  wobble: 0.4,
+  duration: 0.5,
 };
 
 /** The ranges people can choose from, which are all what the project format can work out. */
@@ -79,31 +79,31 @@ export const TUNING_RANGES = {
   amplitude: { min: 1, max: 10 },
   period: { min: 0.05, max: 2 },
   steps: { min: 1, max: 100 },
-  bounce: { min: 0, max: 1 },
-  swing: { min: 0.01, max: 60 },
+  wobble: { min: 0, max: 0.95 },
+  duration: { min: 0.01, max: 60 },
 } as const;
 
 const TAU = 2 * Math.PI;
 
-/** The spring of the project format that swings in `swing` seconds with a bounce. */
-export function springFrom(bounce: number, swing: number): NonNullable<Key["spring"]> {
-  const stiffness = (TAU / swing) ** 2;
-  return { stiffness, damping: 2 * (1 - bounce) * Math.sqrt(stiffness) };
+/** The spring of the project format that swings in `duration` seconds with a wobble. */
+export function springFrom(wobble: number, duration: number): NonNullable<Key["spring"]> {
+  const stiffness = (TAU / duration) ** 2;
+  return { stiffness, damping: 2 * (1 - wobble) * Math.sqrt(stiffness) };
 }
 
 /** The other way round, whatever the mass. Undefined for a spring that cannot be worked out. */
 export function tuningOfSpring(
   spring: Key["spring"],
-): Pick<EaseTuning, "bounce" | "swing"> | undefined {
+): Pick<EaseTuning, "wobble" | "duration"> | undefined {
   const known = springOf(spring);
   if (!known) return undefined;
   const [omega, zeta] = known;
-  return { bounce: 1 - zeta, swing: TAU / omega };
+  return { wobble: 1 - zeta, duration: TAU / omega };
 }
 
 /** What a spring is when people choose it: it comes to rest by the next key, half way along. */
-export const springFor = (length: number | undefined): Pick<EaseTuning, "swing"> => ({
-  swing: length !== undefined && length > 0 ? length / 2 : DEFAULT_TUNING.swing,
+export const springFor = (length: number | undefined): Pick<EaseTuning, "duration"> => ({
+  duration: length !== undefined && length > 0 ? length / 2 : DEFAULT_TUNING.duration,
 });
 
 const SUFFIXES: Readonly<Record<EaseDirection, string>> = { in: "In", out: "Out", inOut: "InOut" };
@@ -132,7 +132,7 @@ export function easeOf(preset: EasePreset, tuning: EaseTuning = DEFAULT_TUNING):
         presetParams: { steps: tuning.steps },
       };
     case "spring":
-      return { interp: "spring", spring: springFrom(tuning.bounce, tuning.swing) };
+      return { interp: "spring", spring: springFrom(tuning.wobble, tuning.duration) };
     default:
       return FIXED_EASES[preset];
   }

@@ -1158,7 +1158,7 @@ export class KeyframeEditor {
 
   /**
    * Changes some of the tuning of the selected keys, each one keeping the rest of its own: a spring
-   * keeps its swing when its bounce changes. `preview` only shows it, as dragging a number does.
+   * keeps its duration when its wobble changes. `preview` only shows it, as dragging a number does.
    */
   tunePreset(change: Partial<EaseTuning>, mode: "preview" | "commit"): void {
     const preset = this.selectedPreset;

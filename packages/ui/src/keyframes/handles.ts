@@ -41,13 +41,19 @@ const TINY = 1e-12;
 const timeOf = (key: Key) => secondsOf(key.time);
 const valueOf = (key: Key) => key.value as number;
 const isBezier = (key: Key) => key.interp === "bezier" && key.out !== undefined;
+/** The ways of going on that handles steer. */
+const HANDLED: ReadonlySet<string> = new Set(["linear", "bezier"]);
 const clamp = (value: number, low: number, high: number) => Math.min(Math.max(value, low), high);
 const fixed = (value: number, digits: number) => {
   const short = Number(value.toFixed(digits));
   return short === 0 ? 0 : short;
 };
 
-/** The keys at the ends of the stretch a handle steers, or undefined where it holds or ends. */
+/**
+ * The keys at the ends of the stretch a handle steers, or undefined where it holds or ends. Only
+ * straight and bezier stretches have handles, as in Blender: dragging one on a preset or a spring
+ * would quietly make it a bezier.
+ */
 export function stretchOf(
   keys: readonly Key[],
   index: number,
@@ -56,7 +62,7 @@ export function stretchOf(
   const from = side === "out" ? index : index - 1;
   const start = keys[from];
   const end = keys[from + 1];
-  if (from < 0 || !start || !end || start.interp === "hold") return undefined;
+  if (from < 0 || !start || !end || !HANDLED.has(start.interp ?? "linear")) return undefined;
   if (typeof start.value !== "number" || typeof end.value !== "number") return undefined;
   return timeOf(end) > timeOf(start) ? { from, to: from + 1 } : undefined;
 }

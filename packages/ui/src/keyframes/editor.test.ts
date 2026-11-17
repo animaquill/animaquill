@@ -984,19 +984,19 @@ describe("what else can be done to keys", () => {
     const box = timeline.model?.boxes.get("a");
     if (!box) throw new Error("no clip");
     const properties = keyframes.shown(box.clip).properties ?? {};
-    // x goes on for a second, y for two: each swings in half of it.
-    const swingOf = (path: string) =>
-      tuningOfSpring((properties[path] as Animation).keys[0]?.spring)?.swing;
-    expect(swingOf(X)).toBeCloseTo(0.5, 9);
-    expect(swingOf(Y)).toBeCloseTo(1, 9);
-    // Tuning the bounce keeps the swing of each.
-    keyframes.tunePreset({ bounce: 0.2 }, "commit");
+    // x goes on for a second, y for two: each takes half of it.
+    const durationOf = (path: string) =>
+      tuningOfSpring((properties[path] as Animation).keys[0]?.spring)?.duration;
+    expect(durationOf(X)).toBeCloseTo(0.5, 9);
+    expect(durationOf(Y)).toBeCloseTo(1, 9);
+    // Tuning the wobble keeps the duration of each.
+    keyframes.tunePreset({ wobble: 0.2 }, "commit");
     const after =
       keyframes.shown(timeline.model?.boxes.get("a")?.clip ?? box.clip).properties ?? {};
     const tuned = (path: string) => tuningOfSpring((after[path] as Animation).keys[0]?.spring);
-    expect(tuned(X)?.swing).toBeCloseTo(0.5, 9);
-    expect(tuned(Y)?.swing).toBeCloseTo(1, 9);
-    expect(tuned(Y)?.bounce).toBeCloseTo(0.2, 9);
+    expect(tuned(X)?.duration).toBeCloseTo(0.5, 9);
+    expect(tuned(Y)?.duration).toBeCloseTo(1, 9);
+    expect(tuned(Y)?.wobble).toBeCloseTo(0.2, 9);
   });
 
   describe("copying", () => {

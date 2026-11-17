@@ -114,7 +114,6 @@ export function InterpBubble({ keyframes, anchor, onClose }: InterpBubbleProps) 
       {selected && tuning && (
         <TuningRow keyframes={keyframes} selected={selected} tuning={tuning} onDrag={setDragged} />
       )}
-      <p className={styles.hint}>{t("keyframes.handleHint")}</p>
     </Bubble>
   );
 }
@@ -122,14 +121,14 @@ export function InterpBubble({ keyframes, anchor, onClose }: InterpBubbleProps) 
 type TunedNumber = keyof typeof TUNING_RANGES;
 
 /** How each number reads and drags: seconds show as such, steps go one by one. */
-const NUMBER_UNITS: Partial<Record<TunedNumber, string>> = { steps: "count", swing: "s" };
+const NUMBER_UNITS: Partial<Record<TunedNumber, string>> = { steps: "count", duration: "s" };
 
 /** The numbers of each tuned preset, in the order of the row. */
 const NUMBERS = {
   elastic: ["amplitude", "period"],
   bounce: [],
   steps: ["steps"],
-  spring: ["bounce", "swing"],
+  spring: ["wobble", "duration"],
 } as const satisfies Record<TunedEase, readonly TunedNumber[]>;
 
 interface TuningRowProps {

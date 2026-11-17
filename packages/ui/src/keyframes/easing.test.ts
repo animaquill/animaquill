@@ -120,28 +120,28 @@ describe("the presets people pick from", () => {
   });
 });
 
-describe("a spring of bounce and swing", () => {
+describe("a spring of wobble and duration", () => {
   it("comes back the same from the three numbers it is saved as", () => {
     const random = randomFrom(7);
     for (let round = 0; round < 2000; round += 1) {
-      const bounce = random();
-      const swing = 0.01 + random() * 60;
-      const back = tuningOfSpring(springFrom(bounce, swing));
-      expect(Math.abs((back?.bounce ?? Infinity) - bounce)).toBeLessThan(1e-9);
-      expect(Math.abs((back?.swing ?? Infinity) - swing) / swing).toBeLessThan(1e-9);
+      const wobble = random() * 0.95;
+      const duration = 0.01 + random() * 60;
+      const back = tuningOfSpring(springFrom(wobble, duration));
+      expect(Math.abs((back?.wobble ?? Infinity) - wobble)).toBeLessThan(1e-9);
+      expect(Math.abs((back?.duration ?? Infinity) - duration) / duration).toBeLessThan(1e-9);
     }
   });
 
   it("reads a spring with a mass of its own as the same motion", () => {
     const back = tuningOfSpring({ stiffness: 400, damping: 16, mass: 4 });
     const [omega, zeta] = springOf({ stiffness: 400, damping: 16, mass: 4 }) ?? [];
-    expect(back?.swing).toBeCloseTo((2 * Math.PI) / (omega as number), 12);
-    expect(back?.bounce).toBeCloseTo(1 - (zeta as number), 12);
+    expect(back?.duration).toBeCloseTo((2 * Math.PI) / (omega as number), 12);
+    expect(back?.wobble).toBeCloseTo(1 - (zeta as number), 12);
   });
 
   it("is at rest by the next key when people choose it, however long the stretch is", () => {
     for (const length of [1 / 60, 0.1, 1, 2.5, 7, 30]) {
-      const spring = springFrom(DEFAULT_TUNING.bounce, springFor(length).swing);
+      const spring = springFrom(DEFAULT_TUNING.wobble, springFor(length).duration);
       const [omega, zeta] = springOf(spring) ?? [Number.NaN, Number.NaN];
       // Right where the next key is, where it would jump.
       expect(Math.abs(1 - springProgress(omega, zeta, length))).toBeLessThan(0.001);

@@ -155,6 +155,35 @@ describe("a handle", () => {
       dragHandle({ keys: line, index: 0, side: "in", to: { t: 0, v: 0 }, mode: "broken" }),
     ).toBeUndefined();
   });
+
+  it("is not there on a preset or a spring, so that a drag cannot make it a bezier", () => {
+    const tuned: readonly Key[][] = [
+      [{ time: "0", value: 0, interp: "preset", preset: "elasticOut" }, ...line.slice(1)],
+      [
+        { time: "0", value: 0, interp: "preset", preset: "stepsEnd", presetParams: { steps: 4 } },
+        ...line.slice(1),
+      ],
+      [
+        { time: "0", value: 0, interp: "spring", spring: { stiffness: 100, damping: 8 } },
+        ...line.slice(1),
+      ],
+    ];
+    for (const keys of tuned) {
+      expect(handlePoint(keys, 0, "out")).toBeUndefined();
+      expect(handlePoint(keys, 1, "in")).toBeUndefined();
+      expect(shareOf(keys, 0, "out")).toBeUndefined();
+      for (const [index, side] of [
+        [0, "out"],
+        [1, "in"],
+      ] as const) {
+        const to = { t: 0.5, v: 8 };
+        expect(dragHandle({ keys, index, side, to, mode: "broken" })).toBeUndefined();
+        expect(dragHandle({ keys, index, side, to, mode: "aligned" })).toBeUndefined();
+      }
+      // The stretch after it is straight and keeps its handles.
+      expect(handlePoint(keys, 1, "out")).toBeDefined();
+    }
+  });
 });
 
 describe("how a key changes its handles", () => {

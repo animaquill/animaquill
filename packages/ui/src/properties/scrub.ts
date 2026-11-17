@@ -5,7 +5,7 @@ const SHOWN_DIGITS = 2;
 /** Enough for anything a person means, and it keeps float noise out of project files. */
 const KEPT_DIGITS = 6;
 /** What one pixel of dragging is worth, by unit. */
-const STEPS: Readonly<Record<string, number>> = { world: 1, deg: 1, ratio: 0.01, count: 0.1 };
+const STEPS: Readonly<Record<string, number>> = { world: 1, deg: 1, ratio: 0.01, count: 0.25 };
 const DEFAULT_STEP = 0.01;
 
 export interface ScrubKeys {
