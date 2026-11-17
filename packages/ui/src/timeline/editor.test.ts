@@ -53,7 +53,12 @@ async function setup(memory = memoryWindow(), { sized = true } = {}) {
     },
   };
   const joinsRemoved = vi.fn<(count: number) => void>();
-  const editor = new TimelineEditor(session, memory, settings, { commandFailed, joinsRemoved });
+  const lockedLeft = vi.fn<(count: number) => void>();
+  const editor = new TimelineEditor(session, memory, settings, {
+    commandFailed,
+    joinsRemoved,
+    lockedLeft,
+  });
   await editor.load();
   if (sized) editor.setViewport(WIDTH, HEIGHT);
 
@@ -127,6 +132,7 @@ async function setup(memory = memoryWindow(), { sized = true } = {}) {
     audio,
     commandFailed,
     joinsRemoved,
+    lockedLeft,
     memory,
     saved,
     settings,
@@ -4528,6 +4534,46 @@ describe("linked clips taken apart and put together again", () => {
     expect(editor.moveIntoSync("v")).toBe(true);
     expect(clip("v").start).toBe("2");
     expect(commandFailed).not.toHaveBeenCalled();
+  });
+
+  it("say what Ctrl+L does in words of the picture and its sound, where it is about them", async () => {
+    const { editor, addClip, video, audio } = await pair();
+    editor.selectOnly("v");
+    expect(editor.linkAction).toBe("unlinkSound");
+    editor.toggleLink();
+    editor.selectOnly("v");
+    editor.addToSelection("s");
+    expect(editor.linkAction).toBe("linkSound");
+    addClip("c", 10, 2, video);
+    editor.addToSelection("c");
+    expect(editor.linkAction).toBe("link");
+    editor.toggleLink();
+    editor.selectOnly("c");
+    expect(editor.linkAction).toBe("unlink");
+    editor.clearSelection();
+    expect(editor.linkAction).toBeUndefined();
+    // The sound alone with a picture of another file is no picture and its sound.
+    editor.selectOnly("s");
+    editor.addToSelection("c");
+    expect(editor.linkAction).toBe("unlink");
+    expect(audio).toBeDefined();
+  });
+
+  it("say how many partners on locked tracks stayed when the rest of their group went", async () => {
+    const { editor, audio, main, lockedLeft } = await pair();
+    editor.selectOnly("v");
+    editor.cutSelection();
+    expect(lockedLeft).not.toHaveBeenCalled();
+    editor.cancelCut();
+    editor.updateTrack(audio, { locked: true });
+    editor.selectOnly("v");
+    editor.cutSelection();
+    expect(lockedLeft).toHaveBeenLastCalledWith(1);
+    editor.cancelCut();
+    editor.selectOnly("v");
+    editor.deleteSelection();
+    expect(Object.keys(main().clips)).toEqual(["s"]);
+    expect(lockedLeft).toHaveBeenCalledTimes(2);
   });
 
   it("move back into step only where there is room", async () => {

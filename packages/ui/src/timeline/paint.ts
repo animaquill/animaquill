@@ -947,42 +947,48 @@ export class TimelinePainter extends StagePainter {
     context.beginPath();
     context.rect(left, top, width, height);
     context.clip();
-    const x = Math.max(left, 0) + LABEL_PADDING + room;
     const y = top + Math.min(height / 2, 12);
     const label = this.#labelOf(box);
+    const named = label ? context.measureText(label).width : 0;
+    const scale = this.theme.fontScale;
+    const font = context.font;
+    const syncFont = `600 ${10 * scale}px ${this.theme.font}`;
+    // Out of step with its partner: how many frames, in red, right after the name; first where
+    // both do not fit, so that a short clip still shows it.
+    const { model } = this.#editor;
+    const sync = model?.outOfSync.get(box.id);
+    const syncText = sync ? signedFrames(sync) : "";
+    context.font = syncFont;
+    const plate = sync ? context.measureText(syncText).width + SYNC_PADDING * 2 : 0;
+    context.font = font;
+    const start = Math.max(left, 0) + LABEL_PADDING + room;
+    const gap = named > 0 && sync ? 6 : 0;
+    const syncFirst = sync !== undefined && start + named + gap + plate > left + width;
+    const x = syncFirst ? start + plate + gap : start;
+    const syncAt = syncFirst ? start : x + named + gap;
     // Over pictures no single colour stays readable.
     const onPicture = box.clip.source.kind === "video" && this.#stripOf(box.clip) !== undefined;
-    if (onPicture) {
+    if (onPicture && named > 0) {
       context.fillStyle = "#000000a6";
-      const plate = context.measureText(label).width + LABEL_PLATE_PADDING * 2;
-      context.fillRect(x - LABEL_PLATE_PADDING, y - 8, plate, 16);
+      context.fillRect(x - LABEL_PLATE_PADDING, y - 8, named + LABEL_PLATE_PADDING * 2, 16);
     }
     const color = onPicture ? "#ffffff" : readableOn(fill);
     context.fillStyle = color;
     context.fillText(label, x, y);
-    const named = label ? context.measureText(label).width : 0;
-    const scale = this.theme.fontScale;
     // Linked clips have their names underlined, as in Premiere.
-    const { model } = this.#editor;
     const link = box.clip.link;
     if (named > 0 && link !== undefined && (model?.links.get(link)?.length ?? 0) > 1) {
-      context.fillStyle = color;
       context.fillRect(x, Math.round(y + 7 * scale), named, Math.max(1, Math.round(scale)));
     }
-    // Out of step with its partner: how many frames, in red, right after the name.
-    const sync = model?.outOfSync.get(box.id);
     if (sync) {
-      const text = signedFrames(sync);
-      context.font = `600 ${10 * scale}px ${this.theme.font}`;
-      const from = x + named + (named > 0 ? 6 : 0);
-      const plate = context.measureText(text).width + SYNC_PADDING * 2;
       const tall = Math.round(14 * scale);
+      context.font = syncFont;
       context.fillStyle = this.theme.unsynced;
       context.beginPath();
-      context.roundRect(from, y - tall / 2, plate, tall, 2);
+      context.roundRect(syncAt, y - tall / 2, plate, tall, 2);
       context.fill();
       context.fillStyle = ON_CLIP;
-      context.fillText(text, from + SYNC_PADDING, y + 0.5);
+      context.fillText(syncText, syncAt + SYNC_PADDING, y + 0.5);
     }
     context.restore();
   }

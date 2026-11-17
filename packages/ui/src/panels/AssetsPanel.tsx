@@ -143,6 +143,7 @@ export function AssetsPanel() {
               key={half}
               className={styles.half}
               data-only={half}
+              title={t(`assetPanel.only.${half}`)}
               aria-hidden
               draggable
               onDragStart={(event) => startHalfDrag(resource.data, half, event)}

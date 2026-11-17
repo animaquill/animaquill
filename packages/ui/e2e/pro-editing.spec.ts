@@ -537,6 +537,22 @@ async function dragBy(page: Page, what: Locator, pixels: number, alt = false) {
   if (alt) await page.keyboard.up("Alt");
 }
 
+/** The menu of a clip, with the tracks under it. */
+async function shootMenu(page: Page, name: string) {
+  const menu = await page.getByRole("menu").boundingBox();
+  const box = await panel(page).boundingBox();
+  if (!menu || !box) return;
+  await page.screenshot({
+    path: test.info().outputPath(name),
+    clip: {
+      x: box.x,
+      y: box.y,
+      width: Math.min(box.width, 700),
+      height: menu.y + menu.height + 8 - box.y,
+    },
+  });
+}
+
 /** The tracks with the clips, for people to look at. */
 async function shootClips(page: Page, name: string) {
   const box = await panel(page).boundingBox();
@@ -599,7 +615,8 @@ test.describe("linked clips", () => {
     // The menu of a clip out of step moves it back into step.
     const target = await middleOf(sound(page));
     await page.mouse.click(target.x, target.y, { button: "right" });
-    await expect(page.getByRole("menuitem", { name: "取消联动" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "分离画面和声音" })).toBeVisible();
+    await shootMenu(page, "clip-menu-dark.png");
     await page.getByRole("menuitem", { name: "移回同步" }).click();
     await expect(clips(page).and(page.locator("[data-out-of-sync]"))).toHaveCount(0);
     const lined = await middleOf(picture(page));

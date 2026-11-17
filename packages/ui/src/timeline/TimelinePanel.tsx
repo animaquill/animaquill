@@ -966,11 +966,11 @@ function Surface({
           : [];
       // One of the two, whichever Ctrl+L would do, and moving back in step where it is not.
       const links = [
-        ...(editor.canUnlink || editor.canLink
+        ...(editor.linkAction
           ? [
               {
                 id: "toggleLink",
-                label: t(editor.canUnlink ? "timeline.unlink" : "timeline.link"),
+                label: t(`timeline.${editor.linkAction}`),
                 run: () => editor.toggleLink(),
               },
             ]

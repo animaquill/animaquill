@@ -753,6 +753,7 @@ export class Workbench {
     this.timeline = new TimelineEditor(this.session, host.windowMemory, host.settings, {
       commandFailed: (failure) => this.notifications.push(commandFailedText(t, failure)),
       joinsRemoved: (count) => this.notifications.push(t("timeline.joinsRemoved", { count })),
+      lockedLeft: (count) => this.notifications.push(t("timeline.lockedLeft", { count })),
       sceneName: (number) => t("scene.newName", { number }),
       soundName: (number) => t("sound.newName", { number }),
       soundWords: () => ({ duration: t("sound.param.duration"), seed: t("sound.param.seed") }),

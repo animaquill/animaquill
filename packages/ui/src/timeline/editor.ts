@@ -118,6 +118,7 @@ import {
   rowAt,
   type ClipBox,
   type Edge,
+  isPictureAndSound,
   type JoinBox,
   type OutOfSync,
   type RoomBelow,
@@ -405,6 +406,8 @@ export interface TimelineMessages {
   commandFailed(failure: CommandFailure): void;
   /** Joins went because their clips are no longer next to each other: undo brings them back. */
   joinsRemoved?(count: number): void;
+  /** Linked partners on locked tracks stayed where they are while the rest went. */
+  lockedLeft?(count: number): void;
   /** What a new scene is called. */
   sceneName?(number: number): string;
   /** What a new sound is called, and the words for what it has to be told. */
@@ -1667,6 +1670,28 @@ export class TimelineEditor implements TouchTarget {
   }
 
   /**
+   * What Ctrl+L does now, in words that say what people see: a picture and its sound come apart or
+   * together, or other clips stop or start being linked. Nothing when it can do nothing.
+   */
+  get linkAction(): "unlinkSound" | "unlink" | "linkSound" | "link" | undefined {
+    const { model } = this;
+    if (!model) return undefined;
+    const clipsOf = (ids: Iterable<string>) =>
+      [...ids].flatMap((id) => model.boxes.get(id)?.clip ?? []);
+    const linked = this.#linkedSelected;
+    if (linked.length > 0) {
+      const groups = new Set(clipsOf(linked).map(({ link }) => link as string));
+      const pairs = [...groups].every((link) =>
+        isPictureAndSound(clipsOf(model.links.get(link) ?? [])),
+      );
+      return pairs ? "unlinkSound" : "unlink";
+    }
+    const clips = this.#changeable(this.#snapshot.selection, model);
+    if (clips.length < 2) return undefined;
+    return isPictureAndSound(clipsOf(clips)) ? "linkSound" : "link";
+  }
+
+  /**
    * Ctrl+L, as in Premiere: where some of the selected clips are linked, all of them stop being
    * linked; otherwise two clips or more become a group. Clips on locked tracks are left out, and a
    * partner there keeps its place, which shows that it is out of step.
@@ -1724,7 +1749,9 @@ export class TimelineEditor implements TouchTarget {
     }
     const clips = this.#changeable(this.#snapshot.selection, model);
     if (!model || clips.length === 0) return;
-    this.#run([{ type: "clip.remove", params: { timeline: model.id, clips } }]);
+    // The model of before, which still has the clips that go.
+    if (!this.#run([{ type: "clip.remove", params: { timeline: model.id, clips } }])) return;
+    this.#tellLockedLeft(new Set(clips), model);
   }
 
   get hasClipboard(): boolean {
@@ -1765,6 +1792,24 @@ export class TimelineEditor implements TouchTarget {
     if (clips.size === 0) return;
     this.#copy(clips);
     this.#setCut(clips);
+    this.#tellLockedLeft(clips);
+  }
+
+  /**
+   * Says how many linked partners of clips that go stay behind on locked tracks, which people
+   * might not see: the rest of their group goes.
+   */
+  #tellLockedLeft(going: ReadonlySet<string>, model = this.model): void {
+    if (!model) return;
+    const links = new Set([...going].map((id) => model.boxes.get(id)?.clip.link));
+    let left = 0;
+    for (const link of links) {
+      if (link === undefined) continue;
+      for (const id of model.links.get(link) ?? []) {
+        if (!going.has(id) && model.rowOfClip.get(id)?.track.locked === true) left++;
+      }
+    }
+    if (left > 0) this.#messages.lockedLeft?.(left);
   }
 
   /** Changes nothing when there is no cut, and says so. */

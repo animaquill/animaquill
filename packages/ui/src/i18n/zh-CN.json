@@ -1263,7 +1263,7 @@
       "addAudioTrack": "添加音频轨道",
       "addCaptionTrack": "添加字幕轨道",
       "split": "在播放头切割",
-      "toggleLink": "联动或取消联动",
+      "toggleLink": "分离或联动画面和声音",
       "delete": "删除",
       "selectAll": "全选片段",
       "toolSelect": "选择工具",
@@ -1413,8 +1413,11 @@
     "joinsRemoved": "{{count}} 个衔接转场两边的片段分开了，衔接转场已删除。撤销可以恢复。",
     "link": "联动",
     "unlink": "取消联动",
+    "linkSound": "联动画面和声音",
+    "unlinkSound": "分离画面和声音",
     "moveIntoSync": "移回同步",
-    "outOfSync": "和联动的片段差 {{frames}} 帧"
+    "outOfSync": "和联动的片段差 {{frames}} 帧",
+    "lockedLeft": "锁定轨道上的 {{count}} 个片段没动"
   },
   "operations": {
     "label": "上次的操作",
@@ -2789,6 +2792,10 @@
     "failed": "没能加到时间轴上，再试一次",
     "missing": "文件找不到",
     "length": "时长 {{length}}",
+    "only": {
+      "video": "只放画面",
+      "audio": "只放声音"
+    },
     "placeOnly": {
       "video": "放到播放头：只放画面",
       "audio": "放到播放头：只放声音"

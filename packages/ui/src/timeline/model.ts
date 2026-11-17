@@ -208,6 +208,13 @@ function fileOf(clip: ClipState): string | undefined {
   return JSON.stringify((source as { readonly media?: unknown }).media);
 }
 
+/** Whether clips are the picture and the sound of one file, as a video with sound brings them. */
+export function isPictureAndSound(clips: readonly ClipState[]): boolean {
+  const files = new Set(clips.map(fileOf));
+  const kinds = new Set(clips.map(({ source }) => source.kind));
+  return files.size === 1 && !files.has(undefined) && kinds.has("video") && kinds.has("audio");
+}
+
 /**
  * Linked clips out of step, by clip: in a group, those that show the same file are in step when
  * their clocks line up, start − offset being the same. Each is measured against the first of them,

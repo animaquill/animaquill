@@ -88,7 +88,7 @@ export function registerTimelineActions(
     menu: {
       name: "timeline",
       group: "edit",
-      title: (t) => t(editor.canUnlink ? "timeline.unlink" : "timeline.link"),
+      title: (t) => t(`timeline.${editor.linkAction ?? "link"}`),
     },
   });
   add(
