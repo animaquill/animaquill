@@ -10,6 +10,7 @@ import {
   aiTask,
   folderBatch,
   repoBatch,
+  type CommandCall,
   type CommandResult,
   type ExecuteOptions,
   type ManyUndoResult,
@@ -273,23 +274,18 @@ describe("a turn that cut a clip, whose new part people changed since", () => {
    * A turn cuts the interview after its blur: the new part has no blur, as cutting gives each part
    * only the effects that work in it. People move that part, so it stays when the turn goes back.
    */
-  function cutAndMoved() {
+  const run = (store: ProjectStore, type: string, params: object, options: ExecuteOptions = {}) =>
+    success(store.execute({ type, params: { timeline, ...params } } as CommandCall, options));
+  const cropOf = (store: ProjectStore, clip: string) =>
+    clipsOf(store)[clip]?.properties?.["effect.fx_crop.left"];
+
+  function cutAndMoved(then: (store: ProjectStore, piece: string) => void = () => {}) {
     const store = open();
-    success(
-      store.execute(
-        { type: "clip.split", params: { timeline, clip: "clip_interview", at: "13" } },
-        { origin: ONE },
-      ),
-    );
-    const piece = Object.keys(clipsOf(store)).find(
-      (id) => !Object.keys(open().getState().timelines["main"]?.clips ?? {}).includes(id),
-    ) as string;
-    success(
-      store.execute({
-        type: "clip.move",
-        params: { timeline, clips: [{ clip: piece, start: "40" }] },
-      }),
-    );
+    const before = Object.keys(clipsOf(store));
+    run(store, "clip.split", { clip: "clip_interview", at: "13" }, { origin: ONE });
+    const piece = Object.keys(clipsOf(store)).find((id) => !before.includes(id)) as string;
+    then(store, piece);
+    run(store, "clip.move", { clips: [{ clip: piece, start: "40" }] });
     const vertical = () => store.getState().timelines["main"]?.overrides?.["format.vertical"];
     return {
       store,
@@ -319,5 +315,119 @@ describe("a turn that cut a clip, whose new part people changed since", () => {
     const real = store.undoOrigins([ONE]);
     expect(went(real)).toEqual(went(dry));
     expect(clipsOf(store)[piece]).toEqual(seen);
+  });
+
+  it("takes back what the turn changed about that part later, in a change of its own", () => {
+    const { store, piece } = cutAndMoved((cut, part) => {
+      run(
+        cut,
+        "clip.setProperty",
+        { clip: part, path: "effect.fx_crop.left", value: 0.77 },
+        {
+          origin: ONE,
+        },
+      );
+      run(cut, "clip.update", { clip: part, changes: { duration: "2" } }, { origin: ONE });
+    });
+    expect(store.undoOrigin(ONE)).toMatchObject({ ok: true, obstacle: "changed" });
+    expect(cropOf(store, piece)).toBe(0.1);
+    expect(clipsOf(store)[piece]?.duration).toBe("4.5");
+  });
+
+  it("takes back what the turn changed elsewhere", () => {
+    const { store } = cutAndMoved((cut) => {
+      run(
+        cut,
+        "clip.setProperty",
+        { clip: "clip_title", path: "param.size", value: 99 },
+        {
+          origin: ONE,
+        },
+      );
+    });
+    store.undoOrigin(ONE);
+    expect(size(store)).toBe(64);
+  });
+
+  it("takes back two changes of a turn to a clip people moved, without any cut", () => {
+    const store = open();
+    for (const value of [0.5, 0.6]) {
+      run(
+        store,
+        "clip.setProperty",
+        { clip: "clip_interview", path: "effect.fx_crop.left", value },
+        {
+          origin: ONE,
+        },
+      );
+    }
+    run(store, "clip.move", { clips: [{ clip: "clip_interview", start: "40" }] });
+    store.undoOrigin(ONE);
+    expect(cropOf(store, "clip_interview")).toBe(0.1);
+  });
+
+  it("keeps what people wrote on that part", () => {
+    const { store, piece } = cutAndMoved((cut, part) => {
+      run(cut, "clip.setProperty", { clip: part, path: "effect.fx_crop.left", value: 0.5 });
+    });
+    store.undoOrigin(ONE);
+    expect(cropOf(store, piece)).toBe(0.5);
+    expect(clipsOf(store)[piece]?.effects?.["fx_blur"]).toBeUndefined();
+  });
+
+  it("decides the same after the project is opened again", () => {
+    const edit = (store: ProjectStore, piece: string) =>
+      run(
+        store,
+        "clip.setProperty",
+        { clip: piece, path: "effect.fx_crop.left", value: 0.77 },
+        {
+          origin: ONE,
+        },
+      );
+    const { store } = cutAndMoved(edit);
+    const record = JSON.parse(JSON.stringify(store.saveUndo(ONE))) as unknown;
+    const { store: again } = ProjectStore.fromUpdates([store.encodeState()]);
+    if (!again) throw new Error("did not open again");
+    again.restoreUndo([record]);
+    store.undoOrigin(ONE);
+    again.undoOrigin(ONE);
+    expect(again.getState().timelines["main"]).toEqual(store.getState().timelines["main"]);
+  });
+
+  it("one by one, as a group and as a dry run alike, and done again comes back", () => {
+    const edit = (store: ProjectStore, piece: string) =>
+      run(
+        store,
+        "clip.setProperty",
+        { clip: piece, path: "effect.fx_crop.left", value: 0.77 },
+        {
+          origin: ONE,
+        },
+      );
+    const a = cutAndMoved(edit);
+    const b = cutAndMoved(edit);
+    // The parts have ids of their own: compare with one name for both.
+    const snap = ({ store, piece }: typeof a) =>
+      JSON.stringify(store.getState()).split(piece).join("PIECE");
+    const start = snap(a);
+    const dry = b.store.undoOrigins([ONE], { dryRun: true });
+    expect(snap(b)).toBe(start);
+    a.store.undoOrigin(ONE);
+    const real = b.store.undoOrigins([ONE]);
+    const undone = snap(a);
+    expect(snap(b)).toBe(undone);
+    expect(undone).not.toBe(start);
+    const patches = (result: ManyUndoResult, piece: string) =>
+      JSON.stringify(result.ok && result.each.map(({ result: each }) => each.ok && each.patches))
+        .split(piece)
+        .join("PIECE");
+    expect(patches(dry, b.piece)).toBe(patches(real, b.piece));
+    a.store.redoOrigin(ONE);
+    b.store.redoOrigins([ONE]);
+    expect(snap(a)).toBe(start);
+    expect(snap(b)).toBe(start);
+    a.store.undoOrigin(ONE);
+    expect(snap(a)).toBe(undone);
   });
 });

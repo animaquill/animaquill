@@ -373,7 +373,8 @@ const keyOf = (path: Path) => path.join("\n");
  * whole clip, and loses the effects that do not work in it. When people changed that part since,
  * it stays as they saw it, and so do the steps that made it so; giving it back the blur it was
  * copied with would change the picture of a clip that is theirs now. Something written by anyone
- * else in between is not this: that goes back to them. Nor is what these changes wrote about such a
+ * else in between is not this: that goes back to them; nor is a later change of the same task, a
+ * command of its own, which goes back to what the cut left. Nor is what these changes wrote about such a
  * part in the versions of its timeline at the same time.
  */
 function onKept(steps: readonly Step[], back: ReadonlySet<Step>): readonly Step[] {
@@ -391,7 +392,11 @@ function onKept(steps: readonly Step[], back: ReadonlySet<Step>): readonly Step[
   return steps.filter((step) => {
     if (!back.has(step)) return false;
     const where = writePathOf(step.patch.path);
-    if (where.some((_, index) => keptBy(step.replaced.by, where.slice(0, index + 1)))) return true;
+    if (
+      step.replaced.by === step.left.by &&
+      where.some((_, index) => keptBy(step.replaced.by, where.slice(0, index + 1)))
+    )
+      return true;
     // What versions change about a clip that stays, made with it: the part a cut made has what
     // the versions changed about the whole clip, such as another fit when it is vertical.
     const [timelines, timeline, overrides, , clips, clip] = step.patch.path;
