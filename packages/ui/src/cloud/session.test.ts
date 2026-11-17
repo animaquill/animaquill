@@ -27,6 +27,12 @@ const MESSAGES: SessionMessages = {
 const PLATFORM = "https://platform.test";
 const CLOUD_ID = "p1";
 const TIMING: Partial<CloudTiming> = { scanMs: 5, noteMs: 50 };
+/**
+ * For the tests that carry megabytes through the sync: encode, split and merge them for real. The
+ * work is computation (0.5 to 2.5 seconds alone), which a machine under load takes several times
+ * over; the time that passes in them is the test clock's. Not a wait for something to happen.
+ */
+const HEAVY = 30_000;
 
 function fixtureState(): { id: string; state: Uint8Array } {
   const files = loadFixture("v1");
@@ -523,7 +529,7 @@ describe("CloudSession, with what syncing cannot take as it is", () => {
     const files = platform.workingCopy(CLOUD_ID).getState().files;
     expect(files["code/big.js"]?.length).toBe(big.length);
     expect(files["code/small.js"]).toBe("s");
-  });
+  }, HEAVY);
 
   it("gets a large change and a large first version through a slow line, in parts", async () => {
     const time = new TestTime();
@@ -555,7 +561,7 @@ describe("CloudSession, with what syncing cannot take as it is", () => {
     expect(b.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
     expect(textOf(b.store, "code/big.js")?.length).toBe(2 * 1024 * 1024);
     expect(platform.connections).toBe(2);
-  });
+  }, HEAVY);
 
   it("stops at a change larger than the platform takes, and goes on from the project as it is, once that is fixed", async () => {
     const time = new TestTime();
@@ -595,7 +601,7 @@ describe("CloudSession, with what syncing cannot take as it is", () => {
     a.store.execute(writeFile("code/later.js", "l"));
     await time.advance(2000);
     expect(platform.workingCopy(CLOUD_ID).getState().files["code/later.js"]).toBe("l");
-  });
+  }, HEAVY);
 
   it("stops at what the platform sends that is larger than it takes, rather than asking again and again", async () => {
     const time = new TestTime();
