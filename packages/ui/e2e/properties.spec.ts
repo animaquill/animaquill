@@ -270,23 +270,40 @@ test("the diamond adds and removes a key, and the last one leaves a plain value"
   await expect(x).toHaveValue("7");
 });
 
-test("the arrows go from key to key inside the clip", async ({ page }) => {
+test("the arrows go from key to key inside the clip, and to its ends past the keys", async ({
+  page,
+}) => {
   await addColor(page);
   const opacity = row(page, "不透明度");
   const previous = opacity.getByRole("button", { name: "上一个关键帧" });
   const next = opacity.getByRole("button", { name: "下一个关键帧" });
   const time = content(page, "preview").locator("output");
+  // Without keys they go to the ends of the clip, and only stop where the playhead is there.
+  await expect(previous).not.toHaveAttribute("aria-disabled", "true");
+  await previous.click();
+  await expect(time).toHaveText("0:00/00");
   await expect(previous).toHaveAttribute("aria-disabled", "true");
+  await next.click();
+  await expect(time).not.toHaveText("0:00/00");
+  const end = (await time.textContent()) ?? "";
   await expect(next).toHaveAttribute("aria-disabled", "true");
+
+  await goTo(page, "0:01/00");
   await keyButton(page, "不透明度").click();
   await goTo(page, "0:03/00");
   await keyButton(page, "不透明度").click();
   await goTo(page, "0:02/00");
   await previous.click();
   await expect(time).toHaveText("0:01/00");
+  await previous.click();
+  await expect(time).toHaveText("0:00/00");
   await expect(previous).toHaveAttribute("aria-disabled", "true");
   await next.click();
+  await expect(time).toHaveText("0:01/00");
+  await next.click();
   await expect(time).toHaveText("0:03/00");
+  await next.click();
+  await expect(time).toHaveText(end);
   await expect(next).toHaveAttribute("aria-disabled", "true");
 });
 

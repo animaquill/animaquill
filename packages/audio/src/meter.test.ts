@@ -57,8 +57,11 @@ describe("loudness, as EBU Tech 3341 (the test signals of EBU R128) has it", () 
     expect(measure(signal([{ seconds: 20, dbfs: -33 }])).integrated).toBeCloseTo(-33, 1);
   });
 
-  // Case 3 and 4: the relative and the absolute gate leave out what is quiet.
-  it("leaves out what is 10 LU quieter and what is below −70 LUFS", () => {
+  // Case 3 and 4: the relative and the absolute gate leave out what is quiet. The two signals are
+  // 180 s of stereo at 48 kHz, as Tech 3341 has them: shorter ones would no longer be its cases.
+  // Nothing in it waits or reads the clock, it only takes long to compute: about 4 s alone, more
+  // than the default 5 s while the machine runs every other test at once (twice in `pnpm check`).
+  it("leaves out what is 10 LU quieter and what is below −70 LUFS", { timeout: 30_000 }, () => {
     const relative = measure(
       signal([
         { seconds: 10, dbfs: -36 },

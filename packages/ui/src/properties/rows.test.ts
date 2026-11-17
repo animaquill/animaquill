@@ -73,7 +73,8 @@ describe("rows of the properties tab", () => {
     const { rows, spec, go } = setup();
     const x = spec("transform.x") as PropertySpec;
     const y = spec("transform.y") as PropertySpec;
-    go(30);
+    // Not on the first frame of the clip, where the arrow back has nowhere to go.
+    go(35);
     const [atX, atY] = [rows.signatureOf("c", x), rows.signatureOf("c", y)];
     go(40);
     // Where it goes, x changes, and y stays what it was.

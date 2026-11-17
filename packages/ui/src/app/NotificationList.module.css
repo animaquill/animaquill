@@ -20,9 +20,11 @@
   display: none;
 }
 
+/* What it says takes the whole width next to the close button; the buttons go in a row under it. */
 .item {
-  display: flex;
-  align-items: flex-start;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
   gap: 8px;
   padding: 10px 12px;
   color: var(--aq-text);
@@ -30,6 +32,11 @@
   border: 1px solid var(--aq-border);
   border-radius: 4px;
   box-shadow: var(--aq-shadow);
+}
+
+.message {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .item button {
@@ -50,8 +57,12 @@
   background: var(--aq-bg-hover);
 }
 
-.item > span {
-  flex: 1;
+.actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 4px 8px;
 }
 
 .item button.action {
@@ -64,6 +75,7 @@
 
 .warning {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   gap: 4px;
   margin-top: 4px;

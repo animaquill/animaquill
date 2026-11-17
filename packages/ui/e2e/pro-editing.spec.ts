@@ -571,6 +571,19 @@ async function shootClips(page: Page, name: string) {
   });
 }
 
+/** The button for it in the toolbar, whichever of its names it has now. */
+const linkButton = (page: Page) =>
+  panel(page)
+    .getByRole("toolbar", { name: "时间轴工具" })
+    .getByRole("button", { name: /^(分离|联动)|联动$/ });
+
+/** Clicks where there is no clip, which selects nothing. */
+async function clickAway(page: Page) {
+  const lane = await middleOf(picture(page));
+  const room = await stage(page).boundingBox();
+  await page.mouse.click((room?.x ?? 0) + (room?.width ?? 0) - 30, lane.y);
+}
+
 test.describe("linked clips", () => {
   test("Ctrl+L takes them apart and links them again, and out of step they say by how much in red", async ({
     page,
@@ -629,6 +642,38 @@ test.describe("linked clips", () => {
     await expect(sound(page)).toHaveAttribute("data-out-of-sync", String(-ahead));
   });
 
+  test("the button in the toolbar does what Ctrl+L does, and says which of the two", async ({
+    page,
+  }) => {
+    await placeVideo(page);
+    await clickAway(page);
+    await expect(linkButton(page)).toHaveAccessibleName("分离或联动画面和声音");
+    await expect(linkButton(page)).toHaveAttribute("aria-disabled", "true");
+    // Disabled, a click does nothing.
+    await linkButton(page).click({ force: true });
+    await expect(picture(page)).toHaveAttribute("data-linked", "");
+
+    await clickOn(page, picture(page));
+    await expect(linkButton(page)).toHaveAccessibleName("分离画面和声音");
+    await expect(linkButton(page)).not.toHaveAttribute("aria-disabled");
+    await shootToolbar(page, "toolbar-link-dark.png");
+    await linkButton(page).click();
+    await expect(picture(page)).not.toHaveAttribute("data-linked");
+    await expect(sound(page)).not.toHaveAttribute("data-linked");
+    // Both are still selected, and the same button puts them together again.
+    await expect(linkButton(page)).toHaveAccessibleName("联动画面和声音");
+    await shootToolbar(page, "toolbar-unlinked-dark.png");
+    await linkButton(page).click();
+    await expect(picture(page)).toHaveAttribute("data-linked", "");
+    await expect(sound(page)).toHaveAttribute("data-linked", "");
+    await expect(linkButton(page)).toHaveAccessibleName("分离画面和声音");
+    // One step each.
+    await page.keyboard.press("Control+z");
+    await expect(picture(page)).not.toHaveAttribute("data-linked");
+    await page.keyboard.press("Control+z");
+    await expect(picture(page)).toHaveAttribute("data-linked", "");
+  });
+
   test("Alt takes one of them alone, which then moves alone, out of step", async ({ page }) => {
     await placeVideo(page);
     const at = await middleOf(picture(page));
@@ -649,6 +694,16 @@ test.describe("linked clips", () => {
 
 test.describe("linked clips in light colours", () => {
   test.use({ colorScheme: "light" });
+
+  test("have their button in the toolbar", async ({ page }) => {
+    await placeVideo(page);
+    await clickOn(page, picture(page));
+    await expect(linkButton(page)).toHaveAccessibleName("分离画面和声音");
+    await shootToolbar(page, "toolbar-link-light.png");
+    await linkButton(page).click();
+    await expect(linkButton(page)).toHaveAccessibleName("联动画面和声音");
+    await shootToolbar(page, "toolbar-unlinked-light.png");
+  });
 
   test("show their names underlined, and in red how far out of step", async ({ page }) => {
     await placeVideo(page);

@@ -3,6 +3,7 @@ import {
   Eye,
   EyeOff,
   FoldHorizontal,
+  Link,
   ListChecks,
   Lock,
   LockOpen,
@@ -12,6 +13,7 @@ import {
   Replace,
   Scissors,
   SquareSplitHorizontal,
+  Unlink,
   Volume2,
   VolumeX,
   ZoomIn,
@@ -121,6 +123,9 @@ function Toolbar({ editor }: { editor: TimelineEditor }) {
     useSyncExternalStore(editor.subscribe, editor.getSnapshot);
   const zoom = useEditorView(editor, () => editor.zoomLevel);
   const canSplit = useEditorView(editor, () => editor.canSplit);
+  const linkAction = useEditorView(editor, () => editor.linkAction);
+  // The chain shows what the selection is: whole while it is linked, broken while it is not.
+  const linked = linkAction === "unlinkSound" || linkAction === "unlink";
 
   return (
     <div className={styles.toolbarArea}>
@@ -226,6 +231,14 @@ function Toolbar({ editor }: { editor: TimelineEditor }) {
               icon={SquareSplitHorizontal}
               unavailable={!canSplit}
               onClick={() => editor.splitAtPlayhead()}
+            />
+            <ToolButton
+              name={t(linkAction ? `timeline.${linkAction}` : "timeline.action.toggleLink")}
+              usage=""
+              action="toggleLink"
+              icon={linked ? Link : Unlink}
+              unavailable={linkAction === undefined}
+              onClick={() => editor.toggleLink()}
             />
             <ToolButton
               name={t("timeline.color")}

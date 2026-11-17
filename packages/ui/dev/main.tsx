@@ -133,6 +133,12 @@ if (root)
           workbench.session.store?.execute(call, options),
         // What the open project holds now, for tests that look at more than the screen shows.
         aqState: () => workbench.session.store?.getState(),
+        // A notification with buttons that do nothing, for looking at how one is laid out.
+        aqNotify: (message: string, labels: readonly string[] = []) =>
+          workbench.notifications.push(message, {
+            stays: true,
+            actions: labels.map((label) => ({ label, run: () => undefined })),
+          }),
         // Resolves once the undo logs are kept, for tests that reload right after.
         aqUndoSaved: () => workbench.undo.flush(),
         // What a device sees that did not make the changes: no undo logs of its own.

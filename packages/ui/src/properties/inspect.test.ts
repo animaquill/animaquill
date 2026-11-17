@@ -285,7 +285,8 @@ describe("a key that is not on a frame", () => {
 
   it("the arrows go on from it", () => {
     const { row } = clipWithKeys();
-    expect(row("c", 10, "transform.x")).toMatchObject({ previousKey: undefined, nextKey: 60 });
+    // Before the first key there is the start of the clip.
+    expect(row("c", 10, "transform.x")).toMatchObject({ previousKey: 0, nextKey: 60 });
   });
 
   it("shows its own value on that frame, because that is what an edit changes", () => {
@@ -343,8 +344,8 @@ describe("a key that is not on a frame", () => {
     };
     add("c", { properties: { "transform.x": curve } });
     expect(row("c", 1, "transform.x").keyTime).toBe("1001/30000");
-    // A little before frame 2, which starts at 0.06673...
-    expect(row("c", 1, "transform.x").nextKey).toBeUndefined();
+    // A little before frame 2, which starts at 0.06673..., so the next stop is the end of the clip.
+    expect(row("c", 1, "transform.x").nextKey).toBe(299);
     expect(row("c", 2, "transform.x").keyTime).toBeUndefined();
   });
 
@@ -391,7 +392,9 @@ describe("a key that is not on a frame", () => {
     };
     add("c", { duration: "1.005", properties: { "transform.x": curve } });
     expect(row("c", 30, "transform.x").keyTime).toBeUndefined();
-    expect(row("c", 0, "transform.x").nextKey).toBeUndefined();
+    // What comes after the key at 0 is the last frame of the clip, and nothing after that.
+    expect(row("c", 0, "transform.x").nextKey).toBe(30);
+    expect(row("c", 30, "transform.x")).toMatchObject({ previousKey: 0, nextKey: undefined });
   });
 });
 
@@ -530,16 +533,26 @@ describe("going from key to key", () => {
     });
   });
 
-  it("has nowhere to go without keys, or with one under the playhead", () => {
+  it("goes to the ends of the clip past the last key, and without keys", () => {
     const { row } = onClip({ properties: { "transform.x": keys("1") } });
-    expect(row("c", 30, "transform.y")).toMatchObject({
-      previousKey: undefined,
-      nextKey: undefined,
-    });
-    expect(row("c", 60, "transform.x")).toMatchObject({
-      previousKey: undefined,
-      nextKey: undefined,
-    });
+    // The clip shows frames 30 to 149.
+    expect(row("c", 45, "transform.y")).toMatchObject({ previousKey: 30, nextKey: 149 });
+    expect(row("c", 60, "transform.x")).toMatchObject({ previousKey: 30, nextKey: 149 });
+    expect(row("c", 45, "transform.x")).toMatchObject({ previousKey: 30, nextKey: 60 });
+    expect(row("c", 100, "transform.x")).toMatchObject({ previousKey: 60, nextKey: 149 });
+  });
+
+  it("has nowhere to go from an end of the clip that is on the playhead", () => {
+    const { row } = onClip();
+    expect(row("c", 30, "transform.y")).toMatchObject({ previousKey: undefined, nextKey: 149 });
+    expect(row("c", 149, "transform.y")).toMatchObject({ previousKey: 30, nextKey: undefined });
+  });
+
+  it("knows the last frame of a clip that does not end on a frame", () => {
+    const { row } = onClip({ duration: "4.01" });
+    // It ends a little after frame 150 starts, so that frame still shows it.
+    expect(row("c", 45, "transform.y").nextKey).toBe(150);
+    expect(row("c", 150, "transform.y").nextKey).toBeUndefined();
   });
 
   it("stays inside the clip, whatever was trimmed away", () => {
@@ -548,14 +561,15 @@ describe("going from key to key", () => {
       properties: { "transform.x": keys("0", "1", "3", "4", "9") },
     });
     // The clip shows its clock from 2 to 6, so only the keys at 3 and 4 are in it.
-    expect(row("c", 60, "transform.x")).toMatchObject({ previousKey: undefined, nextKey: 90 });
-    expect(row("c", 90, "transform.x")).toMatchObject({ previousKey: 60, nextKey: undefined });
+    // The key at 9 would be on frame 240: past the key at 4, the arrow stops at the end instead.
+    expect(row("c", 60, "transform.x")).toMatchObject({ previousKey: 30, nextKey: 90 });
+    expect(row("c", 90, "transform.x")).toMatchObject({ previousKey: 60, nextKey: 149 });
   });
 
-  it("gets into the clip from outside", () => {
+  it("gets into the clip from outside at its nearest end", () => {
     const { row } = onClip({ properties: { "transform.x": keys("1", "2") } });
-    expect(row("c", 0, "transform.x")).toMatchObject({ previousKey: undefined, nextKey: 60 });
-    expect(row("c", 200, "transform.x")).toMatchObject({ previousKey: 90, nextKey: undefined });
+    expect(row("c", 0, "transform.x")).toMatchObject({ previousKey: undefined, nextKey: 30 });
+    expect(row("c", 200, "transform.x")).toMatchObject({ previousKey: 149, nextKey: undefined });
   });
 
   it("skips a key that is on the frame of the playhead without being exactly there", () => {

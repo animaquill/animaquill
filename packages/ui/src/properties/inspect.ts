@@ -47,7 +47,10 @@ export interface PropertyRow {
   readonly animated: boolean;
   /** When the key of this frame is, on the clock of the clip. An edit goes there. */
   readonly keyTime: string | undefined;
-  /** The frames of the nearest keys inside the clip. */
+  /**
+   * Where the arrows take the playhead: the nearest key inside the clip, and past the first and the
+   * last key the first and the last frame of the clip. Nothing when the playhead is there already.
+   */
   readonly previousKey: number | undefined;
   readonly nextKey: number | undefined;
   /** What it shows is being tried, and not in the project yet. */
@@ -122,6 +125,13 @@ function firstFrameOf(clip: ClipState, model: TimelineModel): number {
   return shows(clip, frameTime(frame, model.rate)) ? frame : frame + 1;
 }
 
+/** The end belongs to what comes next, so the last frame is the one before the end on a frame. */
+function lastFrameOf(clip: ClipState, model: TimelineModel, firstFrame: number): number {
+  const frame = frameContaining(clipEnd(clip), model.rate);
+  const last = shows(clip, frameTime(frame, model.rate)) ? frame : frame - 1;
+  return Math.max(last, firstFrame);
+}
+
 /** Where a moment on the timeline is on the clock of a clip. */
 const clockAt = (clip: ClipState, moment: Rational) =>
   add(clipOffset(clip), subtract(moment, clipStart(clip)));
@@ -137,7 +147,10 @@ interface Place {
   /** The moment of the playhead on the timeline, and on the clock of the clip. */
   readonly moment: Rational;
   readonly clock: Rational;
+  readonly frame: number;
   readonly firstFrame: number;
+  /** The last frame that shows the clip. */
+  readonly lastFrame: number;
   /**
    * The part of the clock that belongs to the frame of the playhead. Keys do not have to be on a
    * frame, and each one has to be somewhere people can get to. So a frame stands for all the time
@@ -160,7 +173,9 @@ function placeOf(state: ProjectState, model: TimelineModel, clip: ClipState, fra
     clip,
     moment,
     clock: clockAt(clip, moment),
+    frame,
     firstFrame,
+    lastFrame: lastFrameOf(clip, model, firstFrame),
     from: clockAt(clip, start),
     to: clockAt(clip, compare(end, start) > 0 ? end : next),
   };
@@ -169,6 +184,24 @@ function placeOf(state: ProjectState, model: TimelineModel, clip: ClipState, fra
 /** The frame that stands for a key: see `from`. */
 const frameOfKey = ({ clip, model, firstFrame }: Place, key: Key | undefined) =>
   key && Math.max(frameContaining(momentOf(clip, key), model.rate), firstFrame);
+
+/**
+ * The arrows stop at every key and at both ends of the clip, so past the first key they get to its
+ * start and past the last one to its end. From outside the clip, they get to its nearest end first.
+ */
+function arrowsOf(place: Place, previousKey: number | undefined, nextKey: number | undefined) {
+  const { frame, firstFrame, lastFrame } = place;
+  const before = [previousKey, firstFrame, lastFrame].filter(
+    (stop): stop is number => stop !== undefined && stop < frame,
+  );
+  const after = [nextKey, firstFrame, lastFrame].filter(
+    (stop): stop is number => stop !== undefined && stop > frame,
+  );
+  return {
+    previousKey: before.length > 0 ? Math.max(...before) : undefined,
+    nextKey: after.length > 0 ? Math.min(...after) : undefined,
+  };
+}
 
 function rowOf(spec: PropertySpec, place: Place, look: TrialLook | undefined): PropertyRow {
   const { state, clip, moment, clock, from, to } = place;
@@ -196,8 +229,11 @@ function rowOf(spec: PropertySpec, place: Place, look: TrialLook | undefined): P
     automatic: stored === undefined && spec.default === undefined,
     animated: keys.length > 0,
     keyTime: under?.time,
-    previousKey: before > first ? frameOfKey(place, keys[before - 1]) : undefined,
-    nextKey: after < end ? frameOfKey(place, keys[after]) : undefined,
+    ...arrowsOf(
+      place,
+      before > first ? frameOfKey(place, keys[before - 1]) : undefined,
+      after < end ? frameOfKey(place, keys[after]) : undefined,
+    ),
     tried: look?.holds(clip.id, path) === true,
     changedElsewhere: look?.changedElsewhere(clip.id, path) === true,
   };

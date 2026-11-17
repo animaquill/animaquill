@@ -24,7 +24,8 @@ export function NotificationList() {
             onFocus={() => notifications.hold(item.id)}
             onBlur={() => notifications.release(item.id)}
           >
-            <span>
+            {/* What it says on top and across, the buttons in a row of their own under it. */}
+            <div className={styles.message}>
               {item.message}
               {item.warning && (
                 <span className={styles.warning} data-testid="notification-warning">
@@ -43,20 +44,7 @@ export function NotificationList() {
                   )}
                 </span>
               )}
-            </span>
-            {item.actions?.map(({ label, run }) => (
-              <button
-                key={label}
-                type="button"
-                className={styles.action}
-                onClick={() => {
-                  notifications.dismiss(item.id);
-                  run();
-                }}
-              >
-                {label}
-              </button>
-            ))}
+            </div>
             <button
               type="button"
               aria-label={t("notice.dismiss")}
@@ -64,6 +52,23 @@ export function NotificationList() {
             >
               <X size={14} />
             </button>
+            {item.actions && item.actions.length > 0 && (
+              <div className={styles.actions} data-testid="notification-actions">
+                {item.actions.map(({ label, run }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    className={styles.action}
+                    onClick={() => {
+                      notifications.dismiss(item.id);
+                      run();
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
