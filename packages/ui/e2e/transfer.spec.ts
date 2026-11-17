@@ -231,8 +231,17 @@ async function holdRealFolder(page: Page, folder: string) {
   });
   const client = await page.context().newCDPSession(page);
   const data = { items: [], files: [folder], dragOperationsMask: 1 };
-  for (const type of ["dragEnter", "dragOver", "drop"] as const) {
-    await client.send("Input.dispatchDragEvent", { type, x: 300, y: 300, data });
+  // A drag that the browser, busy with other pages, lets go without a drop (seen 2 in 60 runs with
+  // 12 at a time) is not a reason to fail: the drop is made once more until the page has the
+  // handle. Each one is the same folder, so a late one after a retry changes nothing.
+  for (let attempt = 0; attempt < 8; attempt++) {
+    for (const type of ["dragEnter", "dragOver", "drop"] as const) {
+      await client.send("Input.dispatchDragEvent", { type, x: 300, y: 300, data });
+    }
+    const got = await page
+      .waitForFunction(() => window.realHandle !== undefined, undefined, { timeout: 3_000 })
+      .then(() => true, () => false);
+    if (got) break;
   }
   await page.waitForFunction(() => window.realHandle !== undefined);
   await page.evaluate(async () => {

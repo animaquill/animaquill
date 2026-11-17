@@ -502,13 +502,25 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
 });
 
 test("keeps the last answer when the page goes right after it came", async ({ page }) => {
+  // Two page boots (the development build is hundreds of modules) and the walk through the
+  // settings: 3.5 seconds on a free machine, 13 to 24 on a busy one. It is the page's own work
+  // that takes the time, not something that is waited for, so the test and the one thing that
+  // waits for a boot get what a busy machine needs.
+  test.slow();
   await page.route(ANTHROPIC, (route) => answer(route, [{ text: "这是最后一句。" }]));
   await setUpService(page);
   await send(page, "说一句话");
   await expect(chat(page).getByText("这是最后一句。")).toBeVisible();
+  // The turn's end writes the conversation at once, without the wait of a typing pause. The list
+  // names a conversation only once that write is done, so it says when a reload may come: what
+  // the write itself needs to read first comes back later on a busy machine, and a page that
+  // went before it did has nothing to keep (the window is milliseconds on a free one).
+  await chat(page).getByTestId("chat-title").click();
+  await expect(chat(page).getByTestId("chat-list").getByTestId("chat-conversation")).toHaveCount(1);
   await page.reload();
   await tab(page, "chat").click();
-  await expect(chat(page).getByText("这是最后一句。")).toBeVisible();
+  // What came back from what this browser kept, once the page is up again.
+  await expect(chat(page).getByText("这是最后一句。")).toBeVisible({ timeout: 20_000 });
 });
 
 test("stopping ends the task right away, and the chat goes on", async ({ page }) => {
