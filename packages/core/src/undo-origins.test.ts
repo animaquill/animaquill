@@ -264,3 +264,60 @@ describe("taking back several turns at once", () => {
     expect(store.canUndoOrigin(ONE)).toBe(true);
   });
 });
+
+describe("a turn that cut a clip, whose new part people changed since", () => {
+  const timeline = "main";
+  const clipsOf = (store: ProjectStore) => store.getState().timelines["main"]?.clips ?? {};
+
+  /**
+   * A turn cuts the interview after its blur: the new part has no blur, as cutting gives each part
+   * only the effects that work in it. People move that part, so it stays when the turn goes back.
+   */
+  function cutAndMoved() {
+    const store = open();
+    success(
+      store.execute(
+        { type: "clip.split", params: { timeline, clip: "clip_interview", at: "13" } },
+        { origin: ONE },
+      ),
+    );
+    const piece = Object.keys(clipsOf(store)).find(
+      (id) => !Object.keys(open().getState().timelines["main"]?.clips ?? {}).includes(id),
+    ) as string;
+    success(
+      store.execute({
+        type: "clip.move",
+        params: { timeline, clips: [{ clip: piece, start: "40" }] },
+      }),
+    );
+    const vertical = () => store.getState().timelines["main"]?.overrides?.["format.vertical"];
+    return {
+      store,
+      piece,
+      seen: clipsOf(store)[piece],
+      vertical,
+      seenVertical: vertical()?.clips?.[piece],
+    };
+  }
+
+  it("keeps that part as people saw it, without the blur it never had", () => {
+    const { store, piece, seen, vertical, seenVertical } = cutAndMoved();
+    expect(seenVertical?.properties?.["fit"]).toEqual({ value: "contain", base: "cover" });
+    expect(seen?.effects?.["fx_blur"]).toBeUndefined();
+    expect(seen?.properties?.["effect.fx_blur.radius"]).toBeUndefined();
+    const result = store.undoOrigin(ONE);
+    expect(result).toMatchObject({ ok: true, obstacle: "changed" });
+    expect(clipsOf(store)["clip_interview"]?.duration).toBe("12.5");
+    expect(clipsOf(store)[piece]).toEqual(seen);
+    // Also when it is vertical.
+    expect(vertical()?.clips?.[piece]).toEqual(seenVertical);
+  });
+
+  it("does the same going back to before the turn, and as the dry run said", () => {
+    const { store, piece, seen } = cutAndMoved();
+    const dry = store.undoOrigins([ONE], { dryRun: true });
+    const real = store.undoOrigins([ONE]);
+    expect(went(real)).toEqual(went(dry));
+    expect(clipsOf(store)[piece]).toEqual(seen);
+  });
+});

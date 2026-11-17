@@ -366,6 +366,46 @@ function factsOf(entries: readonly UndoEntry[]): readonly ClipFact[] | undefined
 
 const keyOf = (path: Path) => path.join("\n");
 
+/**
+ * The steps going back that would hand back what another step of the same changes wrote, at or
+ * above their place, while that one stays. What they hand back is something those changes did on
+ * the way and then wrote over, which nobody ever saw: a part that a cut made starts as a copy of the
+ * whole clip, and loses the effects that do not work in it. When people changed that part since,
+ * it stays as they saw it, and so do the steps that made it so; giving it back the blur it was
+ * copied with would change the picture of a clip that is theirs now. Something written by anyone
+ * else in between is not this: that goes back to them. Nor is what these changes wrote about such a
+ * part in the versions of its timeline at the same time.
+ */
+function onKept(steps: readonly Step[], back: ReadonlySet<Step>): readonly Step[] {
+  const kept = new Map<WriteId, Set<string>>();
+  for (const step of steps) {
+    const { by } = step.left;
+    if (back.has(step) || by === undefined) continue;
+    let places = kept.get(by);
+    if (!places) kept.set(by, (places = new Set()));
+    places.add(keyOf(writePathOf(step.patch.path)));
+  }
+  if (kept.size === 0) return [];
+  const keptBy = (by: WriteId | undefined, path: Path) =>
+    by !== undefined && kept.get(by)?.has(keyOf(path)) === true;
+  return steps.filter((step) => {
+    if (!back.has(step)) return false;
+    const where = writePathOf(step.patch.path);
+    if (where.some((_, index) => keptBy(step.replaced.by, where.slice(0, index + 1)))) return true;
+    // What versions change about a clip that stays, made with it: the part a cut made has what
+    // the versions changed about the whole clip, such as another fit when it is vertical.
+    const [timelines, timeline, overrides, , clips, clip] = step.patch.path;
+    return (
+      timelines === "timelines" &&
+      overrides === "overrides" &&
+      clips === "clips" &&
+      timeline !== undefined &&
+      clip !== undefined &&
+      keptBy(step.left.by, ["timelines", timeline, "clips", clip])
+    );
+  });
+}
+
 /** Means something to every object, so it stays out, whatever a document holds. */
 const UNSAFE_KEY = "__proto__";
 
@@ -1805,10 +1845,19 @@ export class ProjectStore {
       }
       return [...kept.values()];
     };
+    // Steps that would hand back what a step of these changes wrote, which stays: see `onKept`.
+    const held = new Set<Step>();
     for (;;) {
       const draft = new Draft(state, origin, written);
       const obstacle: UndoObstacle = stuck.size > 0 ? "inUse" : "changed";
-      const back = steps.filter((step) => !stuck.has(step) && draft.takeBack(step));
+      const back = steps.filter(
+        (step) => !stuck.has(step) && !held.has(step) && draft.takeBack(step),
+      );
+      const onTop = onKept(steps, new Set(back));
+      if (onTop.length > 0) {
+        for (const step of onTop) held.add(step);
+        continue;
+      }
       const dangling = back.filter(({ patch }) => {
         const already = danglingAt(state, patch.path);
         return danglingAt(draft.state, patch.path).some(
