@@ -3064,15 +3064,13 @@ describe("the diamond of an object", () => {
     return { ...setting, press, visual, keyed };
   }
 
+  // Not how it blends, and not the size of a box that follows the stage.
   const ALL_AT_ONE = [
-    "blend 1",
     "opacity 1",
     "transform.anchorX 1",
     "transform.anchorY 1",
-    "transform.height 1",
     "transform.rotation 1",
     "transform.scale 1",
-    "transform.width 1",
     "transform.x 1",
     "transform.y 1",
   ];
@@ -3093,6 +3091,16 @@ describe("the diamond of an object", () => {
     expect(main().clips["c"]?.properties?.["opacity"]).toBe(1);
     store.undo();
     expect(keyed()).toEqual(ALL_AT_ONE);
+  });
+
+  it("leaves a box that follows the stage following it, there and back", async () => {
+    const { keyframes, visual, main } = await onObject();
+    keyframes.toggleObjectKeys("c", visual());
+    keyframes.toggleObjectKeys("c", visual());
+    const properties = main().clips["c"]?.properties ?? {};
+    expect(properties["transform.width"]).toBeUndefined();
+    expect(properties["transform.height"]).toBeUndefined();
+    expect(properties["blend"]).toBeUndefined();
   });
 
   it("fills in the keys that are missing where some are there", async () => {

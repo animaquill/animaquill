@@ -1319,9 +1319,13 @@ export class KeyframeEditor {
       }
       const { spec } = child;
       if (child.orphan || spec.animatable === false || !keysTakeEffect(spec.path)) return;
+      // How it blends has no in between to animate.
+      if (spec.path === "blend") return;
       const inspected = this.inspect(box, spec);
       if (!inspected || inspected.blocked !== undefined || inspected.row.value === undefined)
         return;
+      // What follows the stage or its media, like a box without a size, would stop following it.
+      if (inspected.row.automatic) return;
       rows.push({ row: inspected.row, time: inspected.time });
     };
     object.children.forEach(visit);

@@ -273,6 +273,32 @@ function RecordingStatus() {
   );
 }
 
+/**
+ * Automatic keys are on: wherever the keyframes are, or with nothing selected, it shows and goes off
+ * from here.
+ */
+function KeyRecordingStatus() {
+  const { properties } = useWorkbench();
+  const { t } = useTranslation();
+  const recording = useSyncExternalStore(properties.subscribeRecording, properties.getRecording);
+  if (!recording) return null;
+  const name = t("keyframes.recordOff");
+  return (
+    <Tip name={name} usage="">
+      <button
+        type="button"
+        className={styles.name}
+        aria-label={name}
+        data-testid="key-recording-status"
+        onClick={() => properties.setRecording(false)}
+      >
+        <Circle size={9} fill="currentColor" className={styles.keyRecording} />
+        {t("keyframes.record")}
+      </button>
+    </Tip>
+  );
+}
+
 /** How many problems there are, and the way to them. */
 function ProblemsStatus() {
   const { layout, problems } = useWorkbench();
@@ -927,6 +953,7 @@ export function StatusBar() {
       {project && <ProxyStatus />}
       <VideoExportStatus />
       <RecordingStatus />
+      {project && <KeyRecordingStatus />}
       {project && <TimeStatus />}
       {project && <PreviewStatus />}
       <InputSwitch />

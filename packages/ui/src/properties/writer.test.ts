@@ -61,7 +61,7 @@ async function setup({ trying = false } = {}) {
   store.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } });
   const value = (path: string) => state()?.clips["c"]?.properties?.[path];
   const shown = (path: string) => writer.getPreviewed().get("c")?.get(path);
-  return { store, writer, trials, commandFailed, comparingMessage, value, shown, track };
+  return { session, store, writer, trials, commandFailed, comparingMessage, value, shown, track };
 }
 
 const owner = { clip: "c" };
@@ -464,6 +464,13 @@ describe("automatic keys", () => {
     first.writer.setRecording(true);
     const second = await setup();
     expect(second.writer.getRecording()).toBe(false);
+  });
+
+  it("go off when another project opens", async () => {
+    const { writer, session } = await setup();
+    writer.setRecording(true);
+    await session.create("另一个");
+    expect(writer.getRecording()).toBe(false);
   });
 
   it("leave edits exactly as asked while off", async () => {

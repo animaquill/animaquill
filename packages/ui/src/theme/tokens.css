@@ -67,6 +67,8 @@
   --aq-danger-text: #ff8a8a;
   /* Automatic keys are on: the switch, and a frame around what records, so that it is not forgotten. */
   --aq-recording: #f14c4c;
+  /* Inside the frame of recording, which tells it apart from red under it. */
+  --aq-recording-edge: #000000b3;
   --aq-on-recording: #ffffff;
   /* What worked, such as a test of a connection. */
   --aq-success: #4cc38a;
@@ -232,6 +234,7 @@
   --aq-danger: #b52a2a;
   --aq-danger-text: #b3261e;
   --aq-recording: #d42323;
+  --aq-recording-edge: #000000b3;
   --aq-on-recording: #ffffff;
   --aq-success: #186a40;
   --aq-bg-input: #ececec;

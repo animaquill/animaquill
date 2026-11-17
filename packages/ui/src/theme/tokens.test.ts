@@ -148,11 +148,14 @@ const MARKS: readonly { mark: string; on: Surface }[] = [
   { mark: "recording", on: "timeline-background" },
   { mark: "recording", on: "picture-backdrop" },
   { mark: "on-recording", on: "recording" },
+  // The dark line inside it, on the frame itself and on a picture as red as the frame.
+  { mark: "recording-edge", on: "recording" },
 ];
 
 function unclearIn(theme: Map<string, string>): string[] {
   return MARKS.flatMap(({ mark, on }) => {
-    const ratio = contrast(colorOf(theme, mark), colorOf(theme, on));
+    const background = colorOf(theme, on);
+    const ratio = contrast(over(colorOf(theme, mark), background), background);
     return ratio < 3 ? [`${mark} on ${nameOf(on)}: ${ratio.toFixed(2)}`] : [];
   });
 }

@@ -242,3 +242,9 @@
   border-radius: 3px;
   cursor: pointer;
 }
+
+/* The colour of the red frame around what records keys. */
+.keyRecording {
+  margin-right: 4px;
+  color: var(--aq-recording);
+}

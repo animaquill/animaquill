@@ -1172,6 +1172,17 @@ describe("with automatic keys on", () => {
     expect(property("c", "transform.x")).toBeUndefined();
   });
 
+  it("write one key on the first frame of a clip that starts between frames", async () => {
+    const { addClip, drag, pointer, property, timeline, writer } = await setup();
+    addClip("c", { start: "0.01" });
+    writer.setRecording(true);
+    timeline.seek(1);
+    drag(pointer(480, 270), pointer(580, 270));
+    expect((property("c", "transform.x") as Animation).keys.map(({ value }) => value)).toEqual([
+      200,
+    ]);
+  });
+
   it("change nothing on a locked track", async () => {
     const { addClip, run, video, drag, pointer, property, writer, timeline } = await setup();
     addClip("c");

@@ -16,9 +16,9 @@ import {
 } from "@animaquill/core";
 import {
   BUILT_IN_PROPERTIES,
-  compare,
   isAnimation,
   parseTime,
+  subtract,
   toSeconds,
   type Key,
   type ObjectDescriptor,
@@ -114,6 +114,13 @@ export class PropertyWriter {
     this.#trials = trials;
     this.#messages = messages;
     this.#describe = describe;
+    // Another project starts without recording, as a new window does: nobody meant keys there yet.
+    let store = session.store;
+    session.subscribe(() => {
+      if (session.store === store) return;
+      store = session.store;
+      this.setRecording(false);
+    });
     trials.subscribe(this.#refresh);
     // A key for keyframes is about what is selected: another selection forgets the property.
     timeline.subscribe(() => {
@@ -285,7 +292,11 @@ export class PropertyWriter {
     if (was !== undefined && JSON.stringify(was) === JSON.stringify(value)) return [edit];
     const atPlayhead: PropertyEdit = { owner, path, op: "setKey", time, value };
     const first = clip.offset ?? "0";
-    if (was === undefined || compare(parseTime(time), parseTime(first)) === 0) return [atPlayhead];
+    // The first frame of a clip that does not start on a frame comes a little after its start.
+    const rate = this.#timeline.model?.rate.fps;
+    const after = toSeconds(subtract(parseTime(time), parseTime(first)));
+    const onFirstFrame = rate === undefined ? after === 0 : after < 1 / rate - 1e-9;
+    if (was === undefined || onFirstFrame) return [atPlayhead];
     return [{ owner, path, op: "setKey", time: first, value: was as Value }, atPlayhead];
   }
 

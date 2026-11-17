@@ -103,6 +103,18 @@ test("the switch in the keyframes is the same, with a red frame there too", asyn
   await expect(frameIn(page, "keyframes")).toHaveCount(0);
 });
 
+test("the status bar says it records, and turns it off", async ({ page }) => {
+  await placeImage(page);
+  const status = page.getByTestId("key-recording-status");
+  await expect(status).toHaveCount(0);
+  await recordIn(page, "properties").click();
+  await expect(status).toHaveText("自动关键帧");
+  await status.click();
+  await expect(status).toHaveCount(0);
+  await expect(recordIn(page, "properties")).toHaveAttribute("aria-pressed", "false");
+  await expect(frameIn(page, "preview")).toHaveCount(0);
+});
+
 test("recording starts off again after a reload", async ({ page }) => {
   await placeImage(page);
   await recordIn(page, "properties").click();
