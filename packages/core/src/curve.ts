@@ -479,28 +479,52 @@ export function secondsOf(time: string): number {
 const presetIndexOf = (name: string | undefined): number =>
   name === undefined ? -1 : (EASE_PRESET_NAMES as readonly string[]).indexOf(name);
 
-/** Whether a preset of a key can be worked out: a name of the table, with what it needs. */
-export function knowsPreset(key: Pick<Key, "preset" | "presetParams">): boolean {
-  if (presetIndexOf(key.preset) < 0) return false;
-  const steps = key.presetParams?.steps;
-  return (
-    !STEP_PRESETS.has(key.preset as string) || (Number.isInteger(steps) && (steps as number) > 0)
-  );
+/**
+ * Why a preset of a key cannot be worked out: a name that is not in the table, steps without a
+ * number of them, or parameters out of their range. Undefined when it can.
+ */
+export function presetProblem(
+  key: Pick<Key, "preset" | "presetParams">,
+): "unknown" | "steps" | "params" | undefined {
+  const name = key.preset;
+  if (presetIndexOf(name) < 0) return "unknown";
+  const { amplitude, period, steps } = key.presetParams ?? {};
+  if (STEP_PRESETS.has(name as string)) {
+    return Number.isInteger(steps) && (steps as number) > 0 ? undefined : "steps";
+  }
+  if (!(name as string).startsWith("elastic")) return undefined;
+  const fine =
+    (amplitude === undefined || (amplitude >= 1 && Number.isFinite(amplitude))) &&
+    (period === undefined || (period > 0 && Number.isFinite(period)));
+  return fine ? undefined : "params";
 }
 
-const isSpring = (spring: Key["spring"]): spring is NonNullable<Key["spring"]> =>
-  spring !== undefined &&
-  spring.stiffness > 0 &&
-  Number.isFinite(spring.stiffness) &&
-  spring.damping >= 0 &&
-  Number.isFinite(spring.damping) &&
-  (spring.mass === undefined || (spring.mass > 0 && Number.isFinite(spring.mass)));
+/** Whether a preset of a key can be worked out: a name of the table, with what it needs. */
+export const knowsPreset = (key: Pick<Key, "preset" | "presetParams">): boolean =>
+  presetProblem(key) === undefined;
+
+/**
+ * ω0 and ζ of a spring, as the format works them out. Undefined when they are not numbers that it
+ * can go by: what overflows or comes to nothing, however the file got its values.
+ */
+export function springOf(spring: Key["spring"]): readonly [number, number] | undefined {
+  if (!spring) return undefined;
+  const { stiffness, damping, mass = 1 } = spring;
+  const omega = Math.sqrt(stiffness / mass);
+  const zeta = damping / (2 * Math.sqrt(stiffness * mass));
+  if (!(omega > 0 && Number.isFinite(omega) && zeta >= 0 && Number.isFinite(zeta)))
+    return undefined;
+  // How fast it goes at most: the faster root, or how fast it swings.
+  const fastest =
+    zeta > 1 ? omega * (zeta + Math.sqrt(zeta * zeta - 1)) : omega * Math.sqrt(1 - zeta * zeta);
+  return Number.isFinite(fastest) && (zeta >= 1 || fastest > 0) ? [omega, zeta] : undefined;
+}
 
 /** A spring or a preset that cannot be worked out goes linearly, as the format says. */
 function shapeOf(key: Key, mixes: boolean): number {
   if (!mixes || key.interp === "hold") return HOLD;
   if (key.interp === "bezier" && key.out) return BEZIER;
-  if (key.interp === "spring" && isSpring(key.spring)) return SPRING;
+  if (key.interp === "spring" && springOf(key.spring)) return SPRING;
   if (key.interp === "preset" && knowsPreset(key)) return PRESET;
   return LINEAR;
 }
@@ -540,11 +564,8 @@ function paramsOf(keys: readonly Key[], shapes: Uint8Array): Float64Array {
       const [x2 = 1, y2 = 1] = (keys[index + 1] as Key).in ?? [];
       params.set([x1, y1, x2, y2], index * 4);
     } else if (shape === SPRING) {
-      const { stiffness, damping, mass = 1 } = key.spring as NonNullable<Key["spring"]>;
-      params.set(
-        [Math.sqrt(stiffness / mass), damping / (2 * Math.sqrt(stiffness * mass)), 0, 0],
-        index * 4,
-      );
+      const [omega, zeta] = springOf(key.spring) as readonly [number, number];
+      params.set([omega, zeta, 0, 0], index * 4);
     } else if (shape === PRESET) {
       const { amplitude = AMPLITUDE, period = PERIOD, steps = 1 } = key.presetParams ?? {};
       params.set([presetIndexOf(key.preset), amplitude, period, steps], index * 4);
@@ -703,7 +724,7 @@ export function presetProgress(
 ): number {
   if (s <= 0) return 0;
   if (s >= 1) return 1;
-  const a = Math.max(amplitude, 1);
+  const a = amplitude;
   switch (EASE_PRESET_NAMES[preset]) {
     case "elasticOut":
       return elasticOut(s, a, period);

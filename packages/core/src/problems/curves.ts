@@ -7,7 +7,7 @@ import {
   type Animation,
   type ValueType,
 } from "@animaquill/schema";
-import { canMix, canShake, knowsPreset } from "../curve.ts";
+import { canMix, canShake, presetProblem, springOf } from "../curve.ts";
 import { effectsOf, type ClipState, type ProjectState } from "../model.ts";
 import type { ClipDescription } from "../objects.ts";
 import { effectiveProperties } from "../render-plan.ts";
@@ -18,7 +18,11 @@ import { outputsOf } from "./unsupported.ts";
  * What keys say that makes no difference to how they are worked out: a preset this editor does not
  * know goes linearly, and shaking does nothing to a value that is not a number.
  */
-export const CURVE_CODES = ["unknown-ease-preset", "noise-not-applicable"] as const;
+export const CURVE_CODES = [
+  "unknown-ease-preset",
+  "ease-params-invalid",
+  "noise-not-applicable",
+] as const;
 
 /** Properties whose keys this editor does not apply yet, see `unsupported.ts`. */
 const NOT_APPLIED = ["audio.", "time."];
@@ -46,14 +50,29 @@ function typeOf(
   return undefined;
 }
 
-/** The name of the first preset that is not known, in a stretch that it would ease. */
-function unknownPreset(animation: Animation): string | undefined {
+/** What goes linearly against what a stretch says, at the first stretch that does. */
+interface Linear {
+  /** The name of a preset that is not in the table. */
+  readonly unknown?: string;
+  /** A preset or a spring that is known, with values it cannot be worked out with. */
+  readonly invalid?: { readonly interp: string; readonly reason: "steps" | "params" };
+}
+
+function linearOf(animation: Animation): Linear {
   const { keys } = animation;
+  let unknown: string | undefined;
+  let invalid: Linear["invalid"];
   for (let index = 0; index < keys.length - 1; index += 1) {
     const key = keys[index];
-    if (key?.interp === "preset" && !knowsPreset(key)) return key.preset ?? "";
+    if (key?.interp === "preset") {
+      const problem = presetProblem(key);
+      if (problem === "unknown") unknown ??= key.preset ?? "";
+      else if (problem !== undefined) invalid ??= { interp: "preset", reason: problem };
+    } else if (key?.interp === "spring" && key.spring && !springOf(key.spring)) {
+      invalid ??= { interp: "spring", reason: "params" };
+    }
   }
-  return undefined;
+  return { ...(unknown !== undefined && { unknown }), ...(invalid && { invalid }) };
 }
 
 /**
@@ -81,24 +100,27 @@ export function curveProblems(
       for (const [path, value] of Object.entries(effectiveProperties(clip))) {
         // Keys of sound and of speed are not applied yet: that is a problem of its own.
         if (!isAnimation(value) || NOT_APPLIED.some((prefix) => path.startsWith(prefix))) continue;
-        const preset = unknownPreset(value);
+        const { unknown, invalid } = linearOf(value);
         const shakes = (value.modifiers ?? []).some(({ type }) => type === "noise");
-        if (preset === undefined && !shakes) continue;
+        if (unknown === undefined && !invalid && !shakes) continue;
         const type = typeAt(path);
-        if (preset !== undefined && (type === undefined || canMix(type))) {
-          const part = partOf(clip);
+        const eases = type === undefined || canMix(type);
+        const part = partOf(clip);
+        // Another tool would ease there, and this editor goes linearly: the export is otherwise.
+        const linear = (code: string, params: Record<string, string>) =>
           problems.push(
             withId({
               source: "properties",
               severity: "warning",
-              code: "unknown-ease-preset",
-              params: { path, preset },
+              code,
+              params: { path, ...params },
               subject,
               place: path,
               ...(part && { affectsOutput: part }),
             }),
           );
-        }
+        if (eases && unknown !== undefined) linear("unknown-ease-preset", { preset: unknown });
+        if (eases && invalid) linear("ease-params-invalid", invalid);
         if (shakes && type !== undefined && !canShake(type)) {
           problems.push(
             withId({

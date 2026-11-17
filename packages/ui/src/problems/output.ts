@@ -1,4 +1,5 @@
 import {
+  curveProblems,
   outputProblems,
   unsupportedProblems,
   type OutputQuery,
@@ -20,7 +21,7 @@ const MAX_LISTED = 30;
 
 /**
  * Asks before an export that would not be what the project says, because this editor does not do
- * all of it yet. Each line goes to where it is; people can still export, which is what they want
+ * all of it yet, or goes linearly where keys say what it cannot work out. Each line goes to where it is; people can still export, which is what they want
  * when they only want to see what there is. Cancelling is what Enter does.
  */
 export class OutputDifferences implements OutputCheck {
@@ -40,7 +41,8 @@ export class OutputDifferences implements OutputCheck {
 
   async confirm(state: ProjectState, query: OutputQuery): Promise<boolean> {
     // Worked out now: the list of problems waits for a burst of changes to end.
-    const found = outputProblems(state, unsupportedProblems(state), query);
+    const problems = [...unsupportedProblems(state), ...curveProblems(state)];
+    const found = outputProblems(state, problems, query);
     if (found.length === 0) return true;
     const t = this.#t;
     const items = found.slice(0, MAX_LISTED).map((problem) => {

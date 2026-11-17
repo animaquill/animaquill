@@ -69,6 +69,32 @@ describe("asking before an export", () => {
     expect(await again).toBe(true);
   });
 
+  it("lists keys that go linearly where they say otherwise, and still lets people export", async () => {
+    const { dialogs, check } = setup();
+    const keys = (first: object) => ({
+      keys: [
+        { time: "0", value: 0, ...first },
+        { time: "1", value: 100 },
+      ],
+    });
+    const properties = {
+      "transform.x": keys({ interp: "preset", preset: "wobble" }),
+      "transform.y": keys({ interp: "preset", preset: "stepsEnd" }),
+    };
+    const asking = check.confirm(stateWith([red("方块", { properties })]), query);
+    const dialog = dialogs.getSnapshot();
+    if (dialog?.kind !== "confirm") throw new Error("No dialog");
+    const labels = (dialog.details?.[0]?.items ?? []).map((item) =>
+      typeof item === "string" ? item : item.label,
+    );
+    expect(labels).toEqual([
+      "方块：transform.x 用了这一版编辑器不认识的缓动预设“wobble”，这一段按线性变化",
+      "方块：transform.y 的阶梯缺少格数，这一段按线性变化",
+    ]);
+    dialogs.answer(true);
+    expect(await asking).toBe(true);
+  });
+
   it("says how many more there are than it lists", async () => {
     const { dialogs, check } = setup();
     const clips = Array.from({ length: 40 }, (_, index) => red(`c${index}`, { draft: true }));

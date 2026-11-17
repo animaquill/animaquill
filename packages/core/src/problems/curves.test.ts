@@ -45,6 +45,22 @@ describe("problems of keys", () => {
     ]);
   });
 
+  it("lists steps without a number and values out of range apart from a name it does not know", () => {
+    const properties = {
+      "transform.x": ramp({ interp: "preset", preset: "stepsEnd" }),
+      "transform.y": ramp({ interp: "preset", preset: "elasticOut", presetParams: { period: 0 } }),
+      "transform.scale": ramp({
+        interp: "spring",
+        spring: { stiffness: 1e300, damping: 1, mass: 1e-300 },
+      }),
+    };
+    expect(said({ tracks: [video([color("c", { properties })])] })).toEqual([
+      'ease-params-invalid c transform.x {"interp":"preset","path":"transform.x","reason":"steps"} picture',
+      'ease-params-invalid c transform.y {"interp":"preset","path":"transform.y","reason":"params"} picture',
+      'ease-params-invalid c transform.scale {"interp":"spring","path":"transform.scale","reason":"params"} picture',
+    ]);
+  });
+
   it("does not list a preset on the last key, where it does nothing", () => {
     const keys = {
       keys: [

@@ -75,6 +75,10 @@ export const PROBLEM_TEXTS: Readonly<Record<string, (params: Params) => string>>
     `the value of ${str(p.path)} is no ${str(p.type)}, so the default applies`,
   "unknown-ease-preset": (p) =>
     `${str(p.path)} has preset ${JSON.stringify(str(p.preset))}, which this editor version does not know: that stretch goes linearly`,
+  "ease-params-invalid": (p) =>
+    p.reason === "steps"
+      ? `${str(p.path)} has a preset in steps without a whole number of steps above 0: that stretch goes linearly`
+      : `${str(p.path)} has a ${str(p.interp)} whose values are out of range (amplitude below 1, period not above 0, or a spring that overflows): that stretch goes linearly`,
   "noise-not-applicable": (p) =>
     `${str(p.path)} is a ${str(p.type)}, which noise cannot shake: the noise does nothing`,
   "scene-param-id": (p) =>

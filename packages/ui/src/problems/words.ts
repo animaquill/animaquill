@@ -148,8 +148,9 @@ export function describeProjectProblem(
       ...asText,
     });
   }
-  if (code === "unsupported-audio-effect") {
-    const key = `problems.codes.unsupported-audio-effect.${params["where"]}`;
+  if (code === "unsupported-audio-effect" || code === "ease-params-invalid") {
+    const part = code === "unsupported-audio-effect" ? params["where"] : params["reason"];
+    const key = `problems.codes.${code}.${part}`;
     return t(key, { ...params, defaultValue: code, ...asText });
   }
   const key = `problems.codes.${code}`;

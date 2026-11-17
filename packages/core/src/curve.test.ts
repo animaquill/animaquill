@@ -19,8 +19,10 @@ import {
   knowsPreset,
   noiseAt,
   numberAt,
+  presetProblem,
   presetProgress,
   sample,
+  springOf,
   springProgress,
   splitBezier,
   type Channel,
@@ -671,6 +673,49 @@ describe("noise", () => {
   it("makes one key shake, which would be a value that stays without it", () => {
     expect(compiled(shaking(3)).kind).toBe("curve");
     expect(compiled({ keys: [{ time: "0", value: 0 }] }).kind).toBe("still");
+  });
+});
+
+describe("values that a preset or a spring cannot go by", () => {
+  const stretch = (first: Partial<Key>): Animation => ({
+    keys: [{ time: "0", value: 0, ...first } as Key, { time: "2", value: 10 }],
+  });
+
+  it.each<[string, Partial<Key>]>([
+    [
+      "an elastic with a period of 0",
+      { interp: "preset", preset: "elasticOut", presetParams: { period: 0 } },
+    ],
+    [
+      "an elastic with an amplitude below 1",
+      { interp: "preset", preset: "elasticIn", presetParams: { amplitude: 0.5 } },
+    ],
+    [
+      "steps without a whole number",
+      { interp: "preset", preset: "stepsEnd", presetParams: { steps: 2.5 } },
+    ],
+    [
+      "a spring that overflows",
+      { interp: "spring", spring: { stiffness: 1e300, damping: 1, mass: 1e-300 } },
+    ],
+    [
+      "a spring damped past numbers",
+      { interp: "spring", spring: { stiffness: 1e-300, damping: 1e300, mass: 1e-10 } },
+    ],
+  ])("go linearly, never to NaN: %s", (_, first) => {
+    const channel = compiled(stretch(first));
+    for (const clock of [0.1, 0.5, 1, 1.5, 1.99]) {
+      expect(sample(channel, clock)).toBeCloseTo(clock * 5, 9);
+    }
+  });
+
+  it("say why", () => {
+    expect(presetProblem({ preset: "wobble" })).toBe("unknown");
+    expect(presetProblem({ preset: "stepsStart" })).toBe("steps");
+    expect(presetProblem({ preset: "elasticInOut", presetParams: { period: -1 } })).toBe("params");
+    expect(presetProblem({ preset: "bounceOut", presetParams: { period: -1 } })).toBeUndefined();
+    expect(springOf({ stiffness: 1e300, damping: 1, mass: 1e-300 })).toBeUndefined();
+    expect(springOf({ stiffness: 100, damping: 20 })).toEqual([10, 1]);
   });
 });
 

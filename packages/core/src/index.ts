@@ -55,6 +55,8 @@ export {
   compileChannel,
   isNumeric,
   knowsPreset,
+  presetProblem,
+  springOf,
   mixColors,
   noiseAt,
   numberAt,

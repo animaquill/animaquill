@@ -2032,6 +2032,10 @@
       "property-renamed": "{{from}} 改名成了 {{to}}，关键帧还在旧路径上，照样生效",
       "property-mismatch": "{{path}} 的值不是{{type}}，不起作用，用的是默认值",
       "unknown-ease-preset": "{{path}} 用了这一版编辑器不认识的缓动预设“{{preset}}”，这一段按线性变化",
+      "ease-params-invalid": {
+        "steps": "{{path}} 的阶梯缺少格数，这一段按线性变化",
+        "params": "{{path}} 的缓动参数不合格（幅度小于 1、周期不大于 0，或者弹簧的数值算不出来），这一段按线性变化"
+      },
       "noise-not-applicable": "{{path}} 是{{type}}，抖动只能加在数字上，这里的抖动不起作用",
       "scene-param-id": "参数“{{name}}”的 ID 不能用作属性路径，片段不能给它赋值，也不能打关键帧。ID 只能用英文字母、数字、下划线和连字符",
       "unsupported-music-clip": "音乐片段这一版还不能播放，预览和导出里都没有它的声音",
