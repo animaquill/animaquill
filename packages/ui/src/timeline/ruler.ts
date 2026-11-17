@@ -1,5 +1,7 @@
 import { formatTimecode, type FrameRate } from "./frames.ts";
 
+/** Where the timecodes are, from the top: the middle of their line. */
+export const RULER_LABEL_Y = 10;
 /** Labels need this much room to be read, and ticks closer than this turn into a grey band. */
 const MIN_LABEL_GAP = 110;
 const MIN_TICK_GAP = 7;
@@ -50,6 +52,23 @@ export interface RulerLook {
   readonly label: string;
 }
 
+/** The timecodes along the ruler that show on screen, each with where its words start. */
+export function rulerLabels(
+  view: RulerView,
+  rate: FrameRate,
+): readonly { readonly x: number; readonly text: string }[] {
+  const { major } = rulerSteps(view.pixelsPerSecond / rate.fps, rate.nominal);
+  const firstFrame = Math.max(view.timeAt(0) * rate.fps, 0);
+  const lastFrame = view.timeAt(view.width) * rate.fps;
+  const labels: { x: number; text: string }[] = [];
+  for (let frame = Math.floor(firstFrame / major) * major; frame <= lastFrame; frame += major) {
+    labels.push({ x: view.xAt(frame / rate.fps) + LABEL_INSET, text: formatTimecode(frame, rate) });
+  }
+  return labels;
+}
+
+const LABEL_INSET = 4;
+
 /** Draws a ruler along the top, as tall as `height`. */
 export function paintRuler(
   context: CanvasRenderingContext2D,
@@ -74,7 +93,5 @@ export function paintRuler(
     context.fillRect(x, height - 1 - length, 1, length);
   }
   context.fillStyle = look.label;
-  for (let frame = Math.floor(firstFrame / major) * major; frame <= lastFrame; frame += major) {
-    context.fillText(formatTimecode(frame, rate), view.xAt(frame / rate.fps) + 4, 10);
-  }
+  for (const { x, text } of rulerLabels(view, rate)) context.fillText(text, x, RULER_LABEL_Y);
 }

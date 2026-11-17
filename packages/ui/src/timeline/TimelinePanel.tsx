@@ -951,7 +951,12 @@ function Surface({
           ...(properties.length > 0 ? [properties] : []),
           [
             item("split", () => editor.splitAtPlayhead(), !editor.canSplit),
-            item("delete", () => editor.deleteSelection()),
+            {
+              id: "delete",
+              label: t("timeline.deleteClips"),
+              run: () => editor.deleteSelection(),
+              disabled: false,
+            },
           ],
           ...(sounds.stateOf(hit.box.clip)?.state === "failed"
             ? [[{ id: "retry", label: t("sound.retry"), run: () => sounds.retry(hit.box.clip) }]]

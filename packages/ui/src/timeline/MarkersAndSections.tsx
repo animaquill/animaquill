@@ -120,7 +120,9 @@ export function MarkerBubble({
   return (
     <Bubble
       anchor={anchor.rect}
-      title={box.marker.name || t("timeline.marker.title")}
+      title={t("timeline.marker.at", {
+        time: formatTimecode(frameAt(box.time, model.rate), model.rate),
+      })}
       className={styles.markerBubble}
       onClose={() => editor.editMarker(undefined)}
     >
@@ -406,13 +408,7 @@ export function SectionBand({
         [
           {
             id: "mergeSection",
-            label: t("timeline.section.merge"),
-            disabled: index === 0,
-            run: () => editor.removeSection(id),
-          },
-          {
-            id: "removeSection",
-            label: t("timeline.section.remove"),
+            label: t(index === 0 ? "timeline.section.mergeNext" : "timeline.section.merge"),
             disabled: sections.length < 2,
             run: () => editor.removeSection(id),
           },

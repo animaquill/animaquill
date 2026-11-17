@@ -333,11 +333,20 @@ test.describe("markers", () => {
     await shootBubble(page, "marker-edit-dark.png");
     await page.mouse.click(flag.x + 300, flag.y + 200);
     await expect(bubble).toHaveCount(0);
-    await addMarkersAt(page, [120]);
+    // A second one, with a name that has room between the timecodes; M there opens it.
+    await addMarkersAt(page, [105]);
+    await page.keyboard.press("KeyM");
+    await markerBubble(page).getByLabel("名字").fill("转折");
+    await markerBubble(page).getByLabel("名字").press("Enter");
+    await page.keyboard.press("Escape");
+    await stage(page).focus();
     await page.keyboard.press("Home");
     await shootTop(page, "markers-dark.png");
-    // The second marker goes first; the note was a step of its own, and so was the duration.
+    // The second marker goes first, its name and then itself; the note was a step of its own,
+    // and so was the duration.
     await stage(page).focus();
+    await page.keyboard.press("Control+KeyZ");
+    await expect(markers(page).nth(1)).toHaveAttribute("aria-label", /^标记，/);
     await page.keyboard.press("Control+KeyZ");
     await expect(markers(page)).toHaveCount(1);
     await page.keyboard.press("Control+KeyZ");
@@ -369,6 +378,8 @@ test.describe("markers", () => {
     await expect(menu.getByRole("menuitem", { name: /^添加标记/ })).toContainText("M");
     await expect(menu.getByRole("menuitem", { name: /^转到下一个标记/ })).toBeDisabled();
     await expect(menu.getByRole("menuitem", { name: /^在播放头分段/ })).toBeDisabled();
+    // Delete takes away whatever is selected: markers, transitions, keys or clips.
+    await expect(menu.getByRole("menuitem", { name: /^删除(?!片段)/ })).toHaveCount(1);
     await menu.getByRole("menuitem", { name: /^添加标记/ }).click();
     await expect(markers(page)).toHaveCount(1);
   });
@@ -425,8 +436,8 @@ test.describe("sections", () => {
     await expect(boundaries(page)).toHaveCount(1);
     await expect(boundaries(page)).toHaveAttribute("aria-valuenow", "120");
     await blocks.first().click({ button: "right" });
-    await expect(page.getByRole("menuitem", { name: "和前一段合并" })).toBeDisabled();
-    await page.getByRole("menuitem", { name: "删除段落" }).click();
+    await expect(page.getByRole("menuitem", { name: "和前一段合并" })).toHaveCount(0);
+    await page.getByRole("menuitem", { name: "和后一段合并" }).click();
     // What is left has no name: nothing to show.
     await expect(band(page)).toHaveCount(0);
   });
@@ -436,7 +447,12 @@ test.describe("markers and sections in light colours", () => {
   test.use({ colorScheme: "light" });
 
   test("look as they do in the dark", async ({ page }) => {
-    await addMarkersAt(page, [30, 90]);
+    await addMarkersAt(page, [30, 105]);
+    await page.keyboard.press("KeyM");
+    await markerBubble(page).getByLabel("名字").fill("转折");
+    await markerBubble(page).getByLabel("名字").press("Enter");
+    await page.keyboard.press("Escape");
+    await stage(page).focus();
     const flag = await flagOf(page, 0);
     await page.mouse.dblclick(flag.x, flag.y);
     const bubble = markerBubble(page);

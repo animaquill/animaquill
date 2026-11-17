@@ -12,7 +12,7 @@ import { Draft } from "./draft.ts";
 import { FUZZ, openUnlocked, randomFrom, seedIds, type Random } from "./fuzz-support.ts";
 import { timelineLength, type TimelineState } from "./model.ts";
 import { applyGapPlan, closingPlan, openingPlan, placedSections } from "./section-edits.ts";
-import type { ProjectStore } from "./store.ts";
+import { USER, type ProjectStore } from "./store.ts";
 
 /**
  * Sections split, merged, removed and with boundaries dragged, at random, and the stretches that
@@ -79,11 +79,66 @@ function randomStep(store: ProjectStore, random: Random) {
   }
 }
 
+/**
+ * What versions say of sections, of every sort: with a base and without, of two sections next to
+ * each other and of one alone. English already makes 讲解 26 seconds long, with a base.
+ */
+function withVersionSections(store: ProjectStore): void {
+  const rewrite = (path: string, sections: object) => {
+    const text = store.exportFiles().files.get(path) as string;
+    const document = { ...JSON.parse(text), sections };
+    const result = store.importFile(path, JSON.stringify(document), { origin: USER });
+    if (!result.ok) throw new Error(`${path}: ${JSON.stringify(result)}`);
+  };
+  rewrite("timelines/main/overrides/format.vertical.json", {
+    section_intro: { duration: { value: "6" } },
+  });
+  rewrite("timelines/main/overrides/version.en.vertical.json", {
+    section_intro: { duration: { value: "3", base: "5" } },
+    section_body: { duration: { value: "18" } },
+    section_end: { duration: { value: "4", base: "5.005" } },
+  });
+}
+
+/** How long each version is, which is what removing a section must not change. */
+const versionLengths = (timeline: TimelineState) =>
+  Object.fromEntries(
+    Object.entries(timeline.overrides).map(([name, version]) => [
+      name,
+      t(
+        placedSections(timeline).reduce(
+          (length, { id, duration }) =>
+            add(
+              length,
+              version.sections?.[id] ? parseTime(version.sections[id].duration.value) : duration,
+            ),
+          ZERO,
+        ),
+      ),
+    ]),
+  );
+
+/** Versions only speak of sections that are there. */
+const versionsAboutGone = (timeline: TimelineState) =>
+  Object.values(timeline.overrides).flatMap((version) =>
+    Object.keys(version.sections ?? {}).filter((id) => !Object.hasOwn(timeline.sections, id)),
+  );
+
+/** The base of a version of a section, against what the master has, for those that have one. */
+const basesOf = (timeline: TimelineState) =>
+  Object.entries(timeline.overrides).flatMap(([name, version]) =>
+    Object.entries(version.sections ?? {}).flatMap(([id, { duration }]) =>
+      duration.base === undefined ? [] : [`${name} ${id} ${duration.base}`],
+    ),
+  );
+
 describe.each([1, 2, 3, 4, 5, 6, 7, 8])("sections at random, seed %i", FUZZ, (seed) => {
   it("lie end to end, keep the length and leave what is on the timeline", () => {
     seedIds(seed);
     const random = randomFrom(seed);
     const store = openUnlocked();
+    withVersionSections(store);
+    expect(basesOf(main(store))).toHaveLength(3);
     for (let step = 0; step < 120; step += 1) {
       const before = structuredClone(main(store));
       const ends = boundaries(before);
@@ -116,6 +171,28 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])("sections at random, seed %i", FUZZ, (se
         }
       }
       expect(store.exportFiles().problems).toEqual([]);
+      expect(versionsAboutGone(after)).toEqual([]);
+      if (type === "section.remove") {
+        // Every version is as long as it was, and a base adds up as the durations do.
+        expect(versionLengths(after)).toEqual(versionLengths(before));
+        const gone = Object.keys(before.sections).find((id) => !Object.hasOwn(after.sections, id));
+        for (const [name, version] of Object.entries(after.overrides)) {
+          const old = before.overrides[name]?.sections ?? {};
+          for (const [id, { duration }] of Object.entries(version.sections ?? {})) {
+            if (old[id]?.duration.value === duration.value || gone === undefined) continue;
+            const master = (section: string) => before.sections[section]?.duration ?? "0";
+            const sum = (field: "value" | "base") =>
+              t(
+                add(
+                  parseTime(old[id]?.duration[field] ?? master(id)),
+                  parseTime(old[gone]?.duration[field] ?? master(gone)),
+                ),
+              );
+            expect(duration.value).toBe(sum("value"));
+            if (duration.base !== undefined) expect(duration.base).toBe(sum("base"));
+          }
+        }
+      }
       // One step back is exactly where it was, and forward again exactly where it got to.
       if (random.chance(0.3)) {
         const done = structuredClone(after);

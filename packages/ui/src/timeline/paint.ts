@@ -24,7 +24,7 @@ import {
   type TimelineModel,
 } from "./model.ts";
 import { effectBandOf } from "./effect-band.ts";
-import { paintRuler } from "./ruler.ts";
+import { RULER_LABEL_Y, paintRuler, rulerLabels } from "./ruler.ts";
 import type { Preview } from "./gestures.ts";
 import { StagePainter, type Theme } from "./stage-painter.ts";
 
@@ -72,11 +72,8 @@ const MARK_OVERHANG = 4;
 /** Names of markers: how far from the flag, the least room they take, and where they sit. */
 const MARKER_NAME_GAP = 3;
 const MARKER_NAME_MIN = 18;
-/** Below the numbers of the ruler, whose words end about here. */
-const MARKER_NAME_TOP = 15;
-const MARKER_NAME_Y = 20.5;
-/** The bar of a marker with a duration, along the bottom of the ruler. */
-const MARKER_BAR = 5;
+/** The line of a marker with a duration, along the bottom of the ruler. */
+const MARKER_BAR = 2;
 /** The handle at the end of a marker with a duration. */
 const MARKER_END_BAR = 2;
 /** Zoomed far out a pixel covers minutes. A few samples of them look the same and cost far less. */
@@ -1017,56 +1014,72 @@ export class TimelinePainter extends StagePainter {
 
   /**
    * Markers along the lower part of the ruler, as Premiere has them: a flag that points down at
-   * its moment, with a bar along the bottom as long as its duration, and its name to its right where
-   * there is room before the next one, on the ruler's colour, under the numbers of the ruler. The
-   * selected one is outlined, and one being dragged shows where it goes.
+   * its moment, with a thin line along the bottom as long as its duration. A name shows to the right
+   * of its flag between the timecodes and that line, where it fits and runs into no timecode and no
+   * next marker. Where it does not, it shows only for the marker under the pointer and the selected
+   * one, over what is there. The selected one is outlined, and one being dragged shows where it goes.
    */
   #paintMarkers(model: TimelineModel): void {
     const editor = this.#editor;
     const { context } = this;
     const moving = editor.preview?.marker;
-    const selected = editor.getSnapshot().marker;
+    const { marker: selected } = editor.getSnapshot();
+    const { hovered } = editor;
+    const pointed = hovered.kind === "marker" ? hovered.box.id : undefined;
     const boxes = model.markers
       .map((box) => (moving?.id === box.id ? { ...box, time: moving.time, end: moving.end } : box))
       .toSorted((a, b) => a.time - b.time);
+    if (boxes.length === 0) return;
+    const scale = this.theme.fontScale;
     const bottom = RULER_HEIGHT - 1;
-    const bar = (from: number, to: number, color: string) => {
-      context.fillStyle = color;
-      context.globalAlpha = 0.5;
-      context.fillRect(from, bottom - MARKER_BAR, to - from, MARKER_BAR);
-      context.globalAlpha = 1;
-    };
+    // The timecodes, in the font they are drawn in, which takes up to here from the top.
+    const labels = rulerLabels(editor, model.rate).map(({ x, text }) => ({
+      from: x,
+      to: x + context.measureText(text).width,
+    }));
+    const below = RULER_LABEL_Y + 6 * scale;
+    const nameSize = 10 * scale;
+    const roomy = bottom - MARKER_BAR - below >= nameSize * 0.9;
+    const nameY = roomy ? (below + bottom - MARKER_BAR) / 2 : bottom - MARKER_BAR - nameSize / 2;
+    const meetsLabel = (from: number, to: number) =>
+      labels.some(
+        (label) => label.from < to + MARKER_NAME_GAP && label.to + MARKER_NAME_GAP > from,
+      );
     context.save();
-    context.font = `${11 * this.theme.fontScale}px ${this.theme.font}`;
+    context.font = `${nameSize}px ${this.theme.font}`;
     boxes.forEach((box, index) => {
       const x = this.sharp(editor.xAt(box.time));
       const end = box.end === undefined ? undefined : this.sharp(editor.xAt(box.end));
       if ((end ?? x) + MARKER_HALF < 0 || x - MARKER_HALF > editor.width) return;
       const color = this.#markerColor(box);
       if (end !== undefined) {
-        bar(x, end, color);
         context.fillStyle = color;
+        context.fillRect(x, bottom - MARKER_BAR, end - x, MARKER_BAR);
         context.fillRect(end - MARKER_END_BAR, MARKER_TOP, MARKER_END_BAR, bottom - MARKER_TOP);
       }
+      const focused = box.id === selected || box.id === pointed;
       const name = box.marker.name;
       const next = boxes[index + 1];
       const left = x + MARKER_HALF + MARKER_NAME_GAP;
       const right = Math.min(
-        next
+        next && !focused
           ? this.sharp(editor.xAt(next.time)) - MARKER_HALF - MARKER_NAME_GAP
           : Number.POSITIVE_INFINITY,
-        end === undefined ? Number.POSITIVE_INFINITY : end - MARKER_END_BAR - 1,
         editor.width,
       );
       const text =
         name && right - left >= MARKER_NAME_MIN ? fitText(context, name, right - left) : "";
       if (text !== "") {
         const width = context.measureText(text).width;
-        context.fillStyle = this.theme.ruler;
-        context.fillRect(left - 2, MARKER_NAME_TOP, width + 4, bottom - MARKER_NAME_TOP);
-        if (end !== undefined) bar(left - 2, left + width + 2, color);
-        context.fillStyle = this.theme.label;
-        context.fillText(text, left, MARKER_NAME_Y);
+        if (focused) {
+          context.fillStyle = this.theme.ruler;
+          const top = nameY - nameSize / 2 - 1;
+          context.fillRect(left - 2, top, width + 4, bottom - MARKER_BAR - top);
+        }
+        if (focused || (roomy && !meetsLabel(left, left + width))) {
+          context.fillStyle = this.theme.label;
+          context.fillText(text, left, nameY);
+        }
       }
       context.beginPath();
       context.moveTo(x - MARKER_HALF, MARKER_TOP);
@@ -1081,9 +1094,8 @@ export class TimelinePainter extends StagePainter {
         context.strokeStyle = this.theme.selected;
         context.lineWidth = 1.5;
         context.stroke();
-        if (end !== undefined) {
-          context.strokeRect(x, bottom - MARKER_BAR - 0.5, end - x, MARKER_BAR);
-        }
+        if (end !== undefined)
+          context.strokeRect(x, bottom - MARKER_BAR - 1, end - x, MARKER_BAR + 1);
       }
     });
     context.restore();

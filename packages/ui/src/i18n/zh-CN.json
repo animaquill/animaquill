@@ -1263,7 +1263,7 @@
       "addAudioTrack": "添加音频轨道",
       "addCaptionTrack": "添加字幕轨道",
       "split": "在播放头切割",
-      "delete": "删除片段",
+      "delete": "删除",
       "selectAll": "全选片段",
       "toolSelect": "选择工具",
       "toolRazor": "切割工具",
@@ -1306,8 +1306,10 @@
       "clearMarkersHere": "清除播放头处的标记",
       "splitSection": "在播放头分段"
     },
+    "deleteClips": "删除片段",
     "marker": {
       "list": "标记",
+      "at": "标记 {{time}}",
       "named": "标记“{{name}}”，{{time}}",
       "unnamed": "标记，{{time}}",
       "title": "标记",
@@ -1337,7 +1339,7 @@
       "rename": "重命名",
       "split": "在播放头分段",
       "merge": "和前一段合并",
-      "remove": "删除段落"
+      "mergeNext": "和后一段合并"
     },
     "color": "纯色片段",
     "scene": "场景",
