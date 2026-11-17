@@ -97,6 +97,7 @@ export {
 } from "./timeline.ts";
 export {
   Animation,
+  Extrapolation,
   Handle,
   Key,
   KnownProperties,

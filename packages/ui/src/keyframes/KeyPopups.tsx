@@ -1,9 +1,11 @@
-import type { KeyEase } from "@animaquill/core";
+import { componentSpecOf, type KeyEase } from "@animaquill/core";
 import type { PropertySpec } from "@animaquill/schema";
-import { useState, useSyncExternalStore, type ReactNode } from "react";
+import { Dice5 } from "lucide-react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { Bubble } from "../app/Bubble.tsx";
 import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
+import { Tip } from "../app/Tip.tsx";
 import { NumberField } from "../properties/NumberField.tsx";
 import type { Pointer } from "../timeline/gestures.ts";
 import type { KeyArea, KeySpot } from "./area.ts";
@@ -19,6 +21,7 @@ import {
 } from "./easing.ts";
 import type { KeyframeEditor, SelectedTuning } from "./editor.ts";
 import type { TangentMode } from "./handles.ts";
+import type { Shaking } from "./shaking.ts";
 import styles from "./KeyPopups.module.css";
 
 const TANGENTS: readonly TangentMode[] = ["auto", "aligned", "broken"];
@@ -228,6 +231,116 @@ function TuningRow({ keyframes, selected, tuning, onDrag }: TuningRowProps) {
     <div className={styles.tuning} role="group" aria-label={t(`keyframes.ease.${preset}`)}>
       {preset === "steps" ? [...numbers, choices] : [choices, ...numbers]}
     </div>
+  );
+}
+
+/** How often it shakes: from a slow drift to a buzz. */
+const FREQUENCY_SPEC: PropertySpec = {
+  path: "frequency",
+  type: "number",
+  unit: "hz",
+  min: 0.01,
+  softMin: 0.1,
+  softMax: 10,
+};
+
+interface NoiseBubbleProps {
+  readonly keyframes: KeyframeEditor;
+  readonly clip: string;
+  /** The property that shakes: how far it shakes is in its unit. */
+  readonly spec: PropertySpec;
+  readonly anchor: DOMRect;
+  readonly onClose: () => void;
+}
+
+/**
+ * How a property shakes: how far, how often, new dice for another way of shaking, and no more
+ * shaking. Dragging a number only shows, letting go writes it. Gone with the shaking, as after undo.
+ */
+export function NoiseBubble({ keyframes, clip, spec, anchor, onClose }: NoiseBubbleProps) {
+  const { t } = useTranslation();
+  const { path } = spec;
+  const signature = useSyncExternalStore(keyframes.subscribeView, () =>
+    JSON.stringify(keyframes.shakingOf(clip, path) ?? null),
+  );
+  const shaking = JSON.parse(signature) as Shaking | null;
+  const [dragged, setDragged] = useState<Partial<Shaking>>();
+  const gone = shaking === null;
+  useEffect(() => {
+    if (gone) onClose();
+  }, [gone, onClose]);
+  if (!shaking) return null;
+  const shown = { ...shaking, ...dragged };
+  const readOnly = !keyframes.canMove(clip);
+  const amountSpec: PropertySpec = { ...componentSpecOf(spec), path: "amount", min: 0 };
+  const field = (name: "amount" | "frequency", fieldSpec: PropertySpec) => {
+    const label = t(`keyframes.noise.${name}`);
+    return (
+      <label className={styles.number}>
+        <span>{label}</span>
+        <NumberField
+          label={label}
+          placeholder=""
+          spec={fieldSpec}
+          value={shown[name]}
+          automatic={false}
+          animated={false}
+          tried={false}
+          readOnly={readOnly}
+          onPreview={(value) => {
+            setDragged({ [name]: value });
+            keyframes.tuneShaking(clip, path, { [name]: value }, "preview");
+          }}
+          onCommit={(value) => {
+            setDragged(undefined);
+            keyframes.tuneShaking(clip, path, { [name]: value }, "commit");
+          }}
+          onCancel={() => {
+            setDragged(undefined);
+            keyframes.cancelEdits();
+          }}
+        />
+      </label>
+    );
+  };
+  const reroll = t("keyframes.noise.reroll");
+  return (
+    <Bubble
+      anchor={anchor}
+      title={t("keyframes.noise.title")}
+      onClose={onClose}
+      className={styles.bubble}
+    >
+      {/* The focus starts here, not in a number: one Escape closes it, as it does the menu. */}
+      <div className={styles.noise} tabIndex={-1} data-autofocus>
+        {field("amount", amountSpec)}
+        {field("frequency", FREQUENCY_SPEC)}
+        <Tip name={reroll} usage="">
+          <button
+            type="button"
+            className={styles.dice}
+            aria-label={reroll}
+            disabled={readOnly}
+            onClick={() => keyframes.rollShaking(clip, path)}
+          >
+            <Dice5 size={16} />
+          </button>
+        </Tip>
+      </div>
+      <div className={styles.noiseEnd}>
+        <button
+          type="button"
+          className={styles.remove}
+          disabled={readOnly}
+          onClick={() => {
+            keyframes.stopShaking(clip, path);
+            onClose();
+          }}
+        >
+          {t("keyframes.noise.remove")}
+        </button>
+      </div>
+    </Bubble>
   );
 }
 

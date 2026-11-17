@@ -130,7 +130,7 @@ import {
 } from "./project-edits.ts";
 import { deepEqual } from "./patch.ts";
 import { StorageChange, setStorage } from "./places.ts";
-import { PropertyEdit, applyEdit } from "./property-edit.ts";
+import { PropertyEdit, applyEdit, editContextOf } from "./property-edit.ts";
 import { PropertyRename, convertedValue, movesOf } from "./rename.ts";
 import { isInUse } from "./references.ts";
 import { SourceReplace, removeUses, replaceSource } from "./resource-edits.ts";
@@ -587,7 +587,7 @@ function editProperties(draft: Draft, timeline: string, edits: readonly Property
     const values = changes.get(clip.id) ?? new Map<string, PropertyValue | undefined>();
     changes.set(clip.id, values);
     const before = values.has(path) ? values.get(path) : entryOf(clip.properties, path);
-    values.set(path, applyEdit(before, edit));
+    values.set(path, applyEdit(before, edit, editContextOf(draft.state, clip, path)));
   }
   for (const [id, values] of changes) {
     const clip = entryOf(target.clips, id) as ClipState;

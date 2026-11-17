@@ -87,6 +87,12 @@ export const INVALID_VALUE_TEXTS: RuleTexts = {
     `There is no preset ${JSON.stringify(preset)}: the Key of topic "types/PropertyValue" lists them.`,
   "preset-params": ({ ease }) =>
     `${ease} lacks what it needs or has a value out of range: the Key of topic "types/PropertyValue" says what it takes.`,
+  "extend-needs-keys": ({ path }) =>
+    `${path} has no keyframes, so there is no before or after: setKey first.`,
+  "continue-needs-numbers": ({ path }) =>
+    `"continue" goes on at the slope of the ends, which only a number or an angle has; ${path} is not one: "hold", "loop" or "pingpong" work.`,
+  "noise-needs-numbers": ({ path }) =>
+    `Only numbers, angles and vectors shake; ${path} is not one of them, or has no value to start from yet (setKey one first).`,
   "effect-outside": () =>
     "An effect has to work within its clip: start and end are from its start.",
   "effect-backwards": () => "The start of an effect has to come before its end.",

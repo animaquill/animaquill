@@ -40,9 +40,10 @@ import type { Tool } from "./types.ts";
  * rippleTracks, and clip.trim together, ripple and rippleTracks, and took 70 037 (2026-11-17);
  * 2026.14 added clip.slip, clip.slide and clip.roll, and took 72 022 (2026-11-17); 2026.15 gave
  * keys presetParams, and took 72 208 (2026-11-17); 2026.16 gave setInterp springs and presets, and
- * took 72 819 (2026-11-17). It is a ceiling, so that the list does not grow unnoticed.
+ * took 72 819 (2026-11-17); 2026.17 added setExtend and setNoise to property.edit, and took 73 673
+ * (2026-11-17). It is a ceiling, so that the list does not grow unnoticed.
  */
-const MOST_CHARACTERS = 73_000;
+const MOST_CHARACTERS = 74_000;
 
 const listOf = (tools: Iterable<Tool>) =>
   [...tools].map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));

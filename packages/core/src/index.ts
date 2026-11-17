@@ -116,10 +116,14 @@ export {
 } from "./registration.ts";
 export {
   KeyEase,
+  NoiseEdit,
   PropertyEdit,
   applyEdit,
+  editContextOf,
   firstKeyFrom,
+  seedOf,
   withoutEase,
+  type EditContext,
   type ValueEdit,
 } from "./property-edit.ts";
 export * from "./problems/index.ts";

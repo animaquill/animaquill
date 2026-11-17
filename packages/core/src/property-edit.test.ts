@@ -907,3 +907,166 @@ describe("presets and springs through property.edit", () => {
     });
   });
 });
+
+describe("before, after and shaking through property.edit", () => {
+  /** A clip with x going from 0 to 100 in two seconds. */
+  function moving() {
+    const { store, edit, value, owner, failure, run } = setup();
+    const x = { owner, path: "transform.x" };
+    edit({ ...x, op: "set", value: straight });
+    const animation = (path = "transform.x") => value(path) as Animation;
+    return { store, edit, value, owner, failure, run, x, animation };
+  }
+
+  const tint: Animation = {
+    keys: [
+      { time: "0", value: "#ff0000" },
+      { time: "1", value: "#0000ff" },
+    ],
+  };
+
+  it("writes each of the four ways before and after, and holding is not written", () => {
+    const { edit, x, animation } = moving();
+    for (const mode of ["loop", "pingpong", "continue"] as const) {
+      expect(edit({ ...x, op: "setExtend", before: mode, after: mode }).ok).toBe(true);
+      expect(animation()).toMatchObject({ before: mode, after: mode });
+    }
+    expect(edit({ ...x, op: "setExtend", after: "hold" }).ok).toBe(true);
+    expect(animation()).toEqual({ ...straight, before: "continue" });
+    edit({ ...x, op: "setExtend", before: "hold" });
+    expect(animation()).toEqual(straight);
+  });
+
+  it("goes on after the last key the way it says", () => {
+    const { edit, x, animation } = moving();
+    edit({ ...x, op: "setExtend", after: "loop" });
+    const channel = compileChannel(animation(), "number");
+    if (!channel) throw new Error("no channel");
+    expect(sample(channel, 3)).toBeCloseTo(10, 9);
+    edit({ ...x, op: "setExtend", after: "continue" });
+    expect(sample(compileChannel(animation(), "number") as never, 3)).toBeCloseTo(30, 9);
+  });
+
+  it("refuses to go on with a color, without keys, and without saying which side", () => {
+    const { edit, failure, owner, animation } = moving();
+    const color = { owner, path: "param.tint" };
+    edit({ ...color, op: "set", value: tint });
+    expect(failure(edit({ ...color, op: "setExtend", after: "continue" })).params).toEqual({
+      rule: "continue-needs-numbers",
+      path: "param.tint",
+    });
+    // A color goes around like anything else.
+    expect(edit({ ...color, op: "setExtend", after: "loop" }).ok).toBe(true);
+    // Vectors hold where they would go on, so they cannot say so either.
+    const list = { owner, path: "param.points" };
+    edit({ ...list, op: "set", value: { keys: [{ time: "0", value: [1, 2] }] } });
+    expect(failure(edit({ ...list, op: "setExtend", before: "continue" })).params).toMatchObject({
+      rule: "continue-needs-numbers",
+    });
+    const plain = { owner, path: "opacity" };
+    edit({ ...plain, op: "set", value: 0.5 });
+    expect(failure(edit({ ...plain, op: "setExtend", after: "loop" })).params).toEqual({
+      rule: "extend-needs-keys",
+      path: "opacity",
+    });
+    expect(failure(edit({ ...plain, op: "setExtend" })).code).toBe("invalid-params");
+    expect(animation()).toEqual(straight);
+  });
+
+  it("adds, changes and takes away shaking, and keeps what a change leaves out", () => {
+    const { edit, x, animation } = moving();
+    expect(edit({ ...x, op: "setNoise", noise: { amount: 5, frequency: 2, seed: 7 } }).ok).toBe(
+      true,
+    );
+    expect(animation().modifiers).toEqual([{ type: "noise", amount: 5, frequency: 2, seed: 7 }]);
+    edit({ ...x, op: "setNoise", noise: { amount: 8 } });
+    expect(animation().modifiers).toEqual([{ type: "noise", amount: 8, frequency: 2, seed: 7 }]);
+    edit({ ...x, op: "setNoise", noise: { amount: 8, seed: 9 } });
+    expect(animation().modifiers).toEqual([{ type: "noise", amount: 8, frequency: 2, seed: 9 }]);
+    edit({ ...x, op: "setNoise", noise: null });
+    expect(animation()).toEqual(straight);
+  });
+
+  it("puts a key at the first frame of a clip without keys, with the value it has", () => {
+    const { edit, run, value, store } = moving();
+    run("clip.update", { timeline: "main", clip: "c", changes: { offset: "3/2" } });
+    edit({ owner: { clip: "c" }, path: "opacity", op: "set", value: 0.5 });
+    edit({ owner: { clip: "c" }, path: "opacity", op: "setNoise", noise: { amount: 0.1 } });
+    const shaking = value("opacity") as Animation;
+    expect(shaking.keys).toEqual([{ time: "1.5", value: 0.5 }]);
+    // Nothing written takes the default of the property.
+    edit({
+      owner: { clip: "c" },
+      path: "transform.rotation",
+      op: "setNoise",
+      noise: { amount: 3 },
+    });
+    expect((value("transform.rotation") as Animation).keys).toEqual([{ time: "1.5", value: 0 }]);
+    // Stopping it leaves the key, which is how the property looks now.
+    edit({ owner: { clip: "c" }, path: "opacity", op: "setNoise", noise: null });
+    expect(value("opacity")).toEqual({ keys: [{ time: "1.5", value: 0.5 }] });
+    // Stopping what does not shake changes nothing, and leaves no step.
+    const steps = store.lastStep;
+    edit({ owner: { clip: "c" }, path: "transform.y", op: "setNoise", noise: null });
+    expect(store.lastStep).toBe(steps);
+  });
+
+  it("gives the same seed to the same call, and another one to another clip or path", () => {
+    const seeds = () => {
+      const { edit, owner, value, addClip } = setup();
+      addClip("d", "6");
+      const noise = { amount: 4 };
+      edit(
+        { owner, path: "transform.x", op: "setNoise", noise },
+        { owner, path: "transform.y", op: "setNoise", noise },
+        { owner: { clip: "d" }, path: "transform.x", op: "setNoise", noise },
+      );
+      const seedOf = (path: string, clip = "c") =>
+        (value(path, clip) as Animation).modifiers?.[0]?.seed;
+      return [seedOf("transform.x"), seedOf("transform.y"), seedOf("transform.x", "d")];
+    };
+    const first = seeds();
+    expect(seeds()).toEqual(first);
+    expect(new Set(first).size).toBe(3);
+    for (const seed of first) expect(Number.isInteger(seed)).toBe(true);
+  });
+
+  it("refuses to shake a color, and what has no value to start from", () => {
+    const { edit, failure, owner } = moving();
+    const color = { owner, path: "param.tint" };
+    edit({ ...color, op: "set", value: tint });
+    expect(failure(edit({ ...color, op: "setNoise", noise: { amount: 1 } })).params).toEqual({
+      rule: "noise-needs-numbers",
+      path: "param.tint",
+    });
+    const blend = { owner, path: "blend" };
+    expect(failure(edit({ ...blend, op: "setNoise", noise: { amount: 1 } })).params).toMatchObject({
+      rule: "noise-needs-numbers",
+    });
+    // What a scene describes is not known here, and without a value there is nothing to shake.
+    const unknown = { owner, path: "object.arm.rotation" };
+    expect(
+      failure(edit({ ...unknown, op: "setNoise", noise: { amount: 1 } })).params,
+    ).toMatchObject({ rule: "noise-needs-numbers" });
+    // Vectors shake.
+    const list = { owner, path: "param.points" };
+    edit({ ...list, op: "set", value: [1, 2] });
+    expect(edit({ ...list, op: "setNoise", noise: { amount: 1 } }).ok).toBe(true);
+  });
+
+  it("undo and redo bring back exactly what was there", () => {
+    const { store, edit, x, owner, value } = moving();
+    const before = structuredClone(store.getState());
+    edit(
+      { ...x, op: "setExtend", before: "pingpong", after: "continue" },
+      { ...x, op: "setNoise", noise: { amount: 5, frequency: 2 } },
+      { owner, path: "opacity", op: "setNoise", noise: { amount: 0.1 } },
+    );
+    const after = structuredClone(store.getState());
+    expect(value("opacity")).toMatchObject({ keys: [{ time: "0", value: 1 }] });
+    expect(store.undo().ok).toBe(true);
+    expect(store.getState()).toEqual(before);
+    expect(store.redo().ok).toBe(true);
+    expect(store.getState()).toEqual(after);
+  });
+});

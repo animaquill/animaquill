@@ -97,7 +97,10 @@ describe.each(Array.from({ length: 12 }, (_, i) => i + 1))(
       expect(wrote).toBeGreaterThan(30);
       // Its base is still the project of then.
       expect(copy.baseState()).toEqual(before.state);
-      expect([...copy.baseFiles()].join("\n\n")).toBe(before.exported);
+      // File by file, to the byte: the order of a map of files says nothing about them.
+      const byPath = (files: Iterable<[string, string]>) =>
+        [...files].toSorted(([a], [b]) => a.localeCompare(b));
+      expect(byPath(copy.baseFiles())).toEqual(byPath(source.exportFiles().files));
       copy.discard();
       expect(snapshot(source)).toEqual(before);
     });

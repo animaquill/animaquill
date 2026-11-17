@@ -10,8 +10,9 @@ import {
   PinOff,
   TriangleAlert,
   UnfoldVertical,
+  Waves,
 } from "lucide-react";
-import { memo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
+import { memo, useCallback, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { PopupMenu } from "../app/Menu.tsx";
 import { Tip } from "../app/Tip.tsx";
@@ -26,7 +27,9 @@ import {
 } from "../properties/inspect.ts";
 import type { ClipBox } from "../timeline/model.ts";
 import type { KeyArea } from "./area.ts";
+import { NoiseBubble } from "./KeyPopups.tsx";
 import { firstLaneBelow, type Lane } from "./lanes.ts";
+import { extendMenuGroup } from "./shaking.ts";
 import styles from "./LaneRows.module.css";
 
 /** Where a value comes from, which is not the same as what it is. */
@@ -356,8 +359,15 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
   const workbench = useWorkbench();
   const { trials, properties } = workbench;
   const [menu, setMenu] = useState<{ readonly x: number; readonly y: number }>();
+  // Where the bubble of shaking points, while it is open.
+  const [shakingAt, setShakingAt] = useState<DOMRect>();
   const { node, open, canOpen, box } = lane;
   const isProperty = node.kind === "property";
+  const shakes = useSyncExternalStore(
+    keyframes.subscribeView,
+    () =>
+      isProperty && box !== undefined && keyframes.shakingOf(box.id, node.spec.path) !== undefined,
+  );
   const name = keyframes.nameOfLane(lane);
   const label = keyframes.labelOf(lane);
   const component = lane.component?.index;
@@ -369,6 +379,8 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
   // Keys that nothing describes can go somewhere that does, or away.
   const orphan = isProperty && node.orphan === true && box !== undefined;
   const changeable = box !== undefined && keyframes.canMove(box.id);
+
+  const closeShaking = useCallback(() => setShakingAt(undefined), []);
 
   const selectKeys = (event: MouseEvent) => {
     area.selectLane(lane, event.shiftKey || event.ctrlKey || event.metaKey);
@@ -392,7 +404,7 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
           }
         : {})}
       onContextMenu={(event) => {
-        if (!tried && !orphan) return;
+        if (!isProperty || !box) return;
         event.preventDefault();
         setMenu({ x: event.clientX, y: event.clientY });
       }}
@@ -416,9 +428,30 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
         ) : (
           <span className={styles.noChevron} />
         )}
-        <button type="button" className={styles.name} title={label} onClick={selectKeys}>
-          {name}
-        </button>
+        {/* The rest of the room after the name selects too, as the name did when it had all of it. */}
+        <span
+          className={styles.title}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) selectKeys(event);
+          }}
+        >
+          <button type="button" className={styles.name} title={label} onClick={selectKeys}>
+            {name}
+          </button>
+          {shakes && (
+            <Tip name={t("keyframes.noise.title")} usage="">
+              <button
+                type="button"
+                className={styles.shakes}
+                aria-label={t("keyframes.noise.mark", { name: label })}
+                aria-haspopup="dialog"
+                onClick={(event) => setShakingAt(event.currentTarget.getBoundingClientRect())}
+              >
+                <Waves size={11} />
+              </button>
+            </Tip>
+          )}
+        </span>
         {node.kind === "property" && box && (
           <>
             <ValueControl
@@ -453,6 +486,18 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
           x={menu.x}
           y={menu.y}
           groups={[
+            extendMenuGroup(t, {
+              type: node.spec.type,
+              extend: keyframes.extendOf(box.id, node.spec.path),
+              shaking: keyframes.shakingOf(box.id, node.spec.path) !== undefined,
+              changeable,
+              hasValue: keyframes.canStartShaking(box.id, node.spec.path),
+              setExtend: (side, mode) => keyframes.setExtend(box.id, node.spec.path, side, mode),
+              shake: () => {
+                keyframes.shake(box.id, node.spec.path);
+                setShakingAt(new DOMRect(menu.x, menu.y, 0, 0));
+              },
+            }),
             ...(orphan
               ? [
                   [
@@ -487,6 +532,15 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
               : []),
           ]}
           onClose={() => setMenu(undefined)}
+        />
+      )}
+      {shakingAt && box && node.kind === "property" && (
+        <NoiseBubble
+          keyframes={keyframes}
+          clip={box.id}
+          spec={node.spec}
+          anchor={shakingAt}
+          onClose={closeShaking}
         />
       )}
     </div>

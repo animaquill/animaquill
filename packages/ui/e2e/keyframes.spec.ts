@@ -617,6 +617,103 @@ test.describe("with changes written right away", () => {
     await measure(bounce("bounceOut"), OUT);
   });
 
+  test("a turn that loops after its last key keeps turning, and the menu ticks what it does", async ({
+    page,
+  }) => {
+    await addColor(page);
+    await goTo(page, "0:00/00");
+    await keyButton(page, "旋转").click();
+    await goTo(page, "0:01/00");
+    await typeInto(field(page, "旋转"), "90");
+    await animate(page);
+    await open(page, "纯色");
+    await expect(keys(page, "旋转")).toHaveCount(2);
+    const ends = async (side: "开始之前" | "结束之后") => {
+      await row(page, "旋转").click({ button: "right", position: { x: 40, y: 8 } });
+      await page.getByRole("menuitem", { name: side, exact: true }).click();
+      return page.getByRole("menuitemradio");
+    };
+    const after = await ends("结束之后");
+    await expect(after).toHaveText(["保持", "循环", "往复", "延续"]);
+    await expect(after.filter({ hasText: "保持" })).toHaveAttribute("aria-checked", "true");
+    await after.filter({ hasText: "循环" }).click();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+
+    // Half a second after the last key it is half way round again, and further on further.
+    const turned = async (time: string, expected: number) => {
+      await goTo(page, time);
+      await expect
+        .poll(async () => Math.abs(parseFloat(await value(page, "旋转").inputValue()) - expected))
+        .toBeLessThan(0.01);
+    };
+    await turned("0:01/15", 45);
+    await turned("0:01/24", 72);
+    await turned("0:02/15", 45);
+    const again = await ends("结束之后");
+    await expect(again.filter({ hasText: "循环" })).toHaveAttribute("aria-checked", "true");
+    await expect(again.filter({ hasText: "保持" })).toHaveAttribute("aria-checked", "false");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await page.keyboard.press("Control+z");
+    await turned("0:02/15", 90);
+  });
+
+  test("shaking starts from the menu with a key at the first frame, and exports the same twice", async ({
+    page,
+  }) => {
+    await addColor(page);
+    await animate(page);
+    await open(page, "纯色");
+    await open(page, "位置");
+    await expect(keys(page, "位置 X")).toHaveCount(0);
+    const mark = row(page, "位置 X").getByRole("button", { name: /^抖动：/ });
+    await expect(mark).toHaveCount(0);
+    await row(page, "位置 X").click({ button: "right", position: { x: 40, y: 8 } });
+    await page.getByRole("menuitem", { name: "抖动…", exact: true }).click();
+    const bubble = page.getByRole("dialog", { name: "抖动" });
+    await expect(bubble.getByRole("spinbutton", { name: "幅度" })).toHaveValue("20");
+    await expect(bubble.getByRole("spinbutton", { name: "频率" })).toHaveValue("2 Hz");
+    await expect(keys(page, "位置 X")).toHaveCount(1);
+    await expect(mark).toHaveCount(1);
+
+    await page.keyboard.press("Escape");
+    await expect(bubble).toHaveCount(0);
+    await goTo(page, "0:01/07");
+    const shaken = async () => Number(await value(page, "位置 X").inputValue());
+    await expect.poll(async () => Math.abs(await shaken())).toBeGreaterThan(0.1);
+    const before = await shaken();
+    const exported = async () => {
+      const download = page.waitForEvent("download");
+      await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
+      await page
+        .getByRole("menu")
+        .getByRole("menuitem", { name: "导出当前帧", exact: true })
+        .click();
+      const stream = await (await download).createReadStream();
+      const chunks: Buffer[] = [];
+      for await (const chunk of stream) chunks.push(chunk as Buffer);
+      return Buffer.concat(chunks);
+    };
+    const first = await exported();
+    const second = await exported();
+    expect(first.length).toBeGreaterThan(1000);
+    expect(first.equals(second)).toBe(true);
+
+    // The mark opens the same bubble; new dice shake another way, as far and as often.
+    await mark.click();
+    await bubble.getByRole("button", { name: "换一组" }).click();
+    await expect.poll(shaken).not.toBe(before);
+    await expect(bubble.getByRole("spinbutton", { name: "幅度" })).toHaveValue("20");
+    await expect(bubble.getByRole("spinbutton", { name: "频率" })).toHaveValue("2 Hz");
+    await bubble.getByRole("button", { name: "去掉抖动" }).click();
+    await expect(bubble).toHaveCount(0);
+    await expect(mark).toHaveCount(0);
+    // The key it put in stays, with the value there was.
+    await expect(keys(page, "位置 X")).toHaveCount(1);
+    await expect.poll(shaken).toBe(0);
+  });
+
   test("a handle of a selected key bends the curve, and the picture follows, in one step", async ({
     page,
   }) => {

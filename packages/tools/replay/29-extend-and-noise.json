@@ -1,0 +1,104 @@
+{
+  "about": "Before, after and shaking (keyframes K4): setExtend makes a turn go on after its last key, setNoise shakes a property without keys from a key at the first frame of the clip and the change line gives the seed; continue on what is no number, and shaking a choice, fail and write nothing.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "property.edit",
+            "timeline": "main",
+            "edits": [
+              {
+                "owner": { "clip": "clip_logo" },
+                "path": "transform.rotation",
+                "op": "set",
+                "value": {
+                  "keys": [
+                    { "time": "0", "value": 0 },
+                    { "time": "2", "value": 360 }
+                  ]
+                }
+              },
+              {
+                "owner": { "clip": "clip_logo" },
+                "path": "transform.rotation",
+                "op": "setExtend",
+                "after": "loop"
+              },
+              {
+                "owner": { "clip": "clip_title" },
+                "path": "transform.y",
+                "op": "setNoise",
+                "noise": { "amount": 12, "frequency": 2 }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": { "ok": true, "lines": ["after loop", "noise 12 at 2/s seed "] }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "property.edit",
+            "timeline": "main",
+            "edits": [
+              {
+                "owner": { "clip": "clip_logo" },
+                "path": "blend",
+                "op": "setNoise",
+                "noise": { "amount": 1 }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": { "error": "invalid-value", "lines": ["blend", "nothing was written"] }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "property.edit",
+            "timeline": "main",
+            "edits": [
+              {
+                "owner": { "clip": "clip_logo" },
+                "path": "opacity",
+                "op": "setExtend",
+                "before": "loop"
+              }
+            ]
+          }
+        ]
+      },
+      "expect": {
+        "error": "invalid-value",
+        "lines": ["opacity", "setKey first", "nothing was written"]
+      }
+    }
+  ],
+  "end": {
+    "files": {
+      "timelines/main/timeline.json": [
+        "\"after\": \"loop\"",
+        "\"type\": \"noise\"",
+        "\"frequency\": 2"
+      ]
+    },
+    "absent": {
+      "timelines/main/timeline.json": ["\"before\": \"loop\""]
+    },
+    "undoAll": true
+  }
+}

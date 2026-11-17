@@ -130,6 +130,8 @@ export const TYPE_PAGES: readonly ManualPage[] = [
       '- "moveKey", moves: [{"from","to"}…]: keys move together, with their easing; a key that stays where one lands goes.',
       '- "putKeys", keys: whole Keys in place of what is at those times; a plain value gives way.',
       '- "setInterp", times, ease: how the keys at times go on to the next. ease is {"interp":"linear"}, {"interp":"hold"}, {"interp":"bezier","out":[x,y],"in"?:[x,y]}, where in goes to the next key, {"interp":"spring","spring":{"stiffness","damping","mass"?}} or {"interp":"preset","preset":<name>,"presetParams"?:{"amplitude"?,"period"?,"steps"?}}, as the Key of topic "types/PropertyValue" has them. A name that is not there fails with unknown-preset; steps without steps, or values out of range, with preset-params. Another ease takes away what the one before said.',
+      '- "setExtend", before?, after?: what the value does before the first key and after the last, at least one of them: "hold" (the default), "loop", "pingpong" or "continue" (only a number or an angle; else continue-needs-numbers). Without keys it fails with extend-needs-keys.',
+      '- "setNoise", noise: {"amount","frequency"?,"seed"?} shakes the value (the modifier of topic "types/PropertyValue"; numbers, angles and vectors, else noise-needs-numbers), and null stops it. What it leaves out stays as the shaking there has it; new shaking without seed gets one from the clip and the path, so the same call shakes the same way, and the change line of the result gives it. A property without keys first gets one at the first frame of the clip, with its value. The editor starts at frequency 2.',
       "",
       "PropertyPath, the path of a property, dotted, each part made of letters, digits, _ and -:",
       "- transform.x, transform.y: the anchor in the world, world units: the origin is the center of the picture, x to the right, y down, and the short side of the picture is 1080.",
@@ -147,6 +149,8 @@ export const TYPE_PAGES: readonly ManualPage[] = [
       '[{"op":"property.edit","timeline":"main","edits":[{"owner":{"clip":"clip_title"},"path":"opacity","op":"clear"},{"owner":{"clip":"clip_logo"},"path":"blend","op":"set","value":"screen"}]}]',
       "A logo that drops in and bounces where it lands, and a title that springs to its place (a duration of 0.5 seconds, wobble 0.4):",
       '[{"op":"property.edit","timeline":"main","edits":[{"owner":{"clip":"clip_logo"},"path":"transform.y","op":"set","value":{"keys":[{"time":"0","value":-600},{"time":"1","value":0}]}},{"owner":{"clip":"clip_logo"},"path":"transform.y","op":"setInterp","times":["0"],"ease":{"interp":"preset","preset":"bounceOut"}},{"owner":{"clip":"clip_title"},"path":"transform.x","op":"set","value":{"keys":[{"time":"0","value":-400},{"time":"1.5","value":0}]}},{"owner":{"clip":"clip_title"},"path":"transform.x","op":"setInterp","times":["0"],"ease":{"interp":"spring","spring":{"stiffness":157.91,"damping":15.08}}}]}]',
+      "A logo that keeps turning after its last key, and a title that wiggles by 12 world units twice a second:",
+      '[{"op":"property.edit","timeline":"main","edits":[{"owner":{"clip":"clip_logo"},"path":"transform.rotation","op":"set","value":{"keys":[{"time":"0","value":0},{"time":"2","value":360}]}},{"owner":{"clip":"clip_logo"},"path":"transform.rotation","op":"setExtend","after":"loop"},{"owner":{"clip":"clip_title"},"path":"transform.y","op":"setNoise","noise":{"amount":12,"frequency":2}}]}]',
     ),
   },
   {

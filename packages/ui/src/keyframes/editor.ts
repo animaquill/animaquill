@@ -7,6 +7,7 @@ import {
   clipOffset,
   clipStart,
   componentOf,
+  componentSpecOf,
   effectiveProperties,
   entryOf,
   firstKeyFrom,
@@ -36,10 +37,12 @@ import {
   formatTime,
   parseTime,
   subtract,
+  type Animation,
   type Key,
   type PropertySpec,
   type PropertyValue,
   type Rational,
+  type Value,
 } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import { inspectProperty, type InspectedProperty } from "../properties/inspect.ts";
@@ -68,6 +71,17 @@ import {
   type TunedEase,
 } from "./easing.ts";
 import { moveEdits, movedSelection, type KeyPreview, type MovingChannel } from "./gestures.ts";
+import {
+  DEFAULT_FREQUENCY,
+  anotherSeed,
+  defaultAmountOf,
+  extendOf,
+  shakingOf,
+  type Extend,
+  type ExtendMode,
+  type ExtendSide,
+  type Shaking,
+} from "./shaking.ts";
 import { tangentOf, withTangent, type TangentMode } from "./handles.ts";
 import {
   DEFAULT_TALL_HEIGHT,
@@ -1214,6 +1228,94 @@ export class KeyframeEditor {
       return [{ owner: { clip }, path, op: "putKeys", keys: [...broken.values()] }, interp];
     });
     if (edits.length > 0) this.#writer.commit(edits);
+  }
+
+  /* Before the first key, after the last, and shaking: about a property, whatever is selected. */
+
+  /** The keys of a property as people see them, also while something is dragged. */
+  #animationOf(clip: string, path: string): Animation | undefined {
+    const box = this.model?.boxes.get(clip);
+    return box && animationIn(this.shownValue(box.clip, path));
+  }
+
+  /** What a property does before its first key and after its last; undefined without keys. */
+  extendOf(clip: string, path: string): Extend | undefined {
+    const animation = this.#animationOf(clip, path);
+    return animation && extendOf(animation);
+  }
+
+  setExtend(clip: string, path: string, side: ExtendSide, mode: ExtendMode): void {
+    if (!this.canMove(clip) || !this.#animationOf(clip, path)) return;
+    this.#writer.commit([{ owner: { clip }, path, op: "setExtend", [side]: mode }]);
+  }
+
+  /** How a property shakes, undefined when it does not. */
+  shakingOf(clip: string, path: string): Shaking | undefined {
+    return shakingOf(this.#animationOf(clip, path));
+  }
+
+  /** Whether there is a value to start shaking from: what the property holds, or its default. */
+  canStartShaking(clip: string, path: string): boolean {
+    const box = this.model?.boxes.get(clip);
+    if (!box) return false;
+    return (this.shownValue(box.clip, path) ?? this.specOf(clip, path)?.default) !== undefined;
+  }
+
+  /**
+   * Starts shaking a property, as far as its unit makes it show, twice a second. A property without
+   * keys gets one at the first frame of its clip with the value it has, in the same step: the format
+   * has shaking on keys, and from then on a change writes a key at the playhead, as with any keys.
+   */
+  shake(clip: string, path: string): void {
+    const box = this.model?.boxes.get(clip);
+    const spec = this.specOf(clip, path);
+    if (!box || !spec || !this.canMove(clip) || this.shakingOf(clip, path)) return;
+    const value = this.shownValue(box.clip, path);
+    const owner = { clip };
+    const edits: PropertyEdit[] = [];
+    if (!animationIn(value)) {
+      const start = value ?? spec.default;
+      if (start === undefined) return;
+      const time = box.clip.offset ?? "0";
+      edits.push({ owner, path, op: "setKey", time, value: start as Value });
+    }
+    const amount = defaultAmountOf(componentSpecOf(spec));
+    edits.push({ owner, path, op: "setNoise", noise: { amount, frequency: DEFAULT_FREQUENCY } });
+    this.#writer.commit(edits);
+  }
+
+  /**
+   * Changes some of how a property shakes and keeps the rest: new dice keep the amount and the
+   * frequency. `preview` only shows it, as dragging a number does.
+   */
+  tuneShaking(
+    clip: string,
+    path: string,
+    change: Partial<Shaking>,
+    mode: "preview" | "commit",
+  ): void {
+    const now = this.shakingOf(clip, path);
+    if (!now || !this.canMove(clip)) return;
+    const edit: PropertyEdit = {
+      owner: { clip },
+      path,
+      op: "setNoise",
+      noise: { ...now, ...change },
+    };
+    if (mode === "preview") this.#writer.preview([edit]);
+    else this.#writer.commit([edit]);
+  }
+
+  /** Shakes another way, as much and as often. */
+  rollShaking(clip: string, path: string, random?: () => number): void {
+    const now = this.shakingOf(clip, path);
+    if (now) this.tuneShaking(clip, path, { seed: anotherSeed(now.seed, random) }, "commit");
+  }
+
+  /** No more shaking. The keys stay, also the one that shaking put in. */
+  stopShaking(clip: string, path: string): void {
+    if (!this.canMove(clip) || !this.shakingOf(clip, path)) return;
+    this.#writer.commit([{ owner: { clip }, path, op: "setNoise", noise: null }]);
   }
 
   /** The keys of a property of a clip as people see them, with where the selected ones are. */

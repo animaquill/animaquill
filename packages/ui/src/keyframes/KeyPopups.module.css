@@ -82,3 +82,52 @@
 .number input {
   width: 64px;
 }
+
+/* How a property shakes: two numbers and the dice in a row, and the way out under them. */
+.noise {
+  display: flex;
+  gap: 6px 12px;
+  align-items: center;
+  outline: none;
+}
+
+.dice {
+  display: grid;
+  place-items: center;
+  width: calc(28px * var(--aq-size-scale));
+  height: calc(28px * var(--aq-size-scale));
+  padding: 0;
+  color: var(--aq-text);
+  background: none;
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.dice:hover:not(:disabled) {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.noiseEnd {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 8px;
+  margin-top: 8px;
+  border-top: 1px solid var(--aq-border);
+}
+
+.remove {
+  padding: 2px 8px;
+  color: var(--aq-text);
+  font-size: var(--aq-font-12);
+  background: none;
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.remove:hover:not(:disabled) {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}

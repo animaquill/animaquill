@@ -74,7 +74,7 @@
       "expect": {
         "error": "invalid-params",
         "lines": [
-          "edits[0].op: expected one of \"write\", \"setKey\", \"removeKey\", \"moveKey\", \"setInterp\", \"putKeys\", \"set\", \"clear\", got the string \"addKey\"",
+          "edits[0].op: expected one of \"write\", \"setKey\", \"removeKey\", \"moveKey\", \"setInterp\", \"putKeys\", \"setExtend\", \"setNoise\", \"set\", \"clear\", got the string \"addKey\"",
           "shape: property.edit {timeline, edits:[PropertyEdit]}"
         ]
       }

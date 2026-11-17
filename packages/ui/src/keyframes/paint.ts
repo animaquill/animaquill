@@ -51,6 +51,9 @@ const VALUE_LABEL_MARGIN = 4;
 const VALUE_LABEL_OFFSET = 7;
 const MIN_SEGMENT_LABEL = 24;
 const TRIMMED_ALPHA = 0.4;
+/** The line between keys under what shakes. */
+const STEADY_ALPHA = 0.7;
+const STEADY_WIDTH = 1;
 const GHOST_ALPHA = 0.35;
 const CLIP_SPAN_ALPHA = 0.18;
 const SEGMENT_ALPHA = 0.5;
@@ -97,6 +100,18 @@ class Marks {
     }
     context.globalAlpha = before;
   }
+}
+
+const steadies = new WeakMap<Animation, Animation>();
+
+/** Keys without their shaking, the same object for the same keys, so that its curve is kept. */
+function steadyOf(animation: Animation): Animation {
+  let known = steadies.get(animation);
+  if (!known) {
+    const { modifiers: _modifiers, ...rest } = animation;
+    steadies.set(animation, (known = rest));
+  }
+  return known;
 }
 
 /** A stretch of the screen. */
@@ -450,17 +465,36 @@ export class LanePainter {
     context.rect(0, y, area.width, height);
     context.clip();
     context.strokeStyle = theme.curve;
-    context.lineWidth = CURVE_WIDTH;
     context.lineJoin = "round";
     const alpha = context.globalAlpha;
+    // What shakes keeps the line between its keys without shaking, thin and faint, which is where
+    // the keys are.
+    const steady = channel.kind === "curve" && channel.noise.length > 0 && steadyOf(animation);
+    const steadyChannel = steady && channelOf(steady, channel.type);
+    if (steadyChannel) {
+      const line = new Path2D();
+      traceCurve(line, steadyChannel, place, area.xAt(left), area.xAt(right));
+      context.strokeStyle = theme.label;
+      context.lineWidth = STEADY_WIDTH;
+      context.globalAlpha = alpha * STEADY_ALPHA;
+      context.stroke(line);
+      context.strokeStyle = theme.curve;
+    }
+    context.lineWidth = CURVE_WIDTH;
     context.globalAlpha = alpha * TRIMMED_ALPHA;
     context.stroke(path);
-    const inside = area.xAt(box.start);
-    context.beginPath();
-    context.rect(inside, y, area.xAt(box.end) - inside, height);
-    context.clip();
-    context.globalAlpha = alpha;
-    context.stroke(path);
+    // Full only between the keys, inside the clip: before the first key and after the last it is
+    // what the property does there, which is faint like what the clip does not show. Shaking is
+    // the same all through the clip, and the line under it shows where the keys end.
+    const inside = area.xAt(steadyChannel ? box.start : Math.max(box.start, firstKey));
+    const outside = area.xAt(steadyChannel ? box.end : Math.min(box.end, lastKey));
+    if (outside > inside) {
+      context.beginPath();
+      context.rect(inside, y, outside - inside, height);
+      context.clip();
+      context.globalAlpha = alpha;
+      context.stroke(path);
+    }
     context.restore();
   }
 

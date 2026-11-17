@@ -1,6 +1,7 @@
 import {
   CommandError,
   applyEdit,
+  editContextOf,
   effectiveProperties,
   entryOf,
   hasAutoTangents,
@@ -111,6 +112,10 @@ export class PropertyWriter {
     return entryOf(effectiveProperties(this.#trials.look?.apply(clip) ?? clip), path);
   }
 
+  #contextOf(clip: ClipState, path: string) {
+    return editContextOf(this.#session.store?.getState(), clip, path);
+  }
+
   /** Shows what these edits would do, instead of what they showed so far. */
   preview(edits: readonly PropertyEdit[]): void {
     const clips = this.#timeline.model?.state.clips;
@@ -123,7 +128,7 @@ export class PropertyWriter {
       previewed.set(clip.id, values);
       const before = values.has(path) ? values.get(path) : this.#shown(clip, path);
       try {
-        values.set(path, applyEdit(before, edit));
+        values.set(path, applyEdit(before, edit, this.#contextOf(clip, path)));
       } catch (error) {
         // Somebody else took that key away. The command says so if it comes to that.
         if (!(error instanceof CommandError)) throw error;
@@ -162,7 +167,7 @@ export class PropertyWriter {
       if (!hasAutoTangents(before) && !own.some(bringsAutoKeys)) continue;
       let after = before;
       try {
-        for (const edit of own) after = applyEdit(after, edit);
+        for (const edit of own) after = applyEdit(after, edit, this.#contextOf(clip, path));
       } catch (error) {
         if (!(error instanceof CommandError)) throw error;
         continue;

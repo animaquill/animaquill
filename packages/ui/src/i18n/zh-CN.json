@@ -645,6 +645,9 @@
       "key-moved-twice": "同一个关键帧不能移动两次：{{time}}",
       "unknown-preset": "没有叫 {{preset}} 的缓动预设",
       "preset-params": "{{ease}} 的参数缺了或超出范围",
+      "extend-needs-keys": "{{path}} 没有关键帧，没有开始之前和结束之后",
+      "continue-needs-numbers": "只有数字和角度能延续：{{path}} 不是",
+      "noise-needs-numbers": "只有数字、角度和向量能抖动：{{path}} 不是，或者还没有值",
       "effect-outside": "效果的生效时间要在片段之内",
       "effect-backwards": "效果的开始要在结束之前",
       "replace-same": "换成的{{kind}}和原来的是同一个：{{id}}",
@@ -2167,6 +2170,23 @@
       "steps": "格数",
       "wobble": "晃动",
       "duration": "时长"
+    },
+    "extend": {
+      "before": "开始之前",
+      "after": "结束之后",
+      "hold": "保持",
+      "loop": "循环",
+      "pingpong": "往复",
+      "continue": "延续"
+    },
+    "noise": {
+      "action": "抖动…",
+      "title": "抖动",
+      "mark": "抖动：{{name}}",
+      "amount": "幅度",
+      "frequency": "频率",
+      "reroll": "换一组",
+      "remove": "去掉抖动"
     },
     "keyLabel": "{{name}}，{{time}}",
     "selectRow": "选中这一行",

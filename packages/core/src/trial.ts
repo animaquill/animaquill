@@ -30,7 +30,7 @@ function hasOwner(clip: ClipState, path: string): boolean {
   return of === undefined || typeof entryOf(clip.effects, of.effect)?.type === "string";
 }
 import { deepEqual } from "./patch.ts";
-import { PropertyEdit, applyEdit } from "./property-edit.ts";
+import { PropertyEdit, applyEdit, editContextOf } from "./property-edit.ts";
 import { convertedValue, type Conversion } from "./rename.ts";
 import { effectiveProperties } from "./render-plan.ts";
 import { USER, type CommandFailure, type ProjectStore } from "./store.ts";
@@ -589,7 +589,7 @@ export class Trial {
       const touched = values.get(clip.id) ?? new Map<string, PropertyValue | undefined>();
       values.set(clip.id, touched);
       const start = touched.has(path) ? touched.get(path) : this.#shown(clip, path);
-      touched.set(path, applyEdit(start, edit));
+      touched.set(path, applyEdit(start, edit, editContextOf(this.#store.getState(), clip, path)));
     }
     return values;
   }

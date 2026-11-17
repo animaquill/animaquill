@@ -97,6 +97,12 @@ export const InvalidValue = z.discriminatedUnion("rule", [
   z.strictObject({ rule: z.literal("unknown-preset"), preset: z.string() }),
   /** A preset or a spring (`ease` is its name, or "spring") without what it needs, or out of range. */
   z.strictObject({ rule: z.literal("preset-params"), ease: z.string() }),
+  /** Only a property with keys does something before the first and after the last. */
+  z.strictObject({ rule: z.literal("extend-needs-keys"), path: z.string() }),
+  /** Going on at the slope of the ends needs a single number, such as a position or an angle. */
+  z.strictObject({ rule: z.literal("continue-needs-numbers"), path: z.string() }),
+  /** Shaking needs numbers, angles or vectors, and a value to start from. */
+  z.strictObject({ rule: z.literal("noise-needs-numbers"), path: z.string() }),
   /** An effect works within its clip. */
   z.strictObject({ rule: z.literal("effect-outside") }),
   /** An effect starts before it ends. */

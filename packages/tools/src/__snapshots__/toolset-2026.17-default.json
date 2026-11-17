@@ -2250,7 +2250,7 @@
           "type": "string"
          },
          "edits": {
-          "description": "Each {\"owner\":{\"clip\":id},\"path\",…,\"op\"}: \"set\" a value or keyframes, \"clear\", \"write\" at a time, or \"setKey\", \"removeKey\", \"moveKey\", \"putKeys\", \"setInterp\".",
+          "description": "Each {\"owner\":{\"clip\":id},\"path\",…,\"op\"}: \"set\" a value or keyframes, \"clear\", \"write\" at a time, or \"setKey\", \"removeKey\", \"moveKey\", \"putKeys\", \"setInterp\", \"setExtend\", \"setNoise\".",
           "minItems": 1,
           "type": "array",
           "items": {
@@ -3138,6 +3138,104 @@
           "path",
           "op",
           "keys"
+         ]
+        },
+        {
+         "type": "object",
+         "properties": {
+          "owner": {
+           "type": "object",
+           "properties": {
+            "clip": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "clip"
+           ]
+          },
+          "path": {
+           "$ref": "#/properties/operations/$defs/PropertyPath"
+          },
+          "op": {
+           "const": "setExtend"
+          },
+          "before": {
+           "type": "string",
+           "enum": [
+            "hold",
+            "loop",
+            "pingpong",
+            "continue"
+           ]
+          },
+          "after": {
+           "type": "string",
+           "enum": [
+            "hold",
+            "loop",
+            "pingpong",
+            "continue"
+           ]
+          }
+         },
+         "required": [
+          "owner",
+          "path",
+          "op"
+         ]
+        },
+        {
+         "type": "object",
+         "properties": {
+          "owner": {
+           "type": "object",
+           "properties": {
+            "clip": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "clip"
+           ]
+          },
+          "path": {
+           "$ref": "#/properties/operations/$defs/PropertyPath"
+          },
+          "op": {
+           "const": "setNoise"
+          },
+          "noise": {
+           "anyOf": [
+            {
+             "type": "object",
+             "properties": {
+              "amount": {
+               "type": "number"
+              },
+              "frequency": {
+               "type": "number",
+               "exclusiveMinimum": 0
+              },
+              "seed": {
+               "type": "integer"
+              }
+             },
+             "required": [
+              "amount"
+             ]
+            },
+            {
+             "type": "null"
+            }
+           ]
+          }
+         },
+         "required": [
+          "owner",
+          "path",
+          "op",
+          "noise"
          ]
         },
         {

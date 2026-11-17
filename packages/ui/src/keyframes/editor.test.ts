@@ -999,6 +999,82 @@ describe("what else can be done to keys", () => {
     expect(tuned(Y)?.wobble).toBeCloseTo(0.2, 9);
   });
 
+  describe("before, after and shaking", () => {
+    const R = "transform.rotation";
+    /** A property of clip "a" as people see it. */
+    const shownOf = (
+      { keyframes, timeline }: Awaited<ReturnType<typeof keyed>>,
+      path: string,
+    ): Animation | undefined => {
+      const box = timeline.model?.boxes.get("a");
+      if (!box) throw new Error("no clip");
+      return (keyframes.shown(box.clip).properties ?? {})[path] as Animation | undefined;
+    };
+
+    it("says what a property does at its ends, and changes one end as one step", async () => {
+      const setting = await keyed();
+      const { keyframes, trials } = setting;
+      expect(keyframes.extendOf("a", X)).toEqual({ before: "hold", after: "hold" });
+      expect(keyframes.extendOf("a", R)).toBeUndefined();
+      keyframes.setExtend("a", X, "after", "loop");
+      expect(keyframes.extendOf("a", X)).toEqual({ before: "hold", after: "loop" });
+      keyframes.setExtend("a", X, "before", "continue");
+      expect(shownOf(setting, X)).toMatchObject({
+        before: "continue",
+        after: "loop",
+      });
+      trials.undo();
+      expect(keyframes.extendOf("a", X)).toEqual({ before: "hold", after: "loop" });
+      // Without keys there are no ends.
+      keyframes.setExtend("a", R, "after", "loop");
+      expect(shownOf(setting, R)).toBeUndefined();
+    });
+
+    it("shakes a property without keys from a key at the first frame, in one step", async () => {
+      const setting = await keyed();
+      const { keyframes, trials } = setting;
+      expect(keyframes.shakingOf("a", R)).toBeUndefined();
+      expect(keyframes.canStartShaking("a", R)).toBe(true);
+      keyframes.shake("a", R);
+      const shaking = shownOf(setting, R) as Animation;
+      expect(shaking.keys).toEqual([{ time: "0", value: 0 }]);
+      expect(shaking.modifiers).toEqual([
+        { type: "noise", amount: 5, frequency: 2, seed: expect.any(Number) },
+      ]);
+      // What the row shows after its name.
+      expect(keyframes.shakingOf("a", R)).toMatchObject({ amount: 5, frequency: 2 });
+      trials.undo();
+      expect(shownOf(setting, R)).toBeUndefined();
+      expect(keyframes.shakingOf("a", R)).toBeUndefined();
+    });
+
+    it("new dice change only the seed, a number previews before it is one step, and it stops", async () => {
+      const { keyframes, writer, trials } = await keyed();
+      keyframes.shake("a", X);
+      const first = keyframes.shakingOf("a", X);
+      if (!first) throw new Error("no shaking");
+      expect(first).toMatchObject({ amount: 20, frequency: 2 });
+      keyframes.rollShaking("a", X, () => 0.5);
+      const rolled = keyframes.shakingOf("a", X);
+      expect(rolled?.seed).not.toBe(first.seed);
+      expect(rolled).toMatchObject({ amount: 20, frequency: 2 });
+
+      keyframes.tuneShaking("a", X, { amount: 40 }, "preview");
+      const previewed = writer.getPreviewed().get("a")?.get(X) as Animation;
+      expect(previewed.modifiers?.[0]).toMatchObject({ amount: 40, seed: rolled?.seed });
+      keyframes.cancelEdits();
+      expect(keyframes.shakingOf("a", X)?.amount).toBe(20);
+      keyframes.tuneShaking("a", X, { amount: 40 }, "commit");
+      expect(keyframes.shakingOf("a", X)).toEqual({ ...rolled, amount: 40 });
+
+      keyframes.stopShaking("a", X);
+      expect(keyframes.shakingOf("a", X)).toBeUndefined();
+      expect(keyframes.extendOf("a", X)).toBeDefined();
+      trials.undo();
+      expect(keyframes.shakingOf("a", X)?.amount).toBe(40);
+    });
+  });
+
   describe("copying", () => {
     it("comes back at the playhead, as far apart as it was, with how it goes on", async () => {
       const { keyframes, click, at, timeline, shownTimes, selected } = await keyed();

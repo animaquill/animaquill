@@ -158,6 +158,9 @@ export function randomEdit(clip: string, random: ReturnType<typeof randomFrom>):
     { owner, path, op: "setInterp", times: [time, moment()], ease: random.pick(EASES) },
     { owner, path, op: "setInterp", times: [time], ease: random.pick(EASES) },
     { owner, path, op: "putKeys", keys: [{ time, value, interp: "hold" }] },
+    { owner, path, op: "setExtend", after: random.pick(["loop", "pingpong", "continue", "hold"]) },
+    { owner, path, op: "setNoise", noise: { amount: value, frequency: 2 } },
+    { owner, path, op: "setNoise", noise: null },
     { owner, path, op: "set", value },
     { owner, path, op: "clear" },
   ];

@@ -5,7 +5,13 @@ const SHOWN_DIGITS = 2;
 /** Enough for anything a person means, and it keeps float noise out of project files. */
 const KEPT_DIGITS = 6;
 /** What one pixel of dragging is worth, by unit. */
-const STEPS: Readonly<Record<string, number>> = { world: 1, deg: 1, ratio: 0.01, count: 0.25 };
+const STEPS: Readonly<Record<string, number>> = {
+  world: 1,
+  deg: 1,
+  ratio: 0.01,
+  count: 0.25,
+  hz: 0.05,
+};
 const DEFAULT_STEP = 0.01;
 
 export interface ScrubKeys {
@@ -29,6 +35,7 @@ export function formatNumber(value: number, spec: PropertySpec): string {
   if (isShare(spec)) return `${fixed(value * 100, SHOWN_DIGITS)}%`;
   if (spec.unit === "deg") return `${fixed(value, SHOWN_DIGITS)}°`;
   if (spec.unit === "s") return `${fixed(value, SHOWN_DIGITS)}s`;
+  if (spec.unit === "hz") return `${fixed(value, SHOWN_DIGITS)} Hz`;
   return String(fixed(value, SHOWN_DIGITS));
 }
 
@@ -47,12 +54,18 @@ export function scrubbed(
   return limited(whole(spec, fixed(start + pixels * step, KEPT_DIGITS)), low, high);
 }
 
+/** What people can type after a number, and leave out just as well. */
+const UNIT_SUFFIXES: Readonly<Record<string, RegExp>> = {
+  s: /(?:s|秒)\s*$/u,
+  hz: /hz\s*$/iu,
+};
+
 /** What people typed, or undefined when it is not a number. Too much becomes the limit. */
 export function parseNumber(text: string, spec: PropertySpec): number | undefined {
   const plain = text
     .normalize("NFKC")
     .replaceAll("−", "-")
-    .replace(spec.unit === "s" ? /(?:s|秒)\s*$/u : /[%°]\s*$/u, "")
+    .replace(UNIT_SUFFIXES[spec.unit ?? ""] ?? /[%°]\s*$/u, "")
     .trim();
   const number = plain === "" ? Number.NaN : Number(plain);
   if (!Number.isFinite(number)) return undefined;

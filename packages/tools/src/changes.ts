@@ -1,4 +1,4 @@
-import { isAnimation } from "@animaquill/schema";
+import { isAnimation, type Animation } from "@animaquill/schema";
 import {
   entryOf,
   objectKey,
@@ -45,12 +45,29 @@ function valueAt(state: ProjectState, path: readonly string[]): unknown {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+/**
+ * Keys in a few words, with what they do before and after and how they shake, which a change of
+ * those alone has to show: the seed is what makes shaking come out again.
+ */
+function animationText({ keys, before, after, modifiers }: Animation): string {
+  const parts = [`${keys.length} keys`];
+  // Holding is what keys do anyway.
+  if (before && before !== "hold") parts.push(`before ${before}`);
+  if (after && after !== "hold") parts.push(`after ${after}`);
+  for (const { amount, frequency, seed } of modifiers ?? []) {
+    parts.push(
+      `noise ${amount}${frequency === undefined ? "" : ` at ${frequency}/s`} seed ${seed}`,
+    );
+  }
+  return `animated (${parts.join(", ")})`;
+}
+
 /** A value in a few characters. */
 export function shortText(value: unknown, field = ""): string {
   if (value === undefined) return "none";
   if (field === "enter" || field === "exit") return transitionText(value as never);
   if (typeof value === "object" && value !== null && isAnimation(value as never)) {
-    return `animated (${(value as { keys: unknown[] }).keys.length} keys)`;
+    return animationText(value as Animation);
   }
   const text = typeof value === "string" ? value : JSON.stringify(value);
   return [...text].length > MAX_TEXT ? `${[...text].slice(0, MAX_TEXT - 1).join("")}…` : text;

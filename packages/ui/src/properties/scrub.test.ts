@@ -101,6 +101,14 @@ describe("dragging a number", () => {
     expect(parseNumber("6.4", steps)).toBe(6);
   });
 
+  it("says how often in hertz, and takes it typed with or without", () => {
+    const often = { path: "frequency", type: "number", unit: "hz", min: 0.01 } as const;
+    expect(formatNumber(2, often)).toBe("2 Hz");
+    expect(parseNumber("3.5 Hz", often)).toBe(3.5);
+    expect(parseNumber("4hz", often)).toBe(4);
+    expect(scrubbed(often, 2, 10, plain)).toBeCloseTo(2.5, 9);
+  });
+
   it("stops at the limits", () => {
     expect(scrubbed(opacity, 0.9, 50, plain)).toBe(1);
     expect(scrubbed(opacity, 0.1, -50, plain)).toBe(0);

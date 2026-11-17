@@ -518,90 +518,102 @@ describe("CloudSession, when the platform came back from a backup", () => {
 });
 
 describe("CloudSession, with what syncing cannot take as it is", () => {
-  it("sends a change larger than one frame in parts (R2)", async () => {
-    const time = new TestTime();
-    const { platform, a } = await start(time);
-    const big = "a".repeat(3 * 1024 * 1024);
-    a.store.execute(writeFile("code/big.js", big));
-    a.store.execute(writeFile("code/small.js", "s"));
-    await time.advance(2000);
-    expect(a.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
-    const files = platform.workingCopy(CLOUD_ID).getState().files;
-    expect(files["code/big.js"]?.length).toBe(big.length);
-    expect(files["code/small.js"]).toBe("s");
-  }, HEAVY);
+  it(
+    "sends a change larger than one frame in parts (R2)",
+    async () => {
+      const time = new TestTime();
+      const { platform, a } = await start(time);
+      const big = "a".repeat(3 * 1024 * 1024);
+      a.store.execute(writeFile("code/big.js", big));
+      a.store.execute(writeFile("code/small.js", "s"));
+      await time.advance(2000);
+      expect(a.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
+      const files = platform.workingCopy(CLOUD_ID).getState().files;
+      expect(files["code/big.js"]?.length).toBe(big.length);
+      expect(files["code/small.js"]).toBe("s");
+    },
+    HEAVY,
+  );
 
-  it("gets a large change and a large first version through a slow line, in parts", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    // A little more than 30 KB a second, both ways: a frame takes about eight seconds.
-    platform.faults.line = { time, bytesPerSecond: 32 * 1024 };
-    const { id, state } = fixtureState();
-    const first = new Browser(platform, "ada");
-    await first.project(id, state);
-    const a = await first.open(id, time, { create: true });
-    opened.push(a);
-    a.store.execute(writeFile("code/first.js", "f".repeat(1024 * 1024)));
-    await time.advance(120_000);
-    expect(a.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
-    a.store.execute(writeFile("code/big.js", "b".repeat(2 * 1024 * 1024)));
-    for (let second = 0; second < 300; second += 10) await time.advance(10_000);
-    expect(a.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
-    expect(platform.workingCopy(CLOUD_ID).getState().files["code/big.js"]?.length).toBe(
-      2 * 1024 * 1024,
-    );
-    // One connection did all of it: nothing was taken for dead on the way.
-    expect(platform.connections).toBe(1);
-    // Another browser gets it all through the same line.
-    const second = new Browser(platform, "ada");
-    await second.project(id, state);
-    const b = await second.open(id, time);
-    opened.push(b);
-    for (let step = 0; step < 300; step += 10) await time.advance(10_000);
-    expect(b.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
-    expect(textOf(b.store, "code/big.js")?.length).toBe(2 * 1024 * 1024);
-    expect(platform.connections).toBe(2);
-  }, HEAVY);
+  it(
+    "gets a large change and a large first version through a slow line, in parts",
+    async () => {
+      const time = new TestTime();
+      const platform = new MemoryPlatform();
+      // A little more than 30 KB a second, both ways: a frame takes about eight seconds.
+      platform.faults.line = { time, bytesPerSecond: 32 * 1024 };
+      const { id, state } = fixtureState();
+      const first = new Browser(platform, "ada");
+      await first.project(id, state);
+      const a = await first.open(id, time, { create: true });
+      opened.push(a);
+      a.store.execute(writeFile("code/first.js", "f".repeat(1024 * 1024)));
+      await time.advance(120_000);
+      expect(a.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
+      a.store.execute(writeFile("code/big.js", "b".repeat(2 * 1024 * 1024)));
+      for (let second = 0; second < 300; second += 10) await time.advance(10_000);
+      expect(a.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
+      expect(platform.workingCopy(CLOUD_ID).getState().files["code/big.js"]?.length).toBe(
+        2 * 1024 * 1024,
+      );
+      // One connection did all of it: nothing was taken for dead on the way.
+      expect(platform.connections).toBe(1);
+      // Another browser gets it all through the same line.
+      const second = new Browser(platform, "ada");
+      await second.project(id, state);
+      const b = await second.open(id, time);
+      opened.push(b);
+      for (let step = 0; step < 300; step += 10) await time.advance(10_000);
+      expect(b.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
+      expect(textOf(b.store, "code/big.js")?.length).toBe(2 * 1024 * 1024);
+      expect(platform.connections).toBe(2);
+    },
+    HEAVY,
+  );
 
-  it("stops at a change larger than the platform takes, and goes on from the project as it is, once that is fixed", async () => {
-    const time = new TestTime();
-    const { platform, a } = await start(time);
-    // A folder brings three large files at once: each one fits, together they are more than a
-    // platform takes in one change.
-    const large = 6 * 1024 * 1024;
-    const merged = a.store.mergeFiles(
-      ["a", "b", "c"].map((name) => ({
-        path: `code/${name}.js`,
-        base: undefined,
-        text: name.repeat(large),
-      })),
-      { origin: folderBatch("1"), baseOf: () => undefined },
-    );
-    expect(merged.ok).toBe(true);
-    await time.advance(2000);
-    expect(a.cloud.getSnapshot()).toMatchObject({
-      state: "paused",
-      problem: { kind: "rejected", reason: "too-large" },
-    });
-    // Everything here goes on.
-    expect(a.store.execute(writeFile("code/after.js", "a")).ok).toBe(true);
-    expect(await a.session.trySave()).toBe(true);
-    // People take one of the files away, and sync again from the project as it is: what was taken
-    // away does not go.
-    expect(a.store.execute(removeFile("code/c.js")).ok).toBe(true);
-    await a.cloud.resyncFromHere();
-    await time.advance(5000);
-    expect(a.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
-    const files = platform.workingCopy(CLOUD_ID).getState().files;
-    expect(files["code/a.js"]?.length).toBe(large);
-    expect(files["code/b.js"]?.length).toBe(large);
-    expect(files["code/c.js"]).toBeUndefined();
-    expect(files["code/after.js"]).toBe("a");
-    // And on from there, as ever.
-    a.store.execute(writeFile("code/later.js", "l"));
-    await time.advance(2000);
-    expect(platform.workingCopy(CLOUD_ID).getState().files["code/later.js"]).toBe("l");
-  }, HEAVY);
+  it(
+    "stops at a change larger than the platform takes, and goes on from the project as it is, once that is fixed",
+    async () => {
+      const time = new TestTime();
+      const { platform, a } = await start(time);
+      // A folder brings three large files at once: each one fits, together they are more than a
+      // platform takes in one change.
+      const large = 6 * 1024 * 1024;
+      const merged = a.store.mergeFiles(
+        ["a", "b", "c"].map((name) => ({
+          path: `code/${name}.js`,
+          base: undefined,
+          text: name.repeat(large),
+        })),
+        { origin: folderBatch("1"), baseOf: () => undefined },
+      );
+      expect(merged.ok).toBe(true);
+      await time.advance(2000);
+      expect(a.cloud.getSnapshot()).toMatchObject({
+        state: "paused",
+        problem: { kind: "rejected", reason: "too-large" },
+      });
+      // Everything here goes on.
+      expect(a.store.execute(writeFile("code/after.js", "a")).ok).toBe(true);
+      expect(await a.session.trySave()).toBe(true);
+      // People take one of the files away, and sync again from the project as it is: what was taken
+      // away does not go.
+      expect(a.store.execute(removeFile("code/c.js")).ok).toBe(true);
+      await a.cloud.resyncFromHere();
+      await time.advance(5000);
+      expect(a.cloud.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
+      const files = platform.workingCopy(CLOUD_ID).getState().files;
+      expect(files["code/a.js"]?.length).toBe(large);
+      expect(files["code/b.js"]?.length).toBe(large);
+      expect(files["code/c.js"]).toBeUndefined();
+      expect(files["code/after.js"]).toBe("a");
+      // And on from there, as ever.
+      a.store.execute(writeFile("code/later.js", "l"));
+      await time.advance(2000);
+      expect(platform.workingCopy(CLOUD_ID).getState().files["code/later.js"]).toBe("l");
+    },
+    HEAVY,
+  );
 
   it("stops at what the platform sends that is larger than it takes, rather than asking again and again", async () => {
     const time = new TestTime();

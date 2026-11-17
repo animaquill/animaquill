@@ -76,7 +76,8 @@ export const Key = z
     if (key.interp === "spring") needs("spring", "弹簧关键帧要写 spring 参数");
   });
 
-const Extrapolation = z.enum(["hold", "loop", "pingpong", "continue"]);
+/** What a value does before the first key and after the last one, see the project format. */
+export const Extrapolation = z.enum(["hold", "loop", "pingpong", "continue"]);
 
 /** Random shaking on top of the keys. The seed is required: rendering has to be repeatable. */
 export const Modifier = z.strictObject({

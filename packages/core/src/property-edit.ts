@@ -1,4 +1,6 @@
 import {
+  BUILT_IN_PROPERTIES,
+  Extrapolation,
   Handle,
   Id,
   Key,
@@ -8,15 +10,21 @@ import {
   Spring,
   Time,
   Value,
+  builtInEffect,
   compare,
+  effectOfPath,
   isAnimation,
+  parameterOf,
   parseTime,
   toSeconds,
   type Animation,
   type Rational,
+  type ValueType,
 } from "@animaquill/schema";
 import { z } from "zod";
 import {
+  canShake,
+  isNumeric,
   joinBezier,
   presetProblem,
   springOf,
@@ -25,6 +33,7 @@ import {
   type KeyPoint,
 } from "./curve.ts";
 import { fail } from "./draft.ts";
+import { effectsOf, entryOf, type ClipState, type ProjectState } from "./model.ts";
 
 /** Whose property it is. Tracks and effects get their own shape of this later. */
 const Target = { owner: z.strictObject({ clip: Id }), path: PropertyPath };
@@ -50,6 +59,13 @@ export type KeyEase = z.output<typeof KeyEase>;
 
 const KeyMove = z.strictObject({ from: Time, to: Time });
 
+/** Shaking as `setNoise` writes it. What it leaves out stays as the shaking there has it. */
+export const NoiseEdit = z.strictObject({
+  amount: z.number(),
+  frequency: z.number().positive().optional(),
+  seed: z.number().int().optional(),
+});
+
 /**
  * One change to one property. Times are readings of the clock of the clip, like the keys themselves.
  *
@@ -60,6 +76,9 @@ const KeyMove = z.strictObject({ from: Time, to: Time });
  *   one lands goes. They take their easing along.
  * - `setInterp` says how keys get to the next one, which for a bezier also goes for how it arrives.
  * - `putKeys` puts whole keys in, instead of what is at those moments. A plain value gives way.
+ * - `setExtend` says what the value does before the first key and after the last one.
+ * - `setNoise` shakes the value, or stops it with null. A property without keys gets one at the first
+ *   frame of the clip, as the format has shaking on keys.
  * - `set` replaces the whole property, `clear` takes it away.
  */
 export const PropertyEdit = z.discriminatedUnion("op", [
@@ -74,6 +93,17 @@ export const PropertyEdit = z.discriminatedUnion("op", [
     ease: KeyEase,
   }),
   z.strictObject({ ...Target, op: z.literal("putKeys"), keys: z.array(Key).min(1) }),
+  z
+    .strictObject({
+      ...Target,
+      op: z.literal("setExtend"),
+      before: Extrapolation.optional(),
+      after: Extrapolation.optional(),
+    })
+    .refine(({ before, after }) => before !== undefined || after !== undefined, {
+      message: "setExtend 至少要写 before 或 after",
+    }),
+  z.strictObject({ ...Target, op: z.literal("setNoise"), noise: NoiseEdit.nullable() }),
   z.strictObject({ ...Target, op: z.literal("set"), value: PropertyValue }),
   z.strictObject({ ...Target, op: z.literal("clear") }),
 ]);
@@ -300,14 +330,161 @@ function withEase(
 
 const NO_KEYS: Animation = { keys: [] };
 
+/** What `setExtend` and `setNoise` need to know of the property, besides its value. */
+export interface EditContext {
+  readonly path: string;
+  /** The reading of the clock of the clip at its first frame, where a first key goes. */
+  readonly firstFrame: string;
+  /** The seed of shaking that does not say one, the same for the same clip and path. */
+  readonly seed: number;
+  /** What the property holds, when that is known without running a scene. */
+  readonly type?: ValueType | undefined;
+  /** What it is without a value of its own, when that is known. */
+  readonly fallback?: Value | undefined;
+}
+
+/** Seeds that people can read and type. */
+const SEEDS = 1_000_000;
+
+/** A seed from the clip and the path (FNV-1a), so that the same call gives the same shaking. */
+export function seedOf(clip: string, path: string): number {
+  let hash = 0x811c9dc5;
+  for (const char of `${clip} ${path}`) {
+    hash = Math.imul(hash ^ (char.codePointAt(0) as number), 0x01000193);
+  }
+  return (hash >>> 0) % SEEDS;
+}
+
+/** What a property of a clip is, as far as the format, its effects and the manifest of its scene or sound say. */
+function specOf(state: ProjectState | undefined, clip: ClipState, path: string) {
+  if (Object.hasOwn(BUILT_IN_PROPERTIES, path)) return BUILT_IN_PROPERTIES[path];
+  const of = effectOfPath(path);
+  if (of) {
+    const effect = effectsOf(clip).find(({ id }) => id === of.effect);
+    const spec = effect?.type === undefined ? undefined : builtInEffect(effect.type);
+    return spec && parameterOf(spec, of.parameter);
+  }
+  if (!path.startsWith("param.") || !state) return undefined;
+  const { scene, sound } = clip.source as { readonly scene?: unknown; readonly sound?: unknown };
+  const manifest =
+    clip.source.kind === "scene" && typeof scene === "string"
+      ? entryOf(state.scenes, scene)
+      : clip.source.kind === "sound" && typeof sound === "string"
+        ? entryOf(state.sounds, sound)
+        : undefined;
+  const id = path.slice("param.".length);
+  const params: readonly { id: string; type: ValueType; default?: Value | undefined }[] =
+    manifest?.params ?? [];
+  const param = params.find((one) => one.id === id);
+  return param && { type: param.type, default: param.default };
+}
+
+/** What an edit of a property of a clip needs to know, besides its value. */
+export function editContextOf(
+  state: ProjectState | undefined,
+  clip: ClipState,
+  path: string,
+): EditContext {
+  const spec = specOf(state, clip, path);
+  return {
+    path,
+    firstFrame: clip.offset ?? "0",
+    seed: seedOf(clip.id, path),
+    ...(spec && { type: spec.type, fallback: spec.default }),
+  };
+}
+
+const valuesIn = (value: PropertyValue | undefined): readonly Value[] => {
+  if (value === undefined) return [];
+  return isAnimation(value) ? value.keys.map((key) => key.value) : [value];
+};
+
+const isNumbers = (value: Value) =>
+  Array.isArray(value) && value.every((part) => typeof part === "number");
+
+/** Whether values go on at the slope of their ends: numbers do, a type that is known says so. */
+function goesOn(context: EditContext, values: readonly Value[]): boolean {
+  if (context.type !== undefined) return isNumeric(context.type);
+  return values.length > 0 && values.every((value) => typeof value === "number");
+}
+
+/** Whether shaking does something to values: numbers, angles and vectors. */
+function shakes(context: EditContext, values: readonly Value[]): boolean {
+  if (context.type !== undefined) return canShake(context.type);
+  return (
+    values.length > 0 && values.every((value) => typeof value === "number" || isNumbers(value))
+  );
+}
+
+const needContext = (context: EditContext | undefined): EditContext => {
+  if (!context) throw new Error("setExtend and setNoise need to know about the property");
+  return context;
+};
+
+function withExtend(
+  keyed: Animation | undefined,
+  { before, after }: Pick<Animation, "before" | "after">,
+  context: EditContext,
+): Animation {
+  const { path } = context;
+  if (!keyed) return fail("invalid-value", { rule: "extend-needs-keys", path });
+  if ((before === "continue" || after === "continue") && !goesOn(context, valuesIn(keyed))) {
+    fail("invalid-value", { rule: "continue-needs-numbers", path });
+  }
+  const next: { -readonly [K in keyof Animation]: Animation[K] } = { ...keyed };
+  for (const [side, mode] of [
+    ["before", before],
+    ["after", after],
+  ] as const) {
+    if (mode === undefined) continue;
+    // Holding is what a value does anyway, so it is not written.
+    if (mode === "hold") delete next[side];
+    else next[side] = mode;
+  }
+  return next;
+}
+
+type Noise = NonNullable<Animation["modifiers"]>[number];
+
+function withNoise(
+  value: PropertyValue | undefined,
+  noise: z.output<typeof NoiseEdit> | null,
+  context: EditContext,
+): PropertyValue | undefined {
+  const keyed = value !== undefined && isAnimation(value) ? value : undefined;
+  const others = (keyed?.modifiers ?? []).filter((modifier) => modifier.type !== "noise");
+  const had = keyed?.modifiers?.find((modifier): modifier is Noise => modifier.type === "noise");
+  if (noise === null) {
+    if (!keyed || !had) return value;
+    const { modifiers: _modifiers, ...rest } = keyed;
+    return others.length > 0 ? { ...rest, modifiers: others } : rest;
+  }
+  const { path } = context;
+  const start = value ?? context.fallback;
+  if (!shakes(context, valuesIn(start)))
+    fail("invalid-value", { rule: "noise-needs-numbers", path });
+  const frequency = noise.frequency ?? had?.frequency;
+  const shaking: Noise = {
+    type: "noise",
+    amount: noise.amount,
+    ...(frequency !== undefined && { frequency }),
+    seed: noise.seed ?? had?.seed ?? context.seed,
+  };
+  const animation: Animation = keyed ?? {
+    keys: [{ time: context.firstFrame, value: start as Value }],
+  };
+  return { ...animation, modifiers: [...others, shaking] };
+}
+
 /**
  * What a property holds after an edit, and undefined when nothing is left of it. Previewing, trying
  * out and writing all come through here, so what people see is what gets saved. Fails when an edit
- * is about a key that is not there.
+ * is about a key that is not there. `setExtend` and `setNoise` need `context` (`editContextOf`).
  */
 export function applyEdit(
   value: PropertyValue | undefined,
   edit: ValueEdit,
+  context?: EditContext,
 ): PropertyValue | undefined {
   const keyed = value !== undefined && isAnimation(value) ? value : undefined;
   switch (edit.op) {
@@ -323,6 +500,10 @@ export function applyEdit(
       return withEase(keyed, edit.times, edit.ease);
     case "putKeys":
       return { ...(keyed ?? NO_KEYS), keys: placed(keyed?.keys ?? [], edit.keys) as Key[] };
+    case "setExtend":
+      return withExtend(keyed, edit, needContext(context));
+    case "setNoise":
+      return withNoise(value, edit.noise, needContext(context));
     case "set":
       return edit.value;
     case "clear":
