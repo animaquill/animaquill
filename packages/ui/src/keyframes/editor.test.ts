@@ -3274,6 +3274,29 @@ describe("the box around selected keys", () => {
     expect(shownKeys()).toEqual(["0:20", "0.5:10", "1:0"]);
   });
 
+  it("an edge stays in the view where it can be taken hold of, at the start of the clock too", async () => {
+    const setting = await keyed();
+    const { panel, keys, click, at, drag, shownKeys, trials } = setting;
+    keys("a", Y, 0, 1);
+    setting.open("a", "position");
+    click(at(0, laneOf("a", Y)));
+    click(at(1, laneOf("a", Y), { mod: true }));
+    expect(panel.scrollX).toBe(0);
+    const box = panel.retimeBox();
+    if (!box) throw new Error("no box");
+    expect(box.left).toBeGreaterThan(0);
+    expect(box.left).toBeLessThan(panel.xAt(0) + RETIME_PAD);
+    const from = { ...at(0, laneOf("a", Y)), x: box.left };
+    expect(panel.hover(from)).toBe("ew-resize");
+    // The start squeezes towards the end: the key at 0 goes to 0.5.
+    drag(from, { ...from, x: from.x + panel.xAt(0.5) - panel.xAt(0) });
+    const box2 = setting.timeline.model?.boxes.get("a");
+    const y = box2 && (setting.keyframes.shown(box2.clip).properties?.[Y] as Animation);
+    expect(y?.keys.map(({ time }) => time)).toEqual(["0.5", "1"]);
+    expect(trials.getSnapshot().count).toBe(1);
+    expect(shownKeys()).toEqual(["1:0", "2:10", "3:20"]);
+  });
+
   it("sticks to the playhead and to other keys, exactly; Alt goes between frames", async () => {
     const { panel, selectAll, edge, toward, shownKeys, drag, timeline, keys, open, trials } =
       await keyed();

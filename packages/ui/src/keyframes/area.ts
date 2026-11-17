@@ -752,10 +752,13 @@ export abstract class KeyArea {
       const ends = [retimedSeconds(retime, from, fps), retimedSeconds(retime, to, fps)];
       [from, to] = [Math.min(...ends), Math.max(...ends)];
     }
+    // At the edge of the view an edge of the box stays inside, where it can be taken hold of.
+    const left = Math.max(this.xAt(from) - RETIME_PAD, RETIME_REACH);
+    const right = Math.min(this.xAt(to) + RETIME_PAD, this.width - RETIME_REACH);
     return {
       span: rows.span,
-      left: this.xAt(from) - RETIME_PAD,
-      right: this.xAt(to) + RETIME_PAD,
+      left,
+      right,
       top: this.screenY(rows.top),
       bottom: this.screenY(rows.bottom),
     };

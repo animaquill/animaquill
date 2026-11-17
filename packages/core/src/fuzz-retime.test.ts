@@ -54,7 +54,16 @@ const ROUNDS = 12;
 const PATHS = ["transform.x", "transform.y", "transform.rotation", "param.points"] as const;
 const RATES = ["30", "24", "30000/1001"] as const;
 
-const counts = { done: 0, refused: 0, reversed: 0, played: 0, removed: 0, framed: 0, back: 0 };
+const counts = {
+  interleaved: 0,
+  done: 0,
+  refused: 0,
+  reversed: 0,
+  played: 0,
+  removed: 0,
+  framed: 0,
+  back: 0,
+};
 
 const main = (store: ProjectStore): TimelineState => store.getState().timelines["main"]!;
 
@@ -342,6 +351,37 @@ function checkPlayedBackwards(
   }
 }
 
+/** Another edit of keys or of a clip: a key moved, easing changed, the clip trimmed. */
+function otherEdit(store: ProjectStore, random: Random) {
+  const one = random.pick(animationsOf(store));
+  const timeline = "main";
+  if (!one || random.chance(0.25)) {
+    const clip = random.pick(Object.keys(main(store).clips)) ?? "none";
+    const side = random.chance(0.5)
+      ? { start: `${random.int(40)}/3` }
+      : { end: `${20 + random.int(200)}/3` };
+    return { type: "clip.trim", params: { timeline, clip, ...side } };
+  }
+  const { clip, path, animation } = one;
+  const key = random.pick(animation.keys) as Key;
+  const owner = { clip };
+  const edit = random.chance(0.5)
+    ? { owner, path, op: "moveKey", moves: [{ from: key.time, to: `${random.int(60)}/4` }] }
+    : {
+        owner,
+        path,
+        op: "setInterp",
+        times: [key.time],
+        ease: random.pick([
+          { interp: "hold" },
+          { interp: "bezier", out: [0.3, 1.2], in: [0.6, 0.9] },
+          { interp: "preset", preset: "elasticOut" },
+          { interp: "linear" },
+        ]),
+      };
+  return { type: "property.edit", params: { timeline, edits: [edit] } };
+}
+
 describe.each(SEEDS)("retiming keys at random, seed %i", (seed) => {
   it("keeps every promise of the design", FUZZ, () => {
     seedIds(seed);
@@ -457,6 +497,34 @@ describe.each(SEEDS)("retiming keys at random, seed %i", (seed) => {
   });
 
   it(
+    "other edits after a retime, taken back one by one, come back to exactly what was there",
+    FUZZ,
+    () => {
+      seedIds(seed);
+      const random = randomFrom(seed + 20_000);
+      const store = randomProject(random);
+      const rate = parseTime(store.getState().manifest.fps as string);
+      for (let round = 0; round < 4; round += 1) {
+        const choice = randomChoice(store, random);
+        if (choice.length === 0) continue;
+        const before = structuredClone(store.getState());
+        const mapping = randomMapping(random, span(choice), rate);
+        const done = retime(store, editsOf(choice, mapping, random.chance(0.5)));
+        if (!done.ok || deepEqual(store.getState(), before)) continue;
+        let steps = 1;
+        for (let more = 1 + random.int(5); more > 0; more -= 1) {
+          const was = store.getState();
+          const result = store.execute(otherEdit(store, random));
+          if (result.ok && !deepEqual(store.getState(), was)) steps += 1;
+        }
+        for (; steps > 0; steps -= 1) expect(store.undo().ok).toBe(true);
+        expect(deepEqual(store.getState(), before)).toBe(true);
+        counts.interleaved += 1;
+      }
+    },
+  );
+
+  it(
     "two devices that retime the same keys at once end up with the same valid project",
     FUZZ,
     () => {
@@ -496,5 +564,6 @@ afterAll(() => {
     expect(counts.removed).toBeGreaterThan(15 * share);
     expect(counts.framed).toBeGreaterThan(300 * share);
     expect(counts.back).toBeGreaterThan(300 * share);
+    expect(counts.interleaved).toBeGreaterThan(200 * share);
   }
 });
