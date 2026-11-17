@@ -111,6 +111,8 @@ export const DIRECTIVE_OVERRIDES = {
   "ops.clip.move.summary": "move clips to other starts or tracks, in one step",
   "ops.clip.trim.summary": "move the start or end of a clip; what it shows stays in place",
   "ops.clip.split.summary": "cut a clip in two at a moment of the timeline",
+  "ops.clip.link.summary": "link clips into a group, like the picture and sound of a video",
+  "ops.clip.unlink.summary": "take clips out of their linked groups",
   "ops.property.edit.summary": "set properties of clips and their keyframes, in one step",
   "ops.property.rename.summary":
     "give properties of a clip another path, with their keyframes, after code renamed what they are about",

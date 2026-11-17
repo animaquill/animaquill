@@ -901,6 +901,31 @@ export const OPERATION_TEXTS = {
     },
   ],
 
+  "ops.clip.link.summary":
+    "links clips into a group of their own, like the picture and sound of a video",
+  "ops.clip.link.description":
+    "Gives the clips one new link, which the result names. People select, move, trim and cut linked clips together in the editor; operations change only the clips they list. A group that the clips leave and that would keep one clip loses its link as well.",
+  "ops.clip.link.params.clips": "Clip ids (aq_timeline_read), at least two, each once.",
+  "ops.clip.link.errors.not-found": "There is no timeline or clip with this id.",
+  "ops.clip.link.examples": [
+    {
+      title: "A picture and a sound that belong together",
+      params: { timeline: "main", clips: ["clip_logo", "clip_hit"] },
+    },
+  ],
+
+  "ops.clip.unlink.summary": "takes clips out of their linked groups",
+  "ops.clip.unlink.description":
+    "Takes the link away from the clips, which then go on their own in the editor, such as the sound of a video apart from its picture. A group that keeps one clip loses its link as well. Clips without a link stay as they are.",
+  "ops.clip.unlink.params.clips": "Clip ids (aq_timeline_read), each once.",
+  "ops.clip.unlink.errors.not-found": "There is no timeline or clip with this id.",
+  "ops.clip.unlink.examples": [
+    {
+      title: "The sound apart from its picture",
+      params: { timeline: "main", clips: ["clip_interview_audio"] },
+    },
+  ],
+
   "ops.property.edit.summary": "sets properties of clips and their keyframes, in one step",
   "ops.property.edit.description":
     'Changes properties of clips: values that can change over time with keyframes, such as opacity, transform.x, param.<scene param> or effect.<effect id>.<parameter> (topic "howto/keyframes"). edits run in order as one step, each on what the ones before made, and can be about several clips of the timeline. Each edit names the clip (owner), the property (path) and what to do (op): "set" the whole property to a value or keyframes, "clear" it, "write" a value at a time (a keyframe there when it has keyframes, else the value), "setKey" a keyframe, "removeKey", "moveKey", "putKeys" (whole keyframes in place of what is at those times) or "setInterp" (how keyframes go on to the next), as topic "types/PropertyEdit" has it. Keyframe times are on the clip\'s clock (topic "howto/times"). aq_object_read gives the properties a clip has and those its scene describes.',

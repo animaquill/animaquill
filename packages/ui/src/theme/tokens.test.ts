@@ -28,7 +28,7 @@ const THEMES = { dark, light } as const;
  * colours of their own, which are the same whatever the theme.
  */
 const SAME_IN_BOTH =
-  /^--aq-(font|size-scale|on-picture|shade|picture-|cover-(text|shine|backdrop|\d)|level-|tool-|overlay-|timeline-(picture|sound|caption)$)/;
+  /^--aq-(font|size-scale|on-picture|shade|picture-|cover-(text|shine|backdrop|\d)|level-|tool-|overlay-|timeline-(picture|sound|caption|unsynced)$)/;
 
 type Rgba = readonly [number, number, number, number];
 
@@ -118,6 +118,7 @@ const PAIRS: readonly { text: string; on: Surface; large?: true }[] = [
   { text: "timeline-label", on: "timeline-ruler" },
   { text: "timeline-section-text", on: "timeline-section" },
   { text: "timeline-section-text", on: "timeline-section-alt" },
+  { text: "on-picture", on: "timeline-unsynced" },
 ];
 
 const nameOf = (surface: Surface) =>

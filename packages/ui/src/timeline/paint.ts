@@ -17,6 +17,7 @@ import {
   edgeWorks,
   edgesOf,
   forEachBetween,
+  signedFrames,
   type ClipBox,
   type Edge,
   type JoinBox,
@@ -33,6 +34,8 @@ const CLIP_RADIUS = 3;
 const LABEL_MIN_WIDTH = 28;
 const LABEL_PADDING = 6;
 const LABEL_PLATE_PADDING = 3;
+/** Room around the frames that a clip out of step with its partner says. */
+const SYNC_PADDING = 3;
 const EDGE_HANDLE = 6;
 /** The mark of a clip with effects. */
 /** The band of effects along the bottom of a clip, and a thin one on a low track. */
@@ -954,8 +957,33 @@ export class TimelinePainter extends StagePainter {
       const plate = context.measureText(label).width + LABEL_PLATE_PADDING * 2;
       context.fillRect(x - LABEL_PLATE_PADDING, y - 8, plate, 16);
     }
-    context.fillStyle = onPicture ? "#ffffff" : readableOn(fill);
+    const color = onPicture ? "#ffffff" : readableOn(fill);
+    context.fillStyle = color;
     context.fillText(label, x, y);
+    const named = label ? context.measureText(label).width : 0;
+    const scale = this.theme.fontScale;
+    // Linked clips have their names underlined, as in Premiere.
+    const { model } = this.#editor;
+    const link = box.clip.link;
+    if (named > 0 && link !== undefined && (model?.links.get(link)?.length ?? 0) > 1) {
+      context.fillStyle = color;
+      context.fillRect(x, Math.round(y + 7 * scale), named, Math.max(1, Math.round(scale)));
+    }
+    // Out of step with its partner: how many frames, in red, right after the name.
+    const sync = model?.outOfSync.get(box.id);
+    if (sync) {
+      const text = signedFrames(sync);
+      context.font = `600 ${10 * scale}px ${this.theme.font}`;
+      const from = x + named + (named > 0 ? 6 : 0);
+      const plate = context.measureText(text).width + SYNC_PADDING * 2;
+      const tall = Math.round(14 * scale);
+      context.fillStyle = this.theme.unsynced;
+      context.beginPath();
+      context.roundRect(from, y - tall / 2, plate, tall, 2);
+      context.fill();
+      context.fillStyle = ON_CLIP;
+      context.fillText(text, from + SYNC_PADDING, y + 0.5);
+    }
     context.restore();
   }
 

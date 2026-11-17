@@ -119,6 +119,7 @@ import {
   type ClipBox,
   type Edge,
   type JoinBox,
+  type OutOfSync,
   type RoomBelow,
   type Row,
   type TimelineModel,
@@ -211,6 +212,8 @@ export interface DropPlace {
 export interface MediaPick {
   readonly kind: "asset" | "scene" | "sound";
   readonly id: string;
+  /** Only the picture or only the sound of a video with sound, which then is one clip, unlinked. */
+  readonly only?: "video" | "audio";
 }
 
 /** Where something went on the timeline, for saying so. */
@@ -1644,6 +1647,66 @@ export class TimelineEditor implements TouchTarget {
 
   /* Changing the project. */
 
+  /** Selected clips that can change and are linked to another clip: what unlinking takes apart. */
+  get #linkedSelected(): readonly string[] {
+    const { model } = this;
+    return this.#changeable(this.#snapshot.selection, model).filter((id) => {
+      const link = model?.boxes.get(id)?.clip.link;
+      return link !== undefined && (model?.links.get(link)?.length ?? 0) > 1;
+    });
+  }
+
+  /** Whether some of the selected clips are linked, which `toggleLink` then takes apart. */
+  get canUnlink(): boolean {
+    return this.#linkedSelected.length > 0;
+  }
+
+  /** Whether the selection is two clips or more, none of them linked, for `toggleLink` to link. */
+  get canLink(): boolean {
+    return !this.canUnlink && this.#changeable(this.#snapshot.selection, this.model).length > 1;
+  }
+
+  /**
+   * Ctrl+L, as in Premiere: where some of the selected clips are linked, all of them stop being
+   * linked; otherwise two clips or more become a group. Clips on locked tracks are left out, and a
+   * partner there keeps its place, which shows that it is out of step.
+   */
+  toggleLink(): void {
+    const { model } = this;
+    if (!model) return;
+    const linked = this.#linkedSelected;
+    if (linked.length > 0) {
+      this.#run([{ type: "clip.unlink", params: { timeline: model.id, clips: linked } }]);
+      return;
+    }
+    const clips = this.#changeable(this.#snapshot.selection, model);
+    if (clips.length < 2) return;
+    this.#run([{ type: "clip.link", params: { timeline: model.id, clips } }]);
+  }
+
+  /** How far a clip is out of step with its linked partner, or nothing when it is in step. */
+  outOfSync(clip: string): OutOfSync | undefined {
+    return this.model?.outOfSync.get(clip);
+  }
+
+  /**
+   * Moves a clip that is out of step with its linked partner to where it is in step again, as
+   * Premiere's "Move into Sync" does: only this clip, which needs the room there.
+   */
+  moveIntoSync(clip: string): boolean {
+    const { model } = this;
+    const box = model?.boxes.get(clip);
+    const sync = model?.outOfSync.get(clip);
+    if (!model || !box || !sync || this.#changeable([clip], model).length === 0) return false;
+    const start = subtract(clipStart(box.clip), sync.by);
+    return this.#run([
+      {
+        type: "clip.move",
+        params: { timeline: model.id, clips: [{ clip, start: formatTime(start) }] },
+      },
+    ]);
+  }
+
   deleteSelection(): void {
     const { model } = this;
     const { transition, marker } = this.#snapshot;
@@ -1921,7 +1984,7 @@ export class TimelineEditor implements TouchTarget {
     const frames = known ? Math.floor(toSeconds(parseTime(known)) * model.rate.fps) : 0;
     const duration = frames > 0 ? frameTime(frames, model.rate) : this.#newClipDuration(model);
     const media = { asset: pick.id };
-    const parts: MediaPart[] = [
+    const all: MediaPart[] = [
       ...(asset.kind === "audio"
         ? []
         : [{ kind: "video" as const, source: { kind: asset.kind, media } }]),
@@ -1929,6 +1992,8 @@ export class TimelineEditor implements TouchTarget {
         ? [{ kind: "audio" as const, source: { kind: "audio", media } }]
         : []),
     ];
+    const only = all.filter(({ kind }) => kind === pick.only);
+    const parts = only.length > 0 ? only : all;
     return { parts, duration, before, ...(asset.name === undefined ? {} : { name: asset.name }) };
   }
 
@@ -3088,15 +3153,17 @@ export class TimelineEditor implements TouchTarget {
       this.#gesture = new TransitionPressGesture(pointer, drag, onClick);
       return;
     }
+    // With Alt, one clip of a linked group on its own, as in Premiere: its partners stay out.
+    const alone = pointer.alt;
+    const own = alone ? new Set([box.id]) : this.#withLinked(new Set([box.id]));
     if (edge) {
-      this.#select(this.#withLinked(new Set([box.id])));
+      this.#select(own);
       this.#gesture = new TrimGesture(this.#host, box, row, edge, pointer);
       return;
     }
     const { selection } = this.#snapshot;
     const wasSelected = selection.has(box.id);
     const adding = pointer.shift || pointer.mod || this.#snapshot.multiSelecting;
-    const own = this.#withLinked(new Set([box.id]));
     const selected = new Set(adding ? [...selection, ...own] : own);
     // What a press on a selected clip means shows when it ends: it may be the start of a drag.
     const onClick = () => {
@@ -3110,7 +3177,8 @@ export class TimelineEditor implements TouchTarget {
       this.#gesture = new MarqueeGesture(this.#host, pointer, onClick);
       return;
     }
-    if (!wasSelected) this.#select(selected);
+    // Alt takes the clip out of what was selected with it, so that a drag moves it alone.
+    if (!wasSelected || (alone && !adding)) this.#select(selected);
     this.#gesture = new MoveGesture(this.#host, box, row, pointer, onClick);
   }
 

@@ -42,6 +42,8 @@ export interface Theme {
   readonly markedLanes: string;
   /** The colours of markers, as `MARKER_COLORS` has them. */
   readonly markers: readonly string[];
+  /** Under the frames that a linked clip out of step says, on the clip. */
+  readonly unsynced: string;
 }
 
 export function readTheme(element: Element): Theme {
@@ -80,6 +82,7 @@ export function readTheme(element: Element): Theme {
     marked: color("marked"),
     markedLanes: color("marked-lanes"),
     markers: MARKER_COLORS.map(({ id }) => color(`marker-${id}`)),
+    unsynced: color("unsynced"),
   };
 }
 

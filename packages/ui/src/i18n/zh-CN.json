@@ -1263,6 +1263,7 @@
       "addAudioTrack": "添加音频轨道",
       "addCaptionTrack": "添加字幕轨道",
       "split": "在播放头切割",
+      "toggleLink": "联动或取消联动",
       "delete": "删除",
       "selectAll": "全选片段",
       "toolSelect": "选择工具",
@@ -1409,7 +1410,11 @@
     "timeFormat": "格式：(小时):分:秒/帧，小时为 0 时省略。",
     "openProperties": "展开关键帧",
     "closeProperties": "收起关键帧",
-    "joinsRemoved": "{{count}} 个衔接转场两边的片段分开了，衔接转场已删除。撤销可以恢复。"
+    "joinsRemoved": "{{count}} 个衔接转场两边的片段分开了，衔接转场已删除。撤销可以恢复。",
+    "link": "联动",
+    "unlink": "取消联动",
+    "moveIntoSync": "移回同步",
+    "outOfSync": "和联动的片段差 {{frames}} 帧"
   },
   "operations": {
     "label": "上次的操作",
@@ -2783,7 +2788,11 @@
     "added": "已加到 {{tracks}}，{{start}}",
     "failed": "没能加到时间轴上，再试一次",
     "missing": "文件找不到",
-    "length": "时长 {{length}}"
+    "length": "时长 {{length}}",
+    "placeOnly": {
+      "video": "放到播放头：只放画面",
+      "audio": "放到播放头：只放声音"
+    }
   },
   "resourcePage": {
     "tabs": "打开的资源",

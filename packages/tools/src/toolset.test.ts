@@ -33,9 +33,11 @@ import type { Tool } from "./types.ts";
  * took 63 245 (2026-11-15); 2026.9 gave aq_propose kind "plan", the plan the user asked for first, and
  * took 64 308 (2026-11-16); 2026.10 added section.split and section.moveBoundary, gave section.update
  * and marker.update clear, and section.remove gives the time of a section to the one before it,
- * and took 65 626 (2026-11-17). It is a ceiling, so that the list does not grow unnoticed.
+ * and took 65 626 (2026-11-17); 2026.11 added clip.link and clip.unlink, and aq_edit says that it
+ * changes only the clips it lists, and took 66 656 (2026-11-17). It is a ceiling, so that the list
+ * does not grow unnoticed.
  */
-const MOST_CHARACTERS = 65_800;
+const MOST_CHARACTERS = 66_800;
 
 const listOf = (tools: Iterable<Tool>) =>
   [...tools].map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));

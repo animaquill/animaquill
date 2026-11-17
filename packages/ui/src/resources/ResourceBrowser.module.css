@@ -199,6 +199,22 @@
   aspect-ratio: 16 / 9;
 }
 
+/* What shows on the picture only while the pointer is there or the resource has the keyboard. */
+.over {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.item:hover .over,
+.item:focus-visible .over {
+  opacity: 1;
+}
+
 .picture canvas {
   display: block;
   width: 100%;

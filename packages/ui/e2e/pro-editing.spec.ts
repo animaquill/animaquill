@@ -1,5 +1,6 @@
-import type { Page } from "@playwright/test";
-import { content, expect, tab, test } from "./support.ts";
+import { readFileSync } from "node:fs";
+import type { Locator, Page } from "@playwright/test";
+import { content, expect, resourcesIn, tab, test } from "./support.ts";
 
 /** In and out, and J, K and L (pro-editing P1 of AnimaQuill Cloud). */
 
@@ -475,5 +476,224 @@ test.describe("markers and sections in light colours", () => {
       .click();
     await expect(band(page)).toBeVisible();
     await shootTop(page, "sections-light.png");
+  });
+});
+
+/* Linked clips taken apart and put together again (pro-editing P4 of AnimaQuill Cloud). */
+
+const clips = (page: Page) =>
+  panel(page).getByRole("listbox", { name: "时间轴片段" }).getByRole("option");
+const picture = (page: Page) => clips(page).and(page.locator('[aria-label*="，视频 1，"]'));
+const sound = (page: Page) => clips(page).and(page.locator('[aria-label*="，音频 1，"]'));
+const cards = (page: Page) => resourcesIn(page, "assets");
+const VIDEO = {
+  name: "采访.mp4",
+  mimeType: "video/mp4",
+  buffer: readFileSync(new URL("./fixtures/clip.mp4", import.meta.url)),
+};
+
+async function middleOf(locator: Locator) {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error("no box");
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2, left: box.x };
+}
+
+/** A video with sound in the project, and nothing of it on the timeline yet. */
+async function importVideo(page: Page) {
+  await tab(page, "assets").click();
+  const chooser = page.waitForEvent("filechooser");
+  await content(page, "assets").getByRole("button", { name: "导入" }).click();
+  await (await chooser).setFiles(VIDEO);
+  await expect(cards(page)).toHaveCount(1);
+}
+
+/** The video at the playhead: its picture and its sound, linked, both selected. */
+async function placeVideo(page: Page) {
+  await importVideo(page);
+  await cards(page).first().click();
+  await expect(clips(page)).toHaveCount(2);
+  await stage(page).focus();
+  // Wider, so that their names and what they say fit.
+  for (let index = 0; index < 3; index++) await page.keyboard.press("Equal");
+}
+
+/** A click on a clip, with keys held down: the clips on the canvas are what takes it. */
+async function clickOn(page: Page, what: Locator, key?: "Alt" | "Shift") {
+  const at = await middleOf(what);
+  if (key) await page.keyboard.down(key);
+  await page.mouse.click(at.x, at.y);
+  if (key) await page.keyboard.up(key);
+}
+
+/** Drags with the mouse, by some pixels to the right, holding Alt or not. */
+async function dragBy(page: Page, what: Locator, pixels: number, alt = false) {
+  const from = await middleOf(what);
+  if (alt) await page.keyboard.down("Alt");
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(from.x + pixels / 2, from.y, { steps: 4 });
+  await page.mouse.move(from.x + pixels, from.y, { steps: 4 });
+  await page.mouse.up();
+  if (alt) await page.keyboard.up("Alt");
+}
+
+/** The tracks with the clips, for people to look at. */
+async function shootClips(page: Page, name: string) {
+  const box = await panel(page).boundingBox();
+  if (!box) return;
+  await page.screenshot({
+    path: test.info().outputPath(name),
+    clip: {
+      x: box.x,
+      y: box.y,
+      width: Math.min(box.width, 700),
+      height: Math.min(box.height, 220),
+    },
+  });
+}
+
+test.describe("linked clips", () => {
+  test("Ctrl+L takes them apart and links them again, and out of step they say by how much in red", async ({
+    page,
+  }) => {
+    await placeVideo(page);
+    await expect(picture(page)).toHaveAttribute("data-linked", "");
+    await expect(sound(page)).toHaveAttribute("data-linked", "");
+    await shootClips(page, "linked-dark.png");
+    // The page keeps Ctrl+L from the address bar.
+    await page.evaluate(() => {
+      addEventListener("keydown", (event) => {
+        if (event.key === "l")
+          (window as unknown as { kept?: boolean }).kept = event.defaultPrevented;
+      });
+    });
+    await page.keyboard.press("Control+KeyL");
+    await expect(picture(page)).not.toHaveAttribute("data-linked");
+    await expect(sound(page)).not.toHaveAttribute("data-linked");
+    expect(await page.evaluate(() => (window as unknown as { kept?: boolean }).kept)).toBe(true);
+
+    // Apart, the picture goes alone, and nothing says it is out of step: they are not linked.
+    const lane = await middleOf(picture(page));
+    const room = await stage(page).boundingBox();
+    await page.mouse.click((room?.x ?? 0) + (room?.width ?? 0) - 30, lane.y);
+    const before = await middleOf(sound(page));
+    await dragBy(page, picture(page), 60);
+    expect((await middleOf(sound(page))).left).toBe(before.left);
+    await expect
+      .poll(async () => (await middleOf(picture(page))).left)
+      .toBeGreaterThan(before.left + 40);
+    await expect(clips(page).and(page.locator("[data-out-of-sync]"))).toHaveCount(0);
+
+    // Linked again, out of step: each says how many frames, the one in red on its name.
+    await clickOn(page, picture(page));
+    await clickOn(page, sound(page), "Shift");
+    await page.getByRole("button", { name: "时间轴", exact: true }).click();
+    await page.getByRole("menu").getByRole("menuitem", { name: /^联动/ }).click();
+    await expect(picture(page)).toHaveAttribute("data-linked", "");
+    const ahead = Number(await picture(page).getAttribute("data-out-of-sync"));
+    expect(ahead).toBeGreaterThan(0);
+    await expect(sound(page)).toHaveAttribute("data-out-of-sync", String(-ahead));
+    await expect(sound(page)).toHaveAttribute("aria-description", `和联动的片段差 −${ahead} 帧`);
+    await shootClips(page, "out-of-sync-dark.png");
+
+    // The menu of a clip out of step moves it back into step.
+    const target = await middleOf(sound(page));
+    await page.mouse.click(target.x, target.y, { button: "right" });
+    await expect(page.getByRole("menuitem", { name: "取消联动" })).toBeVisible();
+    await page.getByRole("menuitem", { name: "移回同步" }).click();
+    await expect(clips(page).and(page.locator("[data-out-of-sync]"))).toHaveCount(0);
+    const lined = await middleOf(picture(page));
+    await expect.poll(async () => (await middleOf(sound(page))).left).toBeCloseTo(lined.left, 0);
+    await expect(picture(page)).toHaveAttribute("data-linked", "");
+    await page.keyboard.press("Control+z");
+    await expect(sound(page)).toHaveAttribute("data-out-of-sync", String(-ahead));
+  });
+
+  test("Alt takes one of them alone, which then moves alone, out of step", async ({ page }) => {
+    await placeVideo(page);
+    const at = await middleOf(picture(page));
+    await clickOn(page, picture(page), "Alt");
+    await expect(picture(page)).toHaveAttribute("aria-selected", "true");
+    await expect(sound(page)).toHaveAttribute("aria-selected", "false");
+    const before = await middleOf(sound(page));
+    await dragBy(page, picture(page), 45, true);
+    expect((await middleOf(sound(page))).left).toBe(before.left);
+    await expect(picture(page)).toHaveAttribute("data-linked", "");
+    await expect(picture(page)).toHaveAttribute("data-out-of-sync", /^[1-9]/);
+    await expect(sound(page)).toHaveAttribute("data-out-of-sync", /^-[1-9]/);
+    // Without Alt a click takes both again.
+    await page.mouse.click(at.x + 45, at.y);
+    await expect(sound(page)).toHaveAttribute("aria-selected", "true");
+  });
+});
+
+test.describe("linked clips in light colours", () => {
+  test.use({ colorScheme: "light" });
+
+  test("show their names underlined, and in red how far out of step", async ({ page }) => {
+    await placeVideo(page);
+    await shootClips(page, "linked-light.png");
+    await clickOn(page, sound(page), "Alt");
+    await dragBy(page, sound(page), 40, true);
+    await expect(sound(page)).toHaveAttribute("data-out-of-sync", /^[1-9]/);
+    await shootClips(page, "out-of-sync-light.png");
+  });
+});
+
+test.describe("only the picture or only the sound of a video", () => {
+  /** The card of the video in the assets, with what shows on it while the pointer is there. */
+  async function shootCard(page: Page, name: string) {
+    const box = await cards(page).first().boundingBox();
+    if (!box) return;
+    await page.screenshot({
+      path: test.info().outputPath(name),
+      clip: { x: box.x - 8, y: box.y - 8, width: box.width + 16, height: box.height + 16 },
+    });
+  }
+  const half = (page: Page, which: "video" | "audio") =>
+    cards(page).first().locator(`[data-only="${which}"]`);
+
+  test("show on its card under the pointer, and each is one clip of its own where it is dropped", async ({
+    page,
+  }) => {
+    await importVideo(page);
+    // They show on the picture only while the pointer is on the card.
+    const handles = half(page, "video").locator("..");
+    await expect(handles).toHaveCSS("opacity", "0");
+    await cards(page).first().hover();
+    await expect(handles).toHaveCSS("opacity", "1");
+    await expect(half(page, "audio")).toBeVisible();
+    await shootCard(page, "card-halves-dark.png");
+
+    await half(page, "audio").dragTo(stage(page), { targetPosition: { x: 200, y: 140 } });
+    await expect(clips(page)).toHaveCount(1);
+    await expect(sound(page)).toHaveCount(1);
+    await expect(sound(page)).not.toHaveAttribute("data-linked");
+    await half(page, "video").dragTo(stage(page), { targetPosition: { x: 400, y: 50 } });
+    await expect(clips(page)).toHaveCount(2);
+    await expect(picture(page)).toHaveCount(1);
+    await expect(picture(page)).not.toHaveAttribute("data-linked");
+    await expect(clips(page).and(page.locator("[data-linked]"))).toHaveCount(0);
+
+    // The menu of the card has the same, at the playhead.
+    await cards(page).first().click({ button: "right" });
+    await page.getByRole("menuitem", { name: "放到播放头：只放声音" }).click();
+    await expect(clips(page)).toHaveCount(3);
+    await expect(clips(page).and(page.locator("[data-linked]"))).toHaveCount(0);
+    // A click on the card is all of it, linked, as before.
+    await cards(page).first().click();
+    await expect(clips(page)).toHaveCount(5);
+    await expect(clips(page).and(page.locator("[data-linked]"))).toHaveCount(2);
+  });
+
+  test.describe("in light colours", () => {
+    test.use({ colorScheme: "light" });
+
+    test("look as they do in the dark", async ({ page }) => {
+      await importVideo(page);
+      await cards(page).first().hover();
+      await expect(half(page, "audio").locator("..")).toHaveCSS("opacity", "1");
+      await shootCard(page, "card-halves-light.png");
+    });
   });
 });

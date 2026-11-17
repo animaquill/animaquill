@@ -183,6 +183,8 @@
   --aq-timeline-section: #34414f;
   --aq-timeline-section-alt: #26303b;
   --aq-timeline-section-text: #c9d3de;
+  /* Under the frames that a linked clip out of step says, on the clip: the same in both themes. */
+  --aq-timeline-unsynced: #c62828;
 
   /* What the preview draws over the picture: it has to stand out on any picture, in both themes. */
   --aq-overlay-line: #2aaaff;

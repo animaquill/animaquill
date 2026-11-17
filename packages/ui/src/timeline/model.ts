@@ -1,5 +1,6 @@
 import {
   clipEnd,
+  clipOffset,
   clipStart,
   joinedEdges,
   joinedEndsOf,
@@ -17,11 +18,13 @@ import {
   type WholeJoin,
 } from "@animaquill/core";
 import {
+  ZERO,
   compare,
   findTransition,
   isSupported,
   mediaOfTrack,
   parseTime,
+  subtract,
   toSeconds,
   type Rational,
   type Transition,
@@ -165,6 +168,11 @@ export interface TimelineModel {
   readonly rowOfClip: ReadonlyMap<string, Row>;
   /** Clips that belong together, like the picture and the sound of a video. */
   readonly links: ReadonlyMap<string, readonly string[]>;
+  /**
+   * Linked clips that show the same file and are no longer in step with each other, because one
+   * of them moved alone, by clip. See `outOfSyncOf`.
+   */
+  readonly outOfSync: ReadonlyMap<string, OutOfSync>;
   /** The edges of clips that a join wins over, as `<clip> enter` and `<clip> exit`. */
   readonly joined: ReadonlySet<string>;
   /** What the joins in effect take of the clips at their ends, for how long transitions can be. */
@@ -177,6 +185,86 @@ export interface TimelineModel {
   readonly markers: readonly MarkerBox[];
   /** End to end from zero. */
   readonly sections: readonly SectionBox[];
+}
+
+/** How far a linked clip is out of step with another one of its group that shows the same file. */
+export interface OutOfSync {
+  /** The clip it is measured against, which it would move to line up with. */
+  readonly with: string;
+  /** How much later its clock runs on the timeline than that of the other one: start − offset. */
+  readonly by: Rational;
+  /** The same in whole frames, never 0: what the clip says on it, as "+12" or "−12". */
+  readonly frames: number;
+}
+
+/** How many frames a clip is out of step, as its name shows it: "+12" or "−12". */
+export const signedFrames = ({ frames }: OutOfSync): string =>
+  frames > 0 ? `+${frames}` : `\u2212${-frames}`;
+
+/** What a clip shows that has a clock of its own: a file of pictures or of sound, as a key. */
+function fileOf(clip: ClipState): string | undefined {
+  const { source } = clip;
+  if (source.kind !== "video" && source.kind !== "audio") return undefined;
+  return JSON.stringify((source as { readonly media?: unknown }).media);
+}
+
+/**
+ * Linked clips out of step, by clip: in a group, those that show the same file are in step when
+ * their clocks line up, start − offset being the same. Each is measured against the first of them,
+ * pictures first; that one against the first that is out of step with it. A clip whose clock has a
+ * speed is measured all the same, as the clip and its partner then both have it.
+ */
+export function outOfSyncOf(
+  clips: ReadonlyMap<string, ClipBox>,
+  links: ReadonlyMap<string, readonly string[]>,
+  fps: number,
+): ReadonlyMap<string, OutOfSync> {
+  const found = new Map<string, OutOfSync>();
+  const framesOf = (by: Rational) => {
+    const frames = Math.round(toSeconds(by) * fps);
+    return frames !== 0 ? frames : compare(by, ZERO) > 0 ? 1 : -1;
+  };
+  for (const ids of links.values()) {
+    if (ids.length < 2) continue;
+    const byFile = new Map<string, ClipState[]>();
+    for (const id of ids) {
+      const clip = clips.get(id)?.clip;
+      const file = clip && fileOf(clip);
+      if (!clip || file === undefined) continue;
+      byFile.set(file, [...(byFile.get(file) ?? []), clip]);
+    }
+    for (const same of byFile.values()) {
+      if (same.length < 2) continue;
+      const [first, ...others] = same.toSorted(
+        (a, b) =>
+          Number(a.source.kind !== "video") - Number(b.source.kind !== "video") ||
+          a.id.localeCompare(b.id),
+      ) as [ClipState, ...ClipState[]];
+      const anchor = clockOf(first);
+      for (const other of others) {
+        const by = subtract(clockOf(other), anchor);
+        if (compare(by, ZERO) === 0) continue;
+        found.set(other.id, { with: first.id, by, frames: framesOf(by) });
+        if (!found.has(first.id)) {
+          const back = subtract(anchor, clockOf(other));
+          found.set(first.id, { with: other.id, by: back, frames: framesOf(back) });
+        }
+      }
+    }
+  }
+  return found;
+}
+
+/** Where the clock of a clip reads 0 on the timeline. Unchanged clips keep theirs. */
+const clocks = new WeakMap<ClipState, Rational>();
+
+function clockOf(clip: ClipState): Rational {
+  let clock = clocks.get(clip);
+  if (!clock) {
+    clock = subtract(clipStart(clip), clipOffset(clip));
+    clocks.set(clip, clock);
+  }
+  return clock;
 }
 
 const secondsOf = (time: string) =>
@@ -296,6 +384,7 @@ export function buildModel(
     else clipsByTrack.set(clip.track, [box]);
   }
 
+  const rate = frameRate(fps);
   let top = 0;
   const rowOfClip = new Map<string, Row>();
   const joinsByTrack = joinBoxes(state, project, all);
@@ -330,13 +419,14 @@ export function buildModel(
     fps,
     rowScale,
     roomBelow,
-    rate: frameRate(fps),
+    rate,
     rows,
     duration: toSeconds(timelineLength(state)),
     height: top,
     boxes: all,
     rowOfClip,
     links,
+    outOfSync: outOfSyncOf(all, links, rate.fps),
     joined: joinedEdges(state),
     ends: joinedEndsOf(state),
     joins,

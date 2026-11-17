@@ -479,7 +479,7 @@ export class TrimGesture implements Gesture {
   readonly #points: SnapPoints;
   readonly #lower: SnapPoint;
   readonly #upper: SnapPoint;
-  /** Linked clips that end at the same place go along. */
+  /** Linked clips that end at the same place go along, unless the press was with Alt. */
   readonly #partners: readonly { readonly box: ClipBox; readonly row: Row }[];
   #landing: Landing | undefined;
 
@@ -508,6 +508,8 @@ export class TrimGesture implements Gesture {
   #findPartners(): readonly { readonly box: ClipBox; readonly row: Row }[] {
     const { model } = this.#host;
     const { clip } = this.#box;
+    // With Alt the edge goes alone, for the sound to start before the picture or after it.
+    if (this.#press.alt) return [];
     const here = this.#exactEdge();
     const edgeOf = (other: ClipState) => (this.#edge === "start" ? clipStart : clipEnd)(other);
     const ids = clip.link === undefined ? [] : (model.links.get(clip.link) ?? []);

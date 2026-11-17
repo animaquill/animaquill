@@ -75,6 +75,22 @@ export function registerTimelineActions(
     enabled: () => editor.canSplit,
     group: "edit",
   });
+  // Ctrl+L, as in Premiere. Chrome and Firefox give it to the page first, and the address bar
+  // does not get it when the page keeps it (tried with real key presses, 2026-11-17). The menu
+  // says which of the two it does now.
+  actions.register({
+    id: "timeline.toggleLink",
+    title: (t) => t("timeline.command", { action: t("timeline.action.toggleLink") }),
+    run: () => editor.toggleLink(),
+    keys: ["mod+l"],
+    scope: "timeline",
+    enabled: () => editor.canLink || editor.canUnlink,
+    menu: {
+      name: "timeline",
+      group: "edit",
+      title: (t) => t(editor.canUnlink ? "timeline.unlink" : "timeline.link"),
+    },
+  });
   add(
     "delete",
     () => {

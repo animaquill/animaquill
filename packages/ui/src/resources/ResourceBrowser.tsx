@@ -80,6 +80,11 @@ export interface ResourceBrowserProps<T> {
   readonly multiple?: boolean;
   /** What a resource says on its picture besides, such as where its file is. */
   readonly mark?: (resource: Resource<T>) => ReactNode;
+  /**
+   * What shows on its picture while the pointer is on the resource or it has the keyboard, such
+   * as handles to drag a part of it from. Nothing there takes the keyboard: its menu has the same.
+   */
+  readonly onPicture?: (resource: Resource<T>) => ReactNode;
   /** What it says when there is nothing at all. */
   readonly empty?: string;
   /** What can be dragged, of what can be used here. Nothing can without `onDragStart`. */
@@ -548,6 +553,9 @@ export function ResourceBrowser<T>(props: ResourceBrowserProps<T>) {
                         <div className={styles.picture}>
                           <Icon resource={resource} playing={key === pointed} />
                           {props.mark?.(resource)}
+                          {props.onPicture && (
+                            <div className={styles.over}>{props.onPicture(resource)}</div>
+                          )}
                         </div>
                         <span className={styles.name}>{resource.name}</span>
                         {notice?.badge !== undefined && notice.resource === resource.id && (

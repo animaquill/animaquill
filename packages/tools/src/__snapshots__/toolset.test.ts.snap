@@ -82,6 +82,8 @@ ops/clip.update — changes the name, source, offset, loop, hidden, draft, link 
 ops/clip.move — moves clips to other starts or tracks, in one step
 ops/clip.trim — moves the start or end of a clip; what it shows stays in place
 ops/clip.split — cuts a clip in two at a moment of the timeline
+ops/clip.link — links clips into a group of their own, like the picture and sound of a video
+ops/clip.unlink — takes clips out of their linked groups
 ops/clip.setTransition — puts a transition at the start (enter) or end (exit) of a clip, or takes it away with null
 ops/join.add — puts a transition on the cut between two clips that touch
 ops/join.update — changes the type, duration, align, curve or values of a join

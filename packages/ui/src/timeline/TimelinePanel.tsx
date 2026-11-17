@@ -38,13 +38,18 @@ import { KeyList } from "../keyframes/KeyList.tsx";
 import { useKeyPopups } from "../keyframes/KeyPopups.tsx";
 import { LaneRows } from "../keyframes/LaneRows.tsx";
 import { LanePainter, paintMarquee, paintSnapLine } from "../keyframes/paint.ts";
-import { ASSET_DRAG_TYPE, SCENE_DRAG_TYPE, SOUND_DRAG_TYPE } from "../panels/AssetsPanel.tsx";
+import {
+  ASSET_DRAG_TYPE,
+  ASSET_PART_DRAG_TYPE,
+  SCENE_DRAG_TYPE,
+  SOUND_DRAG_TYPE,
+} from "../panels/AssetsPanel.tsx";
 import type zhCN from "../i18n/zh-CN.json";
 import type { TimelineAction } from "./actions.ts";
 import { RULER_HEIGHT, type TimelineEditor, type VisibleClip } from "./editor.ts";
 import { formatTimecode } from "./frames.ts";
 import type { Pointer } from "./gestures.ts";
-import type { ClipBox, Row, TimelineModel } from "./model.ts";
+import { signedFrames, type ClipBox, type Row, type TimelineModel } from "./model.ts";
 import { TimelinePainter } from "./paint.ts";
 import { effectName } from "../resources/effects.ts";
 import { EFFECT_NAMES_SEPARATOR, effectBandOf } from "./effect-band.ts";
@@ -636,6 +641,24 @@ function ClipList({ editor }: { editor: TimelineEditor }) {
       "aria-description": t("effect.mark", { names }),
     };
   };
+  /** Whether a clip is linked, and how many frames it is out of step, as its name shows. */
+  const syncMark = (box: ClipBox) => {
+    const sync = model?.outOfSync.get(box.id);
+    const link = box.clip.link;
+    const linked = link !== undefined && (model?.links.get(link)?.length ?? 0) > 1;
+    const effects = (effectsMark(box) as { readonly "aria-description"?: string })[
+      "aria-description"
+    ];
+    return {
+      ...(linked && { "data-linked": "" }),
+      ...(sync && {
+        "data-out-of-sync": sync.frames,
+        "aria-description": [effects, t("timeline.outOfSync", { frames: signedFrames(sync) })]
+          .filter(Boolean)
+          .join("；"),
+      }),
+    };
+  };
   const labelOf = useClipLabel();
   const trackNameOf = useTrackName();
   const [clips, setClips] = useState<readonly VisibleClip[]>([]);
@@ -684,6 +707,7 @@ function ClipList({ editor }: { editor: TimelineEditor }) {
             end: timecode(box.end),
           })}
           {...effectsMark(box)}
+          {...syncMark(box)}
           data-download={downloadMark(workbench.downloadOfClip(box.clip))}
           data-flash={editor.flashesOn(box.id) || undefined}
           data-ai-changed={editor.marked.has(box.id) || undefined}
@@ -836,7 +860,9 @@ function Surface({
     mediaDrag.end();
     const dragged = event.dataTransfer.getData(ASSET_DRAG_TYPE);
     if (dragged) {
-      editor.addAsset(dragged, place);
+      const part = event.dataTransfer.getData(ASSET_PART_DRAG_TYPE);
+      const only = part === "video" || part === "audio" ? part : undefined;
+      editor.addMedia({ kind: "asset", id: dragged, ...(only && { only }) }, place);
       return;
     }
     const scene = event.dataTransfer.getData(SCENE_DRAG_TYPE);
@@ -938,6 +964,27 @@ function Surface({
               },
             ]
           : [];
+      // One of the two, whichever Ctrl+L would do, and moving back in step where it is not.
+      const links = [
+        ...(editor.canUnlink || editor.canLink
+          ? [
+              {
+                id: "toggleLink",
+                label: t(editor.canUnlink ? "timeline.unlink" : "timeline.link"),
+                run: () => editor.toggleLink(),
+              },
+            ]
+          : []),
+        ...(editor.outOfSync(hit.box.id)
+          ? [
+              {
+                id: "moveIntoSync",
+                label: t("timeline.moveIntoSync"),
+                run: () => editor.moveIntoSync(hit.box.id),
+              },
+            ]
+          : []),
+      ];
       showMenu({
         x,
         y,
@@ -958,6 +1005,7 @@ function Surface({
               disabled: false,
             },
           ],
+          ...(links.length > 0 ? [links] : []),
           ...(sounds.stateOf(hit.box.clip)?.state === "failed"
             ? [[{ id: "retry", label: t("sound.retry"), run: () => sounds.retry(hit.box.clip) }]]
             : []),

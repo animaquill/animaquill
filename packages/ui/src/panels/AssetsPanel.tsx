@@ -1,6 +1,7 @@
-import { Plus, Upload } from "lucide-react";
+import { AudioWaveform, Film, Plus, Upload } from "lucide-react";
 import { useMemo, useState, useSyncExternalStore, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
+import type { MenuItem } from "../app/Menu.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import { NO_PROGRESS } from "../folder/assets.ts";
 import { ProjectIcon } from "../resources/ProjectIcon.tsx";
@@ -22,6 +23,16 @@ import styles from "./AssetsPanel.module.css";
 export const ASSET_DRAG_TYPE = "application/x-animaquill-asset";
 export const SCENE_DRAG_TYPE = "application/x-animaquill-scene";
 export const SOUND_DRAG_TYPE = "application/x-animaquill-sound";
+/** Along with an asset: only its picture, or only its sound, as "video" or "audio". */
+export const ASSET_PART_DRAG_TYPE = "application/x-animaquill-asset-part";
+
+/** The two halves of a video with sound, which can go on the timeline one without the other. */
+const HALVES = ["video", "audio"] as const;
+type Half = (typeof HALVES)[number];
+
+/** Whether a resource is a video with sound, whose picture and sound can go on their own. */
+const hasHalves = (item: ProjectItem): boolean =>
+  item.kind === "asset" && item.asset.kind === "video" && item.asset.info?.hasAudio === true;
 
 const DRAG_TYPES: Readonly<Record<ProjectItem["kind"], string>> = {
   asset: ASSET_DRAG_TYPE,
@@ -45,6 +56,16 @@ export function startProjectItemDrag(item: ProjectItem, event: DragEvent<HTMLEle
   event.dataTransfer.setData(DRAG_TYPES[item.kind], item.id);
   event.dataTransfer.effectAllowed = "copy";
   mediaDrag.start({ kind: item.kind, id: item.id });
+}
+
+/** What a drag of only the picture or only the sound of a video carries. */
+function startHalfDrag(item: ProjectItem, half: Half, event: DragEvent<HTMLElement>): void {
+  // The card under it would carry all of it.
+  event.stopPropagation();
+  event.dataTransfer.setData(ASSET_DRAG_TYPE, item.id);
+  event.dataTransfer.setData(ASSET_PART_DRAG_TYPE, half);
+  event.dataTransfer.effectAllowed = "copy";
+  mediaDrag.start({ kind: "asset", id: item.id, only: half });
 }
 
 const noSubscription = () => () => {};
@@ -91,9 +112,9 @@ export function AssetsPanel() {
     canDragProjectItem(data) ? undefined : { reason: t("assetPanel.why.font"), draggable: false };
 
   /** A click puts it at the playhead, and says where it went, or why it did not. */
-  const addToTimeline = (resource: Resource<ProjectItem>) => {
+  const addToTimeline = (resource: Resource<ProjectItem>, only?: Half) => {
     const { data } = resource;
-    const added = timeline.addMedia({ kind: data.kind, id: data.id });
+    const added = timeline.addMedia({ kind: data.kind, id: data.id, ...(only && { only }) });
     if (!added) {
       say(resource.id, t("assetPanel.failed"), undefined, true);
       return;
@@ -107,6 +128,55 @@ export function AssetsPanel() {
     });
     say(resource.id, `${resource.name}${where}`, `✓ ${where}`);
   };
+
+  /**
+   * The picture and the sound of a video on their own, as Premiere has them under its source
+   * monitor: dragged from there, or a click puts one at the playhead. The menu has the same.
+   */
+  const halvesOf = (resource: Resource<ProjectItem>) =>
+    hasHalves(resource.data) && (
+      <>
+        {HALVES.map((half) => {
+          const Icon = half === "video" ? Film : AudioWaveform;
+          return (
+            <span
+              key={half}
+              className={styles.half}
+              data-only={half}
+              aria-hidden
+              draggable
+              onDragStart={(event) => startHalfDrag(resource.data, half, event)}
+              onClick={(event) => {
+                event.stopPropagation();
+                addToTimeline(resource, half);
+              }}
+            >
+              <Icon size={14} />
+            </span>
+          );
+        })}
+      </>
+    );
+
+  const menuOf = (resource: Resource<ProjectItem>): readonly (readonly MenuItem[])[] => [
+    ...(hasHalves(resource.data)
+      ? [
+          HALVES.map((half) => ({
+            id: `only-${half}`,
+            label: t(`assetPanel.placeOnly.${half}`),
+            run: () => addToTimeline(resource, half),
+          })),
+        ]
+      : []),
+    [
+      {
+        id: "reveal",
+        label: t("resources.reveal"),
+        disabled: !workbench.canRevealResource(resource.id),
+        run: () => workbench.revealResource(resource.id),
+      },
+    ],
+  ];
 
   const hasFiles = (event: DragEvent) => event.dataTransfer.types.includes("Files");
   // On entering too: the browser goes by the last of the two, and the element under the pointer
@@ -195,7 +265,9 @@ export function AssetsPanel() {
           empty={t(inFolder ? "assets.emptyFolder" : "assets.empty")}
           unavailable={unavailable}
           Icon={ProjectIcon}
-          onActivate={addToTimeline}
+          onActivate={(resource) => addToTimeline(resource)}
+          onPicture={halvesOf}
+          menu={menuOf}
           notice={notice}
           onDragStart={(resource, event) => startProjectItemDrag(resource.data, event)}
           onDragEnd={(resource, dropped) => {

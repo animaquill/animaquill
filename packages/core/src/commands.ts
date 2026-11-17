@@ -297,6 +297,43 @@ const MaybeApart = z.strictObject(JoinsRemoved).optional();
 
 const trackPath = (timeline: string, track: string) => ["timelines", timeline, "tracks", track];
 
+/** Clips by id, each once. */
+const DistinctClips = z
+  .array(Id)
+  .refine((ids) => new Set(ids).size === ids.length, "同一个片段只能写一次");
+
+/**
+ * Gives clips a link, or takes theirs away. A group they leave that keeps only one clip goes too:
+ * a link to nothing would show as one and do nothing.
+ */
+function setLinks(
+  draft: Draft,
+  timeline: string,
+  target: TimelineState,
+  clips: readonly string[],
+  link: string | undefined,
+): void {
+  const listed = new Set(clips);
+  const left = new Set<string>();
+  for (const id of clips) {
+    const before = entryOf(target.clips, id)?.link;
+    if (before !== undefined) left.add(before);
+    if (before === link) continue;
+    const path = [...clipPath(timeline, id), "link"];
+    if (link === undefined) draft.delete(path);
+    else draft.set(path, link);
+  }
+  if (left.size === 0) return;
+  const staying = new Map<string, string[]>();
+  for (const clip of Object.values(target.clips)) {
+    if (clip.link === undefined || !left.has(clip.link) || listed.has(clip.id)) continue;
+    staying.set(clip.link, [...(staying.get(clip.link) ?? []), clip.id]);
+  }
+  for (const [, ids] of staying) {
+    if (ids.length === 1) draft.delete([...clipPath(timeline, ids[0] as string), "link"]);
+  }
+}
+
 function trackOf(timeline: TimelineState, id: string): TrackState {
   return entryOf(timeline.tracks, id) ?? fail("not-found", { kind: "track", id });
 }
@@ -1541,6 +1578,42 @@ export const OPERATIONS = [
       return { id: rightId };
     },
     { group: "clip", result: Made, failures: ["not-found", "invalid-value", "id-taken"] },
+  ),
+
+  /**
+   * Links clips, such as the picture and the sound of a video, so that people select, move, trim
+   * and cut them together. Commands still do only what they list. A group that would keep only one
+   * clip goes, so that no clip is linked to nothing.
+   */
+  define(
+    "clip.link",
+    "把几个片段联动成一组：在编辑器里一起选中、移动、修剪和切割。",
+    z.strictObject({ timeline: Id, clips: DistinctClips.min(2) }),
+    (draft, { timeline, clips }) => {
+      const target = timelineOf(draft, timeline);
+      for (const id of clips) clipOf(target, id);
+      const link = newId("link");
+      setLinks(draft, timeline, target, clips, link);
+      return { link };
+    },
+    {
+      group: "clip",
+      result: z.strictObject({ link: Id }),
+      failures: ["not-found"],
+    },
+  ),
+
+  /** Takes clips out of their groups, and a group that keeps only one clip goes. */
+  define(
+    "clip.unlink",
+    "取消片段的联动，之后各自独立；组里只剩一个片段时它也不再联动。",
+    z.strictObject({ timeline: Id, clips: DistinctClips.min(1) }),
+    (draft, { timeline, clips }) => {
+      const target = timelineOf(draft, timeline);
+      for (const id of clips) clipOf(target, id);
+      setLinks(draft, timeline, target, clips, undefined);
+    },
+    { group: "clip", result: Nothing, failures: ["not-found"] },
   ),
 
   define(

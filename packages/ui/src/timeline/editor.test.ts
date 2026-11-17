@@ -4354,3 +4354,235 @@ describe("sections", () => {
     expect(clip("b").start).toBe("4");
   });
 });
+
+describe("linked clips taken apart and put together again", () => {
+  /** The picture and the sound of one file from 2 to 6 seconds, linked as a video brings them. */
+  const pair = async () => {
+    const context = await setup();
+    const { addClip, video, audio } = context;
+    const media = { asset: "a" };
+    addClip("v", 2, 4, video, { link: "pair", source: { kind: "video", media } });
+    addClip("s", 2, 4, audio, { link: "pair", source: { kind: "audio", media } });
+    const actions = new ActionRegistry();
+    registerTimelineActions(actions, context.editor, {
+      hasSelection: false,
+      canChangeSelection: false,
+      hasClipboard: false,
+      nudge: () => {},
+      deleteSelected: () => {},
+      copySelected: () => {},
+      cutSelected: () => {},
+      paste: () => {},
+    });
+    const action = actions.get("timeline.toggleLink");
+    const press = (pointer: Pointer) => {
+      context.editor.press(pointer);
+      context.editor.release(pointer);
+    };
+    const frames = (seconds: number) => Math.round(seconds * (context.editor.model?.rate.fps ?? 0));
+    return { ...context, action, press, frames };
+  };
+
+  it("unlink with Ctrl+L, after which each moves alone, and link again", async () => {
+    const { editor, action, at, drag, clip, selection, audio, store } = await pair();
+    expect(action?.keys).toEqual(["mod+l"]);
+    editor.selectOnly("v");
+    expect(selection()).toEqual(["s", "v"]);
+    expect([editor.canUnlink, editor.canLink]).toEqual([true, false]);
+    action?.run();
+    expect([clip("v").link, clip("s").link]).toEqual([undefined, undefined]);
+    // Selected as they were, and now one of them goes by itself.
+    expect(selection()).toEqual(["s", "v"]);
+    editor.clearSelection();
+    drag(at(3), at(4));
+    expect([clip("v").start, clip("s").start]).toEqual(["3", "2"]);
+    drag(at(3, audio), at(3.5, audio));
+    expect([clip("v").start, clip("s").start]).toEqual(["3", "2.5"]);
+    editor.selectOnly("v");
+    editor.addToSelection("s");
+    expect([editor.canUnlink, editor.canLink]).toEqual([false, true]);
+    action?.run();
+    expect(clip("v").link).toBeDefined();
+    expect(clip("v").link).toBe(clip("s").link);
+    editor.clearSelection();
+    drag(at(4), at(5));
+    expect([clip("v").start, clip("s").start]).toEqual(["4", "3.5"]);
+    store.undo();
+    store.undo();
+    expect([clip("v").link, clip("s").link]).toEqual([undefined, undefined]);
+  });
+
+  it("cut and delete one of them alone once they are apart", async () => {
+    const { editor, action, clip, main, frames } = await pair();
+    editor.selectOnly("s");
+    action?.run();
+    editor.selectOnly("s");
+    expect([...editor.getSnapshot().selection]).toEqual(["s"]);
+    editor.seek(frames(8));
+    editor.cutSelection();
+    editor.paste();
+    const sound = Object.values(main().clips).find(({ track }) => track !== clip("v").track);
+    expect([clip("v").start, sound?.start, main().clips["s"]]).toEqual(["2", "8", undefined]);
+    editor.selectOnly("v");
+    editor.deleteSelection();
+    expect(Object.keys(main().clips)).toHaveLength(1);
+    expect(main().clips["v"]).toBeUndefined();
+    expect(clip(Object.keys(main().clips)[0] as string).source.kind).toBe("audio");
+  });
+
+  it("selects one of them alone with Alt, which then moves, trims and goes alone", async () => {
+    const { editor, press, at, drag, clip, selection, main } = await pair();
+    press(at(3, undefined, { alt: true }));
+    expect(selection()).toEqual(["v"]);
+    // Alt still keeps it from snapping while it moves.
+    drag(at(3, undefined, { alt: true }), at(3.5, undefined, { alt: true }));
+    expect([clip("v").start, clip("s").start]).toEqual(["2.5", "2"]);
+    expect(clip("v").link).toBe("pair");
+    // A plain click takes both again; Alt on a selected clip takes it out of the group.
+    press(at(4));
+    expect(selection()).toEqual(["s", "v"]);
+    press(at(4, undefined, { alt: true }));
+    expect(selection()).toEqual(["v"]);
+    // Its end goes alone too, for the sound to go on after the picture.
+    const end = { ...at(6.5), x: at(6.5).x - 2, alt: true };
+    drag(end, { ...at(6), x: at(6).x - 2, alt: true });
+    expect([clip("v").duration, clip("s").duration]).toEqual(["3.5", "4"]);
+    press(at(3, undefined, { alt: true }));
+    editor.deleteSelection();
+    expect(Object.keys(main().clips)).toEqual(["s"]);
+  });
+
+  it("say how many frames they are out of step, and move back into step", async () => {
+    const { editor, action, at, drag, clip, frames, audio } = await pair();
+    expect(editor.outOfSync("v")).toBeUndefined();
+    drag(at(3, undefined, { alt: true }), at(3.4, undefined, { alt: true }));
+    expect([clip("v").start, clip("s").start]).toEqual(["2.4", "2"]);
+    // The same file: their clocks are 0.4 seconds apart, as each of them says.
+    expect(editor.outOfSync("v")?.frames).toBe(frames(0.4));
+    expect(editor.outOfSync("s")?.frames).toBe(-frames(0.4));
+    expect(editor.outOfSync("s")?.with).toBe("v");
+    expect(editor.model?.outOfSync.size).toBe(2);
+    // Clips that are not linked are on their own, and nothing is out of step with anything.
+    editor.selectOnly("v");
+    action?.run();
+    expect(editor.model?.outOfSync.size).toBe(0);
+    editor.selectOnly("v");
+    editor.addToSelection("s");
+    action?.run();
+    expect(editor.outOfSync("v")?.frames).toBe(frames(0.4));
+    expect(editor.moveIntoSync("s")).toBe(true);
+    expect(clip("s").start).toBe("2.4");
+    expect(editor.outOfSync("v")).toBeUndefined();
+    expect(editor.outOfSync("s")).toBeUndefined();
+    // Only the clip itself moved.
+    expect(clip("v").start).toBe("2.4");
+    drag(at(3.4, audio, { alt: true }), at(5.4, audio, { alt: true }));
+    expect(editor.outOfSync("s")?.frames).toBe(frames(2));
+    expect(editor.moveIntoSync("v")).toBe(true);
+    expect(clip("v").start).toBe("4.4");
+    expect(editor.model?.outOfSync.size).toBe(0);
+  });
+
+  it("measure the clock, not the start, and only of the same file", async () => {
+    const { editor, addClip, video, audio, store, clip, frames } = await pair();
+    // Trimmed at the start, both: start − offset stays, so they are in step.
+    for (const id of ["v", "s"]) {
+      expect(
+        store.execute({ type: "clip.trim", params: { timeline: "main", clip: id, start: "3" } }).ok,
+      ).toBe(true);
+    }
+    expect(clip("v").offset).toBe("1");
+    expect(editor.outOfSync("v")).toBeUndefined();
+    // Another file in the same group says nothing about these two.
+    addClip("m", 10, 2, audio, { link: "pair", source: { kind: "audio", media: { asset: "b" } } });
+    addClip("w", 10, 2, video, { link: "other", source: { kind: "video", media: { asset: "a" } } });
+    expect(editor.model?.outOfSync.size).toBe(0);
+    store.execute({
+      type: "clip.move",
+      params: { timeline: "main", clips: [{ clip: "s", start: "3.5" }] },
+    });
+    expect(editor.outOfSync("s")?.frames).toBe(frames(0.5));
+    expect(editor.outOfSync("m")).toBeUndefined();
+    expect(editor.outOfSync("w")).toBeUndefined();
+  });
+
+  it("leave a partner on a locked track where it is, out of step, which only the other moves back", async () => {
+    const { editor, action, at, drag, clip, audio, frames, commandFailed } = await pair();
+    editor.updateTrack(audio, { locked: true });
+    drag(at(3), at(4));
+    expect([clip("v").start, clip("s").start]).toEqual(["3", "2"]);
+    expect(editor.outOfSync("v")?.frames).toBe(frames(1));
+    expect(editor.moveIntoSync("s")).toBe(false);
+    expect(clip("s").start).toBe("2");
+    // Ctrl+L leaves out what is locked; the one clip left of the group is linked to nothing.
+    editor.selectOnly("v");
+    expect(editor.getSnapshot().selection.has("s")).toBe(true);
+    action?.run();
+    expect([clip("v").link, clip("s").link]).toEqual([undefined, undefined]);
+    editor.selectOnly("v");
+    editor.addToSelection("s");
+    expect(editor.canLink).toBe(false);
+    editor.updateTrack(audio, { locked: false });
+    expect(editor.canLink).toBe(true);
+    action?.run();
+    expect(editor.moveIntoSync("v")).toBe(true);
+    expect(clip("v").start).toBe("2");
+    expect(commandFailed).not.toHaveBeenCalled();
+  });
+
+  it("move back into step only where there is room", async () => {
+    const { editor, addClip, audio, store, clip, commandFailed } = await pair();
+    store.execute({
+      type: "clip.move",
+      params: { timeline: "main", clips: [{ clip: "s", start: "8" }] },
+    });
+    addClip("x", 3, 1, audio);
+    expect(editor.moveIntoSync("s")).toBe(false);
+    expect(commandFailed).toHaveBeenCalledWith(expect.objectContaining({ code: "overlap" }));
+    expect(clip("s").start).toBe("8");
+  });
+});
+
+describe("only the picture or only the sound of a video", () => {
+  const withFilm = async () => {
+    const context = await setup();
+    context.store.execute({
+      type: "asset.add",
+      params: {
+        id: "film",
+        asset: {
+          path: "assets/film",
+          storage: "local",
+          kind: "video",
+          info: { duration: "2", hasAudio: true },
+        },
+      },
+    });
+    const clips = () => Object.values(context.main().clips);
+    return { ...context, clips };
+  };
+
+  it("makes one clip of either, linked to nothing", async () => {
+    const { editor, clips, video, audio, store } = await withFilm();
+    editor.addMedia({ kind: "asset", id: "film", only: "audio" });
+    expect(clips()).toHaveLength(1);
+    expect(clips()[0]).toMatchObject({ track: audio, source: { kind: "audio" } });
+    expect(clips()[0]?.link).toBeUndefined();
+    store.undo();
+    editor.addMedia({ kind: "asset", id: "film", only: "video" }, { seconds: 4 });
+    expect(clips()).toHaveLength(1);
+    expect(clips()[0]).toMatchObject({ track: video, source: { kind: "video" }, start: "4" });
+    expect(clips()[0]?.link).toBeUndefined();
+    expect(editor.model?.outOfSync.size).toBe(0);
+  });
+
+  it("is all of it where there is no such half", async () => {
+    const { editor, clips, store } = await withFilm();
+    store.execute({
+      type: "asset.add",
+      params: { id: "song", asset: { path: "assets/song", storage: "local", kind: "audio" } },
+    });
+    editor.addMedia({ kind: "asset", id: "song", only: "video" });
+    expect(clips().map(({ source }) => source.kind)).toEqual(["audio"]);
+  });
+});
