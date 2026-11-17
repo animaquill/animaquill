@@ -132,6 +132,20 @@ export const InvalidValue = z.discriminatedUnion("rule", [
   }),
   /** The last section ends where the timeline does, with no section after it to give way. */
   z.strictObject({ rule: z.literal("no-next-section"), section: z.string() }),
+  /** A stretch of a timeline starts before it ends. */
+  z.strictObject({
+    rule: z.literal("range-backwards"),
+    path: z.string(),
+    from: z.string(),
+    to: z.string(),
+  }),
+  /** A stretch of a timeline ends at its end at the latest. */
+  z.strictObject({
+    rule: z.literal("range-outside"),
+    path: z.string(),
+    to: z.string(),
+    length: z.string(),
+  }),
 ]);
 export type InvalidValue = z.output<typeof InvalidValue>;
 
@@ -191,6 +205,14 @@ export const FAILURES = {
   overlap: z.strictObject({
     clips: z.array(z.strictObject({ id: z.string(), name: z.string().optional() })),
     moved: z.boolean().optional(),
+  }),
+  /**
+   * Clips on the tracks that a ripple edit moves are in the stretch that it would take out, by id
+   * and name, with their tracks: it moves nothing then.
+   */
+  "ripple-blocked": z.strictObject({
+    clips: z.array(z.strictObject({ id: z.string(), name: z.string().optional() })),
+    tracks: z.array(z.string()),
   }),
   /** A join needs two clips next to each other on one track. */
   "not-adjacent": z.strictObject({

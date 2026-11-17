@@ -1,6 +1,12 @@
 import { PEAKS_PER_SECOND } from "@animaquill/audio";
 import { bezierProgress, type ClipState } from "@animaquill/core";
-import type { Transition, TransitionRef, TransitionUse } from "@animaquill/schema";
+import {
+  parseTime,
+  toSeconds,
+  type Transition,
+  type TransitionRef,
+  type TransitionUse,
+} from "@animaquill/schema";
 import {
   EXPANDER_SIZE,
   MARKER_BAND,
@@ -217,6 +223,7 @@ export class TimelinePainter extends StagePainter {
     context.rect(0, RULER_HEIGHT, width, height - RULER_HEIGHT);
     context.clip();
     this.#paintLanes(model);
+    this.#paintGap(model);
     this.#paintClips(model);
     this.#paintJoins(model);
     this.#paintMarkedLanes();
@@ -232,6 +239,33 @@ export class TimelinePainter extends StagePainter {
 
   #rowTop(row: Row): number {
     return RULER_HEIGHT - this.#editor.scrollY + row.top;
+  }
+
+  /** The selected empty time between two clips: a light block where clips would be. */
+  #paintGap(model: TimelineModel): void {
+    const editor = this.#editor;
+    const gap = editor.selectedGap;
+    const row = gap && model.rows.find(({ id, gone }) => id === gap.track && !gone);
+    if (!gap || !row) return;
+    const left = editor.xAt(toSeconds(parseTime(gap.from)));
+    const right = editor.xAt(toSeconds(parseTime(gap.to)));
+    if (right < 0 || left > editor.width) return;
+    const top = this.#rowTop(row) + ROW_INSET;
+    const height = row.height - ROW_INSET * 2 - 1;
+    const { context } = this;
+    context.save();
+    context.fillStyle = this.theme.selected;
+    context.globalAlpha = 0.22;
+    context.beginPath();
+    context.roundRect(left, top, right - left, height, CLIP_RADIUS);
+    context.fill();
+    context.globalAlpha = 0.9;
+    context.strokeStyle = this.theme.selected;
+    context.lineWidth = 1;
+    context.beginPath();
+    context.roundRect(left + 0.5, top + 0.5, right - left - 1, height - 1, CLIP_RADIUS);
+    context.stroke();
+    context.restore();
   }
 
   #paintLanes(model: TimelineModel): void {
@@ -874,6 +908,8 @@ export class TimelinePainter extends StagePainter {
     const editor = this.#editor;
     const whole = editor.flashOf("clips", box.id);
     if (whole > 0) this.#paintLit(whole, left, top, width, height);
+    const blocked = editor.flashOf("blocked", box.id);
+    if (blocked > 0) this.#paintLit(blocked, left, top, width, height, this.theme.failed);
     const band = editor.flashOf("bands", box.id);
     if (band > 0) {
       const size = height >= EFFECT_BAND_MIN_CLIP ? EFFECT_BAND_HEIGHT : EFFECT_BAND_THIN;
@@ -885,16 +921,23 @@ export class TimelinePainter extends StagePainter {
    * The one way something that was just added lights up, fading away over `FLASH_MS`: a clip, the
    * block of a transition or a join, or the band of effects of a clip.
    */
-  #paintLit(share: number, left: number, top: number, width: number, height: number): void {
+  #paintLit(
+    share: number,
+    left: number,
+    top: number,
+    width: number,
+    height: number,
+    color = this.theme.flash,
+  ): void {
     const { context } = this;
     context.save();
     context.globalAlpha *= share * 0.4;
-    context.fillStyle = "#ffffff";
+    context.fillStyle = color === this.theme.flash ? "#ffffff" : color;
     context.beginPath();
     context.roundRect(left, top, width, height, CLIP_RADIUS);
     context.fill();
     context.globalAlpha = Math.min(share * 1.5, 1);
-    context.strokeStyle = this.theme.flash;
+    context.strokeStyle = color;
     context.lineWidth = 2;
     context.beginPath();
     context.roundRect(left + 1, top + 1, width - 2, height - 2, CLIP_RADIUS);

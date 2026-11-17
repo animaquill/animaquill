@@ -663,6 +663,7 @@ function ClipList({ editor }: { editor: TimelineEditor }) {
   const trackNameOf = useTrackName();
   const [clips, setClips] = useState<readonly VisibleClip[]>([]);
   const { selection, model } = useSyncExternalStore(editor.subscribe, editor.getSnapshot);
+  const gap = editor.visibleGap;
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -710,11 +711,26 @@ function ClipList({ editor }: { editor: TimelineEditor }) {
           {...syncMark(box)}
           data-download={downloadMark(workbench.downloadOfClip(box.clip))}
           data-flash={editor.flashesOn(box.id) || undefined}
+          data-blocked={editor.flashOf("blocked", box.id) > 0 || undefined}
           data-ai-changed={editor.marked.has(box.id) || undefined}
           data-repo-changed={editor.repoMarked.has(box.id) || undefined}
           style={{ left, top, width, height }}
         />
       ))}
+      {gap && (
+        <div
+          className={styles.clipItem}
+          role="option"
+          aria-selected="true"
+          aria-label={t("timeline.gapLabel", {
+            track: trackNameOf(gap.row),
+            start: timecode(gap.from),
+            end: timecode(gap.to),
+          })}
+          data-gap=""
+          style={{ left: gap.left, top: gap.top, width: gap.width, height: gap.height }}
+        />
+      )}
     </div>
   );
 }

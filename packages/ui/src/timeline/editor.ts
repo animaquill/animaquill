@@ -266,6 +266,16 @@ export interface TransitionsAttached {
   readonly replaced: boolean;
 }
 
+/**
+ * The empty time between two clips of a track, which people select by clicking there, as in
+ * Premiere, to close it. Exact times, as the clips have them.
+ */
+export interface GapChoice {
+  readonly track: string;
+  readonly from: string;
+  readonly to: string;
+}
+
 /** What lights up for a moment after it was added, see `TimelineEditor.flash`. */
 export interface FlashTargets {
   /** Whole clips. */
@@ -275,6 +285,8 @@ export interface FlashTargets {
   readonly joins?: ReadonlySet<string>;
   /** The bands of effects of clips. */
   readonly bands?: ReadonlySet<string>;
+  /** Whole clips that are in the way of what people tried, in the colour of danger. */
+  readonly blocked?: ReadonlySet<string>;
 }
 
 const nameOf = ({ track }: Row) => (track.name === undefined ? {} : { name: track.name });
@@ -381,6 +393,8 @@ export interface TimelineSnapshot {
   readonly marker: string | undefined;
   /** The marker whose name, colour, duration and note are open to change, by id. */
   readonly editingMarker: string | undefined;
+  /** Selected instead of clips: the empty time between two clips, see `GapChoice`. */
+  readonly gap: GapChoice | undefined;
 }
 
 /** Where playing started, by the clock, and how fast it goes. */
@@ -408,6 +422,11 @@ export interface TimelineMessages {
   joinsRemoved?(count: number): void;
   /** Linked partners on locked tracks stayed where they are while the rest went. */
   lockedLeft?(count: number): void;
+  /**
+   * Clips on other tracks are in the time that a ripple edit would close, so nothing moved: as
+   * `commandFailed`, with a way to do it again on only the tracks of what was removed.
+   */
+  rippleBlocked?(failure: CommandFailure, onlyThese: () => void): void;
   /** What a new scene is called. */
   sceneName?(number: number): string;
   /** What a new sound is called, and the words for what it has to be told. */
@@ -489,6 +508,18 @@ const sameView = (a: ViewPlace, b: ViewPlace) =>
 const sameSet = (a: ReadonlySet<string>, b: ReadonlySet<string>) =>
   a.size === b.size && [...a].every((item) => b.has(item));
 
+/** A gap as it is now: undefined when its track is gone or locked, or something is in it now. */
+function stillAGap(model: TimelineModel, gap: GapChoice): GapChoice | undefined {
+  const row = model.rows.find(({ id, gone }) => id === gap.track && !gone);
+  if (!row || row.track.locked) return undefined;
+  const from = parseTime(gap.from);
+  const to = parseTime(gap.to);
+  for (const { clip } of row.clips) {
+    if (compare(clipStart(clip), to) < 0 && compare(clipEnd(clip), from) > 0) return undefined;
+  }
+  return gap;
+}
+
 /**
  * The timeline of this window: what it shows, what is selected and what the mouse is doing. None of
  * it is part of the project. Changes to the project go through commands, once a drag has ended.
@@ -521,6 +552,7 @@ export class TimelineEditor implements TouchTarget {
     cut: new Set(),
     marker: undefined,
     editingMarker: undefined,
+    gap: undefined,
   };
   /** What was copied, in this window. */
   #clipboard: readonly ClipState[] = [];
@@ -975,6 +1007,7 @@ export class TimelineEditor implements TouchTarget {
       cut: new Set(),
       marker: undefined,
       editingMarker: undefined,
+      gap: undefined,
     };
     this.#clipboard = [];
     this.#clipboardJoins = [];
@@ -1016,6 +1049,7 @@ export class TimelineEditor implements TouchTarget {
       cut: sameSet(cut, this.#snapshot.cut) ? this.#snapshot.cut : cut,
       marker: markerThere(this.#snapshot.marker),
       editingMarker: markerThere(this.#snapshot.editingMarker),
+      gap: model && this.#snapshot.gap ? stillAGap(model, this.#snapshot.gap) : undefined,
     };
     if (model) this.#frame = Math.min(this.#frame, frameAt(model.duration, model.rate));
     if (model && this.#gesture?.isStale?.(model)) this.#cancelGesture();
@@ -1046,12 +1080,15 @@ export class TimelineEditor implements TouchTarget {
    * Runs commands as one change. Failing is rare, because the interface checks first. Joins that
    * went because their clips got taken apart are something people should hear about.
    */
-  #run(calls: readonly CommandCall[]): boolean {
+  #run(
+    calls: readonly CommandCall[],
+    failed: (failure: CommandFailure) => boolean = () => false,
+  ): boolean {
     const store = this.#store;
     if (!store) return false;
     const result = store.executeBatch(calls);
     if (!result.ok) {
-      this.#messages.commandFailed(result.error);
+      if (!failed(result.error)) this.#messages.commandFailed(result.error);
       return false;
     }
     const removed = result.results.flatMap((outcome) => {
@@ -1120,8 +1157,8 @@ export class TimelineEditor implements TouchTarget {
 
   /** Whether there is anything in the selection that can be deleted. A transition can be. */
   get canChangeSelection(): boolean {
-    const { selection, transition, marker } = this.#snapshot;
-    if (marker !== undefined) return true;
+    const { selection, transition, marker, gap } = this.#snapshot;
+    if (marker !== undefined || gap !== undefined) return true;
     if (isJoinChoice(transition)) {
       const join = this.model?.joins.get(transition.join);
       return join !== undefined && this.model?.state.tracks[join.join.track]?.locked !== true;
@@ -1143,9 +1180,16 @@ export class TimelineEditor implements TouchTarget {
   #setSelection(wanted: ReadonlySet<string>): void {
     // A drag can hold on to a clip that is gone by now.
     const selection = new Set(this.#present(wanted, this.model));
-    const { transition, marker } = this.#snapshot;
-    if (sameSet(selection, this.#snapshot.selection) && !transition && marker === undefined) return;
-    this.#snapshot = { ...this.#snapshot, selection, transition: undefined, marker: undefined };
+    const { transition, marker, gap } = this.#snapshot;
+    const alone = !transition && marker === undefined && !gap;
+    if (sameSet(selection, this.#snapshot.selection) && alone) return;
+    this.#snapshot = {
+      ...this.#snapshot,
+      selection,
+      transition: undefined,
+      marker: undefined,
+      gap: undefined,
+    };
     this.#emitter.emit();
     this.#viewEmitter.emit();
   }
@@ -1164,6 +1208,7 @@ export class TimelineEditor implements TouchTarget {
       selection: new Set(),
       transition: { clip, edge },
       marker: undefined,
+      gap: undefined,
     };
     this.#emitter.emit();
     this.#viewEmitter.emit();
@@ -1179,6 +1224,7 @@ export class TimelineEditor implements TouchTarget {
       selection: new Set(),
       transition: { join },
       marker: undefined,
+      gap: undefined,
     };
     this.#emitter.emit();
     this.#viewEmitter.emit();
@@ -1472,7 +1518,7 @@ export class TimelineEditor implements TouchTarget {
     this.#snapshot = {
       ...this.#snapshot,
       marker,
-      ...(there && { selection: new Set<string>(), transition: undefined }),
+      ...(there && { selection: new Set<string>(), transition: undefined, gap: undefined }),
     };
     // What people do next is about the marker, not about keys.
     if (there) this.#chosen.emit();
@@ -1734,9 +1780,13 @@ export class TimelineEditor implements TouchTarget {
 
   deleteSelection(): void {
     const { model } = this;
-    const { transition, marker } = this.#snapshot;
+    const { transition, marker, gap } = this.#snapshot;
     if (marker !== undefined) {
       this.removeMarker(marker);
+      return;
+    }
+    if (gap) {
+      this.#closeGap(gap);
       return;
     }
     if (isJoinChoice(transition)) {
@@ -1752,6 +1802,188 @@ export class TimelineEditor implements TouchTarget {
     // The model of before, which still has the clips that go.
     if (!this.#run([{ type: "clip.remove", params: { timeline: model.id, clips } }])) return;
     this.#tellLockedLeft(new Set(clips), model);
+  }
+
+  /* Ripple edits: what follows moves back into the time that goes, on every track not locked. */
+
+  /** The selected empty time between two clips, which Delete closes. */
+  get selectedGap(): GapChoice | undefined {
+    return this.#snapshot.gap;
+  }
+
+  /**
+   * The empty time at a place on a track that is not locked, between the end of a clip (or the
+   * start of the timeline) and the start of the next one.
+   */
+  #gapAt(model: TimelineModel, pointer: Pointer): GapChoice | undefined {
+    const row = rowAt(model, this.laneAt(pointer.y));
+    if (!row || row.track.locked || row.gone) return undefined;
+    const seconds = this.timeAt(pointer.x);
+    if (seconds < 0) return undefined;
+    let from = ZERO;
+    for (const box of row.clips) {
+      const start = clipStart(box.clip);
+      if (box.start > seconds) {
+        return compare(from, start) < 0
+          ? { track: row.id, from: formatTime(from), to: box.clip.start }
+          : undefined;
+      }
+      const end = clipEnd(box.clip);
+      if (box.end > seconds) return undefined;
+      if (compare(end, from) > 0) from = end;
+    }
+    return undefined;
+  }
+
+  #selectGap(gap: GapChoice): void {
+    this.#snapshot = {
+      ...this.#snapshot,
+      selection: new Set(),
+      transition: undefined,
+      marker: undefined,
+      gap,
+    };
+    this.#chosen.emit();
+    this.#emitter.emit();
+    this.#viewEmitter.emit();
+  }
+
+  /**
+   * The tracks that ripple edits move: all that are not locked, as with sync lock in Premiere, also
+   * the tracks that are gone and still have clips. Commands do not know of locks.
+   */
+  #rippleTracks(model: TimelineModel): readonly string[] {
+    const tracks = new Set<string>();
+    for (const row of model.rows) {
+      if (row.track.locked) continue;
+      if (row.gone) for (const box of row.clips) tracks.add(box.clip.track);
+      else tracks.add(row.id);
+    }
+    return [...tracks];
+  }
+
+  /**
+   * Runs a ripple edit. When clips on other tracks are in the way, nothing moved: they light up,
+   * and people can do it again on only the tracks of what goes.
+   */
+  #runRipple(
+    model: TimelineModel,
+    call: { readonly type: string; readonly params: Readonly<Record<string, unknown>> },
+    onlyThese: readonly string[],
+  ): boolean {
+    return this.#run([call], (failure) => {
+      if (failure.code !== "ripple-blocked") return false;
+      const clips = (failure.params["clips"] ?? []) as readonly { readonly id: string }[];
+      this.flash({ blocked: new Set(clips.map(({ id }) => id)) });
+      const retry = () => {
+        const params = { ...call.params, rippleTracks: onlyThese };
+        if (this.model?.id === model.id) this.#run([{ type: call.type, params }]);
+      };
+      if (!this.#messages.rippleBlocked) return false;
+      this.#messages.rippleBlocked(failure, retry);
+      return true;
+    });
+  }
+
+  #closeGap(gap: GapChoice): void {
+    const { model } = this;
+    if (!model) return;
+    const call = {
+      type: "timeline.closeGap",
+      params: {
+        timeline: model.id,
+        ranges: [{ from: gap.from, to: gap.to }],
+        rippleTracks: this.#rippleTracks(model),
+      },
+    };
+    // Once closed, it is no gap any more: the clip after it is there now.
+    this.#runRipple(model, call, [gap.track]);
+  }
+
+  /** Whether Shift+Delete has something to do: a gap, or clips that can go. */
+  get canRippleDelete(): boolean {
+    const { gap, marker, transition } = this.#snapshot;
+    if (gap) return true;
+    if (marker !== undefined || transition) return false;
+    return this.#changeable(this.#snapshot.selection, this.model).length > 0;
+  }
+
+  /**
+   * Deletes the selected clips and closes the time they took, on every track that is not locked;
+   * with a gap selected, closes that.
+   */
+  rippleDelete(): void {
+    const { model } = this;
+    const { gap, marker, transition } = this.#snapshot;
+    if (!model) return;
+    if (gap) {
+      this.#closeGap(gap);
+      return;
+    }
+    if (marker !== undefined || transition) return;
+    const clips = this.#changeable(this.#snapshot.selection, model);
+    if (clips.length === 0) return;
+    const own = [...new Set(clips.flatMap((id) => model.boxes.get(id)?.clip.track ?? []))];
+    const call = {
+      type: "clip.remove",
+      params: { timeline: model.id, clips, ripple: true, rippleTracks: this.#rippleTracks(model) },
+    };
+    if (this.#runRipple(model, call, own)) this.#tellLockedLeft(new Set(clips), model);
+  }
+
+  /** Whether there is a marked part to lift or extract, and a track that is not locked. */
+  get canLift(): boolean {
+    const { model } = this;
+    return model !== undefined && this.#markedRange(model) !== undefined;
+  }
+
+  /** What is on tracks that are not locked between in and out goes, and the time stays. */
+  lift(): void {
+    this.#removeMarked(false);
+  }
+
+  /** As `lift`, and what follows moves back into the time. */
+  extract(): void {
+    this.#removeMarked(true);
+  }
+
+  /** In to out, exactly: without an in from the start, without an out to the end. */
+  #markedRange(
+    model: TimelineModel,
+  ): { readonly from: Rational; readonly to: Rational } | undefined {
+    const frames = markedFrames(this.#snapshot.marks, frameAt(model.duration, model.rate));
+    if (!frames) return undefined;
+    const length = timelineLength(model.state);
+    const from = frameTime(frames.from, model.rate);
+    const end = this.#snapshot.marks.out === undefined ? length : frameTime(frames.to, model.rate);
+    const to = compare(end, length) > 0 ? length : end;
+    return compare(from, to) < 0 ? { from, to } : undefined;
+  }
+
+  #removeMarked(ripple: boolean): void {
+    const { model } = this;
+    const range = model && this.#markedRange(model);
+    if (!model || !range) return;
+    const tracks = this.#rippleTracks(model);
+    if (tracks.length === 0) return;
+    const seconds = { from: toSeconds(range.from), to: toSeconds(range.to) };
+    const touched = new Set<string>();
+    for (const row of model.rows) {
+      if (row.track.locked) continue;
+      forEachBetween(row, seconds.from, seconds.to, (box) => touched.add(box.id));
+    }
+    const params = {
+      timeline: model.id,
+      from: formatTime(range.from),
+      to: formatTime(range.to),
+      tracks,
+      ...(ripple && { ripple: true }),
+    };
+    if (!this.#run([{ type: "timeline.removeRange", params }])) return;
+    this.#tellLockedLeft(touched, model);
+    // What was marked is gone, and marks still there would take the next part with them.
+    this.setMarks(NO_MARKS);
+    this.seek(frameAt(toSeconds(range.from), model.rate));
   }
 
   get hasClipboard(): boolean {
@@ -2437,6 +2669,30 @@ export class TimelineEditor implements TouchTarget {
       });
     }
     return found;
+  }
+
+  /** The selected gap where it is on screen, for those who do not see the canvas. */
+  get visibleGap():
+    | {
+        readonly row: Row;
+        readonly from: number;
+        readonly to: number;
+        readonly left: number;
+        readonly top: number;
+        readonly width: number;
+        readonly height: number;
+      }
+    | undefined {
+    const { model } = this;
+    const gap = this.#snapshot.gap;
+    const row = gap && model?.rows.find(({ id, gone }) => id === gap.track && !gone);
+    if (!gap || !row) return undefined;
+    const from = toSeconds(parseTime(gap.from));
+    const to = toSeconds(parseTime(gap.to));
+    const left = Math.max(this.xAt(from), 0);
+    const right = Math.min(this.xAt(to), this.#width);
+    const top = RULER_HEIGHT - this.#scrollY + row.top;
+    return { row, from, to, left, top, width: Math.max(right - left, 0), height: row.height };
   }
 
   /* The mouse. */
@@ -3133,7 +3389,12 @@ export class TimelineEditor implements TouchTarget {
     } else if (hit.kind === "join") {
       this.#pressJoin(hit, pointer);
     } else {
-      this.#gesture = new MarqueeGesture(host, pointer);
+      // A click in the empty time between two clips selects it, and a drag from there selects
+      // clips, as in Premiere.
+      const adding = pointer.shift || pointer.mod || this.#snapshot.multiSelecting;
+      const gap = adding ? undefined : this.#gapAt(model, pointer);
+      const onClick = gap && (() => this.#selectGap(gap));
+      this.#gesture = new MarqueeGesture(host, pointer, onClick);
     }
   }
 

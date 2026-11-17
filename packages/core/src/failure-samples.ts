@@ -38,6 +38,8 @@ const RULES: { readonly [R in InvalidValue["rule"]]: Extract<InvalidValue, { rul
   "section-edge": { rule: "section-edge", path: "at", time: "5" },
   "boundary-outside": { rule: "boundary-outside", path: "at", time: "12", from: "5", to: "10" },
   "no-next-section": { rule: "no-next-section", section: "s1" },
+  "range-backwards": { rule: "range-backwards", path: "ranges.0", from: "8", to: "6" },
+  "range-outside": { rule: "range-outside", path: "to", to: "40", length: "30.005" },
 };
 
 const CODES: { readonly [C in FailureCode]: CommandFailure & { readonly code: C } } = {
@@ -69,6 +71,10 @@ const CODES: { readonly [C in FailureCode]: CommandFailure & { readonly code: C 
     params: { trackKind: "audio", holds: "clip", sourceKind: "image" },
   },
   overlap: { code: "overlap", params: { clips: [{ id: "c2", name: "片头" }] } },
+  "ripple-blocked": {
+    code: "ripple-blocked",
+    params: { clips: [{ id: "clip_bed", name: "配乐" }], tracks: ["track_music"] },
+  },
   "not-adjacent": { code: "not-adjacent", params: { from: "c1", to: "c2", why: "gap" } },
   "last-section": { code: "last-section", params: { timeline: "main" } },
   "source-start": { code: "source-start", params: { clip: "c1", name: "片头" } },

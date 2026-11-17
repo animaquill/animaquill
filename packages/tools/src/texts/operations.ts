@@ -569,13 +569,73 @@ export const OPERATION_TEXTS = {
     },
   ],
 
-  "ops.clip.remove.summary": "removes clips",
+  "ops.clip.remove.summary": "removes clips; with ripple, what follows moves back into their place",
   "ops.clip.remove.description":
-    "Takes clips away, as one step, with the joins at their edges. Nothing else moves: what was after them keeps its place.",
+    "Takes clips away, as one step, with the joins at their edges. Without ripple nothing else moves. With ripple: true the time they took is taken out as timeline.closeGap does, on rippleTracks or all tracks; another clip in that time on those tracks, such as the sound of a picture removed alone, makes it fail with ripple-blocked.",
+  "ops.clip.remove.params.ripple":
+    "true takes the time of the clips out, so that what follows moves back into it.",
   "ops.clip.remove.errors.not-found":
-    "There is no timeline with this id, or one of the clips is not on it.",
+    "There is no timeline with this id, or one of the clips or rippleTracks is not on it.",
+  "ops.clip.remove.errors.ripple-blocked":
+    "With ripple, other clips on the tracks that move are in the time that the clips took.",
   "ops.clip.remove.examples": [
     { title: "A clip", params: { timeline: "main", clips: ["clip_idea"] } },
+    {
+      title: "A clip, and what follows on its track moves back into its place",
+      params: {
+        timeline: "main",
+        clips: ["clip_lottie"],
+        ripple: true,
+        rippleTracks: ["track_overlay"],
+      },
+    },
+  ],
+
+  "ops.timeline.closeGap.summary":
+    "takes empty stretches out of a timeline; what follows moves back",
+  "ops.timeline.closeGap.description":
+    "Takes stretches of time out of the timeline: on rippleTracks (all tracks without it), every clip from the end of a stretch on moves back by its length and those of the stretches before it. Sections and markers move back too: a section all inside a stretch goes (the result lists it), markers inside go to its start. The timeline gets shorter by as much, unless clips on other tracks reach further. On the tracks that move, the stretches have to be empty, or it fails with ripple-blocked and writes nothing. Overlapping stretches count once.",
+  "ops.timeline.closeGap.params.ranges":
+    'Each {"from","to"}: seconds of the timeline, from before to; at least one.',
+  "ops.timeline.closeGap.errors.not-found":
+    "There is no timeline with this id, or one of rippleTracks is not on it.",
+  "ops.timeline.closeGap.errors.invalid-value":
+    "A stretch does not start before it ends, or ends past the end of the timeline.",
+  "ops.timeline.closeGap.errors.ripple-blocked":
+    "Clips on the tracks that move are in one of the stretches.",
+  "ops.timeline.closeGap.examples": [
+    {
+      title: "The empty start of one track",
+      params: {
+        timeline: "main",
+        ranges: [{ from: "0", to: "6" }],
+        rippleTracks: ["track_overlay"],
+      },
+    },
+  ],
+
+  "ops.timeline.removeRange.summary":
+    "takes away what is on tracks between two moments; with ripple, closes that time too",
+  "ops.timeline.removeRange.description":
+    "Takes away what is on tracks from from to to, as lift and extract do between in and out: clips inside go, clips across from or to lose the part inside, and a clip across both becomes two, the part after to a new clip (split lists both ids; linked parts after the cut get a new link). Without ripple the time stays, empty; with ripple: true it is taken out on the same tracks, as timeline.closeGap does.",
+  "ops.timeline.removeRange.params.from": "Start of the stretch, seconds of the timeline.",
+  "ops.timeline.removeRange.params.to": "End of the stretch, after from, at the end at the latest.",
+  "ops.timeline.removeRange.params.tracks": "Track ids (aq_timeline_read); without, all tracks.",
+  "ops.timeline.removeRange.params.ripple":
+    "true takes the time out as well, so that what follows moves back.",
+  "ops.timeline.removeRange.errors.not-found":
+    "There is no timeline with this id, or one of tracks is not on it.",
+  "ops.timeline.removeRange.errors.invalid-value":
+    "from is not before to, or to is past the end of the timeline.",
+  "ops.timeline.removeRange.examples": [
+    {
+      title: "Lift: 10 to 12 seconds, left empty",
+      params: { timeline: "main", from: "10", to: "12" },
+    },
+    {
+      title: "Extract: 10 to 12 seconds, and what follows moves back",
+      params: { timeline: "main", from: "10", to: "12", ripple: true },
+    },
   ],
 
   "ops.clip.update.summary":

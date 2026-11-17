@@ -103,6 +103,19 @@ export function registerTimelineActions(
       group: "edit",
     },
   );
+  // Premiere closes what goes with Shift+Delete; on a Mac keyboard that is Shift+Backspace.
+  add("rippleDelete", () => editor.rippleDelete(), {
+    keys: ["shift+delete", "shift+backspace"],
+    enabled: () => !hasKeys() && editor.canRippleDelete,
+    group: "edit",
+  });
+  // Lift and extract between in and out, with the keys of Premiere.
+  add("lift", () => editor.lift(), { keys: [";"], enabled: () => editor.canLift, group: "edit" });
+  add("extract", () => editor.extract(), {
+    keys: ["'"],
+    enabled: () => editor.canLift,
+    group: "edit",
+  });
   add("selectAll", () => editor.selectAll(), { keys: ["mod+a"], group: "edit" });
   add("toggleProperties", toggleProperties, { keys: ["u"], enabled: hasSelection, group: "edit" });
   const whileSelected = () => hasTimeline() && (hasSelection() || hasKeys());

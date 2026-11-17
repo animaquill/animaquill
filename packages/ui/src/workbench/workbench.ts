@@ -754,6 +754,10 @@ export class Workbench {
       commandFailed: (failure) => this.notifications.push(commandFailedText(t, failure)),
       joinsRemoved: (count) => this.notifications.push(t("timeline.joinsRemoved", { count })),
       lockedLeft: (count) => this.notifications.push(t("timeline.lockedLeft", { count })),
+      rippleBlocked: (failure, onlyThese) =>
+        this.notifications.push(commandFailedText(t, failure), {
+          actions: [{ label: t("timeline.rippleOnlyThese"), run: onlyThese }],
+        }),
       sceneName: (number) => t("scene.newName", { number }),
       soundName: (number) => t("sound.newName", { number }),
       soundWords: () => ({ duration: t("sound.param.duration"), seed: t("sound.param.seed") }),

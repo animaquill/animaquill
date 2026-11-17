@@ -54,10 +54,12 @@ async function setup(memory = memoryWindow(), { sized = true } = {}) {
   };
   const joinsRemoved = vi.fn<(count: number) => void>();
   const lockedLeft = vi.fn<(count: number) => void>();
+  const rippleBlocked = vi.fn<(failure: CommandFailure, onlyThese: () => void) => void>();
   const editor = new TimelineEditor(session, memory, settings, {
     commandFailed,
     joinsRemoved,
     lockedLeft,
+    rippleBlocked,
   });
   await editor.load();
   if (sized) editor.setViewport(WIDTH, HEIGHT);
@@ -133,6 +135,7 @@ async function setup(memory = memoryWindow(), { sized = true } = {}) {
     commandFailed,
     joinsRemoved,
     lockedLeft,
+    rippleBlocked,
     memory,
     saved,
     settings,
@@ -4630,5 +4633,176 @@ describe("only the picture or only the sound of a video", () => {
     });
     editor.addMedia({ kind: "asset", id: "song", only: "video" });
     expect(clips().map(({ source }) => source.kind)).toEqual(["audio"]);
+  });
+});
+
+describe("ripple edits", () => {
+  /** Shift+Delete and the rest, as the keys and the menu run them. */
+  function actionsOf(editor: TimelineEditor) {
+    const actions = new ActionRegistry();
+    const noKeys = {
+      hasSelection: false,
+      canChangeSelection: false,
+      hasClipboard: false,
+      nudge: () => {},
+      deleteSelected: () => {},
+      copySelected: () => {},
+      cutSelected: () => {},
+      paste: () => {},
+    };
+    registerTimelineActions(actions, editor, noKeys);
+    return {
+      run: (id: string) => actions.get(`timeline.${id}`)?.run(),
+      enabled: (id: string) => actions.get(`timeline.${id}`)?.enabled?.() !== false,
+      keys: (id: string) => actions.get(`timeline.${id}`)?.keys,
+    };
+  }
+
+  it("closes what a clip and its sound leave on every track, in one step, with Shift+Delete", async () => {
+    const { editor, addClip, audio, video, clip, store, main } = await setup();
+    editor.addTrack("video");
+    const upper = orderedTracks(main()).find(
+      ({ id, kind }) => kind === "video" && id !== video,
+    )!.id;
+    addClip("a", 0, 2);
+    addClip("b", 2, 2, undefined, { link: "film" });
+    addClip("sb", 2, 2, audio, { link: "film" });
+    addClip("c", 4, 2);
+    addClip("sc", 4, 2, audio);
+    // On a track of its own, which moves along as every track that is not locked does.
+    addClip("title", 5, 1, upper);
+    const { run, enabled, keys } = actionsOf(editor);
+    expect(keys("rippleDelete")).toEqual(["shift+delete", "shift+backspace"]);
+    expect(enabled("rippleDelete")).toBe(false);
+    editor.selectOnly("b");
+    expect(editor.getSnapshot().selection).toEqual(new Set(["b", "sb"]));
+    expect(enabled("rippleDelete")).toBe(true);
+    run("rippleDelete");
+    expect([clip("c").start, clip("sc").start, clip("a").start]).toEqual(["2", "2", "0"]);
+    expect(clip("title").start).toBe("3");
+    expect([clip("b"), clip("sb")]).toEqual([undefined, undefined]);
+    store.undo();
+    expect([clip("b").start, clip("c").start, clip("sc").start]).toEqual(["2", "4", "4"]);
+  });
+
+  it("selects the empty time between two clips with a click, and Delete closes it", async () => {
+    const { editor, addClip, audio, clip, at, video } = await setup();
+    addClip("a", 0, 2);
+    addClip("c", 5, 2);
+    addClip("s", 6, 1, audio);
+    editor.selectOnly("a");
+    editor.press(at(3.5));
+    editor.release(at(3.5));
+    expect(editor.selectedGap).toEqual({ track: video, from: "2", to: "5" });
+    expect(editor.getSnapshot().selection.size).toBe(0);
+    expect(editor.canChangeSelection).toBe(true);
+    editor.deleteSelection();
+    expect([clip("c").start, clip("s").start]).toEqual(["2", "3"]);
+    // It is no gap any more.
+    expect(editor.selectedGap).toBeUndefined();
+  });
+
+  it("still selects clips with a drag from the empty time, and selects no gap after the last clip", async () => {
+    const { editor, addClip, at, drag, selection } = await setup();
+    addClip("a", 0, 2);
+    addClip("c", 5, 2);
+    drag(at(3), at(6));
+    expect(selection()).toEqual(["c"]);
+    expect(editor.selectedGap).toBeUndefined();
+    editor.press(at(8));
+    editor.release(at(8));
+    expect(editor.selectedGap).toBeUndefined();
+    expect(selection()).toEqual([]);
+  });
+
+  it("selects the time before the first clip, gives up the gap for a clip, and the clip for a gap", async () => {
+    const { editor, addClip, at } = await setup();
+    addClip("a", 1, 1);
+    addClip("c", 5, 2);
+    editor.press(at(0.5));
+    editor.release(at(0.5));
+    expect(editor.selectedGap?.to).toBe("1");
+    editor.selectOnly("c");
+    expect(editor.selectedGap).toBeUndefined();
+    editor.press(at(3));
+    editor.release(at(3));
+    expect(editor.selectedGap).toMatchObject({ from: "2", to: "5" });
+    expect(editor.getSnapshot().selection.size).toBe(0);
+  });
+
+  it("does nothing when another track has something in that time, lights it up, and can move only that track", async () => {
+    const { editor, addClip, audio, clip, at, rippleBlocked, commandFailed, store, video } =
+      await setup();
+    addClip("a", 0, 2);
+    addClip("c", 5, 2);
+    addClip("s", 1, 3, audio);
+    const before = structuredClone(store.getState());
+    editor.press(at(3));
+    editor.release(at(3));
+    editor.rippleDelete();
+    expect(store.getState()).toEqual(before);
+    expect(commandFailed).not.toHaveBeenCalled();
+    expect(rippleBlocked).toHaveBeenCalledTimes(1);
+    const [failure, onlyThese] = rippleBlocked.mock.calls[0]!;
+    expect(failure).toMatchObject({
+      code: "ripple-blocked",
+      params: { clips: [{ id: "s" }], tracks: [audio] },
+    });
+    expect(editor.flashOf("blocked", "s")).toBeGreaterThan(0);
+    vi.advanceTimersByTime(FLASH_MS + 100);
+    expect(editor.flashOf("blocked", "s")).toBe(0);
+    onlyThese();
+    expect([clip("c").start, clip("s").start]).toEqual(["2", "1"]);
+    expect(video).toBeDefined();
+  });
+
+  it("leaves a locked track where it is, and says when a partner stays behind there", async () => {
+    const { editor, addClip, audio, clip, lockedLeft } = await setup();
+    addClip("b", 2, 2, undefined, { link: "film" });
+    addClip("sb", 2, 2, audio, { link: "film" });
+    addClip("c", 4, 2);
+    addClip("sc", 4, 2, audio);
+    editor.updateTrack(audio, { locked: true });
+    editor.selectOnly("b");
+    editor.rippleDelete();
+    // The sound stays, and so its time is not empty: on the unlocked track it closes.
+    expect([clip("b"), clip("c").start, clip("sb").start, clip("sc").start]).toEqual([
+      undefined,
+      "2",
+      "2",
+      "4",
+    ]);
+    expect(lockedLeft).toHaveBeenCalledWith(1);
+  });
+
+  it("lifts with ; and extracts with ' between in and out, on tracks that are not locked", async () => {
+    const { editor, addClip, audio, clip, main, store } = await setup();
+    addClip("v", 0, 6);
+    addClip("s", 0, 6, audio);
+    addClip("w", 7, 2);
+    const { run, enabled, keys } = actionsOf(editor);
+    expect([keys("lift"), keys("extract")]).toEqual([[";"], ["'"]]);
+    expect([enabled("lift"), enabled("extract")]).toEqual([false, false]);
+    const fps = editor.model!.rate.fps;
+    editor.setMarks({ in: 2 * fps, out: 4 * fps - 1 });
+    expect([enabled("lift"), enabled("extract")]).toEqual([true, true]);
+    run("lift");
+    const pieces = () =>
+      Object.values(main().clips)
+        .map(
+          ({ id, start, duration, track }) =>
+            `${track === audio ? "A" : "V"}${start}+${duration}${id === "v" || id === "s" || id === "w" ? `:${id}` : ""}`,
+        )
+        .toSorted();
+    expect(pieces()).toEqual(["A0+2:s", "A4+2", "V0+2:v", "V4+2", "V7+2:w"]);
+    // The marks went with what they marked, and the playhead is where it was cut.
+    expect(editor.marks).toEqual({});
+    expect(enabled("extract")).toBe(false);
+    store.undo();
+    editor.setMarks({ in: 2 * fps, out: 4 * fps - 1 });
+    editor.updateTrack(audio, { locked: true });
+    run("extract");
+    expect(pieces()).toEqual(["A0+6:s", "V0+2:v", "V2+2", "V5+2:w"]);
+    expect(clip("w").start).toBe("5");
   });
 });

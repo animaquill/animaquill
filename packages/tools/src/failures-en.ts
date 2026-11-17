@@ -101,6 +101,10 @@ export const INVALID_VALUE_TEXTS: RuleTexts = {
     `${path} ${time} is outside the two sections: the boundary has to be after ${from} and before ${to}.`,
   "no-next-section": ({ section }) =>
     `Section ${section} is the last one and ends where the timeline ends: section.update changes its duration.`,
+  "range-backwards": ({ path, from, to }) =>
+    `${path} goes from ${from} to ${to}: a stretch has to start before it ends.`,
+  "range-outside": ({ path, to, length }) =>
+    `${path} ${to} is past the end of the timeline, which is ${length} seconds long: a stretch ends at the end at the latest.`,
 };
 
 function invalidValue(params: InvalidValue): string {
@@ -174,6 +178,8 @@ export const FAILURE_TEXTS: Texts = {
     moved
       ? `Clips would land on the same place: ${clips.map((clip) => clip.id).join(", ")}; moved clips cannot overlap each other.`
       : `There are clips in the way: ${clips.map((clip) => clip.id).join(", ")}; overlap: "overwrite" cuts them away.`,
+  "ripple-blocked": ({ clips, tracks }) =>
+    `Clips ${clips.map((clip) => clip.id).join(", ")} are in the time that would be taken out, on tracks ${tracks.join(", ")}, which move with it: nothing moved. rippleTracks without those tracks leaves them where they are.`,
   "not-adjacent": ({ from, to, why }) =>
     why === "tracks"
       ? `Clips ${from} and ${to} are on different tracks: a join needs both on one track.`

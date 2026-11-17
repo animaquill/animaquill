@@ -95,7 +95,11 @@ export const DIRECTIVE_OVERRIDES = {
   "ops.track.move.summary": "move a track before another one, or last",
   "ops.track.remove.summary": "remove a track with all its clips",
   "ops.clip.add.summary": "put a clip on a track: an asset, a scene, a sound, a color or a caption",
-  "ops.clip.remove.summary": "remove clips",
+  "ops.clip.remove.summary": "remove clips; with ripple, move what follows back into their place",
+  "ops.timeline.closeGap.summary":
+    "take empty stretches out of a timeline; what follows moves back",
+  "ops.timeline.removeRange.summary":
+    "take away what is on tracks between two moments; with ripple, close that time too",
   "ops.clip.update.summary":
     "change the name, source, offset, loop, hidden, draft, link or section fit of a clip",
   "ops.clip.setTransition.summary":

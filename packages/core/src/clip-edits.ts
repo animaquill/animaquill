@@ -470,10 +470,13 @@ export function splitClip(
   clip: ClipState,
   at: Rational,
   rightId: string,
-  rightLink?: string,
+  rightLink?: string | null,
 ): void {
   const { enter, exit } = joinsAtEdgesOf(timelineOf(draft, timeline), clip.id);
-  const { enter: _enter, offset: _offset, ...rest } = clip;
+  const { enter: _enter, offset: _offset, ...kept } = clip;
+  // A link of its own, none (null), or the one of the clip.
+  const { link: _link, ...unlinked } = kept;
+  const rest = rightLink === null ? unlinked : kept;
   const offset = add(clipOffset(clip), subtract(at, clipStart(clip)));
   const rightLength = subtract(clipEnd(clip), at);
   draft.note({ kind: "cut", clip: clip.id, piece: rightId });
@@ -483,7 +486,7 @@ export function splitClip(
     start: formatTime(at),
     duration: formatTime(rightLength),
     offset: formatTime(offset),
-    ...(rightLink === undefined ? {} : { link: rightLink }),
+    ...(typeof rightLink === "string" && { link: rightLink }),
   });
   for (const [id, join] of Object.entries(timelineOf(draft, timeline).joins ?? {})) {
     if (join.from === clip.id) draft.set([...joinPath(timeline, id), "from"], rightId);
@@ -509,29 +512,105 @@ export function splitClip(
   fitEffects(draft, timeline, rightId, leftLength, rightLength, true);
 }
 
-/** Takes away the part of a clip under a span. What comes after a cut is not looked at again. */
-function cutOut(draft: Draft, timeline: string, id: string, span: Span): void {
+/**
+ * The links of the parts after cuts, as `clip.split` gives them: the part before a cut keeps the
+ * link of its clip, and the parts after one cut of a linked group get a new link together, or
+ * else all of them would move as one with the parts before. A part that is the only one of its
+ * group after that cut has nothing to be linked with, and gets no link: a link to nothing would
+ * show as one and do nothing. So every cut is counted first (`expect`), and then each part gets
+ * its link as it is made (`linkFor`), in one write.
+ */
+export class PieceLinks {
+  readonly #counts = new Map<string, number>();
+  readonly #links = new Map<string, string>();
+
+  #key = (link: string, at: Rational) => `${link} ${formatTime(at)}`;
+
+  /** A cut that is to come at `at`, of a clip that has this link. */
+  expect(link: string | undefined, at: Rational): void {
+    if (link === undefined) return;
+    const key = this.#key(link, at);
+    this.#counts.set(key, (this.#counts.get(key) ?? 0) + 1);
+  }
+
+  /**
+   * The link of the part after a cut at `at` of a clip that has this link: undefined for a clip
+   * without one, null for the only part of its group after this cut.
+   */
+  linkFor(link: string | undefined, at: Rational): string | null | undefined {
+    if (link === undefined) return undefined;
+    const key = this.#key(link, at);
+    if ((this.#counts.get(key) ?? 0) < 2) return null;
+    let made = this.#links.get(key);
+    if (made === undefined) {
+      made = newId("link");
+      this.#links.set(key, made);
+    }
+    return made;
+  }
+}
+
+/** Counts the cuts that clearing spans of a track would make, see `PieceLinks`. */
+export function expectCuts(
+  timeline: TimelineState,
+  track: string,
+  spans: readonly Span[],
+  moving: ReadonlySet<string>,
+  links: PieceLinks,
+): void {
+  for (const { clip, spans: touched } of clipsInTheWay(timeline, track, spans, moving)) {
+    for (const span of touched) expectCut(clip, span, links);
+  }
+}
+
+/** Counts the cut that taking a span out of a clip would make, if it cuts it in two. */
+export function expectCut(clip: ClipState, span: Span, links: PieceLinks): void {
+  const { from, to } = spanOf(clip);
+  if (compare(from, span.from) < 0 && compare(to, span.to) > 0) links.expect(clip.link, span.to);
+}
+
+/** What happened to a clip under a span: it went, it lost an end, or it is two parts now. */
+export type CutOut =
+  | { readonly kind: "removed" }
+  | { readonly kind: "trimmed" }
+  | { readonly kind: "split"; readonly piece: string };
+
+/**
+ * Takes away the part of a clip under a span. What comes after a cut is not looked at again. The
+ * links of parts after a cut go through `links`.
+ */
+export function cutOut(
+  draft: Draft,
+  timeline: string,
+  id: string,
+  span: Span,
+  links: PieceLinks,
+): CutOut | undefined {
   const clip = entryOf(timelineOf(draft, timeline).clips, id);
-  if (!clip || !overlap(spanOf(clip), span)) return;
+  if (!clip || !overlap(spanOf(clip), span)) return undefined;
   const { from, to } = spanOf(clip);
   const before = compare(from, span.from) < 0;
   const after = compare(to, span.to) > 0;
   if (before && after) {
-    splitClip(draft, timeline, clip, span.to, newId("clip"));
+    const piece = newId("clip");
+    splitClip(draft, timeline, clip, span.to, piece, links.linkFor(clip.link, span.to));
     const left = entryOf(timelineOf(draft, timeline).clips, id) as ClipState;
     trimClip(draft, timeline, left, { from, to: span.from });
-  } else if (before) {
-    trimClip(draft, timeline, clip, { from, to: span.from });
-  } else if (after) {
-    trimClip(draft, timeline, clip, { from: span.to, to });
-  } else {
-    removeClips(draft, timeline, [id]);
+    return { kind: "split", piece };
   }
+  if (before) trimClip(draft, timeline, clip, { from, to: span.from });
+  else if (after) trimClip(draft, timeline, clip, { from: span.to, to });
+  else {
+    removeClips(draft, timeline, [id]);
+    return { kind: "removed" };
+  }
+  return { kind: "trimmed" };
 }
 
 /**
  * Makes room on a track, the way dropping clips does in an editor: what is under them goes. A clip
- * can be under several of them. From the last one back, what stays keeps its id.
+ * can be under several of them. From the last one back, what stays keeps its id. The parts after
+ * cuts get their links from `links`, which has to have counted them all first: see `expectCuts`.
  */
 export function clearSpans(
   draft: Draft,
@@ -539,6 +618,7 @@ export function clearSpans(
   track: string,
   spans: readonly Span[],
   moving: ReadonlySet<string>,
+  links: PieceLinks,
 ): void {
   for (const { clip, spans: touched } of clipsInTheWay(
     timelineOf(draft, timeline),
@@ -546,7 +626,7 @@ export function clearSpans(
     spans,
     moving,
   )) {
-    for (const span of touched.toReversed()) cutOut(draft, timeline, clip.id, span);
+    for (const span of touched.toReversed()) cutOut(draft, timeline, clip.id, span, links);
   }
 }
 

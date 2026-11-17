@@ -482,7 +482,10 @@ test.describe("markers and sections in light colours", () => {
 /* Linked clips taken apart and put together again (pro-editing P4 of AnimaQuill Cloud). */
 
 const clips = (page: Page) =>
-  panel(page).getByRole("listbox", { name: "时间轴片段" }).getByRole("option");
+  panel(page)
+    .getByRole("listbox", { name: "时间轴片段" })
+    .getByRole("option")
+    .and(page.locator(":not([data-gap])"));
 const picture = (page: Page) => clips(page).and(page.locator('[aria-label*="，视频 1，"]'));
 const sound = (page: Page) => clips(page).and(page.locator('[aria-label*="，音频 1，"]'));
 const cards = (page: Page) => resourcesIn(page, "assets");
@@ -712,5 +715,194 @@ test.describe("only the picture or only the sound of a video", () => {
       await expect(half(page, "audio").locator("..")).toHaveCSS("opacity", "1");
       await shootCard(page, "card-halves-light.png");
     });
+  });
+});
+
+/* Ripple delete, gaps, lift and extract (pro-editing P3a of AnimaQuill Cloud). */
+
+/** The same video again at the playhead, after the one there is. */
+async function placeAgain(page: Page) {
+  const before = await clips(page).count();
+  await tab(page, "assets").click();
+  await cards(page).first().click();
+  await expect(clips(page)).toHaveCount(before + 2);
+  await tab(page, "timeline").click();
+  await stage(page).focus();
+}
+
+/** Two videos with their sound, the second some frames after the first ends. */
+async function twoVideos(page: Page, apart: number) {
+  await placeVideo(page);
+  await page.keyboard.press("ArrowDown");
+  await stepRight(page, apart);
+  await placeAgain(page);
+}
+
+const leftOf = async (locator: Locator) => (await middleOf(locator)).left;
+const rightOf = async (locator: Locator) => {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error("no box");
+  return box.x + box.width;
+};
+const gapOption = (page: Page) =>
+  panel(page).getByRole("listbox", { name: "时间轴片段" }).locator("[data-gap]");
+const notice = (page: Page) =>
+  page.getByRole("status").filter({ hasText: "后面的内容没法一起左移" });
+
+/** A click in the empty time between the two pictures. */
+async function clickGap(page: Page) {
+  const from = await rightOf(picture(page).nth(0));
+  const to = await leftOf(picture(page).nth(1));
+  const { y } = await middleOf(picture(page).nth(0));
+  await page.mouse.click((from + to) / 2, y);
+}
+
+/** All the tracks, as wide as they are, for people to look at. */
+async function shootTracks(page: Page, name: string) {
+  const box = await panel(page).boundingBox();
+  if (!box) return;
+  await page.screenshot({
+    path: test.info().outputPath(name),
+    clip: { x: box.x, y: box.y, width: box.width, height: Math.min(box.height, 220) },
+  });
+}
+
+/** The window with the notification in its corner and the tracks, for people to look at. */
+async function shootNotice(page: Page, name: string) {
+  await page.screenshot({ path: test.info().outputPath(name) });
+}
+
+test.describe("ripple edits", () => {
+  test("Shift+Delete takes a video away, and what follows moves back with its sound, in one step", async ({
+    page,
+  }) => {
+    await twoVideos(page, 0);
+    const start = await leftOf(picture(page).nth(0));
+    const later = await leftOf(picture(page).nth(1));
+    expect(later).toBeGreaterThan(start + 40);
+    await clickOn(page, picture(page).nth(0));
+    await expect(sound(page).nth(0)).toHaveAttribute("aria-selected", "true");
+    await page.keyboard.press("Shift+Delete");
+    await expect(clips(page)).toHaveCount(2);
+    await expect.poll(() => leftOf(picture(page).first())).toBeCloseTo(start, 0);
+    await expect.poll(() => leftOf(sound(page).first())).toBeCloseTo(start, 0);
+    await page.keyboard.press("Control+z");
+    await expect(clips(page)).toHaveCount(4);
+    await expect.poll(() => leftOf(picture(page).nth(1))).toBeCloseTo(later, 0);
+  });
+
+  test("a click in the empty time between two clips selects it, and Delete closes it", async ({
+    page,
+  }) => {
+    await twoVideos(page, 20);
+    const end = await rightOf(picture(page).nth(0));
+    const soundBefore = await leftOf(sound(page).nth(1));
+    await clickGap(page);
+    await expect(gapOption(page)).toHaveAttribute("aria-selected", "true");
+    await expect(gapOption(page)).toHaveAttribute("aria-label", /^空隙，视频 1，/);
+    await expect(clips(page).and(page.locator('[aria-selected="true"]'))).toHaveCount(0);
+    await shootTracks(page, "gap-dark.png");
+    await page.keyboard.press("Delete");
+    await expect(gapOption(page)).toHaveCount(0);
+    await expect.poll(() => leftOf(picture(page).nth(1))).toBeCloseTo(end, 0);
+    await expect.poll(() => leftOf(sound(page).nth(1))).toBeLessThan(soundBefore - 20);
+    await page.keyboard.press("Control+z");
+    await expect.poll(() => leftOf(sound(page).nth(1))).toBeCloseTo(soundBefore, 0);
+  });
+
+  test("with something on another track in the way, nothing moves, it lights up, and only those tracks can move", async ({
+    page,
+  }) => {
+    await twoVideos(page, 20);
+    const width = (await rightOf(picture(page).nth(0))) - (await leftOf(picture(page).nth(0)));
+    const sounds = [await leftOf(sound(page).nth(0)), await leftOf(sound(page).nth(1))];
+    const later = await leftOf(picture(page).nth(1));
+    // Only the picture, with Alt: its sound is still there in that time.
+    await clickOn(page, picture(page).nth(0), "Alt");
+    await page.keyboard.press("Shift+Delete");
+    await expect(notice(page)).toBeVisible();
+    await expect(sound(page).nth(0)).toHaveAttribute("data-blocked", "true");
+    await expect(clips(page)).toHaveCount(4);
+    expect(await leftOf(picture(page).nth(1))).toBeCloseTo(later, 0);
+    await shootNotice(page, "ripple-blocked-dark.png");
+    await notice(page).getByRole("button", { name: "只动这几条轨道" }).click();
+    await expect(clips(page)).toHaveCount(3);
+    // The picture after it moves back by as much, and the sounds stay where they are.
+    await expect.poll(() => leftOf(picture(page).first())).toBeCloseTo(later - width, -1);
+    expect([await leftOf(sound(page).nth(0)), await leftOf(sound(page).nth(1))]).toEqual(sounds);
+  });
+
+  test("leave a locked track where it is", async ({ page }) => {
+    await twoVideos(page, 20);
+    const end = await rightOf(picture(page).nth(0));
+    const soundBefore = await leftOf(sound(page).nth(1));
+    await panel(page).getByRole("button", { name: "锁定 音频 1" }).click();
+    await stage(page).focus();
+    await clickGap(page);
+    await page.keyboard.press("Delete");
+    await expect.poll(() => leftOf(picture(page).nth(1))).toBeCloseTo(end, 0);
+    expect(await leftOf(sound(page).nth(1))).toBeCloseTo(soundBefore, 0);
+  });
+
+  test("; lifts between in and out and leaves the time, ' extracts and closes it", async ({
+    page,
+  }) => {
+    await placeVideo(page);
+    const mark = async () => {
+      await page.keyboard.press("Home");
+      await stepRight(page, 10);
+      await page.keyboard.press("KeyI");
+      await stepRight(page, 9);
+      await page.keyboard.press("KeyO");
+      await expect(outPoint(page)).toBeVisible();
+    };
+    await mark();
+    await page.keyboard.press("Semicolon");
+    await expect(clips(page)).toHaveCount(4);
+    // The marks went with what they marked.
+    await expect(inPoint(page)).toHaveCount(0);
+    expect(await leftOf(picture(page).nth(1))).toBeGreaterThan(
+      (await rightOf(picture(page).nth(0))) + 10,
+    );
+    await page.keyboard.press("Control+z");
+    await expect(clips(page)).toHaveCount(2);
+    await mark();
+    await page.keyboard.press("Quote");
+    await expect(clips(page)).toHaveCount(4);
+    await expect
+      .poll(
+        async () => (await leftOf(picture(page).nth(1))) - (await rightOf(picture(page).nth(0))),
+      )
+      .toBeLessThan(2);
+    await expect
+      .poll(async () => (await leftOf(sound(page).nth(1))) - (await rightOf(sound(page).nth(0))))
+      .toBeLessThan(2);
+  });
+
+  test("are in the menu, with their keys, and greyed out while there is nothing to do", async ({
+    page,
+  }) => {
+    await page.getByRole("button", { name: "时间轴", exact: true }).click();
+    const menu = page.getByRole("menu");
+    await expect(menu.getByRole("menuitem", { name: /^波纹删除/ })).toBeDisabled();
+    await expect(menu.getByRole("menuitem", { name: /^抬起/ })).toBeDisabled();
+    await expect(menu.getByRole("menuitem", { name: /^提取/ })).toBeDisabled();
+    await expect(menu.getByRole("menuitem", { name: /^抬起/ })).toContainText(";");
+    await expect(menu.getByRole("menuitem", { name: /^提取/ })).toContainText("'");
+  });
+});
+
+test.describe("ripple edits in light colours", () => {
+  test.use({ colorScheme: "light" });
+
+  test("show the selected gap and what is in the way as they do in the dark", async ({ page }) => {
+    await twoVideos(page, 20);
+    await clickGap(page);
+    await expect(gapOption(page)).toBeVisible();
+    await shootTracks(page, "gap-light.png");
+    await clickOn(page, picture(page).nth(0), "Alt");
+    await page.keyboard.press("Shift+Delete");
+    await expect(notice(page)).toBeVisible();
+    await shootNotice(page, "ripple-blocked-light.png");
   });
 });

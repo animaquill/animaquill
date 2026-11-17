@@ -47,6 +47,8 @@ import {
   timelineOf,
   timelinePath,
   trimClip,
+  PieceLinks,
+  expectCuts,
   type Edge,
   type JoinedEdges,
   type Span,
@@ -91,6 +93,7 @@ import {
 } from "./model.ts";
 import { STORAGE, type Origin } from "./origin.ts";
 import { moveBoundary, removeSection, splitSection } from "./section-edits.ts";
+import { checkSpan, checkTracks, closeGaps, liftSpan, type Rippled } from "./ripple-edits.ts";
 import {
   BackgroundSet,
   CoverSet,
@@ -294,6 +297,27 @@ const Made = z.strictObject({ id: Id });
 /** Joins that went away because their clips are no longer next to each other, see `apart`. */
 const JoinsRemoved = { joinsRemoved: z.array(Id).readonly().optional() };
 const MaybeApart = z.strictObject(JoinsRemoved).optional();
+/** What a ripple edit moved back, and took away along with it. */
+const RippledFields = {
+  moved: z.array(Id).readonly().optional(),
+  ...JoinsRemoved,
+  sectionsRemoved: z.array(Id).readonly().optional(),
+};
+
+/** What a ripple edit says it did: only what there is of it. */
+const rippled = ({ moved, joinsRemoved, sectionsRemoved }: Rippled) => ({
+  ...(moved.length > 0 && { moved }),
+  ...apart(joinsRemoved),
+  ...(sectionsRemoved.length > 0 && { sectionsRemoved }),
+});
+
+/** A stretch of a timeline, from a moment to a later one. */
+const Range = z.strictObject({ from: Time, to: Time });
+/**
+ * The tracks that a ripple edit moves; without them all of them. The editor leaves out the tracks
+ * that people locked, as video editors do with sync lock.
+ */
+const RippleTracks = z.array(Id).min(1).optional();
 
 const trackPath = (timeline: string, track: string) => ["timelines", timeline, "tracks", track];
 
@@ -483,8 +507,9 @@ function makeRoom(
   spans: readonly Span[],
   moving: ReadonlySet<string>,
   overlap: z.output<typeof Overlap>,
+  links: PieceLinks,
 ): void {
-  if (overlap === "overwrite") clearSpans(draft, timeline, track, spans, moving);
+  if (overlap === "overwrite") clearSpans(draft, timeline, track, spans, moving, links);
   else assertFree(timelineOf(draft, timeline), track, spans, moving);
 }
 
@@ -1219,7 +1244,9 @@ export const OPERATIONS = [
       for (const [path, value] of Object.entries(clip.properties ?? {})) checkKeys(path, value);
       const added = clipStateOf({ ...clip, id }, track);
       const together = joinsTogether(target);
-      makeRoom(draft, timeline, track, [spanOf(added)], new Set(), overlap);
+      const links = new PieceLinks();
+      if (overlap === "overwrite") expectCuts(target, track, [spanOf(added)], new Set(), links);
+      makeRoom(draft, timeline, track, [spanOf(added)], new Set(), overlap, links);
       draft.set(clipPath(timeline, id), added);
       // A copy brings its transitions as they are, also ones that this editor cannot do yet, which
       // the problems and exports then tell about. What does not fit any more gets shorter.
@@ -1241,16 +1268,95 @@ export const OPERATIONS = [
     },
   ),
 
+  /**
+   * With ripple, what was after the clips moves back into where they were, on all tracks or those
+   * listed, as long as nothing else is in that time there: see `closeGaps`.
+   */
   define(
     "clip.remove",
-    "删除一个或几个片段。",
-    z.strictObject({ timeline: Id, clips: z.array(Id).min(1) }),
-    (draft, { timeline, clips }) => {
+    "删除一个或几个片段；ripple 为 true 时合上它们留下的空（波纹删除），后面的内容左移。",
+    z.strictObject({
+      timeline: Id,
+      clips: z.array(Id).min(1),
+      ripple: z.boolean().optional(),
+      rippleTracks: RippleTracks,
+    }),
+    (draft, { timeline, clips, ripple, rippleTracks }) => {
       const target = timelineOf(draft, timeline);
-      for (const id of clips) clipOf(target, id);
+      const gone = clips.map((id) => clipOf(target, id));
+      if (!ripple) {
+        removeClips(draft, timeline, clips);
+        return undefined;
+      }
+      checkTracks(target, rippleTracks);
       removeClips(draft, timeline, clips);
+      return rippled(closeGaps(draft, timeline, gone.map(spanOf), rippleTracks));
     },
-    { group: "clip", result: Nothing, failures: ["not-found"] },
+    {
+      group: "clip",
+      result: z.strictObject(RippledFields).optional(),
+      failures: ["not-found", "ripple-blocked"],
+    },
+  ),
+
+  /** Takes stretches out of a timeline, which have to be empty on the tracks that move. */
+  define(
+    "timeline.closeGap",
+    "把时间段从时间轴上抽掉（合上空隙）：这些时间段在参与的轨道上要是空的，之后的片段、段落和标记左移。",
+    z.strictObject({ timeline: Id, ranges: z.array(Range).min(1), rippleTracks: RippleTracks }),
+    (draft, { timeline, ranges, rippleTracks }) => {
+      const target = timelineOf(draft, timeline);
+      checkTracks(target, rippleTracks);
+      const spans = ranges.map(({ from, to }, index) => {
+        const span = { from: parseTime(from), to: parseTime(to) };
+        checkSpan(target, span, `ranges.${index}`, `ranges.${index}.to`);
+        return span;
+      });
+      return rippled(closeGaps(draft, timeline, spans, rippleTracks));
+    },
+    {
+      group: "timeline",
+      result: z.strictObject(RippledFields),
+      failures: ["not-found", "invalid-value", "ripple-blocked"],
+    },
+  ),
+
+  /**
+   * Lift and extract, as video editors have them between in and out: what is in a stretch of time
+   * goes, and with ripple the stretch goes too.
+   */
+  define(
+    "timeline.removeRange",
+    "去掉一段时间里轨道上的内容（抬起），跨边界的片段切开留两头；ripple 为 true 时再合上这段（提取），后面的内容左移。",
+    z.strictObject({
+      timeline: Id,
+      from: Time,
+      to: Time,
+      tracks: z.array(Id).min(1).optional(),
+      ripple: z.boolean().optional(),
+    }),
+    (draft, { timeline, from, to, tracks, ripple }) => {
+      const target = timelineOf(draft, timeline);
+      checkTracks(target, tracks);
+      const span = { from: parseTime(from), to: parseTime(to) };
+      checkSpan(target, span, "from", "to");
+      const together = joinsTogether(target);
+      const lifted = liftSpan(draft, timeline, span, tracks);
+      const apartNow = followJoins(draft, timeline, together);
+      if (!ripple) return { ...lifted, ...apart(apartNow) };
+      const closed = closeGaps(draft, timeline, [span], tracks);
+      const joinsRemoved = [...apartNow, ...closed.joinsRemoved];
+      return { ...lifted, ...rippled({ ...closed, joinsRemoved }) };
+    },
+    {
+      group: "timeline",
+      result: z.strictObject({
+        removed: z.array(Id).readonly(),
+        split: z.array(z.strictObject({ clip: Id, piece: Id })).readonly(),
+        ...RippledFields,
+      }),
+      failures: ["not-found", "invalid-value"],
+    },
   ),
 
   /**
@@ -1474,6 +1580,15 @@ export const OPERATIONS = [
         if (onTrack) onTrack.push(item);
         else byTrack.set(item.moved.track, [item]);
       }
+      // Every cut of every track is counted before any is made: see PieceLinks.
+      const links = new PieceLinks();
+      const spansOf = (items: typeof landed) =>
+        items.toSorted((a, b) => compare(a.span.from, b.span.from)).map(({ span }) => span);
+      if (overlap === "overwrite") {
+        for (const [track, items] of byTrack) {
+          expectCuts(target, track, spansOf(items), moving, links);
+        }
+      }
       for (const [track, items] of byTrack) {
         const inOrder = items.toSorted((a, b) => compare(a.span.from, b.span.from));
         inOrder.forEach(({ moved, span }, index) => {
@@ -1483,7 +1598,7 @@ export const OPERATIONS = [
           }
         });
         const spans = inOrder.map(({ span }) => span);
-        makeRoom(draft, timeline, track, spans, moving, overlap);
+        makeRoom(draft, timeline, track, spans, moving, overlap, links);
       }
 
       for (const { moved } of landed) {

@@ -56,6 +56,7 @@ export const PARAM_TEXTS = {
   "params.at": "Moment of the timeline to cut at, seconds.",
   "params.piece": "Id for the part after the cut; leave out for a new one.",
   "params.keep": "Linked clip ids that stay whole.",
+  "params.rippleTracks": "Track ids (aq_timeline_read) whose clips move back; without, all tracks.",
   "params.edits":
     'Each {"owner":{"clip":id},"path",…,"op"}: "set" a value or keyframes, "clear", "write" at a time, or "setKey", "removeKey", "moveKey", "putKeys", "setInterp".',
   "params.renames": 'Each {"owner":{"clip":id},"from","to"}; paths may end in ".*".',

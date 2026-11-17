@@ -1,0 +1,66 @@
+{
+  "about": "Ripple edits (pro-editing P3a): closing a stretch that clips on other tracks are in moves nothing and says which clips and tracks; with rippleTracks only those tracks move. Extracting takes what is in a stretch away on all tracks and closes it.",
+  "steps": [
+    { "tool": "aq_timeline_read", "expect": { "ok": true } },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          { "op": "timeline.closeGap", "timeline": "main", "ranges": [{ "from": "0", "to": "6" }] }
+        ]
+      },
+      "expect": {
+        "error": "ripple-blocked",
+        "lines": [
+          "Clips clip_title, clip_voice, clip_interview, clip_hit, clip_line are in the time that would be taken out, on tracks track_video, track_voice, track_music, track_captions, which move with it: nothing moved.",
+          "nothing was written"
+        ]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "timeline.closeGap",
+            "timeline": "main",
+            "ranges": [{ "from": "0", "to": "6" }],
+            "rippleTracks": ["track_overlay"]
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": [
+          "clip_lottie: start 6→0",
+          "clip_idea \"样片：换个开场\": start 10→4",
+          "section_intro: removed",
+          "marker marker_turn \"转折\": duration 2→1; time 5→0"
+        ]
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "timeline.removeRange",
+            "timeline": "main",
+            "from": "20",
+            "to": "22",
+            "ripple": true
+          }
+        ]
+      },
+      "expect": {
+        "ok": true,
+        "lines": [
+          "clip_logo: duration 7.5→2.5",
+          "clip_card: start 25→23",
+          "section_end \"结尾\": duration 11.005→9.005"
+        ]
+      }
+    }
+  ],
+  "end": { "undoAll": true }
+}

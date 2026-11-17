@@ -122,6 +122,13 @@ export function failureMessage(failure: CommandFailure, t: Translate = plainTran
         ? t(`${key}.moved`, { names: names.join("、") })
         : t(`${key}.plain`, { names: names[0] ?? "" });
     }
+    case "ripple-blocked": {
+      const names = namesOf(params);
+      const shown = names.slice(0, 3).join("、");
+      return names.length > 3
+        ? t(`${key}.more`, { names: shown, count: names.length })
+        : t(`${key}.plain`, { names: shown });
+    }
     case "source-start":
     case "source-end":
       return t(key, { name: params.name ?? params.clip });

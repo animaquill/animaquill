@@ -549,6 +549,10 @@
       "plain": "这里已经有片段了：{{names}}",
       "moved": "片段落在了同一个位置：{{names}}"
     },
+    "ripple-blocked": {
+      "plain": "别的轨道上有片段挡着，后面的内容没法一起左移：{{names}}",
+      "more": "别的轨道上有片段挡着，后面的内容没法一起左移：{{names}} 等 {{count}} 个"
+    },
     "not-adjacent": {
       "tracks": "衔接转场的两个片段要在同一条轨道上",
       "gap": "两个片段之间有空隙，先把它们接上，才能加衔接转场"
@@ -650,7 +654,9 @@
       "time-outside": "{{path}} 的 {{time}} 秒不在时间轴里：时间轴只有 {{length}} 秒长",
       "section-edge": "{{time}} 秒是段落的开头或结尾，要在段落中间才能分段",
       "boundary-outside": "段落的分界要在 {{from}} 秒和 {{to}} 秒之间，{{time}} 秒不行",
-      "no-next-section": "最后一段后面没有段落，它的结尾就是时间轴的结尾：改它的时长"
+      "no-next-section": "最后一段后面没有段落，它的结尾就是时间轴的结尾：改它的时长",
+      "range-backwards": "时间段要先开始再结束：{{from}} 秒到 {{to}} 秒不行",
+      "range-outside": "{{to}} 秒超出了时间轴的结尾：时间轴只有 {{length}} 秒长"
     }
   },
   "panel": {
@@ -1265,6 +1271,9 @@
       "split": "在播放头切割",
       "toggleLink": "分离或联动画面和声音",
       "delete": "删除",
+      "rippleDelete": "波纹删除",
+      "lift": "抬起",
+      "extract": "提取",
       "selectAll": "全选片段",
       "toolSelect": "选择工具",
       "toolRazor": "切割工具",
@@ -1417,7 +1426,9 @@
     "unlinkSound": "分离画面和声音",
     "moveIntoSync": "移回同步",
     "outOfSync": "和联动的片段差 {{frames}} 帧",
-    "lockedLeft": "锁定轨道上的 {{count}} 个片段没动"
+    "lockedLeft": "锁定轨道上的 {{count}} 个片段没动",
+    "rippleOnlyThese": "只动这几条轨道",
+    "gapLabel": "空隙，{{track}}，{{start}} 到 {{end}}"
   },
   "operations": {
     "label": "上次的操作",
