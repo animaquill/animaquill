@@ -649,6 +649,7 @@ test.describe("linked clips", () => {
     await clickAway(page);
     await expect(linkButton(page)).toHaveAccessibleName("分离或联动画面和声音");
     await expect(linkButton(page)).toHaveAttribute("aria-disabled", "true");
+    await shootToolbar(page, "toolbar-disabled-dark.png");
     // Disabled, a click does nothing.
     await linkButton(page).click({ force: true });
     await expect(picture(page)).toHaveAttribute("data-linked", "");
@@ -697,6 +698,9 @@ test.describe("linked clips in light colours", () => {
 
   test("have their button in the toolbar", async ({ page }) => {
     await placeVideo(page);
+    await clickAway(page);
+    await expect(linkButton(page)).toHaveAttribute("aria-disabled", "true");
+    await shootToolbar(page, "toolbar-disabled-light.png");
     await clickOn(page, picture(page));
     await expect(linkButton(page)).toHaveAccessibleName("分离画面和声音");
     await shootToolbar(page, "toolbar-link-light.png");

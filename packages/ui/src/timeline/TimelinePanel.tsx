@@ -124,8 +124,9 @@ function Toolbar({ editor }: { editor: TimelineEditor }) {
   const zoom = useEditorView(editor, () => editor.zoomLevel);
   const canSplit = useEditorView(editor, () => editor.canSplit);
   const linkAction = useEditorView(editor, () => editor.linkAction);
-  // The chain shows what the selection is: whole while it is linked, broken while it is not.
-  const linked = linkAction === "unlinkSound" || linkAction === "unlink";
+  // The chain shows what the selection is: broken only while it can be linked. Greyed out it stays
+  // whole, which does not read as something taken apart.
+  const apart = linkAction === "linkSound" || linkAction === "link";
 
   return (
     <div className={styles.toolbarArea}>
@@ -236,7 +237,7 @@ function Toolbar({ editor }: { editor: TimelineEditor }) {
               name={t(linkAction ? `timeline.${linkAction}` : "timeline.action.toggleLink")}
               usage=""
               action="toggleLink"
-              icon={linked ? Link : Unlink}
+              icon={apart ? Unlink : Link}
               unavailable={linkAction === undefined}
               onClick={() => editor.toggleLink()}
             />

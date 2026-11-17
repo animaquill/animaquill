@@ -79,6 +79,22 @@ for (const scheme of ["dark", "light"] as const) {
   });
 }
 
+test("without buttons, are only the text and the close button on one row", async ({ page }) => {
+  await notify(page, LONG, []);
+  const text = notices(page).getByText(LONG);
+  const item = text.locator("xpath=..");
+  await expect(item.getByTestId("notification-actions")).toHaveCount(0);
+  await expect(item.getByRole("button")).toHaveCount(1);
+  const itemBox = await boxOf(item);
+  const textBox = await boxOf(text);
+  const closeBox = await boxOf(item.getByRole("button", { name: "关闭" }));
+  expect(textBox.width).toBeGreaterThan(itemBox.width - closeBox.width - 48);
+  expect(closeBox.y).toBeLessThan(textBox.y + 12);
+  // Nothing under the text but the padding.
+  expect(itemBox.y + itemBox.height - (textBox.y + textBox.height)).toBeLessThan(16);
+  await shoot(page, "notice-no-buttons-dark.png");
+});
+
 test("a button does what it says and the notification goes away", async ({ page }) => {
   await notify(page, LONG, LABELS);
   await notices(page).getByRole("button", { name: LABELS[0] }).click();
