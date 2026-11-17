@@ -30,7 +30,7 @@ async function box(locator: Locator) {
 
 /** The layout of the first rows of the table: preview; files, assets; timeline, keyframes; properties, chat. */
 async function tableLayout(page: Page) {
-  await close(page, "code", "explorer", "transitions", "effects", "problems");
+  await close(page, "code", "explorer", "transitions", "fades", "effects", "problems");
   await expect(group(page, "files").locator("[data-tab]")).toHaveCount(2);
   await expect(group(page, "timeline").locator("[data-tab]")).toHaveCount(2);
   await expect(group(page, "properties").locator("[data-tab]")).toHaveCount(2);
@@ -69,6 +69,35 @@ test("the view menu ticks the panels that are open, and says so", async ({ page 
   await viewItem(page, "运行情况").click();
   await page.getByRole("button", { name: "视图", exact: true }).click();
   await expect(viewItem(page, "运行情况")).toHaveAccessibleDescription("已打开");
+});
+
+test("fades, the transitions of sound, open from the view menu and the palette next to transitions", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "视图", exact: true }).click();
+  // In the menu right after transitions, open.
+  const names = await viewMenu(page).getByRole("menuitem").allTextContents();
+  expect(names.indexOf("过渡")).toBe(names.indexOf("转场") + 1);
+  await expect(viewItem(page, "过渡")).toHaveAccessibleDescription("已打开");
+  await viewMenu(page).screenshot({ path: test.info().outputPath("view-menu.png") });
+  await page.keyboard.press("Escape");
+  // Closed, it comes back where transitions go, which are made for the same room.
+  await close(page, "fades", "transitions");
+  await chooseFromView(page, "转场");
+  await chooseFromView(page, "过渡");
+  await expect(group(page, "transitions").locator('[data-tab="fades"]')).toHaveCount(1);
+  await expect(content(page, "fades")).toBeVisible();
+  // And from the palette.
+  await close(page, "fades");
+  await page.locator("header").getByRole("button", { name: "命令面板" }).click();
+  const input = page.getByRole("combobox", { name: "命令面板" });
+  await input.fill("过渡");
+  await expect(
+    page.getByRole("dialog", { name: "命令面板" }).getByRole("option").first(),
+  ).toContainText("打开选项卡：过渡");
+  await page.keyboard.press("Enter");
+  await expect(content(page, "fades")).toBeVisible();
+  await expect(group(page, "transitions").locator('[data-tab="fades"]')).toHaveCount(1);
 });
 
 test("the view menu ends with the settings and the keys", async ({ page }) => {

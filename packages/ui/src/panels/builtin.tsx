@@ -23,6 +23,7 @@ import {
   TriangleAlert,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { FadeIcon } from "./FadeIcon.tsx";
 import { FxIcon } from "./FxIcon.tsx";
 import { ChatPanel } from "../chat/ChatPanel.tsx";
 import { CodePanel } from "../code/CodePanel.tsx";
@@ -39,7 +40,7 @@ import { AssetsPanel } from "./AssetsPanel.tsx";
 import { PreviewPanel } from "./PreviewPanel.tsx";
 import { EffectsPanel } from "./EffectsPanel.tsx";
 import { ExplorerPanel } from "./ExplorerPanel.tsx";
-import { TransitionsPanel } from "./TransitionsPanel.tsx";
+import { FadesPanel, TransitionsPanel } from "./TransitionsPanel.tsx";
 import styles from "./Placeholder.module.css";
 
 type Type = {
@@ -68,6 +69,7 @@ function planned(
     | "keyframes"
     | "exports"
     | "transitions"
+    | "fades"
     | "effects"
     | "explorer"
     | "chat"
@@ -133,6 +135,14 @@ export const builtinPanels: readonly PanelDefinition[] = [
     area: "left",
     sizes: ["tall", "large"],
     component: TransitionsPanel,
+  },
+  {
+    type: "fades",
+    title: (t) => t("panel.fades.title"),
+    icon: FadeIcon,
+    area: "left",
+    sizes: ["tall", "large"],
+    component: FadesPanel,
   },
   {
     type: "effects",

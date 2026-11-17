@@ -1579,6 +1579,41 @@ describe("transitions from their tab", () => {
     editor.selectOnly("a");
     expect(editor.attachProblem("enter", fade)).toBe("locked");
   });
+
+  it("from the tab of pictures or of sound go on that only, a fade too", async () => {
+    const { editor, at, main, video, audio, addClip } = await setup();
+    addClip("a", 2, 3, video, { link: "la" });
+    addClip("b", 5, 3, video, { link: "lb" });
+    addClip("s", 2, 3, audio, { link: "la" });
+    addClip("sb", 5, 3, audio, { link: "lb" });
+    addClip("c", 10, 3, video);
+    addClip("t", 10, 3, audio);
+    const pictureFade = builtInPick("fade", "picture") as TransitionPick;
+    const soundFade = builtInPick("fade", "sound") as TransitionPick;
+    expect(pictureFade.lengths).toEqual({ picture: "0.5" });
+    expect(soundFade.lengths).toEqual({ sound: "0.2" });
+    editor.selectOnly("t");
+    expect(editor.attachProblem("enter", pictureFade)).toBe("pictureOnly");
+    expect(editor.attachProblem("enter", soundFade)).toBeUndefined();
+    editor.selectOnly("c");
+    expect(editor.attachProblem("enter", pictureFade)).toBeUndefined();
+    expect(editor.attachProblem("enter", soundFade)).toBe("soundOnly");
+    // Dragged, the same: one of sound does not go between two clips of pictures.
+    expect(editor.transitionDropAt(at(5), soundFade)).toBeUndefined();
+    expect(editor.transitionDropAt(at(5), pictureFade)).toMatchObject({ kind: "join" });
+    // A fade of pictures still brings the cross-fade of their sound along.
+    expect(editor.dropTransition(at(5), pictureFade)).toBe(true);
+    const joins = Object.values(main().joins ?? {}).map(({ from, to, transition }) => [
+      from,
+      to,
+      transition?.type,
+      transition?.duration,
+    ]);
+    expect(joins.toSorted()).toEqual([
+      ["a", "b", "fade", "0.5"],
+      ["s", "sb", "fade", "0.2"],
+    ]);
+  });
 });
 
 describe("joins", () => {

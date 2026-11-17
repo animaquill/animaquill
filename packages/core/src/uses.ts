@@ -21,8 +21,16 @@ import { entryOf, type ClipState, type ProjectState, type TimelineState } from "
 export type UsedResource =
   | { readonly kind: "asset" | "scene" | "sound"; readonly id: string }
   | { readonly kind: "effect"; readonly type: string }
-  /** At the edges of clips, or between them for a join. */
-  | { readonly kind: "transition"; readonly use: TransitionUse; readonly ref: TransitionRef };
+  /**
+   * At the edges of clips, or between them for a join. With `media`, only on clips of pictures or
+   * of sound: a `fade` is one of each.
+   */
+  | {
+      readonly kind: "transition";
+      readonly use: TransitionUse;
+      readonly ref: TransitionRef;
+      readonly media?: TransitionMedia | undefined;
+    };
 
 /** One place where something is used. */
 export interface ResourceUse {
@@ -177,10 +185,14 @@ function usesIn(id: string, timeline: TimelineState, resource: UsedResource): Re
         }
       }
       return uses;
-    case "transition":
+    case "transition": {
+      const onIt = (track: string | undefined) =>
+        resource.media === undefined || mediaOf(timeline, track) === resource.media;
       if (resource.use === "join") {
-        for (const [join, { from, to, transition }] of Object.entries(timeline.joins ?? {})) {
-          if (!transition || !sameRef(transition, resource.ref)) continue;
+        for (const [join, { from, to, track, transition }] of Object.entries(
+          timeline.joins ?? {},
+        )) {
+          if (!transition || !sameRef(transition, resource.ref) || !onIt(track)) continue;
           const clip = from ?? to;
           uses.push({ timeline: id, join, ...(clip !== undefined && { clip }) });
         }
@@ -188,11 +200,12 @@ function usesIn(id: string, timeline: TimelineState, resource: UsedResource): Re
       }
       for (const clip of Object.values(timeline.clips)) {
         const transition = clip[resource.use];
-        if (transition && sameRef(transition, resource.ref)) {
+        if (transition && sameRef(transition, resource.ref) && onIt(clip.track)) {
           uses.push({ timeline: id, clip: clip.id, edge: resource.use });
         }
       }
       return uses;
+    }
   }
 }
 

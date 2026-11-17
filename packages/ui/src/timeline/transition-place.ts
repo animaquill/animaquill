@@ -68,11 +68,13 @@ export const firstLength = (pick: TransitionPick): string =>
 
 /**
  * A transition that comes with the editor, for pictures, sound or both, or nothing for one there is
- * not. It comes with the defaults of its properties, which people change once it is there.
+ * not. It comes with the defaults of its properties, which people change once it is there. With
+ * `media`, only as it is there: the transitions tab picks for pictures and the fades tab for sound,
+ * so a `fade` from one of them goes on that one only.
  */
-export function builtInPick(type: string): TransitionPick | undefined {
-  const picture = builtInTransition("picture", type);
-  const sound = builtInTransition("sound", type);
+export function builtInPick(type: string, media?: TransitionMedia): TransitionPick | undefined {
+  const picture = media === "sound" ? undefined : builtInTransition("picture", type);
+  const sound = media === "picture" ? undefined : builtInTransition("sound", type);
   const spec = picture ?? sound;
   if (!spec) return undefined;
   const uses = [...new Set([...(picture?.uses ?? []), ...(sound?.uses ?? [])])];
@@ -455,8 +457,15 @@ export type AttachContext =
       readonly box: ClipBox;
       readonly edge: Edge;
       readonly locked: boolean;
+      /** What the clip is, pictures or sound. */
+      readonly media: TransitionMedia;
     }
-  | { readonly kind: "join"; readonly join: JoinBox; readonly locked: boolean }
+  | {
+      readonly kind: "join";
+      readonly join: JoinBox;
+      readonly locked: boolean;
+      readonly media: TransitionMedia;
+    }
   | {
       readonly kind: "clips";
       /** Those that can take transitions, in time order on each track. */
@@ -476,14 +485,26 @@ export function attachContext(
   if (!model) return { kind: "nothing" };
   if (chosen && "join" in chosen) {
     const join = model.joins.get(chosen.join);
-    if (!join) return { kind: "nothing" };
-    return { kind: "join", join, locked: model.state.tracks[join.join.track]?.locked === true };
+    const row = join && model.rowOfClip.get(join.from.id);
+    if (!join || !row) return { kind: "nothing" };
+    return {
+      kind: "join",
+      join,
+      locked: model.state.tracks[join.join.track]?.locked === true,
+      media: mediaOf(row),
+    };
   }
   if (chosen) {
     const box = model.boxes.get(chosen.clip);
     const row = model.rowOfClip.get(chosen.clip);
     if (!box || !row) return { kind: "nothing" };
-    return { kind: "edge", box, edge: chosen.edge, locked: row.track.locked === true };
+    return {
+      kind: "edge",
+      box,
+      edge: chosen.edge,
+      locked: row.track.locked === true,
+      media: mediaOf(row),
+    };
   }
   if (selection.size === 0) return { kind: "nothing" };
   // By row, in time order: the order of clips in a row, found in one go over each of those rows.

@@ -489,7 +489,9 @@ function EdgeProperties({ clip, edge }: { readonly clip: string; readonly edge: 
         </div>
       )}
       <div className={styles.hint}>
-        <span>{t("transition.replaceHint")}</span>
+        <span>
+          {t(media === "sound" ? "transition.replaceHintSound" : "transition.replaceHint")}
+        </span>
         <DeleteButton
           disabled={readOnly}
           onDelete={() => timeline.setTransition(box.id, edge, null)}
@@ -571,7 +573,9 @@ function JoinProperties({ join: id }: { readonly join: string }) {
         </div>
       )}
       <div className={styles.hint}>
-        <span>{t("transition.replaceHint")}</span>
+        <span>
+          {t(media === "sound" ? "transition.replaceHintSound" : "transition.replaceHint")}
+        </span>
         <DeleteButton disabled={readOnly} onDelete={() => timeline.removeJoin(id)} />
       </div>
       <div className={styles.rows}>

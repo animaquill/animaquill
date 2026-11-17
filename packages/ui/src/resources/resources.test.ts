@@ -5,7 +5,9 @@ import zhCN from "../i18n/zh-CN.json";
 import { ResourceHabits } from "./habits.ts";
 import { browse, steadyRecent, usedNow, type Resource } from "./resources.ts";
 import { loopShare } from "./transition-preview.ts";
-import { builtInTransitions } from "./transitions.ts";
+import { builtInTransitions, isBuiltInSoundId, isChosen } from "./transitions.ts";
+import type { AttachContext } from "../timeline/transition-place.ts";
+import { nodeOfResource } from "./explorer.ts";
 
 const resource = (
   id: string,
@@ -200,24 +202,65 @@ describe("the transitions that come with the editor", () => {
   }) as unknown as TFunction;
 
   it("are listed once for each place they go, each kind on its own, with their names there", () => {
-    const transitions = builtInTransitions(t);
-    // One of each kind, in, between and out: which way and what color are its properties. A fade
-    // is one for pictures and sound alike, and the linear one is for sound.
-    expect(transitions).toHaveLength(5 * 3);
+    const transitions = builtInTransitions(t, "picture");
+    // One of each kind, in, between and out: which way and what color are its properties.
+    expect(transitions).toHaveLength(4 * 3);
     expect(new Set(transitions.map(({ id }) => id)).size).toBe(transitions.length);
     const names = (type: string) =>
       transitions.filter((item) => item.type === type).map(({ name }) => name);
-    expect(names("transition.enter")).toEqual(["淡入", "闪入", "擦入", "推入", "线性淡入"]);
-    expect(names("transition.join")).toEqual(["叠化", "闪色", "擦除", "推移", "等增益交叉淡化"]);
-    expect(names("transition.exit")).toEqual(["淡出", "闪出", "擦出", "推出", "线性淡出"]);
-    const fade = transitions.find(({ name }) => name === "淡入")?.data.pick;
-    expect(fade?.lengths).toEqual({ picture: "0.5", sound: "0.2" });
-    const linear = transitions.find(({ name }) => name === "线性淡入")?.data.pick;
-    expect(linear?.lengths).toEqual({ sound: "0.2" });
+    expect(names("transition.enter")).toEqual(["淡入", "闪入", "擦入", "推入"]);
+    expect(names("transition.join")).toEqual(["叠化", "闪色", "擦除", "推移"]);
+    expect(names("transition.exit")).toEqual(["淡出", "闪出", "擦出", "推出"]);
+    // A fade here goes on pictures only: the fades tab has the one of sound.
+    const fade = transitions.find(({ name }) => name === "淡入");
+    expect(fade?.data.pick.lengths).toEqual({ picture: "0.5" });
+    expect(fade?.data.media).toBe("picture");
+    // As before there were two tabs, so what people used lately stays.
+    expect(fade?.id).toBe("transition:built-in:fade:enter");
     expect(transitions.find(({ name }) => name === "推入")?.data.pick.name).toEqual({
       type: "push",
     });
     expect(transitions.find(({ name }) => name === "闪色")?.tags).toEqual(["柔和", "纯色"]);
+  });
+
+  it("of sound are fades of their own, by what they do", () => {
+    const fades = builtInTransitions(t, "sound");
+    expect(fades).toHaveLength(2 * 3);
+    const names = (type: string) =>
+      fades.filter((item) => item.type === type).map(({ name }) => name);
+    expect(names("fade.enter")).toEqual(["淡入", "线性淡入"]);
+    expect(names("fade.join")).toEqual(["交叉淡化", "等增益交叉淡化"]);
+    expect(names("fade.exit")).toEqual(["淡出", "线性淡出"]);
+    const fade = fades.find(({ name }) => name === "淡入");
+    expect(fade?.data.pick.lengths).toEqual({ sound: "0.2" });
+    expect(fade?.data.media).toBe("sound");
+    expect(fade?.id).toBe("transition:built-in:sound:fade:enter");
+    expect(isBuiltInSoundId(fade?.id ?? "")).toBe(true);
+    expect(nodeOfResource(fade?.id ?? "")).toBe("built-in.fades");
+    const linear = fades.find(({ name }) => name === "线性淡入");
+    expect(linear?.data.pick.lengths).toEqual({ sound: "0.2" });
+    expect(linear?.tags).toEqual(["线性", "等增益"]);
+    // None of them is one of pictures, and the other way round.
+    const pictures = new Set(builtInTransitions(t, "picture").map(({ id }) => id));
+    expect(fades.filter(({ id }) => pictures.has(id))).toEqual([]);
+  });
+
+  it("show as what is selected only in the tab of what it is on", () => {
+    const [pictureFade] = builtInTransitions(t, "picture");
+    const [soundFade] = builtInTransitions(t, "sound");
+    if (!pictureFade || !soundFade) throw new Error("no fades");
+    const on = (media: "picture" | "sound") =>
+      ({
+        kind: "edge",
+        box: { clip: { enter: { type: "fade", duration: "0.2" } } },
+        edge: "enter",
+        locked: false,
+        media,
+      }) as unknown as AttachContext;
+    expect(isChosen(on("sound"), soundFade.data)).toBe(true);
+    expect(isChosen(on("sound"), pictureFade.data)).toBe(false);
+    expect(isChosen(on("picture"), pictureFade.data)).toBe(true);
+    expect(isChosen(on("picture"), soundFade.data)).toBe(false);
   });
 });
 

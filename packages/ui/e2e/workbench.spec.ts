@@ -390,6 +390,7 @@ const EVERY_TAB = [
   "explorer",
   "assets",
   "transitions",
+  "fades",
   "effects",
   "preview",
   "code",

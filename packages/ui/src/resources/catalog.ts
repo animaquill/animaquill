@@ -1,5 +1,5 @@
 import { missingIn, type MissingResource, type UsedResource } from "@animaquill/core";
-import type { TransitionRef } from "@animaquill/schema";
+import type { TransitionMedia, TransitionRef } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import { useMemo, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
@@ -69,7 +69,12 @@ export function usedOf(data: ExplorerItem): UsedResource | undefined {
     case "project":
       return { kind: data.item.kind, id: data.item.id };
     case "transition":
-      return { kind: "transition", use: data.item.use, ref: data.item.pick.name };
+      return {
+        kind: "transition",
+        use: data.item.use,
+        ref: data.item.pick.name,
+        media: data.item.media,
+      };
     case "effect":
       return { kind: "effect", type: data.item.type };
     case "missing":
@@ -78,7 +83,9 @@ export function usedOf(data: ExplorerItem): UsedResource | undefined {
 }
 
 export interface ResourceCatalog {
+  /** Built in: transitions of pictures, and of sound, which people know as fades. */
   readonly transitions: readonly Resource<ExplorerItem>[];
+  readonly fades: readonly Resource<ExplorerItem>[];
   readonly effects: readonly Resource<ExplorerItem>[];
   /** What the project has itself. */
   readonly own: readonly Resource<ExplorerItem>[];
@@ -101,13 +108,14 @@ export function useResourceCatalog({ missing: withMissing = true } = {}): Resour
   const { store } = useSession();
   const project = useProject(store);
   const missing = useSyncExternalStore(missingFiles.subscribe, missingFiles.getSnapshot);
-  const transitions = useMemo(
-    () =>
-      builtInTransitions(t).map((resource) =>
-        as(resource, { kind: "transition", item: resource.data } as ExplorerItem),
-      ),
-    [t],
-  );
+  const transitionsOf = (media: TransitionMedia) =>
+    builtInTransitions(t, media).map((resource) =>
+      as(resource, { kind: "transition", item: resource.data } as ExplorerItem),
+    );
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- transitionsOf only reads t
+  const transitions = useMemo(() => transitionsOf("picture"), [t]);
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- transitionsOf only reads t
+  const fades = useMemo(() => transitionsOf("sound"), [t]);
   const effects = useMemo(
     () =>
       builtInEffects(t).map((resource) =>
@@ -143,9 +151,12 @@ export function useResourceCatalog({ missing: withMissing = true } = {}): Resour
   const byId = useMemo(
     () =>
       new Map(
-        [...transitions, ...effects, ...own, ...gone].map((resource) => [resource.id, resource]),
+        [...transitions, ...fades, ...effects, ...own, ...gone].map((resource) => [
+          resource.id,
+          resource,
+        ]),
       ),
-    [transitions, effects, own, gone],
+    [transitions, fades, effects, own, gone],
   );
-  return { transitions, effects, own, gone, byId };
+  return { transitions, fades, effects, own, gone, byId };
 }

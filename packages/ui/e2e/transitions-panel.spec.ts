@@ -4,7 +4,8 @@ import { content, expect, findCompositor, tab, tabScrolls, test } from "./suppor
 
 /**
  * The transitions tab, and what it puts on the timeline: dragged onto a clip or a cut, or clicked
- * with something selected; and what each transition has people set, in the properties. See
+ * with something selected; and what each transition has people set, in the properties. The
+ * transitions of sound are in a tab of their own, the fades tab, which works the same. See
  * docs/design/resource-panels.md, sections 2, 3 and 7.
  */
 
@@ -14,8 +15,11 @@ test.use({ withProject: false });
 const shot = (name: string) => ({ path: test.info().outputPath(name) });
 
 const panel = (page: Page) => content(page, "transitions");
+const fadesPanel = (page: Page) => content(page, "fades");
 const item = (page: Page, name: string) =>
   panel(page).getByRole("option", { name, exact: true }).first();
+const fade = (page: Page, name: string) =>
+  fadesPanel(page).getByRole("option", { name, exact: true }).first();
 const clips = (page: Page) => content(page, "timeline").getByRole("option");
 const properties = (page: Page) => content(page, "properties");
 
@@ -83,29 +87,34 @@ test("lists the transitions by where they go, finds them, and groups them other 
   await expect(groups.nth(1)).toHaveAccessibleName("衔接转场");
   await expect(groups.nth(2)).toHaveAccessibleName("出转场");
   // One of each kind: which way it goes and what color it has are what people set afterwards.
-  // A fade is for pictures and sound alike; the linear one is for sound.
-  await expect(groups.nth(0).getByRole("option")).toHaveText([
-    "淡入",
-    "闪入",
-    "擦入",
-    "推入",
-    "线性淡入",
-  ]);
-  await expect(groups.nth(1).getByRole("option")).toHaveText([
-    "叠化",
-    "闪色",
-    "擦除",
-    "推移",
-    "等增益交叉淡化",
-  ]);
-  await expect(groups.nth(2).getByRole("option")).toHaveText([
-    "淡出",
-    "闪出",
-    "擦出",
-    "推出",
-    "线性淡出",
-  ]);
+  // Only those of pictures: the fades tab has those of sound.
+  await expect(groups.nth(0).getByRole("option")).toHaveText(["淡入", "闪入", "擦入", "推入"]);
+  await expect(groups.nth(1).getByRole("option")).toHaveText(["叠化", "闪色", "擦除", "推移"]);
+  await expect(groups.nth(2).getByRole("option")).toHaveText(["淡出", "闪出", "擦出", "推出"]);
+  await expect(groups).toHaveCount(3);
   await panel(page).screenshot(shot("transitions-panel.png"));
+
+  // The fades tab next to it lists those of sound, by what they do, and finds them the same way.
+  await expect(tab(page, "fades").locator('svg[data-icon="fade"]')).toBeVisible();
+  await tab(page, "fades").click();
+  const fadeGroups = fadesPanel(page).getByRole("group");
+  await expect(fadeGroups).toHaveCount(3);
+  await expect(fadeGroups.nth(0)).toHaveAccessibleName("淡入");
+  await expect(fadeGroups.nth(0).getByRole("option")).toHaveText(["淡入", "线性淡入"]);
+  await expect(fadeGroups.nth(1)).toHaveAccessibleName("交叉淡化");
+  await expect(fadeGroups.nth(1).getByRole("option")).toHaveText(["交叉淡化", "等增益交叉淡化"]);
+  await expect(fadeGroups.nth(2)).toHaveAccessibleName("淡出");
+  await expect(fadeGroups.nth(2).getByRole("option")).toHaveText(["淡出", "线性淡出"]);
+  // Each with a picture of how loud each side goes.
+  await expect(fade(page, "交叉淡化").locator("canvas")).toBeVisible();
+  await fadesPanel(page).screenshot(shot("fades-panel.png"));
+  const fadeSearch = fadesPanel(page).getByRole("searchbox", { name: "搜索过渡" });
+  await fadeSearch.fill("交叉淡化");
+  await expect(fadesPanel(page).getByRole("option")).toHaveCount(2);
+  await fadeSearch.fill("推入");
+  await expect(fadesPanel(page).getByRole("option")).toHaveCount(0);
+  await fadeSearch.press("Escape");
+  await tab(page, "transitions").click();
 
   const search = panel(page).getByRole("searchbox", { name: "搜索转场" });
   await search.fill("推入");
@@ -228,7 +237,10 @@ test("go on what is selected with a click: in at the start, out at the end, betw
 test.describe("on sound", () => {
   const sound = { kind: "audio", media: { asset: TONE } };
   const color = (value: string) => ({ kind: "color", color: value });
-  /** Pictures a and b with their sound linked, at the same cut, and a sound of its own after them. */
+  /**
+   * Pictures a and b with their sound linked, at the same cut, and a picture and a sound of their
+   * own after them.
+   */
   async function openWithSound(page: Page) {
     await importClips(
       page,
@@ -236,6 +248,7 @@ test.describe("on sound", () => {
       [
         { id: "a", name: "红", start: "0", duration: "3", source: color("#ff0000"), link: "la" },
         { id: "b", name: "绿", start: "3", duration: "3", source: color("#00ff00"), link: "lb" },
+        { id: "c", name: "蓝", start: "7", duration: "3", source: color("#0000ff") },
       ],
       [
         {
@@ -259,8 +272,21 @@ test.describe("on sound", () => {
         { id: "sc", name: "音乐", start: "7", duration: "3", offset: "1", source: sound },
       ],
     );
-    await tab(page, "transitions").click();
-    await expect(panel(page)).toBeVisible();
+    await tab(page, "fades").click();
+    await expect(fadesPanel(page)).toBeVisible();
+  }
+  /** Drags a fade from its tab. */
+  async function dragFade(page: Page, name: string, to: { x: number; y: number }) {
+    await fade(page, name).scrollIntoViewIfNeeded();
+    const from = await boxOf(fade(page, name));
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(from.x + from.width / 2 + 10, from.y + from.height / 2 + 10, {
+      steps: 3,
+    });
+    await page.mouse.move(to.x, to.y, { steps: 12 });
+    await page.mouse.move(to.x + 1, to.y, { steps: 2 });
+    await page.mouse.up();
   }
   const clip = (page: Page, name: string) =>
     content(page, "timeline").getByRole("option", { name: new RegExp(`^${name}，`) });
@@ -272,20 +298,38 @@ test.describe("on sound", () => {
   test("go in, out and across as fades of sound, which say how long they are", async ({ page }) => {
     await openWithSound(page);
     // A fade in where it is dropped, as long as sound has it: 0.2 seconds, 6 frames.
-    await drag(page, "淡入", await on(page, "音乐", 0.1));
+    await dragFade(page, "淡入", await on(page, "音乐", 0.1));
     await expect(properties(page).getByRole("region", { name: "淡入" })).toBeVisible();
     await expect(properties(page).getByRole("textbox", { name: "时长" })).toHaveValue("0:00/06");
     await expect(properties(page).getByRole("status")).toHaveCount(0);
-    await drag(page, "线性淡出", await on(page, "音乐", 0.9));
+    await dragFade(page, "线性淡出", await on(page, "音乐", 0.9));
     await expect(properties(page).getByRole("region", { name: "线性淡出" })).toBeVisible();
-    // A transition of pictures only does not go on sound, and says so when clicked.
+    // A fade of sound does not go on pictures: nothing comes of it there.
+    await dragFade(page, "淡入", await on(page, "蓝", 0.1));
+    await expect(properties(page).getByRole("region", { name: "淡入" })).toHaveCount(0);
+    // Clicked with pictures selected, it says where they are; it is not greyed out before.
+    await page.mouse.click(...xy(await on(page, "蓝", 0.5)));
+    await expect(fade(page, "淡入")).not.toHaveAttribute("aria-disabled");
+    await fade(page, "淡入").click();
+    await expect(fade(page, "淡入")).toHaveAttribute("data-shake", "");
+    await expect(fadesPanel(page).locator("[data-notice]")).toHaveText(
+      "过渡只能用在声音上，画面的转场在转场选项卡里",
+    );
+    // And one of pictures, clicked with sound selected, the same the other way round.
     await page.mouse.click(...xy(await on(page, "音乐", 0.5)));
-    await expect(item(page, "擦入")).toHaveAttribute("aria-disabled", "true");
-    await item(page, "擦入").hover();
-    await expect(panel(page).getByRole("status")).toHaveText("这个转场只能用在画面上");
+    await tab(page, "transitions").click();
+    await expect(item(page, "擦入")).not.toHaveAttribute("aria-disabled");
+    await item(page, "擦入").click();
+    await expect(panel(page).locator("[data-notice]")).toHaveText(
+      "转场只能用在画面上，声音的淡入淡出在过渡选项卡里",
+    );
+    await tab(page, "fades").click();
     // A cross-fade between the two sounds, and a longer one typed in.
     const cut = await boxOf(clip(page, "人声一"));
-    await drag(page, "等增益交叉淡化", { x: cut.x + cut.width - 1, y: cut.y + cut.height / 2 });
+    await dragFade(page, "等增益交叉淡化", {
+      x: cut.x + cut.width - 1,
+      y: cut.y + cut.height / 2,
+    });
     await expect(properties(page).getByText("人声一 → 人声二")).toBeVisible();
     await expect(properties(page).getByRole("region", { name: "等增益交叉淡化" })).toBeVisible();
     const length = properties(page).getByRole("textbox", { name: "时长" });
@@ -293,7 +337,7 @@ test.describe("on sound", () => {
     await length.press("Enter");
     await expect(length).toHaveValue("0:00/15");
     // Another kind in its place, from the tab.
-    await item(page, "叠化").click();
+    await fade(page, "交叉淡化").click();
     await expect(properties(page).getByRole("region", { name: "交叉淡化" })).toBeVisible();
     await expect(properties(page).getByRole("status")).toHaveCount(0);
     await content(page, "timeline").screenshot(shot("sound-transitions.png"));
@@ -307,6 +351,7 @@ test.describe("on sound", () => {
     page,
   }) => {
     await openWithSound(page);
+    await tab(page, "transitions").click();
     const cut = await boxOf(clip(page, "红"));
     await drag(page, "推移", { x: cut.x + cut.width - 1, y: cut.y + cut.height / 2 });
     await expect(properties(page).getByText("红 → 绿")).toBeVisible();

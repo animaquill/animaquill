@@ -1,5 +1,10 @@
 import { bezierProgress, fadeGainAt, type SoundFade } from "@animaquill/core";
-import { findTransition, type SpeedCurve, type TransitionUse } from "@animaquill/schema";
+import {
+  findTransition,
+  type SpeedCurve,
+  type TransitionMedia,
+  type TransitionUse,
+} from "@animaquill/schema";
 import { codeOf } from "@animaquill/render/transitions";
 import type { TransitionFrame, TransitionHost } from "@animaquill/render/transitions";
 import type { TransitionName } from "../timeline/transition-place.ts";
@@ -143,19 +148,21 @@ class TransitionPreviews {
   }
 
   /**
-   * Draws a transition at a point of its progress onto a canvas of the page. Says whether it
-   * could: one that this editor does not have draws nothing.
+   * Draws a transition at a point of its progress onto a canvas of the page, as it goes on
+   * pictures or on sound. Says whether it could: one that this editor does not have draws nothing.
    */
   draw(
     target: HTMLCanvasElement,
     name: TransitionName,
     use: TransitionUse,
     progress: number,
+    media: TransitionMedia = "picture",
   ): boolean {
     const context = target.getContext("2d");
     if (!context || !this.works || name.type === undefined) return false;
+    if (media === "sound") return drawGain(target, context, name, use, progress);
     const found = findTransition(name, "picture", use);
-    if (found.kind !== "built-in") return drawGain(target, context, name, use, progress);
+    if (found.kind !== "built-in") return false;
     const runner = this.#runnerOf(found.type);
     const samples = (this.#samples ??= {
       from: sample(["#2b5fa8", "#5ab0d6"], "circle"),

@@ -1,5 +1,6 @@
 import { Emitter } from "../workbench/emitter.ts";
 import { parseProjectResourceId } from "./project-resources.ts";
+import { isBuiltInSoundId } from "./transitions.ts";
 
 /**
  * Where people are in the explorer: which source of resources, and which resource. This is the
@@ -10,6 +11,7 @@ import { parseProjectResourceId } from "./project-resources.ts";
 export const EXPLORER_NODES = [
   "built-in",
   "built-in.transitions",
+  "built-in.fades",
   "built-in.effects",
   "project",
   "project.media",
@@ -39,6 +41,7 @@ export interface ExplorerSnapshot {
 
 /** Where a resource is listed, by its id. */
 export function nodeOfResource(id: string): ExplorerNode | undefined {
+  if (isBuiltInSoundId(id)) return "built-in.fades";
   if (id.startsWith("transition:built-in:")) return "built-in.transitions";
   if (id.startsWith("effect:built-in:")) return "built-in.effects";
   const project = parseProjectResourceId(id);

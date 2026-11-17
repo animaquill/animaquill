@@ -31,7 +31,10 @@ export const layouts: readonly LayoutPreset[] = [
           // Editing starts from the assets.
           [
             22,
-            { ...left("files", "explorer", "assets", "transitions", "effects"), active: "assets" },
+            {
+              ...left("files", "explorer", "assets", "transitions", "fades", "effects"),
+              active: "assets",
+            },
           ],
           [52, top("preview", "code", "music", "recording", "versions")],
           [26, right("properties", "chat", "history", "notes")],
@@ -48,7 +51,7 @@ export const layouts: readonly LayoutPreset[] = [
       [
         50,
         row(
-          [21, left("explorer", "assets", "transitions", "effects", "files")],
+          [21, left("explorer", "assets", "transitions", "fades", "effects", "files")],
           [28, top("preview")],
           [28, top("code")],
           [23, right("properties", "chat", "history")],
@@ -64,7 +67,7 @@ export const layouts: readonly LayoutPreset[] = [
       [
         55,
         row(
-          [22, left("assets", "explorer", "effects")],
+          [22, left("assets", "explorer", "fades", "effects")],
           [52, top("music", "recording", "preview")],
           [26, right("properties", "history")],
         ),
@@ -83,7 +86,7 @@ export const layouts: readonly LayoutPreset[] = [
           [
             60,
             row(
-              [28, left("explorer", "assets", "transitions", "effects", "files")],
+              [28, left("explorer", "assets", "transitions", "fades", "effects", "files")],
               [72, top("preview", "code")],
             ),
           ],

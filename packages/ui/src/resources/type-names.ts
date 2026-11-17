@@ -6,6 +6,9 @@ export function resourceTypeName(t: TFunction, type: string): string {
   if (type.startsWith("transition.")) {
     return textOf(t, `transitionPanel.types.${type.slice("transition.".length)}`, type);
   }
+  if (type.startsWith("fade.")) {
+    return textOf(t, `fadePanel.types.${type.slice("fade.".length)}`, type);
+  }
   if (type.startsWith("effect.")) {
     return textOf(t, `effectPanel.types.${type.slice("effect.".length)}`, type);
   }

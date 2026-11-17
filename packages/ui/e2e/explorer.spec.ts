@@ -49,8 +49,8 @@ interface TimelineFile {
 const image = (asset: string) => ({ kind: "image", media: { asset } });
 
 /**
- * A project with a picture used twice, once with a fade in and once with a blur, a sound, and a
- * picture whose file is not there. It comes in as a folder of files.
+ * A project with a picture used twice, once with a fade in and once with a blur, a sound with a
+ * fade in, and a picture whose file is not there. It comes in as a folder of files.
  */
 async function open(page: Page) {
   const files = ProjectStore.create(createProject({ name: "资源项目" })).exportFiles().files;
@@ -97,6 +97,7 @@ async function open(page: Page) {
       start: "0",
       duration: "2",
       source: { kind: "audio", media: { asset: "voice" } },
+      enter: { type: "fade", duration: "0.2" },
     },
   ];
   files.set(path, JSON.stringify(timeline));
@@ -142,6 +143,7 @@ test("lists the sources, and what each of them has", async ({ page }) => {
   await expect(panel(page).getByRole("treeitem")).toHaveText([
     "内置",
     "转场",
+    "过渡",
     "效果",
     "本项目",
     "素材",
@@ -197,8 +199,13 @@ test("says where something is used, and goes there", async ({ page }) => {
   await expect(uses(page)).toHaveText(["中间 的效果，0:03"]);
   await node(page, "built-in.transitions").click();
   await item(page, "淡入").click();
+  // Only on pictures: the fade in of the sound is another one, which fades have.
   await expect(uses(page)).toHaveText(["开头 的入转场，0:00"]);
   await details(page).screenshot(shot("explorer-uses.png"));
+  await node(page, "built-in.fades").click();
+  await item(page, "淡入").click();
+  await expect(uses(page)).toHaveText(["旁白 的入转场，0:00"]);
+  await node(page, "built-in.transitions").click();
   await item(page, "淡出").click();
   await expect(details(page).getByText("还没有用到")).toBeVisible();
 
@@ -337,6 +344,16 @@ test("is where the other tabs of resources show something", async ({ page }) => 
   await page.getByRole("menuitem", { name: "在资源管理器里显示" }).click();
   await expect(node(page, "built-in.effects")).toHaveAttribute("aria-selected", "true");
   await expect(item(page, "模糊")).toBeFocused();
+
+  // Fades, the transitions of sound, have a place of their own.
+  await tab(page, "fades").click();
+  await content(page, "fades")
+    .getByRole("option", { name: "交叉淡化", exact: true })
+    .click({ button: "right" });
+  await page.getByRole("menuitem", { name: "在资源管理器里显示" }).click();
+  await expect(node(page, "built-in.fades")).toHaveAttribute("aria-selected", "true");
+  await expect(item(page, "交叉淡化")).toBeFocused();
+  await expect(items(page)).toHaveCount(6);
 
   await tab(page, "assets").click();
   await resourcesIn(page, "assets").filter({ hasText: "配音.wav" }).click({ button: "right" });

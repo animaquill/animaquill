@@ -55,6 +55,17 @@ describe("where a resource is used", () => {
       { timeline: "main", clip: "clip_title", edge: "enter" },
       { timeline: "main", clip: "clip_interview_audio", edge: "enter" },
     ]);
+    // A fade of pictures is not one of sound, when it says which it is after.
+    const fadeIn = { kind: "transition", use: "enter", ref: { type: "fade" } } as const;
+    expect(usesOf(state, { ...fadeIn, media: "picture" })).toEqual([
+      { timeline: "main", clip: "clip_title", edge: "enter" },
+    ]);
+    expect(usesOf(state, { ...fadeIn, media: "sound" })).toEqual([
+      { timeline: "main", clip: "clip_interview_audio", edge: "enter" },
+    ]);
+    expect(
+      usesOf(state, { kind: "transition", use: "join", ref: { type: "fade" }, media: "sound" }),
+    ).toEqual([]);
     expect(usesOf(state, { kind: "transition", use: "join", ref: { type: "fade" } })).toEqual([
       { timeline: "main", join: "join_1", clip: "clip_title" },
     ]);

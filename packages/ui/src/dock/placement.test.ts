@@ -75,6 +75,27 @@ describe("placing a panel (settings-and-properties 11.5)", () => {
     expect(place("transitions", layout(2, 1))).toEqual({ kind: "into", group: "G2" });
   });
 
+  it("6b: fades are made for the same room as transitions, and go next to them", () => {
+    expect(sizes("fades")).toEqual(sizes("transitions"));
+    // The group of transitions is one for large room too, which comes before a tall one used last.
+    const layout = groups(
+      ["G2", ["files", "transitions"], { used: 1 }],
+      ["G3", ["timeline"]],
+      ["G4", ["properties"], { used: 2 }],
+    );
+    expect(place("fades", layout)).toEqual({ kind: "into", group: "G2" });
+    // Without it, where transitions would go.
+    const without = (left: number, right: number) =>
+      groups(
+        ["G2", ["files"], { used: left }],
+        ["G3", ["timeline"]],
+        ["G4", ["properties"], { used: right }],
+      );
+    expect(place("fades", without(1, 2))).toEqual(place("transitions", without(1, 2)));
+    expect(place("fades", without(2, 1))).toEqual(place("transitions", without(2, 1)));
+    expect(place("fades", defaults())).toEqual({ kind: "into", group: "G1" });
+  });
+
   it("7: without a wide group, the timeline opens a new group below", () => {
     const layout = groups(["G1", ["preview"]], ["G2", ["files"]], ["G4", ["properties"]]);
     expect(place("timeline", layout)).toEqual({ kind: "new", area: "bottom" });
@@ -151,6 +172,7 @@ describe("sizes of the panels", () => {
         "effects",
         "explorer",
         "exports",
+        "fades",
         "files",
         "history",
         "keyframes",

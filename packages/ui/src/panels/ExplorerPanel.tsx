@@ -9,7 +9,7 @@ import { EXPLORER_NODES, parentOf, type ExplorerNode } from "../resources/explor
 import { ResourceBrowser } from "../resources/ResourceBrowser.tsx";
 import { PROJECT_TYPES, type ProjectItem } from "../resources/project-resources.ts";
 import type { Resource } from "../resources/resources.ts";
-import { TRANSITION_TYPES } from "../resources/transitions.ts";
+import { FADE_TYPES, TRANSITION_TYPES } from "../resources/transitions.ts";
 import { resourceTypeName } from "../resources/type-names.ts";
 import { textOf } from "../properties/names.ts";
 import { canDragProjectItem, startProjectItemDrag } from "./AssetsPanel.tsx";
@@ -23,6 +23,7 @@ export type { ExplorerItem } from "../resources/catalog.ts";
 const TYPES: readonly string[] = [
   ...PROJECT_TYPES,
   ...TRANSITION_TYPES,
+  ...FADE_TYPES,
   ...EFFECT_RESOURCE_TYPES,
   "transition",
   "effect",
@@ -42,16 +43,18 @@ export function ExplorerPanel() {
   const { explorer, timeline, resourceHabits: habits } = workbench;
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(explorer.subscribe, explorer.getSnapshot);
-  const { transitions, effects, own, gone } = useResourceCatalog();
+  const { transitions, fades, effects, own, gone } = useResourceCatalog();
 
   const listOf = (node: ExplorerNode): readonly Resource<ExplorerItem>[] => {
     const ofKind = (kind: ProjectItem["kind"]) =>
       own.filter(({ data }) => data.kind === "project" && data.item.kind === kind);
     switch (node) {
       case "built-in":
-        return [...transitions, ...effects];
+        return [...transitions, ...fades, ...effects];
       case "built-in.transitions":
         return transitions;
+      case "built-in.fades":
+        return fades;
       case "built-in.effects":
         return effects;
       case "project":
@@ -72,7 +75,7 @@ export function ExplorerPanel() {
   };
   const { node } = snapshot;
   // oxlint-disable-next-line react-hooks/exhaustive-deps -- listOf only reads what is listed here
-  const resources = useMemo(() => listOf(node), [node, own, transitions, effects, gone]);
+  const resources = useMemo(() => listOf(node), [node, own, transitions, fades, effects, gone]);
   const actions = useResourceActions();
   const placeMenu = usePlaceMenu();
   const marks = useAssetMarks();
