@@ -15,7 +15,7 @@ import {
   placeImage,
   typeInto,
 } from "./property-helpers.ts";
-import { importClips } from "./project-files.ts";
+import { TONE, importClips, toneFile } from "./project-files.ts";
 import {
   animateBesideTimeline,
   chooseLayout,
@@ -1534,5 +1534,100 @@ test.describe("while trying things out", () => {
     await page.getByRole("menuitem", { name: "放弃这个属性的试改" }).click();
     await expect(trialBar(page)).toHaveCount(0);
     await expect(keys(page, "位置 X").nth(1)).toHaveAttribute("aria-label", /0:03\/00$/);
+  });
+});
+
+test.describe("the row of sound", () => {
+  test.use({ withProject: false, trying: false });
+
+  const soundHeader = (page: Page) => panel(page).getByTestId("keyframes-sound");
+
+  /** How many pixels of the row of sound are not its background, from the canvas itself. */
+  async function waveformPixels(page: Page): Promise<number> {
+    const header = await soundHeader(page).boundingBox();
+    const canvas = await stage(page).locator("canvas").boundingBox();
+    if (!header || !canvas) throw new Error("no row of sound");
+    return stage(page)
+      .locator("canvas")
+      .evaluate(
+        (element: HTMLCanvasElement, { top, height }) => {
+          const ratio = element.width / element.clientWidth;
+          const context = element.getContext("2d");
+          if (!context) return 0;
+          const y = Math.round((top + 2) * ratio);
+          const rows = Math.round((height - 4) * ratio);
+          // Left of the end of the timeline, where the row has its own background.
+          const width = Math.round(element.width / 3);
+          const { data } = context.getImageData(0, y, width, rows);
+          const [r, g, b] = [data[0], data[1], data[2]];
+          let count = 0;
+          for (let index = 0; index < data.length; index += 4) {
+            const differs =
+              Math.abs((data[index] ?? 0) - (r ?? 0)) +
+                Math.abs((data[index + 1] ?? 0) - (g ?? 0)) +
+                Math.abs((data[index + 2] ?? 0) - (b ?? 0)) >
+              30;
+            if (differs) count += 1;
+          }
+          return count;
+        },
+        { top: header.y - canvas.y, height: header.height },
+      );
+  }
+
+  test("shows the music on top, flat once its track is muted, and folds", async ({ page }) => {
+    const shots = (name: string) => test.info().outputPath(`k7-${name}.png`);
+    await importClips(
+      page,
+      10,
+      [{ id: "c", start: "0", duration: "8", source: { kind: "color", color: "#336699" } }],
+      [
+        {
+          id: "m",
+          name: "音乐",
+          start: "0",
+          duration: "8",
+          source: { kind: "audio", media: { asset: TONE } },
+        },
+      ],
+      toneFile(10, 0.5),
+    );
+    await dismissNotices(page);
+    await animate(page);
+    await showAll(page);
+    await expect(soundHeader(page)).toHaveText("声音");
+    // The waveform is worked out from the file first.
+    await expect.poll(() => waveformPixels(page), { timeout: 20_000 }).toBeGreaterThan(100);
+    await panel(page).screenshot({ path: shots("dark") });
+
+    const mute = content(page, "timeline").getByRole("button", { name: "静音 音频 1" });
+    await mute.click();
+    await expect.poll(() => waveformPixels(page)).toBe(0);
+    await panel(page).screenshot({ path: shots("muted") });
+    await mute.click();
+    await expect.poll(() => waveformPixels(page)).toBeGreaterThan(100);
+
+    // Its menu picks one track, which shows by itself, muted or not.
+    await soundHeader(page).click({ button: "right" });
+    const menu = page.getByRole("menu");
+    await expect(menu.getByRole("menuitemradio")).toHaveText(["全部声音", "音频 1"]);
+    await page.screenshot({ path: shots("menu-dark") });
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.screenshot({ path: shots("menu-light") });
+    await menu.getByRole("menuitemradio", { name: "音频 1" }).click();
+    await expect(soundHeader(page)).toHaveText("声音 · 音频 1");
+    await mute.click();
+    await expect.poll(() => waveformPixels(page)).toBeGreaterThan(100);
+    await panel(page).screenshot({ path: shots("light") });
+    await page.emulateMedia({ colorScheme: "dark" });
+
+    // Folded, it is only a row, and the rows of keys move up.
+    const before = await soundHeader(page).boundingBox();
+    await panel(page).getByRole("button", { name: "收起 声音 · 音频 1", exact: true }).click();
+    const after = await soundHeader(page).boundingBox();
+    expect(after && before && after.height < before.height).toBe(true);
+    await panel(page).screenshot({ path: shots("folded") });
+    await panel(page).getByRole("button", { name: "展开 声音 · 音频 1", exact: true }).click();
+    await expect(soundHeader(page)).toHaveText("声音 · 音频 1");
   });
 });

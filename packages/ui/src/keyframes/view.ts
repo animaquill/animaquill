@@ -6,6 +6,14 @@ import { Emitter } from "../workbench/emitter.ts";
 import { KeyArea } from "./area.ts";
 import type { KeyframeEditor, ShownClips } from "./editor.ts";
 import { LANE_HEIGHT, laneAt, lanesOfTracks, type Lane } from "./lanes.ts";
+import {
+  SOUND_ROW_FOLDED,
+  SOUND_ROW_HEIGHT,
+  soundMemoryIn,
+  soundPictureOf,
+  type SoundMemory,
+  type SoundPicture,
+} from "./sound-row.ts";
 
 const SNAP_REACH = 8;
 const ZOOM_STEP = 1.5;
@@ -51,6 +59,16 @@ export class KeyframesView extends KeyArea implements StageEditor {
   #gesture: Gesture | undefined;
   /** What is selected is listed here, wherever it is. */
   readonly shownClips: ShownClips = () => true;
+  /** The row of sound at the top: folded or not, and the track it shows by itself, if one. */
+  #soundFolded = false;
+  #soundTrack: string | undefined;
+  /** Goes up when waveforms arrive, which the drawing has to show. */
+  #soundsArrived = 0;
+  #soundKnown: {
+    readonly by: readonly unknown[];
+    readonly picture: SoundPicture | undefined;
+  } = { by: [], picture: undefined };
+  #peaksOf: (clip: string) => Uint8Array | undefined = () => undefined;
 
   constructor(keyframes: KeyframeEditor, timeline: TimelineEditor) {
     super(keyframes);
@@ -125,11 +143,85 @@ export class KeyframesView extends KeyArea implements StageEditor {
   }
 
   laneY(y: number): number {
-    return y - RULER_HEIGHT + this.#scrollY;
+    return y - this.lanesTop + this.#scrollY;
   }
 
   screenY(laneTop: number): number {
-    return RULER_HEIGHT - this.#scrollY + laneTop;
+    return this.lanesTop - this.#scrollY + laneTop;
+  }
+
+  override get lanesTop(): number {
+    return RULER_HEIGHT + this.soundHeight;
+  }
+
+  /* The row of sound. */
+
+  /** What the row of sound shows, or nothing when there is no sound and so no row. */
+  get sound(): SoundPicture | undefined {
+    const { model } = this;
+    const state = this.keyframes.state;
+    const by = [state, model, this.#soundTrack];
+    const known = this.#soundKnown;
+    if (by.every((item, index) => item === known.by[index])) return known.picture;
+    const picture = state && model ? soundPictureOf(state, model, this.#soundTrack) : undefined;
+    this.#soundKnown = { by, picture };
+    return picture;
+  }
+
+  get soundFolded(): boolean {
+    return this.#soundFolded;
+  }
+
+  /** How tall the row of sound is on screen: nothing without sound. */
+  get soundHeight(): number {
+    if (!this.sound) return 0;
+    const height = this.#soundFolded ? SOUND_ROW_FOLDED : SOUND_ROW_HEIGHT;
+    return Math.round(height * this.#sizeScale);
+  }
+
+  foldSound(folded: boolean): void {
+    if (folded === this.#soundFolded) return;
+    this.#soundFolded = folded;
+    this.#clampScroll();
+    this.#viewChanged();
+  }
+
+  /** Shows one track by itself, or all that is heard again without one. */
+  pickSoundTrack(track: string | undefined): void {
+    if (track === this.#soundTrack) return;
+    this.#soundTrack = track;
+    this.#viewChanged();
+  }
+
+  /** What to keep of the row of sound for this window. */
+  get soundMemory(): SoundMemory {
+    // A track that is gone is forgotten. Without any sound there is nothing to tell, so it stays.
+    const { sound } = this;
+    const track = sound ? sound.track : this.#soundTrack;
+    return {
+      ...(this.#soundFolded && { folded: true as const }),
+      ...(track !== undefined && { track }),
+    };
+  }
+
+  /** Where the waveform of a clip comes from. It can show up later. */
+  setPeaksSource(peaksOf: (clip: string) => Uint8Array | undefined): void {
+    this.#peaksOf = peaksOf;
+    this.soundsArrived();
+  }
+
+  peaksOf(clip: string): Uint8Array | undefined {
+    return this.#peaksOf(clip);
+  }
+
+  /** Waveforms came, so the row shows them. */
+  soundsArrived(): void {
+    this.#soundsArrived += 1;
+    this.keyframes.redrawTab();
+  }
+
+  override get whatIsDrawn(): readonly unknown[] {
+    return [...super.whatIsDrawn, this.sound, this.soundHeight, this.#soundsArrived];
   }
 
   snapDistance(pointer: Pointer): number {
@@ -149,7 +241,7 @@ export class KeyframesView extends KeyArea implements StageEditor {
   get contentHeight(): number {
     const last = this.#lanes.at(-1);
     const bottom = last ? last.top + last.height : 0;
-    return Math.max(bottom + RULER_HEIGHT + BOTTOM_MARGIN, this.#height);
+    return Math.max(bottom + this.lanesTop + BOTTOM_MARGIN, this.#height);
   }
 
   /** Whether the playhead turned into the line of what something snapped to. */
@@ -286,7 +378,8 @@ export class KeyframesView extends KeyArea implements StageEditor {
     if (this.#gesture) return;
     const scale = clamp(this.#rowScale * factor, MIN_ROW_SCALE, MAX_ROW_SCALE);
     if (scale === this.#rowScale) return;
-    const inLanes = this.laneY(Math.max(y, RULER_HEIGHT));
+    const top = this.lanesTop;
+    const inLanes = this.laneY(Math.max(y, top));
     const lane = laneAt(this.#lanes, inLanes);
     const share = lane ? (inLanes - lane.top) / lane.height : 0;
     const before = this.#rowScale;
@@ -294,17 +387,17 @@ export class KeyframesView extends KeyArea implements StageEditor {
     this.relist();
     const after = lane && this.#lanes.find(({ id }) => id === lane.id);
     const target = after ? after.top + share * after.height : (inLanes * scale) / before;
-    this.#scrollY = target - (Math.max(y, RULER_HEIGHT) - RULER_HEIGHT);
+    this.#scrollY = target - (Math.max(y, top) - top);
     this.#clampScroll();
     this.#viewChanged();
   }
 
   rowsTaller(): void {
-    this.zoomRowsAround(RULER_HEIGHT, ROW_SCALE_STEP);
+    this.zoomRowsAround(this.lanesTop, ROW_SCALE_STEP);
   }
 
   rowsShorter(): void {
-    this.zoomRowsAround(RULER_HEIGHT, 1 / ROW_SCALE_STEP);
+    this.zoomRowsAround(this.lanesTop, 1 / ROW_SCALE_STEP);
   }
 
   /** The playhead moved. Like the timeline, this scrolls just far enough that it can be seen. */
@@ -337,7 +430,10 @@ export class KeyframesView extends KeyArea implements StageEditor {
   }
 
   /** Starts from what was remembered, as far as that makes sense. */
-  adoptView(view: OwnView | undefined, rowScale: unknown): void {
+  adoptView(view: OwnView | undefined, rowScale: unknown, sound?: unknown): void {
+    const { folded, track } = soundMemoryIn(sound);
+    this.#soundFolded = folded === true;
+    this.#soundTrack = track;
     const fits =
       view && Number.isFinite(view.pixelsPerSecond) && view.pixelsPerSecond > 0
         ? Number.isFinite(view.scrollX)
@@ -360,7 +456,7 @@ export class KeyframesView extends KeyArea implements StageEditor {
   }
 
   hover(pointer: Pointer): string {
-    return pointer.y < RULER_HEIGHT ? "pointer" : this.cursorAt(pointer);
+    return pointer.y < this.lanesTop ? "pointer" : this.cursorAt(pointer);
   }
 
   leave(): void {}
@@ -370,7 +466,7 @@ export class KeyframesView extends KeyArea implements StageEditor {
     if (!model) return;
     this.#cancelGesture();
     this.#gesture =
-      pointer.y < RULER_HEIGHT
+      pointer.y < this.lanesTop
         ? new ScrubGesture(this.#scrubHost, pointer)
         : this.pressLanes(pointer);
   }
@@ -411,7 +507,7 @@ export class KeyframesView extends KeyArea implements StageEditor {
   }
 
   touchAt(pointer: Pointer): TouchStart {
-    return pointer.y < RULER_HEIGHT ? "grab" : this.touchAtLanes(pointer);
+    return pointer.y < this.lanesTop ? "grab" : this.touchAtLanes(pointer);
   }
 
   hold(pointer: Pointer): void {

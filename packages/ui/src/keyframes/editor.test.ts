@@ -3382,3 +3382,120 @@ describe("the box around selected keys", () => {
     expect(shownKeys()).toEqual(["1:0", "2:10", "3:20"]);
   });
 });
+
+describe("the row of sound", () => {
+  async function withSound(memory = memoryWindow()) {
+    const context = await setup({ memory });
+    const { store } = context;
+    const run = (type: string, params: object) => {
+      const result = store.execute({ type, params } as never);
+      if (!result.ok)
+        throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
+    };
+    run("asset.add", {
+      id: "song",
+      asset: { kind: "audio", path: "assets/song.wav", storage: "local", hash: "sha256-song" },
+    });
+    run("asset.add", {
+      id: "talk",
+      asset: { kind: "audio", path: "assets/talk.wav", storage: "local", hash: "sha256-talk" },
+    });
+    const sound = (track: string, id: string, asset: string) => {
+      run("track.add", { timeline: "main", id: track, kind: "audio" });
+      run("clip.add", {
+        timeline: "main",
+        track,
+        id,
+        start: "0",
+        duration: "4",
+        source: { kind: "audio", media: { asset } },
+      });
+    };
+    const heard = () => context.panel.sound?.sounds.map(({ id }) => id).toSorted();
+    const track = (id: string, changes: object) =>
+      run("track.update", { timeline: "main", track: id, changes });
+    return { ...context, run, sound, heard, track };
+  }
+
+  it("is not there without sound, and the lanes start under the ruler", async () => {
+    const { panel, addClip } = await setup();
+    addClip("a", 0, 2);
+    expect(panel.sound).toBeUndefined();
+    expect(panel.soundHeight).toBe(0);
+    expect(panel.lanesTop).toBe(RULER_HEIGHT);
+  });
+
+  it("comes with sound, and the lanes move down under it", async () => {
+    const { panel, sound, addClip, lane } = await withSound();
+    addClip("a", 0, 2);
+    const before = panel.screenY(lane("a").top);
+    sound("music", "m", "song");
+    expect(panel.sound).toBeDefined();
+    expect(panel.lanesTop).toBe(RULER_HEIGHT + panel.soundHeight);
+    expect(panel.screenY(lane("a").top)).toBe(before + panel.soundHeight);
+    // Pressing it moves the playhead, as the ruler does, and selects nothing.
+    expect(
+      panel.hitAt({ x: 10, y: RULER_HEIGHT + 2, shift: false, alt: false, mod: false }),
+    ).toEqual({ kind: "empty" });
+  });
+
+  it("adds up what is heard: muting and solo as the export has them", async () => {
+    const { sound, heard, track } = await withSound();
+    sound("music", "m", "song");
+    sound("voice", "v", "talk");
+    expect(heard()).toEqual(["m", "v"]);
+    track("music", { muted: true });
+    expect(heard()).toEqual(["v"]);
+    track("voice", { muted: true });
+    expect(heard()).toEqual([]);
+    track("music", { solo: true });
+    expect(heard()).toEqual(["m"]);
+  });
+
+  it("shows one track by itself, muted or not, and all again when that track goes", async () => {
+    const { panel, sound, heard, track, run } = await withSound();
+    sound("music", "m", "song");
+    sound("voice", "v", "talk");
+    expect(panel.sound?.tracks.map(({ track: { id } }) => id)).toEqual(["music", "voice"]);
+    panel.pickSoundTrack("voice");
+    track("voice", { muted: true });
+    expect(panel.sound?.track).toBe("voice");
+    expect(heard()).toEqual(["v"]);
+    panel.pickSoundTrack(undefined);
+    expect(heard()).toEqual(["m"]);
+    panel.pickSoundTrack("voice");
+    run("track.remove", { timeline: "main", track: "voice" });
+    expect(panel.sound?.track).toBeUndefined();
+    expect(heard()).toEqual(["m"]);
+  });
+
+  it("goes when the last sound does", async () => {
+    const { panel, sound, run } = await withSound();
+    sound("music", "m", "song");
+    run("clip.remove", { timeline: "main", clips: ["m"] });
+    expect(panel.sound).toBeUndefined();
+    expect(panel.lanesTop).toBe(RULER_HEIGHT);
+  });
+
+  it("folds, and remembers that and the track it shows for this window", async () => {
+    const memory = memoryWindow();
+    const first = await withSound(memory);
+    first.sound("music", "m", "song");
+    first.sound("voice", "v", "talk");
+    const open = first.panel.soundHeight;
+    first.panel.foldSound(true);
+    expect(first.panel.soundHeight).toBeLessThan(open);
+    expect(first.panel.lanesTop).toBe(RULER_HEIGHT + first.panel.soundHeight);
+    first.panel.pickSoundTrack("voice");
+    first.keyframes.flush();
+    const again = first.reopen();
+    again.panel.setViewport(WIDTH, HEIGHT);
+    expect(again.panel.soundFolded).toBe(true);
+    expect(again.panel.sound?.track).toBe("voice");
+
+    // Another window has its own.
+    const other = await withSound();
+    other.sound("music", "m", "song");
+    expect(other.panel.soundFolded).toBe(false);
+  });
+});

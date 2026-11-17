@@ -11,13 +11,18 @@ interface TimelineFile {
   sections: { duration: string }[];
 }
 
-/** A quiet tone of `seconds`, as a WAV file: 8 kHz mono, enough to play. */
-function toneFile(seconds: number): Buffer {
+/**
+ * A quiet tone of `seconds`, as a WAV file: 8 kHz mono, enough to play. With `beat`, it is loud at
+ * the start of every `beat` seconds and dies down before the next, as a drum does.
+ */
+export function toneFile(seconds: number, beat?: number): Buffer {
   const rate = 8000;
   const samples = Math.round(seconds * rate);
   const data = Buffer.alloc(samples * 2);
   for (let index = 0; index < samples; index += 1) {
-    data.writeInt16LE(Math.round(3000 * Math.sin((2 * Math.PI * 220 * index) / rate)), index * 2);
+    const time = index / rate;
+    const volume = beat === undefined ? 3000 : 28000 * Math.exp((-(time % beat) / beat) * 6);
+    data.writeInt16LE(Math.round(volume * Math.sin(2 * Math.PI * 220 * time)), index * 2);
   }
   const header = Buffer.alloc(44);
   header.write("RIFF", 0);
@@ -47,6 +52,7 @@ export async function importClips(
   seconds: number,
   clips: readonly unknown[],
   sound: readonly unknown[] = [],
+  tone: Buffer = toneFile(seconds),
 ): Promise<void> {
   const files: Map<string, string | Buffer> = ProjectStore.create(
     createProject({ name: "写好的项目" }),
@@ -64,7 +70,7 @@ export async function importClips(
     audio.clips = [...sound];
     const asset = { name: "测试音", kind: "audio", path: "assets/tone.wav", storage: "git" };
     files.set("assets.json", JSON.stringify({ assets: { [TONE]: asset } }));
-    files.set("assets/tone.wav", toneFile(seconds));
+    files.set("assets/tone.wav", tone);
   }
   files.set(path, JSON.stringify(timeline));
   const folder = mkdtempSync(join(tmpdir(), "animaquill-project-"));

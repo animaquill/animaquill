@@ -759,11 +759,13 @@ function joinFade(join: JoinInEffect, way: SoundFade["way"]) {
 /**
  * Solo wins: as soon as one track has it, only those tracks sound. `volumeOf` is for what people are
  * trying out, which they have to hear: it gives the volume of a clip when that is not the saved one.
+ * `only` is one track by itself, muted or not, as people pick it to look at.
  */
 export function buildAudioPlan(
   state: ProjectState,
   timelineId: string,
   volumeOf?: (clip: string) => number | undefined,
+  only?: string,
 ): AudioPlan {
   const timeline = entryOf(state.timelines, timelineId);
   if (!timeline) return { sounds: [] };
@@ -773,7 +775,9 @@ export function buildAudioPlan(
   const soloing = tracks.some((track) => track.solo);
   const audible = new Map(
     tracks
-      .filter((track) => (soloing ? track.solo : !track.muted))
+      .filter((track) =>
+        only === undefined ? (soloing ? track.solo : !track.muted) : track.id === only,
+      )
       .map((track) => [track.id, track]),
   );
   // Joins win over the transitions at their edges, and have their clips sound past the cut.

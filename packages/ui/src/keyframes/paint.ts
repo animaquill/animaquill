@@ -22,6 +22,7 @@ import { StagePainter, type Theme } from "../timeline/stage-painter.ts";
 import type { KeyArea, ShownHandle } from "./area.ts";
 import { liftKey, withinSpec } from "./gestures.ts";
 import { retimedSeconds } from "./retime.ts";
+import { paintSoundLevels, soundLevels } from "./sound-row.ts";
 import { specOfLane, type Lane } from "./lanes.ts";
 import { yIn, type ValueScale } from "./scale.ts";
 import {
@@ -274,7 +275,7 @@ export class LanePainter {
 
   paint(context: CanvasRenderingContext2D, theme: Theme, sharp: (value: number) => number): void {
     const area = this.#area;
-    const lanes = area.lanesBetween(area.laneY(RULER_HEIGHT), area.laneY(area.screenHeight));
+    const lanes = area.lanesBetween(area.laneY(area.lanesTop), area.laneY(area.screenHeight));
     if (lanes.length === 0) return;
     const marks = new Marks();
     const from = area.timeAt(0);
@@ -305,7 +306,7 @@ export class LanePainter {
     if (!box) return;
     const left = sharp(box.left);
     const right = sharp(box.right);
-    const top = sharp(Math.max(box.top, RULER_HEIGHT));
+    const top = sharp(Math.max(box.top, this.#area.lanesTop));
     const bottom = sharp(box.bottom);
     if (bottom <= top) return;
     context.save();
@@ -751,6 +752,8 @@ export class KeyframesPainter extends StagePainter {
   readonly #lanes: LanePainter;
   /** What the last drawing went by. The playhead is an element, so playing changes none of it. */
   #drawn: readonly unknown[] = [];
+  /** How loud the sound is at each pixel, kept from one drawing to the next. */
+  #levels = new Float32Array(0);
 
   constructor(canvas: HTMLCanvasElement, view: KeyframesView, labelOf: ValueLabel) {
     super(canvas);
@@ -777,18 +780,20 @@ export class KeyframesPainter extends StagePainter {
     context.font = `${12 * theme.fontScale}px ${theme.font}`;
     context.textBaseline = "middle";
 
+    const top = view.lanesTop;
+    const end = sharp(view.xAt(view.visibleDuration));
     context.save();
     context.beginPath();
-    context.rect(0, RULER_HEIGHT, width, height - RULER_HEIGHT);
+    context.rect(0, top, width, height - top);
     context.clip();
     this.#lanes.paint(context, theme, sharp);
-    const end = sharp(view.xAt(view.visibleDuration));
     if (end < width) {
       context.fillStyle = theme.outside;
-      context.fillRect(Math.max(end, 0), RULER_HEIGHT, width, height);
+      context.fillRect(Math.max(end, 0), top, width, height);
     }
     paintMarquee(context, view, theme);
     context.restore();
+    this.#paintSound(theme, end);
 
     paintRuler(
       context,
@@ -799,6 +804,34 @@ export class KeyframesPainter extends StagePainter {
       sharp,
     );
     paintSnapLine(context, view, theme, sharp);
+  }
+
+  /**
+   * The row of sound under the ruler: what is heard, or the one track picked, as one waveform. It
+   * stays there while the rows of keys scroll under it. Folded, it is only a row.
+   */
+  #paintSound(theme: Theme, end: number): void {
+    const view = this.#view;
+    const { sound } = view;
+    const height = view.soundHeight;
+    if (!sound || height === 0) return;
+    const { context, ratio } = this;
+    const { width } = view;
+    const top = RULER_HEIGHT;
+    context.fillStyle = theme.lane;
+    context.fillRect(0, top, width, height);
+    if (!view.soundFolded) {
+      const pixels = Math.ceil(width);
+      if (this.#levels.length < pixels) this.#levels = new Float32Array(pixels);
+      soundLevels(sound.sounds, (layer) => view.peaksOf(layer.id), view, this.#levels);
+      paintSoundLevels(this.context, this.#levels, pixels, { top, height }, theme.sound);
+    }
+    if (end < width) {
+      context.fillStyle = theme.outside;
+      context.fillRect(Math.max(end, 0), top, width, height);
+    }
+    context.fillStyle = theme.line;
+    context.fillRect(0, top + height - 1 / ratio, width, 1 / ratio);
   }
 }
 

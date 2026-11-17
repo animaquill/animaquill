@@ -195,6 +195,11 @@ export abstract class KeyArea {
   /** The clips this shows keys of, which are the only ones what people do here is about. */
   abstract readonly shownClips: ShownClips;
 
+  /** Where the lanes start on screen: under the ruler, and under whatever stays there with it. */
+  get lanesTop(): number {
+    return RULER_HEIGHT;
+  }
+
   /**
    * All that a drawing depends on. When none of it changed, what is there is still right, which is
    * what playing comes down to: the playhead is an element and moves by itself.
@@ -352,7 +357,7 @@ export abstract class KeyArea {
    * handles of selected keys are on top of everything, also where they reach over another row.
    */
   hitAt(pointer: Pointer): LaneHit {
-    if (pointer.y < RULER_HEIGHT) return { kind: "empty" };
+    if (pointer.y < this.lanesTop) return { kind: "empty" };
     const handle = this.#handleNear(pointer);
     if (handle) return { kind: "handle", handle };
     const y = this.laneY(pointer.y);
@@ -368,7 +373,7 @@ export abstract class KeyArea {
 
   /** Whether a handle is at a place, which can be over something that is not a row of keys. */
   isOnHandle(pointer: Pointer): boolean {
-    return pointer.y >= RULER_HEIGHT && this.#handleNear(pointer) !== undefined;
+    return pointer.y >= this.lanesTop && this.#handleNear(pointer) !== undefined;
   }
 
   #handleNear(pointer: Pointer): ShownHandle | undefined {
@@ -769,7 +774,7 @@ export abstract class KeyArea {
    * a handle that is nearer to the pointer than the edge is what the pointer is on.
    */
   retimeAt(pointer: Pointer): RetimePart | undefined {
-    if (pointer.y < RULER_HEIGHT) return undefined;
+    if (pointer.y < this.lanesTop) return undefined;
     const box = this.retimeBox();
     if (!box || pointer.y < box.top || pointer.y > box.bottom) return undefined;
     const { x } = pointer;
@@ -810,7 +815,10 @@ export abstract class KeyArea {
     const found: ShownHandle[] = [];
     const from = this.timeAt(0);
     const to = this.timeAt(this.width);
-    for (const lane of this.lanesBetween(this.laneY(RULER_HEIGHT), this.laneY(this.screenHeight))) {
+    for (const lane of this.lanesBetween(
+      this.laneY(this.lanesTop),
+      this.laneY(this.screenHeight),
+    )) {
       const { box } = lane;
       if (!box || lane.node.kind !== "property" || !keyframes.canMove(box.id)) continue;
       this.#handlesOf(lane, box, from, to, found);

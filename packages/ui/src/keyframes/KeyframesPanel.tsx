@@ -1,7 +1,16 @@
 import type { ListRange } from "@animaquill/core";
-import { Magnet, Spline, ZoomIn, ZoomOut, FoldHorizontal } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Magnet,
+  Spline,
+  ZoomIn,
+  ZoomOut,
+  FoldHorizontal,
+} from "lucide-react";
 import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
+import { PopupMenu } from "../app/Menu.tsx";
 import { Tip } from "../app/Tip.tsx";
 import { useWorkbench } from "../app/context.ts";
 import { RULER_HEIGHT } from "../timeline/editor.ts";
@@ -16,6 +25,7 @@ import { LaneRows } from "./LaneRows.tsx";
 import { RecordButton, RecordingFrame } from "./RecordButton.tsx";
 import { KeyframesPainter } from "./paint.ts";
 import styles from "./KeyframesPanel.module.css";
+import rowStyles from "./LaneRows.module.css";
 import type { KeyframesView } from "./view.ts";
 
 const RANGES: readonly ListRange[] = ["here", "all", "keyed"];
@@ -137,6 +147,87 @@ function Corner({ view }: { view: KeyframesView }) {
   );
 }
 
+/** What the row of sound shows, as far as its header goes. */
+function soundHeaderOf(view: KeyframesView): string {
+  const { sound } = view;
+  if (!sound) return "";
+  return JSON.stringify([view.soundHeight, view.soundFolded, sound.track, sound.tracks]);
+}
+
+/**
+ * The header of the row of sound: it folds, and its menu picks what it shows. It stays under the
+ * ruler, as the row does, while the rows of keys scroll.
+ */
+function SoundHeader({ view }: { view: KeyframesView }) {
+  const { keyframes } = view;
+  const { t } = useTranslation();
+  const [menu, setMenu] = useState<{ x: number; y: number }>();
+  useSyncExternalStore(keyframes.subscribeView, () => soundHeaderOf(view));
+  const { sound } = view;
+  if (!sound) return null;
+  const folded = view.soundFolded;
+  const picked = sound.tracks.find(({ track }) => track.id === sound.track);
+  const nameOf = ({ track, number }: (typeof sound.tracks)[number]) =>
+    track.name ?? t("timeline.track.audio", { number });
+  const name = picked
+    ? t("keyframes.sound.track", { name: nameOf(picked) })
+    : t("keyframes.sound.title");
+  const toggle = () => view.foldSound(!folded);
+  return (
+    <div
+      className={`${rowStyles.lane} ${styles.sound}`}
+      data-kind="track"
+      data-testid="keyframes-sound"
+      style={{ height: view.soundHeight }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        setMenu({ x: event.clientX, y: event.clientY });
+      }}
+    >
+      <div className={rowStyles.line} style={{ height: view.soundHeight - 1 }}>
+        <button
+          type="button"
+          className={rowStyles.chevron}
+          aria-label={t(folded ? "keyframes.open" : "keyframes.close", { name })}
+          aria-expanded={!folded}
+          onClick={toggle}
+        >
+          {folded ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+        </button>
+        <span className={rowStyles.title}>
+          <button type="button" className={rowStyles.name} title={name} onClick={toggle}>
+            {name}
+          </button>
+        </span>
+      </div>
+      {menu && (
+        <PopupMenu
+          label={t("keyframes.sound.title")}
+          x={menu.x}
+          y={menu.y}
+          groups={[
+            [
+              {
+                id: "all",
+                label: t("keyframes.sound.all"),
+                selected: sound.track === undefined,
+                run: () => view.pickSoundTrack(undefined),
+              },
+            ],
+            sound.tracks.map((row) => ({
+              id: `track-${row.track.id}`,
+              label: nameOf(row),
+              selected: sound.track === row.track.id,
+              run: () => view.pickSoundTrack(row.track.id),
+            })),
+          ]}
+          onClose={() => setMenu(undefined)}
+        />
+      )}
+    </div>
+  );
+}
+
 function List({ view }: { view: KeyframesView }) {
   const { keyframes } = view;
   const { input } = useWorkbench();
@@ -168,7 +259,7 @@ function List({ view }: { view: KeyframesView }) {
         view.setScroll(view.scrollX + action.dx, view.scrollY + action.dy);
       } else {
         const box = element?.getBoundingClientRect();
-        view.zoomRowsAround(event.clientY - (box?.top ?? 0) + RULER_HEIGHT, action.factor);
+        view.zoomRowsAround(event.clientY - (box?.top ?? 0) + view.lanesTop, action.factor);
       }
     };
     element?.addEventListener("wheel", onWheel, { passive: false });
@@ -199,6 +290,7 @@ function List({ view }: { view: KeyframesView }) {
         }}
       />
       <Corner view={view} />
+      <SoundHeader view={view} />
       <div
         ref={list}
         className={timelineStyles.headerList}
@@ -246,7 +338,17 @@ function EmptyHint({ view }: { view: KeyframesView }) {
 
 function Surface({ view }: { view: KeyframesView }) {
   const { keyframes } = view;
+  const { media } = useWorkbench();
   const { t } = useTranslation();
+  // The waveforms of the timeline, which the row of sound adds up.
+  useLayoutEffect(() => {
+    view.setPeaksSource((clip) => {
+      const box = view.model?.boxes.get(clip);
+      return box && media.peaksOf(box.clip);
+    });
+    return media.subscribe(() => view.soundsArrived());
+  }, [view, media]);
+  const lanesTop = useSyncExternalStore(keyframes.subscribeView, () => view.lanesTop);
   const stage = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const playhead = useRef<HTMLDivElement>(null);
@@ -267,7 +369,7 @@ function Surface({ view }: { view: KeyframesView }) {
   // Closed, nothing shows this any more, and it should not go on following the playhead.
   useLayoutEffect(() => () => view.setViewport(0, 0), [view]);
 
-  const lanes = () => view.height - RULER_HEIGHT;
+  const lanes = () => view.height - view.lanesTop;
   const { model } = view;
 
   return (
@@ -302,7 +404,7 @@ function Surface({ view }: { view: KeyframesView }) {
           tabIndex={-1}
         />
       </div>
-      <div className={timelineStyles.barRight} style={{ paddingTop: RULER_HEIGHT }}>
+      <div className={timelineStyles.barRight} style={{ paddingTop: lanesTop }}>
         <ZoomBar
           axis="y"
           label={t("timeline.scrollY")}
@@ -310,14 +412,14 @@ function Surface({ view }: { view: KeyframesView }) {
           handleUsage={t("keyframes.zoomHandleY")}
           subscribe={keyframes.subscribeView}
           read={() => ({
-            content: view.contentHeight - RULER_HEIGHT,
+            content: view.contentHeight - view.lanesTop,
             view: lanes(),
             offset: view.scrollY,
           })}
           scrollTo={(offset) => view.setScroll(view.scrollX, offset)}
           beginZoom={(edge) => {
             const start = view.rowScale;
-            const y = edge === "start" ? view.height : RULER_HEIGHT;
+            const y = edge === "start" ? view.height : view.lanesTop;
             return (ratio) => view.zoomRowsAround(y, start / ratio / view.rowScale);
           }}
         />

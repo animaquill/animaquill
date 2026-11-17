@@ -87,3 +87,9 @@
   position: relative;
   will-change: transform;
 }
+
+/* The header of the row of sound, which stays under the ruler while the rows scroll. */
+.sound {
+  position: relative;
+  flex: none;
+}

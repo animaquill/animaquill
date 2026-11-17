@@ -94,6 +94,7 @@ import {
 } from "./lanes.ts";
 import { rangeOfChannel, unionOf, type ValueRange } from "./scale.ts";
 import { KeySelection, NO_KEYS, type KeyRef } from "./selection.ts";
+import type { SoundMemory } from "./sound-row.ts";
 import { animationIn, hasKeyAt } from "./tables.ts";
 import { TimelineLanes } from "./timeline-lanes.ts";
 import { KeyframesView } from "./view.ts";
@@ -170,6 +171,8 @@ interface RememberedState {
   readonly view?: { readonly pixelsPerSecond: number; readonly scrollX: number };
   /** How much taller the rows of keys are. */
   readonly rows?: number;
+  /** The row of sound, when it is not as it starts. */
+  readonly sound?: SoundMemory;
 }
 
 /** What the rows of one frame show. */
@@ -440,7 +443,7 @@ export class KeyframeEditor {
       this.#tall.set(rowKey(clip, path, component), tall);
     }
     this.inTimeline.openAll(there(stringsIn(remembered.open)));
-    this.panel.adoptView(remembered.view, remembered.rows);
+    this.panel.adoptView(remembered.view, remembered.rows, remembered.sound);
     const range = remembered.range;
     this.#show({
       range: range && RANGES.includes(range) ? range : "here",
@@ -1590,6 +1593,7 @@ export class KeyframeEditor {
     if (id === undefined) return;
     const { range, pinned } = this.#snapshot;
     const view = this.panel.ownView;
+    const sound = this.panel.soundMemory;
     // What is gone stays out of it, so that it does not grow with every clip there ever was.
     const there = (ids: Iterable<string>) => [...ids].filter((one) => this.#isThere(one));
     const remembered: RememberedState = {
@@ -1608,6 +1612,7 @@ export class KeyframeEditor {
       open: there(this.inTimeline.opened),
       ...(view ? { view } : {}),
       ...(this.panel.rowScale === 1 ? {} : { rows: this.panel.rowScale }),
+      ...(Object.keys(sound).length > 0 && { sound }),
     };
     this.#memory.write(`keyframes.${id}`, JSON.stringify(remembered));
   }
