@@ -46,10 +46,10 @@ import { ProjectStore, USER, type CommandCall } from "./store.ts";
  * Putting a stretch in and taking it out again leaves everything where it was. Two devices that do
  * ripple edits and other edits at once end up with the same valid project.
  *
- * `FUZZ_SEEDS` runs more seeds than the 32 of every check.
+ * `FUZZ_SEEDS` runs more or fewer seeds than the 200 of every check.
  */
 
-const SEEDS = Array.from({ length: Number(process.env["FUZZ_SEEDS"] ?? 32) }, (_, i) => i + 1);
+const SEEDS = Array.from({ length: Number(process.env["FUZZ_SEEDS"] ?? 200) }, (_, i) => i + 1);
 const MAIN = "timelines/main/timeline.json";
 const FPS = 30n;
 const frames = (count: number) => rational(BigInt(count), FPS);
@@ -316,22 +316,24 @@ function groupBy<T>(items: readonly T[], key: (item: T) => string): Map<string, 
   return groups;
 }
 
-/** Pairs of clips on one track that share a moment. */
-function overlapsOn(timeline: TimelineState): ReadonlyMap<string, number> {
-  const counts = new Map<string, number>();
+/**
+ * How much time clips on one track share, pair by pair. Cutting two sounds that already overlap
+ * makes more pairs, never more shared time.
+ */
+function overlapsOn(timeline: TimelineState): ReadonlyMap<string, Rational> {
+  const totals = new Map<string, Rational>();
   const byTrack = groupBy(Object.values(timeline.clips), ({ track }) => track);
   for (const [track, clips] of byTrack) {
-    let count = 0;
+    let total = ZERO;
     for (const [index, a] of clips.entries()) {
       for (const b of clips.slice(index + 1)) {
-        const apart =
-          compare(clipEnd(a), clipStart(b)) <= 0 || compare(clipEnd(b), clipStart(a)) <= 0;
-        if (!apart) count += 1;
+        const shared = subtract(minOf(clipEnd(a), clipEnd(b)), maxOf(clipStart(a), clipStart(b)));
+        if (compare(shared, ZERO) > 0) total = add(total, shared);
       }
     }
-    counts.set(track, count);
+    totals.set(track, total);
   }
-  return counts;
+  return totals;
 }
 
 /** Where a moment goes when stretches are taken out: back by those before it, or to the start of one it is in. */
@@ -417,11 +419,13 @@ function checkEdit(step: Step, before: TimelineState, after: TimelineState, resu
     (result?.split ?? []).map(({ clip, piece }: { clip: string; piece: string }) => [clip, piece]),
   );
 
-  // 2. No new overlaps.
+  // 2. No new overlaps: no more time that clips of a track share.
   const was = overlapsOn(before);
-  for (const [track, count] of overlapsOn(after))
-    expect(count).toBeLessThanOrEqual(was.get(track) ?? 0);
+  for (const [track, shared] of overlapsOn(after)) {
+    expect(compare(shared, was.get(track) ?? ZERO), `overlap on ${track}`).toBeLessThanOrEqual(0);
+  }
 
+  const untouched = new Set<string>();
   // 3, 5, 6, 9. Every clip: gone as asked, or there with what it showed, where it should be.
   const accounted = new Set<string>();
   for (const clip of Object.values(before.clips)) {
@@ -451,6 +455,15 @@ function checkEdit(step: Step, before: TimelineState, after: TimelineState, resu
       expect(t(clipOffset(now!))).toBe(t(part.clock));
       expect(now!.track).toBe(clip.track);
       expect(without(now!)).toEqual({ ...without(clip), id: id! });
+      // A clip that was not cut keeps its transitions as they were.
+      const whole =
+        parts.length === 1 &&
+        compare(part.from, clipStart(clip)) === 0 &&
+        compare(part.to, clipEnd(clip)) === 0;
+      if (whole) {
+        untouched.add(clip.id);
+        expect([now!.enter, now!.exit]).toEqual([clip.enter, clip.exit]);
+      }
     });
   }
   // Nothing new but the parts after cuts.
@@ -467,20 +480,35 @@ function checkEdit(step: Step, before: TimelineState, after: TimelineState, resu
     }
   }
 
-  // 4. Linked clips at one time that were in step stay in step, and those of one group that were in the same
-  // time still are; parts after one cut are a group of their own.
+  // 4. Linked clips at one time that were in step stay in step: every part of one and every part of
+  // the other that show the same part of the file (the two parts of a cut never do); and those of
+  // one group that were in the same time still are, see `checkGroups`.
   const clockOf = (clip: ClipState) => subtract(clipStart(clip), clipOffset(clip));
+  const partsOf = (id: string) =>
+    [after.clips[id], after.clips[pieces.get(id) ?? ""]].filter(
+      (clip): clip is ClipState => clip !== undefined,
+    );
+  const sharesPart = (x: ClipState, y: ClipState) => {
+    const length = (clip: ClipState) => subtract(clipEnd(clip), clipStart(clip));
+    return (
+      compare(clipOffset(x), add(clipOffset(y), length(y))) < 0 &&
+      compare(clipOffset(y), add(clipOffset(x), length(x))) < 0
+    );
+  };
   for (const a of Object.values(before.clips)) {
     for (const b of Object.values(before.clips)) {
       if (a.id >= b.id || !a.link || a.link !== b.link) continue;
-      const [na, nb] = [after.clips[a.id], after.clips[b.id]];
-      if (!na || !nb || !takesPart(a.track) || !takesPart(b.track)) continue;
+      if (!takesPart(a.track) || !takesPart(b.track)) continue;
       // Partners at one time: what is in between them in time never ripples one and not the other.
       const together =
         compare(clipStart(a), clipEnd(b)) < 0 && compare(clipStart(b), clipEnd(a)) < 0;
-      if (together && compare(clockOf(a), clockOf(b)) === 0) {
-        const about = JSON.stringify({ call: step.call, a, b, na, nb });
-        expect(t(clockOf(na)), about).toBe(t(clockOf(nb)));
+      if (!together || compare(clockOf(a), clockOf(b)) !== 0) continue;
+      for (const x of partsOf(a.id)) {
+        for (const y of partsOf(b.id)) {
+          if (!sharesPart(x, y)) continue;
+          const about = JSON.stringify({ call: step.call, a, b, x, y });
+          expect(t(clockOf(x)), about).toBe(t(clockOf(y)));
+        }
       }
     }
   }
@@ -552,6 +580,11 @@ function checkEdit(step: Step, before: TimelineState, after: TimelineState, resu
     const touchedBefore =
       fromBefore && toBefore && compare(clipEnd(fromBefore), clipStart(toBefore)) === 0;
     if (touchedBefore) expect(t(clipEnd(from))).toBe(t(clipStart(to)));
+    // Between two clips that were not cut, a join stays as it was: its kind and how long it is.
+    const sides = [wasJoined.from ?? "", wasJoined.to ?? ""];
+    if (sides.every((side) => untouched.has(side) || !takesPart(before.clips[side]?.track ?? ""))) {
+      expect(join).toEqual(wasJoined);
+    }
   }
   for (const id of Object.keys(before.joins ?? {})) {
     if (after.joins?.[id]) continue;
@@ -590,12 +623,16 @@ function checkGroups(
       expect(spans.size, `group ${key}`).toBe(1);
     }
   }
-  // A new group never takes in a part before a cut: the parts of one clip are in two groups.
-  for (const clip of Object.values(after.clips)) {
-    if (before.clips[clip.id] || clip.link === undefined) continue;
-    const old = Object.values(before.clips).some(({ link }) => link === clip.link);
-    expect(old, `piece ${clip.id} kept the link ${clip.link}`).toBe(false);
-  }
+  // Parts after one cut of two or more clips of a group are a group of their own, apart from the
+  // parts before it; the part of the only one cut there stays in its group.
+  const oldLinks = new Set(Object.values(before.clips).map(({ link }) => link));
+  const fresh = groupBy(
+    Object.values(after.clips).filter(
+      ({ id, link }) => !before.clips[id] && link !== undefined && oldLinks.has(link),
+    ),
+    ({ link, start }) => `${link} ${start}`,
+  );
+  for (const [key, same] of fresh) expect(same.length, `parts ${key} kept their link`).toBe(1);
 }
 
 describe.each(SEEDS)("ripple edits at random, seed %i", FUZZ, (seed) => {

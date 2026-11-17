@@ -470,13 +470,10 @@ export function splitClip(
   clip: ClipState,
   at: Rational,
   rightId: string,
-  rightLink?: string | null,
+  rightLink?: string,
 ): void {
   const { enter, exit } = joinsAtEdgesOf(timelineOf(draft, timeline), clip.id);
-  const { enter: _enter, offset: _offset, ...kept } = clip;
-  // A link of its own, none (null), or the one of the clip.
-  const { link: _link, ...unlinked } = kept;
-  const rest = rightLink === null ? unlinked : kept;
+  const { enter: _enter, offset: _offset, ...rest } = clip;
   const offset = add(clipOffset(clip), subtract(at, clipStart(clip)));
   const rightLength = subtract(clipEnd(clip), at);
   draft.note({ kind: "cut", clip: clip.id, piece: rightId });
@@ -486,7 +483,7 @@ export function splitClip(
     start: formatTime(at),
     duration: formatTime(rightLength),
     offset: formatTime(offset),
-    ...(typeof rightLink === "string" && { link: rightLink }),
+    ...(rightLink === undefined ? {} : { link: rightLink }),
   });
   for (const [id, join] of Object.entries(timelineOf(draft, timeline).joins ?? {})) {
     if (join.from === clip.id) draft.set([...joinPath(timeline, id), "from"], rightId);
@@ -514,11 +511,11 @@ export function splitClip(
 
 /**
  * The links of the parts after cuts, as `clip.split` gives them: the part before a cut keeps the
- * link of its clip, and the parts after one cut of a linked group get a new link together, or
- * else all of them would move as one with the parts before. A part that is the only one of its
- * group after that cut has nothing to be linked with, and gets no link: a link to nothing would
- * show as one and do nothing. So every cut is counted first (`expect`), and then each part gets
- * its link as it is made (`linkFor`), in one write.
+ * link of its clip, and when two or more clips of a linked group are cut at the same moment, their
+ * parts after it get a new link together, or else all of them would move as one with the parts
+ * before. The only clip of its group cut there keeps the link for its part after the cut too: its
+ * partners still lie under both parts, and go with them as before. So every cut is counted first
+ * (`expect`), and then each part gets its link as it is made (`linkFor`), in one write.
  */
 export class PieceLinks {
   readonly #counts = new Map<string, number>();
@@ -534,13 +531,13 @@ export class PieceLinks {
   }
 
   /**
-   * The link of the part after a cut at `at` of a clip that has this link: undefined for a clip
-   * without one, null for the only part of its group after this cut.
+   * The link of the part after a cut at `at` of a clip that has this link: a new one shared with
+   * the other parts of its group cut there, or else the link of the clip (undefined).
    */
-  linkFor(link: string | undefined, at: Rational): string | null | undefined {
+  linkFor(link: string | undefined, at: Rational): string | undefined {
     if (link === undefined) return undefined;
     const key = this.#key(link, at);
-    if ((this.#counts.get(key) ?? 0) < 2) return null;
+    if ((this.#counts.get(key) ?? 0) < 2) return undefined;
     let made = this.#links.get(key);
     if (made === undefined) {
       made = newId("link");

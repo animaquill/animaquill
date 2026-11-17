@@ -384,14 +384,29 @@ describe("timeline.removeRange", () => {
     );
     const { split } = result.results[0] as { split: { clip: string; piece: string }[] };
     expect(split).toHaveLength(1);
-    // The only part after the cut of its group has nothing to be linked with.
-    expect(main().clips[split[0]!.piece]?.link).toBeUndefined();
+    // The only clip of its group cut there: its part after the cut stays with the sound under it.
+    expect(main().clips[split[0]!.piece]?.link).toBe("film");
     expect([spanOf("s"), spanOf("t"), spanOf("o"), spanOf("c")]).toEqual([
       "0+10",
       "3+1",
       "3+2",
       "8+2",
     ]);
+  });
+
+  it("keeps a group together when only one of it is cut and its partner moves back with the part after the cut", () => {
+    const { run, main, spanOf } = project({
+      video: [picture("v", "2", "4", "film")],
+      audio: [{ ...sound("a", "3", "3", "film"), offset: "1" }],
+    });
+    const result = success(run("timeline.removeRange", { from: "2.5", to: "3.5", ripple: true }));
+    const { split } = result.results[0] as { split: { clip: string; piece: string }[] };
+    const piece = split[0]!.piece;
+    expect([spanOf("v"), spanOf(piece), spanOf("a")]).toEqual(["2+0.5", "2.5+2.5", "2.5+2.5"]);
+    // All three stay one group: the part after the cut and the sound go on together.
+    const linkOf = (id: string) => main().clips[id]?.link;
+    expect([linkOf("v"), linkOf(piece), linkOf("a")]).toEqual(["film", "film", "film"]);
+    expect(main().clips[piece]?.offset).toBe(main().clips["a"]?.offset);
   });
 
   it("takes a join at an edge that it cuts away", () => {
@@ -443,23 +458,22 @@ describe("cutting clips away under a drop", () => {
     ).toEqual(["s", "v"]);
   });
 
-  it("gives the only part after a cut of its group no link", () => {
+  it("keeps the link for the part after a cut of the only clip of its group cut there", () => {
+    // Dropped over the picture only: the sound still lies under both parts, and goes with both.
     const { run, main } = project({
       video: [picture("v", "0", "10", "film")],
       audio: [sound("s", "0", "10", "film")],
+      overlay: [color("d", "4", "2")],
     });
-    const added = success(
-      run("clip.add", {
-        track: "V1",
-        start: "4",
-        duration: "2",
-        source: { kind: "color", color: "#00ff00" },
-        overlap: "overwrite",
-      }),
+    success(
+      run("clip.move", { clips: [{ clip: "d", start: "4", track: "V1" }], overlap: "overwrite" }),
     );
-    const id = (added.results[0] as { id: string }).id;
-    const piece = Object.values(main().clips).find((clip) => clip.start === "6" && clip.id !== id);
-    expect(piece?.link).toBeUndefined();
-    expect([main().clips["v"]?.link, main().clips["s"]?.link]).toEqual(["film", "film"]);
+    const piece = Object.values(main().clips).find((clip) => clip.id !== "s" && clip.start === "6");
+    expect(piece).toBeDefined();
+    expect([main().clips["v"]?.link, piece?.link, main().clips["s"]?.link]).toEqual([
+      "film",
+      "film",
+      "film",
+    ]);
   });
 });

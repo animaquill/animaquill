@@ -19,6 +19,7 @@ import {
 } from "@animaquill/core";
 import {
   ZERO,
+  add,
   compare,
   findTransition,
   isSupported,
@@ -216,10 +217,11 @@ export function isPictureAndSound(clips: readonly ClipState[]): boolean {
 }
 
 /**
- * Linked clips out of step, by clip: in a group, those that show the same file are in step when
- * their clocks line up, start − offset being the same. Each is measured against the first of them,
- * pictures first; that one against the first that is out of step with it. A clip whose clock has a
- * speed is measured all the same, as the clip and its partner then both have it.
+ * Linked clips out of step, by clip: in a group, those that show the same part of the same file
+ * are in step when their clocks line up, start − offset being the same. The two parts of a cut show
+ * different parts and are never compared, so a group of a picture cut in two and its sound is fine.
+ * A clip that is in step with none of its partners is measured against the first of them, pictures
+ * first. A clip whose clock has a speed is measured all the same, as its partner then has it too.
  */
 export function outOfSyncOf(
   clips: ReadonlyMap<string, ClipBox>,
@@ -242,24 +244,31 @@ export function outOfSyncOf(
     }
     for (const same of byFile.values()) {
       if (same.length < 2) continue;
-      const [first, ...others] = same.toSorted(
+      const ordered = same.toSorted(
         (a, b) =>
           Number(a.source.kind !== "video") - Number(b.source.kind !== "video") ||
           a.id.localeCompare(b.id),
-      ) as [ClipState, ...ClipState[]];
-      const anchor = clockOf(first);
-      for (const other of others) {
-        const by = subtract(clockOf(other), anchor);
-        if (compare(by, ZERO) === 0) continue;
-        found.set(other.id, { with: first.id, by, frames: framesOf(by) });
-        if (!found.has(first.id)) {
-          const back = subtract(anchor, clockOf(other));
-          found.set(first.id, { with: other.id, by: back, frames: framesOf(back) });
-        }
+      );
+      for (const clip of ordered) {
+        // Only what shows the same part of the file: the two parts of a cut never do.
+        const partners = ordered.filter((other) => other !== clip && sharesPart(clip, other));
+        if (partners.length === 0) continue;
+        if (partners.some((other) => compare(clockOf(other), clockOf(clip)) === 0)) continue;
+        const other = partners[0] as ClipState;
+        const by = subtract(clockOf(clip), clockOf(other));
+        found.set(clip.id, { with: other.id, by, frames: framesOf(by) });
       }
     }
   }
   return found;
+}
+
+/** Whether two clips show some of the same part of their file, by what their clocks read. */
+function sharesPart(a: ClipState, b: ClipState): boolean {
+  const [fromA, fromB] = [clipOffset(a), clipOffset(b)];
+  const toA = add(fromA, subtract(clipEnd(a), clipStart(a)));
+  const toB = add(fromB, subtract(clipEnd(b), clipStart(b)));
+  return compare(fromA, toB) < 0 && compare(fromB, toA) < 0;
 }
 
 /** Where the clock of a clip reads 0 on the timeline. Unchanged clips keep theirs. */

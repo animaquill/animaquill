@@ -4461,6 +4461,35 @@ describe("linked clips taken apart and put together again", () => {
     expect(Object.keys(main().clips)).toEqual(["s"]);
   });
 
+  it("are in step when only the picture was cut and its sound went back with the part after the cut", async () => {
+    const { editor, store, clip, main } = await pair();
+    // Overwritten in the picture only, the part after the cut stays in the group with the sound.
+    store.execute({
+      type: "clip.add",
+      params: {
+        timeline: "main",
+        track: clip("v").track,
+        start: "3",
+        duration: "1",
+        source: { kind: "color", color: "#00ff00" },
+        overlap: "overwrite",
+      },
+    });
+    const piece = Object.values(main().clips).find(
+      ({ id, start }) => start === "4" && id !== "s" && id !== "v",
+    )!;
+    expect([clip("v").link, piece.link, clip("s").link]).toEqual(["pair", "pair", "pair"]);
+    // The two parts of the picture show different parts of the file: nothing is out of step.
+    expect(editor.model?.outOfSync.size).toBe(0);
+    // The sound alone a little later is out of step with both of them, each by as much.
+    store.execute({
+      type: "clip.move",
+      params: { timeline: "main", clips: [{ clip: "s", start: "2.4" }] },
+    });
+    expect(["v", piece.id]).toContain(editor.outOfSync("s")?.with);
+    expect(editor.outOfSync(piece.id)?.frames).toBe(editor.outOfSync("v")?.frames);
+  });
+
   it("say how many frames they are out of step, and move back into step", async () => {
     const { editor, action, at, drag, clip, frames, audio } = await pair();
     expect(editor.outOfSync("v")).toBeUndefined();

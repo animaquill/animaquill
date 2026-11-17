@@ -297,6 +297,8 @@ export function openGap(
     }
   }
   // As `closeGaps`: sections and markers make room only when all of the timeline from `at` on moves.
+  // Then nothing makes the timeline longer either, and what moved on can end past its end. Nothing
+  // uses this yet: insert (P3b) has to make room for that first, as `extendToFit` does for drops.
   const stays = Object.values(target.clips).some(
     (clip) => !rippling(clip) && compare(clipEnd(clip), at) > 0,
   );
