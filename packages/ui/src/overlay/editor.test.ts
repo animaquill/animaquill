@@ -1100,3 +1100,85 @@ describe("handles that reach another object by an older name", () => {
     expect(context.property("c", "object.leg.x")).toBe(7);
   });
 });
+
+describe("with automatic keys on", () => {
+  const timesAndValues = (value: unknown) =>
+    (value as Animation).keys.map(({ time, value: v }) => [time, v]);
+
+  it("moving a clip at one second animates it from where it was at its start", async () => {
+    const { addClip, drag, pointer, property, timeline, writer, store } = await setup();
+    addClip("c");
+    writer.setRecording(true);
+    timeline.seek(30);
+    drag(pointer(480, 270), pointer(580, 270));
+    expect(timesAndValues(property("c", "transform.x"))).toEqual([
+      ["0", 0],
+      ["1", 200],
+    ]);
+    // Only what the drag changed.
+    expect(property("c", "transform.y")).toBeUndefined();
+    store.undo();
+    expect(property("c", "transform.x")).toBeUndefined();
+  });
+
+  it("the anchor keeps the picture where it is on every frame, without keys anywhere", async () => {
+    const context = await setup();
+    const { addClip, set, drag, pointer, property, writer, timeline } = context;
+    addClip("c");
+    set("c", { "transform.scale": 0.5, "transform.rotation": 30 });
+    writer.setRecording(true);
+    timeline.seek(30);
+    const before = cornersAt(context, "c", FRAMES);
+    const anchor = context.grip("c anchor").at;
+    drag(pointer(anchor.x, anchor.y), pointer(anchor.x - 70, anchor.y - 40, { alt: true }));
+    expectSamePlaces(cornersAt(context, "c", FRAMES), before);
+    expect((property("c", "transform.anchorX") as Animation).keys.map(({ time }) => time)).toEqual([
+      "0",
+      "1",
+    ]);
+  });
+
+  it("the anchor keeps it there too with keys on one side of it only, turned", async () => {
+    const context = await setup();
+    const { addClip, edit, drag, pointer, writer, timeline } = context;
+    addClip("c");
+    edit(
+      { owner: { clip: "c" }, path: "transform.scale", op: "set", value: 0.5 },
+      { owner: { clip: "c" }, path: "transform.rotation", op: "set", value: 30 },
+      { owner: { clip: "c" }, path: "transform.anchorX", op: "setKey", time: "0", value: 0.3 },
+      { owner: { clip: "c" }, path: "transform.anchorX", op: "setKey", time: "2", value: 0.7 },
+    );
+    writer.setRecording(true);
+    timeline.seek(30);
+    const before = cornersAt(context, "c", FRAMES);
+    const anchor = context.grip("c anchor").at;
+    drag(pointer(anchor.x, anchor.y), pointer(anchor.x - 70, anchor.y - 40, { alt: true }));
+    expectSamePlaces(cornersAt(context, "c", FRAMES), before);
+  });
+
+  it("the anchor moved sideways leaves what did not move alone", async () => {
+    const { addClip, set, drag, pointer, property, writer, timeline, grip } = await setup();
+    addClip("c");
+    set("c", { "transform.scale": 0.37, "transform.rotation": 90 });
+    writer.setRecording(true);
+    timeline.seek(30);
+    // Turned a quarter, along the width of the box is down the screen.
+    const anchor = grip("c anchor").at;
+    drag(pointer(anchor.x, anchor.y), pointer(anchor.x, anchor.y + 33.3, { alt: true }));
+    expect((property("c", "transform.anchorX") as Animation).keys).toHaveLength(2);
+    expect((property("c", "transform.y") as Animation).keys).toHaveLength(2);
+    // Written as it was, as without automatic keys: no keys for what did not change.
+    expect(property("c", "transform.anchorY")).toBe(0.5);
+    expect(property("c", "transform.x")).toBeUndefined();
+  });
+
+  it("change nothing on a locked track", async () => {
+    const { addClip, run, video, drag, pointer, property, writer, timeline } = await setup();
+    addClip("c");
+    writer.setRecording(true);
+    timeline.seek(30);
+    run("track.update", { timeline: "main", track: video, changes: { locked: true } });
+    drag(pointer(700, 400), pointer(800, 450));
+    expect(property("c", "transform.x")).toBeUndefined();
+  });
+});

@@ -6,6 +6,7 @@ import { useSession, useWorkbench } from "../app/context.ts";
 import { PreviewLink } from "../preview/link.ts";
 import { PreviewNotices } from "../preview/PreviewNotices.tsx";
 import { QualityButton } from "../preview/Quality.tsx";
+import { RecordingFrame } from "../keyframes/RecordButton.tsx";
 import { PreviewOverlay } from "../overlay/PreviewOverlay.tsx";
 import { formatTimecode, frameAt } from "../timeline/frames.ts";
 import { rateText } from "../timeline/shuttle.ts";
@@ -171,6 +172,7 @@ export function PreviewPanel() {
         )}
         <PreviewNotices onRetry={(layer) => link.current?.retryScene(layer)} />
         <WaitingForFiles />
+        <RecordingFrame />
         {count > 0 && (
           <div className={styles.showing} data-comparing={comparing || undefined} role="status">
             {comparing ? t("trial.showingSaved") : t("trial.showingTrial")}

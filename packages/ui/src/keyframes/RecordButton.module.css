@@ -1,0 +1,41 @@
+.record {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: calc(20px * var(--aq-size-scale));
+  height: calc(20px * var(--aq-size-scale));
+  padding: 0;
+  color: var(--aq-text-muted);
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.record:hover {
+  color: var(--aq-text);
+  background: var(--aq-bg-hover);
+}
+
+.record[data-recording] {
+  color: var(--aq-on-recording);
+  background: var(--aq-recording);
+  border-color: var(--aq-recording);
+}
+
+.dot {
+  width: 40%;
+  height: 40%;
+  background: currentColor;
+  border-radius: 50%;
+}
+
+/* On top of everything in what records, and in the way of nothing. */
+.frame {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  border: 2px solid var(--aq-recording);
+  pointer-events: none;
+}

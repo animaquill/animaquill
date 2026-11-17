@@ -1221,10 +1221,16 @@ export class Workbench {
         openFile: (path) => void this.showCode(path),
         open: (url) => void window.open(url, "_blank", "noopener,noreferrer"),
       });
-    this.properties = new PropertyWriter(this.session, this.timeline, this.trials, {
-      commandFailed: (failure) => this.notifications.push(commandFailedText(t, failure)),
-      comparing: () => this.notifications.push(t("notice.comparing")),
-    });
+    this.properties = new PropertyWriter(
+      this.session,
+      this.timeline,
+      this.trials,
+      {
+        commandFailed: (failure) => this.notifications.push(commandFailedText(t, failure)),
+        comparing: () => this.notifications.push(t("notice.comparing")),
+      },
+      (clip) => this.keyframes.describe(clip),
+    );
     this.keyframes = new KeyframeEditor(
       this.session,
       this.timeline,

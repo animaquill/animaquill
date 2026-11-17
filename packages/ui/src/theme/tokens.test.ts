@@ -138,6 +138,25 @@ function belowIn(theme: Map<string, string>): string[] {
   return below;
 }
 
+/**
+ * What is no word but has to be seen at once, as WCAG asks of parts of an interface (3:1): the
+ * frame around what records automatic keys, on the panels it goes around and on the picture.
+ */
+const MARKS: readonly { mark: string; on: Surface }[] = [
+  { mark: "recording", on: "bg-panel" },
+  { mark: "recording", on: "bg-chrome" },
+  { mark: "recording", on: "timeline-background" },
+  { mark: "recording", on: "picture-backdrop" },
+  { mark: "on-recording", on: "recording" },
+];
+
+function unclearIn(theme: Map<string, string>): string[] {
+  return MARKS.flatMap(({ mark, on }) => {
+    const ratio = contrast(colorOf(theme, mark), colorOf(theme, on));
+    return ratio < 3 ? [`${mark} on ${nameOf(on)}: ${ratio.toFixed(2)}`] : [];
+  });
+}
+
 describe("the themes", () => {
   it("give every colour of the editor a value of its own in the light theme", () => {
     const own = block(':root[data-theme="light"]');
@@ -150,5 +169,10 @@ describe("the themes", () => {
   for (const [name, theme] of Object.entries(THEMES))
     it(`keep words readable in the ${name} theme`, () => {
       expect(belowIn(theme)).toEqual([]);
+    });
+
+  for (const [name, theme] of Object.entries(THEMES))
+    it(`make the frame of recording clear in the ${name} theme`, () => {
+      expect(unclearIn(theme)).toEqual([]);
     });
 });

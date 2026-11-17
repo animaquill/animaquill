@@ -439,3 +439,160 @@ describe("automatic handles", () => {
     });
   });
 });
+
+describe("automatic keys", () => {
+  const keysOf = (value: unknown) =>
+    (value as { keys: { time: string; value: unknown }[] }).keys.map(({ time, value: v }) => [
+      time,
+      v,
+    ]);
+
+  it("are off to begin with, and say when they go on and off", async () => {
+    const { writer } = await setup();
+    expect(writer.getRecording()).toBe(false);
+    const listener = vi.fn();
+    writer.subscribeRecording(listener);
+    writer.toggleRecording();
+    expect(writer.getRecording()).toBe(true);
+    writer.setRecording(true);
+    writer.setRecording(false);
+    expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it("start off in a new window, whatever the one before did", async () => {
+    const first = await setup();
+    first.writer.setRecording(true);
+    const second = await setup();
+    expect(second.writer.getRecording()).toBe(false);
+  });
+
+  it("leave edits exactly as asked while off", async () => {
+    const { writer, store } = await setup();
+    const execute = vi.spyOn(store, "execute");
+    const edits = [write(10), write(0.5, "2", "opacity")];
+    writer.commit(edits);
+    expect(execute.mock.calls[0]?.[0]).toEqual({
+      type: "property.edit",
+      params: { timeline: "main", edits },
+    });
+  });
+
+  it("animate a property without keys from what it was at the first frame, in one step", async () => {
+    const { writer, store, value } = await setup();
+    store.execute({
+      type: "property.edit",
+      params: { timeline: "main", edits: [{ owner, path: "opacity", op: "set", value: 0.8 }] },
+    });
+    writer.setRecording(true);
+    writer.commit([write(0.3, "2", "opacity"), write(50, "2")]);
+    expect(keysOf(value("opacity"))).toEqual([
+      ["0", 0.8],
+      ["2", 0.3],
+    ]);
+    // Without a value of its own, it was its default.
+    expect(keysOf(value("transform.x"))).toEqual([
+      ["0", 0],
+      ["2", 50],
+    ]);
+    store.undo();
+    expect(value("opacity")).toBe(0.8);
+    expect(value("transform.x")).toBeUndefined();
+  });
+
+  it("write only one key at the first frame", async () => {
+    const { writer, value } = await setup();
+    writer.setRecording(true);
+    writer.commit([write(50, "0")]);
+    expect(keysOf(value("transform.x"))).toEqual([["0", 50]]);
+  });
+
+  it("start at the first frame that the clip shows, where its start was trimmed", async () => {
+    const { writer, value, store, track } = await setup();
+    const clip = {
+      id: "t",
+      start: "6",
+      duration: "2",
+      offset: "1.5",
+      source: { kind: "color", color: "#00ff00" },
+    };
+    store.execute({ type: "clip.add", params: { timeline: "main", track, ...clip } });
+    writer.setRecording(true);
+    writer.commit([{ owner: { clip: "t" }, path: "opacity", op: "write", time: "2.5", value: 0 }]);
+    const saved = store.getState().timelines["main"]?.clips["t"]?.properties?.["opacity"];
+    expect(keysOf(saved)).toEqual([
+      ["1.5", 1],
+      ["2.5", 0],
+    ]);
+    expect(value("opacity")).toBeUndefined();
+  });
+
+  it("write a key at the playhead only, where there are keys already", async () => {
+    const { writer, value } = await setup();
+    writer.commit([{ owner, path: "transform.x", op: "setKey", time: "1", value: 5 }]);
+    writer.setRecording(true);
+    writer.commit([write(9, "3")]);
+    expect(keysOf(value("transform.x"))).toEqual([
+      ["1", 5],
+      ["3", 9],
+    ]);
+  });
+
+  it("leave what keys do nothing for yet, and what cannot have keys, as values", async () => {
+    const { writer, value } = await setup();
+    writer.setRecording(true);
+    writer.commit([
+      write(-6, "2", "audio.volume"),
+      write(2, "2", "time.speed"),
+      { owner, path: "fit", op: "set", value: "cover" },
+    ]);
+    expect(value("audio.volume")).toBe(-6);
+    expect(value("time.speed")).toBe(2);
+    expect(value("fit")).toBe("cover");
+  });
+
+  it("write a value that does not change as it is", async () => {
+    const { writer, value } = await setup();
+    writer.setRecording(true);
+    writer.commit([write(1, "2", "opacity")]);
+    expect(value("opacity")).toBe(1);
+  });
+
+  it("show the keys while dragging, and write them as one step at the end", async () => {
+    const { writer, store, shown, value } = await setup();
+    writer.setRecording(true);
+    const { revision } = store;
+    writer.preview([write(10, "2")]);
+    writer.preview([write(20, "2")]);
+    expect(keysOf(shown("transform.x"))).toEqual([
+      ["0", 0],
+      ["2", 20],
+    ]);
+    expect(store.revision).toBe(revision);
+    writer.commit([write(30, "2")]);
+    expect(keysOf(value("transform.x"))).toEqual([
+      ["0", 0],
+      ["2", 30],
+    ]);
+    store.undo();
+    expect(value("transform.x")).toBeUndefined();
+  });
+
+  it("go into what is being tried, like anything else", async () => {
+    const { writer, value, shown } = await setup({ trying: true });
+    writer.setRecording(true);
+    writer.commit([write(30, "2")]);
+    expect(value("transform.x")).toBeUndefined();
+    expect(keysOf(shown("transform.x"))).toEqual([
+      ["0", 0],
+      ["2", 30],
+    ]);
+    // What is being tried has keys now, so the next change is a key at the playhead only.
+    writer.commit([write(40, "3")]);
+    expect(keysOf(shown("transform.x"))).toEqual([
+      ["0", 0],
+      ["2", 30],
+      ["3", 40],
+    ]);
+    expect(value("transform.x")).toBeUndefined();
+  });
+});

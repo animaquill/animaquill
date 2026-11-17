@@ -57,6 +57,11 @@ export interface Live {
   readonly stored: PropertyValue | undefined;
   /** Writes a value where the properties tab would: on the key of this frame, if it has keys. */
   readonly write: (value: number) => PropertyEdit;
+  /**
+   * What writes come to once they are written, which automatic keys change (`PropertyWriter`): for
+   * what goes by what a write does to the curve, as the anchor does. As they are without it.
+   */
+  readonly recorded?: (edits: readonly PropertyEdit[]) => readonly PropertyEdit[];
 }
 
 /** A property that a drag writes. */
@@ -136,10 +141,12 @@ export interface AnchorPlace {
 /** How close to a corner or a middle the anchor has to come to stop there, in pixels. */
 export const ANCHOR_SNAP = 8;
 
-/** What a write does to a value, or nothing when it cannot. */
-function written(stored: PropertyValue | undefined, edit: PropertyEdit) {
+/** What writes do to a value, or nothing when they cannot. */
+function written(stored: PropertyValue | undefined, edits: readonly PropertyEdit[]) {
   try {
-    return { value: applyEdit(stored, edit) };
+    let value = stored;
+    for (const edit of edits) value = applyEdit(value, edit);
+    return { value };
   } catch (error) {
     if (error instanceof CommandError) return undefined;
     throw error;
@@ -180,26 +187,43 @@ export function anchorGesture(
       const { x, y, anchorX, anchorY } = live;
       if (!x || !y || !anchorX || !anchorY) return undefined;
       if (!moved) return [];
-      const toX = anchorX.write(tidy(moved.anchorX, binds.anchorX.spec));
-      const toY = anchorY.write(tidy(moved.anchorY, binds.anchorY.spec));
+      // Automatic keys turn a value into keys, and the position has to go by those.
+      const write = (now: Live, value: number) => {
+        const edits = [now.write(value)];
+        return now.recorded?.(edits) ?? edits;
+      };
+      const toX = write(anchorX, tidy(moved.anchorX, binds.anchorX.spec));
+      const toY = write(anchorY, tidy(moved.anchorY, binds.anchorY.spec));
       // What the position needs goes by where the anchor really went, which is round where the
-      // pointer went a round way: the few digits of a share that get written are not.
-      const afterX = written(anchorX.stored, anchorX.write(moved.anchorX));
-      const afterY = written(anchorY.stored, anchorY.write(moved.anchorY));
+      // pointer went a round way: the few digits of a share that get written are not. Whether it
+      // becomes keys goes by what gets written.
+      const exactly = (edits: readonly PropertyEdit[], value: number) =>
+        edits.map((edit, index) =>
+          index === edits.length - 1 && (edit.op === "write" || edit.op === "setKey")
+            ? { ...edit, value }
+            : edit,
+        );
+      const afterX = written(anchorX.stored, exactly(toX, moved.anchorX));
+      const afterY = written(anchorY.stored, exactly(toY, moved.anchorY));
       if (!afterX || !afterY) return undefined;
       const side = (
         bound: Bound,
         before: Live,
         after: { value: PropertyValue | undefined },
-        edit: PropertyEdit,
+        edits: readonly PropertyEdit[],
         perShare: number,
-      ) => ({
-        spec: bound.spec,
-        before: before.stored,
-        after: after.value,
-        at: edit.op === "write" && keysOf(after.value).length > 0 ? edit.time : undefined,
-        perShare,
-      });
+      ) => {
+        // The last one is at the playhead, where the anchor moved.
+        const edit = edits.at(-1);
+        const keyed = edit && (edit.op === "write" || edit.op === "setKey");
+        return {
+          spec: bound.spec,
+          before: before.stored,
+          after: after.value,
+          at: keyed && keysOf(after.value).length > 0 ? edit.time : undefined,
+          perShare,
+        };
+      };
       const move = (perX: number, perY: number): AnchorMove => ({
         clock: place.clock,
         x: side(binds.anchorX, anchorX, afterX, toX, perX),
@@ -214,8 +238,8 @@ export function anchorGesture(
         write: now.write,
       });
       return [
-        toX,
-        toY,
+        ...toX,
+        ...toY,
         ...compensation(position(binds.x, x), move(a * box.width, c * box.height)),
         ...compensation(position(binds.y, y), move(b * box.width, d * box.height)),
       ];

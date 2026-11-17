@@ -85,4 +85,35 @@ export function registerKeyframeActions(
     enabled: () => keyNow() !== undefined,
     menu: { name: "timeline", group: "keys", title: (t) => t("keyframes.action.toggleKey") },
   });
+
+  // The same for every property of the object around it, as the diamond of the object does.
+  const objectKeys = () => {
+    const last = properties.lastProperty;
+    if (!last || !timeline.getSnapshot().selection.has(last.clip)) return;
+    const object = keyframes.objectAround(last.clip, last.spec.path);
+    const keys = object && keyframes.objectKeyEdits(last.clip, object);
+    return keys && keys.edits.length > 0 ? keys.edits : undefined;
+  };
+  actions.register({
+    id: "keyframes.toggleObjectKeys",
+    title: (t) => t("keyframes.command", { action: t("keyframes.action.toggleObjectKeys") }),
+    run: () => {
+      const edits = objectKeys();
+      if (edits) properties.commit(edits);
+    },
+    keys: ["alt+shift+k"],
+    enabled: () => objectKeys() !== undefined,
+    menu: {
+      name: "timeline",
+      group: "keys",
+      title: (t) => t("keyframes.action.toggleObjectKeys"),
+    },
+  });
+
+  // No key of its own: forgetting it is on writes keys nobody meant, so it takes a look to turn on.
+  actions.register({
+    id: "keyframes.toggleRecording",
+    title: (t) => t("keyframes.command", { action: t("keyframes.action.toggleRecording") }),
+    run: () => properties.toggleRecording(),
+  });
 }

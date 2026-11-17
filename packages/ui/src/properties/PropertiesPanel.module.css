@@ -48,6 +48,13 @@
   text-overflow: ellipsis;
 }
 
+/* What goes with the whole tab, on the right of its title. */
+.headerEnd {
+  display: flex;
+  align-self: center;
+  margin-left: auto;
+}
+
 .kind {
   flex: none;
   color: var(--aq-text-muted);

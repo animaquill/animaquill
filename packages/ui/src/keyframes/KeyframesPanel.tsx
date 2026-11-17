@@ -13,6 +13,7 @@ import { ZoomBar } from "../timeline/ZoomBar.tsx";
 import { KeyList } from "./KeyList.tsx";
 import { InterpBubble, useKeyPopups } from "./KeyPopups.tsx";
 import { LaneRows } from "./LaneRows.tsx";
+import { RecordButton, RecordingFrame } from "./RecordButton.tsx";
 import { KeyframesPainter } from "./paint.ts";
 import styles from "./KeyframesPanel.module.css";
 import type { KeyframesView } from "./view.ts";
@@ -42,6 +43,7 @@ function Toolbar({ view }: { view: KeyframesView }) {
       <div className={styles.toolbar} role="toolbar" aria-label={t("keyframes.toolbar")}>
         {/* Over the list it searches, as wide as it is: the tools start where the time does. */}
         <div className={styles.searchArea} style={{ width: listWidth }}>
+          <RecordButton />
           <input
             className={styles.search}
             type="search"
@@ -359,12 +361,13 @@ export function KeyframesPanel() {
   };
 
   return (
-    <div className={timelineStyles.panel} onKeyDown={onKeyDown}>
+    <div className={`${timelineStyles.panel} ${styles.panel}`} onKeyDown={onKeyDown}>
       <Toolbar view={view} />
       <div className={timelineStyles.body}>
         <List view={view} />
         <Surface view={view} />
       </div>
+      <RecordingFrame />
     </div>
   );
 }

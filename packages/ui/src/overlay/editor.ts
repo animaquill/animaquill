@@ -778,7 +778,11 @@ export class OverlayEditor {
       const inspected = inspectProperty(state, model, current, spec, frame.frame, view);
       const { row, blocked, time } = inspected;
       if (blocked) return undefined;
-      return { stored: row.stored, write: (value) => writeEdit(box.id, row, time, value) };
+      return {
+        stored: row.stored,
+        write: (value) => writeEdit(box.id, row, time, value),
+        recorded: (edits) => this.#sources.properties.recorded(edits),
+      };
     };
     return now() && { path: spec.path, spec, start, now };
   }

@@ -65,6 +65,9 @@
   --aq-danger: #c72e2e;
   /* What takes something away, as text on a dark background. */
   --aq-danger-text: #ff8a8a;
+  /* Automatic keys are on: the switch, and a frame around what records, so that it is not forgotten. */
+  --aq-recording: #f14c4c;
+  --aq-on-recording: #ffffff;
   /* What worked, such as a test of a connection. */
   --aq-success: #4cc38a;
   --aq-bg-input: #313131;
@@ -228,6 +231,8 @@
   --aq-on-trial: #ffffff;
   --aq-danger: #b52a2a;
   --aq-danger-text: #b3261e;
+  --aq-recording: #d42323;
+  --aq-on-recording: #ffffff;
   --aq-success: #186a40;
   --aq-bg-input: #ececec;
   --aq-shadow: 0 2px 8px #00000029;

@@ -27,6 +27,7 @@ import {
 } from "../properties/inspect.ts";
 import type { ClipBox } from "../timeline/model.ts";
 import type { KeyArea } from "./area.ts";
+import type { KeyedObject } from "./editor.ts";
 import { NoiseBubble } from "./KeyPopups.tsx";
 import { firstLaneBelow, type Lane } from "./lanes.ts";
 import { extendMenuGroup } from "./shaking.ts";
@@ -252,6 +253,51 @@ function KeyButtons(props: PropertyControlsProps) {
   );
 }
 
+/**
+ * The diamond of an object: keys every property under it at the playhead, or takes them all away
+ * when all of them have one there. It sits where the diamonds of its properties are.
+ */
+function ObjectKeyButton({
+  area,
+  box,
+  node,
+  label,
+}: {
+  area: KeyArea;
+  box: ClipBox;
+  node: KeyedObject;
+  label: string;
+}) {
+  const { keyframes } = area;
+  const { t } = useTranslation();
+  const state = useSyncExternalStore(keyframes.subscribeView, () => {
+    const keys = keyframes.objectKeyEdits(box.id, node);
+    if (!keys) return "none";
+    return keys.all ? "all" : keys.edits.length < keys.count ? "some" : "empty";
+  });
+  const all = state === "all";
+  const name = t(all ? "keyframes.objectKey.remove" : "keyframes.objectKey.add", { name: label });
+  return (
+    <div className={styles.buttons}>
+      <span className={styles.buttonSlot} />
+      <RowButton
+        name={name}
+        usage=""
+        unavailable={state === "none"}
+        pressed={all}
+        onClick={() => keyframes.toggleObjectKeys(box.id, node)}
+      >
+        <Diamond
+          size={12}
+          className={state === "all" || state === "some" ? styles.keyed : undefined}
+          {...(all ? { fill: "currentColor" } : {})}
+        />
+      </RowButton>
+      <span className={styles.buttonSlot} />
+    </div>
+  );
+}
+
 function Pinning({ area, lane, label }: { area: KeyArea; lane: Lane; label: string }) {
   const { keyframes } = area;
   const { t } = useTranslation();
@@ -465,6 +511,9 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
             <ValueMarks area={area} box={box} node={node} label={label} />
             <KeyButtons area={area} box={box} node={node} label={label} />
           </>
+        )}
+        {(node.kind === "clip" || (node.kind === "object" && !node.orphans)) && box && (
+          <ObjectKeyButton area={area} box={box} node={node} label={label} />
         )}
         {canPin && (node.kind === "clip" || (node.kind === "object" && !node.orphans)) && (
           <Pinning area={area} lane={lane} label={label} />

@@ -4,10 +4,20 @@ import {
   orderedTracks,
   sceneSourceOf,
   secondsOf,
+  type ClipState,
+  type ObjectNode,
   type PropertyEdit,
+  type PropertyNode,
   type CommandFailure,
 } from "@animaquill/core";
-import { formatTime, parseTime, type Animation, type Key } from "@animaquill/schema";
+import {
+  BUILT_IN_PROPERTIES,
+  formatTime,
+  parseTime,
+  type Animation,
+  type Key,
+  type PropertySpec,
+} from "@animaquill/schema";
 import { describe, expect, it, vi } from "vitest";
 import { writeEdit } from "../properties/inspect.ts";
 import { SceneRegistrations } from "../properties/registrations.ts";
@@ -3022,5 +3032,130 @@ describe("parts of a vector", () => {
     expect(again.isTall("c", P, 1)).toBe(true);
     expect(again.tallHeightOf("c", P, 1)).toBe(200);
     expect(again.isTall("c", P, 0)).toBe(false);
+  });
+});
+
+describe("the diamond of an object", () => {
+  async function onObject() {
+    const setting = await setup({ trying: false });
+    const { addClip, timeline, keyframes, writer, main } = setting;
+    addClip("c", 1, 4);
+    timeline.selectOnly("c");
+    // Two seconds in: one second on the clock of the clip.
+    timeline.seek(Math.round(2 * (timeline.model?.rate.fps ?? 30)));
+    const actions = new ActionRegistry();
+    registerKeyframeActions(actions, keyframes, timeline, writer);
+    const press = (id: string) => {
+      const action = actions.get(id);
+      if (!action) throw new Error(`no action ${id}`);
+      if (action.enabled?.() !== false) action.run();
+    };
+    const visual = () => {
+      const object = keyframes.objectAround("c", X);
+      if (!object) throw new Error("no object");
+      return object;
+    };
+    /** Which properties have keys, and where, as people see them. */
+    const keyed = () =>
+      Object.entries(keyframes.shown(main().clips["c"] as ClipState).properties ?? {})
+        .filter(([, value]) => typeof value === "object" && value !== null && "keys" in value)
+        .map(([path, value]) => `${path} ${(value as Animation).keys.map(({ time }) => time)}`)
+        .toSorted();
+    return { ...setting, press, visual, keyed };
+  }
+
+  const ALL_AT_ONE = [
+    "blend 1",
+    "opacity 1",
+    "transform.anchorX 1",
+    "transform.anchorY 1",
+    "transform.height 1",
+    "transform.rotation 1",
+    "transform.scale 1",
+    "transform.width 1",
+    "transform.x 1",
+    "transform.y 1",
+  ];
+
+  it("keys every property that keys work on at the playhead, and takes them away again", async () => {
+    const { keyframes, visual, keyed, store, main } = await onObject();
+    expect(keyframes.objectKeyEdits("c", visual())?.all).toBe(false);
+    keyframes.toggleObjectKeys("c", visual());
+    // Not how the picture fits in its box, which cannot have keys.
+    expect(keyed()).toEqual(ALL_AT_ONE);
+    expect(keyframes.objectKeyEdits("c", visual())?.all).toBe(true);
+    store.undo();
+    expect(keyed()).toEqual([]);
+    store.redo();
+    keyframes.toggleObjectKeys("c", visual());
+    expect(keyed()).toEqual([]);
+    // The last key of each leaves its value behind, as for one property.
+    expect(main().clips["c"]?.properties?.["opacity"]).toBe(1);
+    store.undo();
+    expect(keyed()).toEqual(ALL_AT_ONE);
+  });
+
+  it("fills in the keys that are missing where some are there", async () => {
+    const { keyframes, visual, keyed, edit } = await onObject();
+    edit(
+      { owner: { clip: "c" }, path: X, op: "setKey", time: "1", value: 40 },
+      { owner: { clip: "c" }, path: "opacity", op: "setKey", time: "0", value: 0 },
+    );
+    keyframes.toggleObjectKeys("c", visual());
+    expect(keyed()).toEqual(
+      ALL_AT_ONE.map((line) => (line === "opacity 1" ? "opacity 0,1" : line)),
+    );
+  });
+
+  it("leaves out sound and speed, whose keys do nothing yet", async () => {
+    const { keyframes, keyed } = await onObject();
+    const property = (spec: PropertySpec): PropertyNode => ({
+      kind: "property",
+      id: `c/${spec.path}`,
+      clip: "c",
+      spec,
+      rows: [],
+    });
+    const specs = ["opacity", "audio.pan", "audio.volume", "time.speed"].map(
+      (path) => BUILT_IN_PROPERTIES[path] as PropertySpec,
+    );
+    const object: ObjectNode = {
+      kind: "object",
+      id: "c/object:mixed",
+      clip: "c",
+      object: { id: "mixed", properties: specs },
+      children: specs.map(property),
+    };
+    keyframes.toggleObjectKeys("c", object);
+    expect(keyed()).toEqual(["opacity 1"]);
+  });
+
+  it("Alt+Shift+K does it for the object of the property people worked with last", async () => {
+    const { writer, press, keyed, timeline, keyframes } = await onObject();
+    press("keyframes.toggleObjectKeys");
+    expect(keyed()).toEqual([]);
+    const spec = keyframes.specOf("c", "opacity");
+    if (!spec) throw new Error("no spec");
+    writer.noteProperty("c", spec);
+    press("keyframes.toggleObjectKeys");
+    expect(keyed()).toEqual(ALL_AT_ONE);
+    press("keyframes.toggleObjectKeys");
+    expect(keyed()).toEqual([]);
+    // Only on a selected clip, as Alt+K.
+    timeline.clearSelection();
+    writer.noteProperty("c", spec);
+    press("keyframes.toggleObjectKeys");
+    expect(keyed()).toEqual([]);
+  });
+
+  it("does nothing on a locked track, or where the clip is not", async () => {
+    const { keyframes, visual, keyed, video, timeline } = await onObject();
+    timeline.updateTrack(video, { locked: true });
+    expect(keyframes.objectKeyEdits("c", visual())).toBeUndefined();
+    keyframes.toggleObjectKeys("c", visual());
+    expect(keyed()).toEqual([]);
+    timeline.updateTrack(video, { locked: false });
+    timeline.seek(0);
+    expect(keyframes.objectKeyEdits("c", visual())).toBeUndefined();
   });
 });

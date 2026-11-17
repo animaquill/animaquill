@@ -1594,6 +1594,7 @@ describe("default keys of everything there is", () => {
       ["mod+shift+x", "timeline.clearMarks"],
       ["mod+shift+space", "timeline.playInToOut"],
       ["alt+k", "keyframes.toggleKey"],
+      ["alt+shift+k", "keyframes.toggleObjectKeys"],
     ]);
     const taken = keyed().filter(({ key, action }) => own.has(key) && own.get(key) !== action.id);
     expect(taken.map(({ key, action }) => `${key}: ${action.id}`)).toEqual([]);
@@ -1604,5 +1605,15 @@ describe("default keys of everything there is", () => {
   it("give the switch for overwriting none: O is the out", () => {
     const { workbench } = setup();
     expect(workbench.actions.get("timeline.toggleOverwriting")?.keys).toBeUndefined();
+  });
+
+  // Turned on by a key nobody meant, it writes keys nobody meant: people can give it one.
+  it("give automatic keys none", () => {
+    const { workbench } = setup();
+    const action = workbench.actions.get("keyframes.toggleRecording");
+    expect(action).toBeDefined();
+    expect(action?.keys).toBeUndefined();
+    action?.run();
+    expect(workbench.properties.getRecording()).toBe(true);
   });
 });

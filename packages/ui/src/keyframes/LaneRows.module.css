@@ -216,6 +216,12 @@
   width: 18px;
 }
 
+/* Where an object has no arrows, so that its diamond is where those of its properties are. */
+.buttonSlot {
+  flex: none;
+  width: 18px;
+}
+
 .keyed {
   color: var(--aq-match);
 }

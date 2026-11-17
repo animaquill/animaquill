@@ -22,6 +22,7 @@ import {
   type ClipState,
   type KeyEase,
   type ListRange,
+  type ObjectNode,
   type ProjectState,
   type ProjectStore,
   type PropertyEdit,
@@ -45,12 +46,12 @@ import {
   type Value,
 } from "@animaquill/schema";
 import type { TFunction } from "i18next";
-import { inspectProperty, type InspectedProperty } from "../properties/inspect.ts";
+import { inspectProperty, keyEdit, type InspectedProperty } from "../properties/inspect.ts";
 import { groupOf, nameOf, partNameOf, textOf } from "../properties/names.ts";
 import { effectName } from "../resources/effects.ts";
 import { ClipDescriptions, SceneRegistrations } from "../properties/registrations.ts";
 import type { TrialSession } from "../properties/trial.ts";
-import type { PropertyWriter } from "../properties/writer.ts";
+import { keysTakeEffect, type PropertyWriter } from "../properties/writer.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import { frameTime } from "../timeline/frames.ts";
 import { forEachBetween, type ClipBox, type Row, type TimelineModel } from "../timeline/model.ts";
@@ -240,6 +241,17 @@ function parseWidth(value: unknown): number | undefined {
 
 const clampWidth = (width: number) =>
   Math.min(Math.max(Math.round(width), MIN_LIST_WIDTH), MAX_LIST_WIDTH);
+
+/** What has a diamond for all of its properties: an object, or a clip for its own. */
+export type KeyedObject = ObjectNode | ClipNode;
+
+/** What the diamond of an object does: whether all of it has keys at the playhead, and the edits. */
+export interface ObjectKeys {
+  readonly all: boolean;
+  /** How many properties it is about. */
+  readonly count: number;
+  readonly edits: readonly PropertyEdit[];
+}
 
 /**
  * Keys in this window: what is selected, what is listed and what is open. None of that is part of
@@ -1282,6 +1294,71 @@ export class KeyframeEditor {
     const amount = defaultAmountOf(componentSpecOf(spec));
     edits.push({ owner, path, op: "setNoise", noise: { amount, frequency: DEFAULT_FREQUENCY } });
     this.#writer.commit(edits);
+  }
+
+  /**
+   * What the diamond of an object does at the playhead, for every property under it that keys work
+   * on: those without a key there get one with what they show, and when all of them have one, those
+   * go. A clip is the object of its own properties, such as where it is: its effects and the objects
+   * of its scene have diamonds of their own. Nothing when there is nothing to key or the clip cannot
+   * change here.
+   */
+  objectKeyEdits(clip: string, object: KeyedObject): ObjectKeys | undefined {
+    const box = this.model?.boxes.get(clip);
+    if (!box || (object.kind === "object" && object.orphans) || !this.canMove(clip))
+      return undefined;
+    const rows: { readonly row: InspectedProperty["row"]; readonly time: string }[] = [];
+    const visit = (child: ClipChild) => {
+      if (child.kind === "object") {
+        if (object.kind === "object" && !child.orphans) child.children.forEach(visit);
+        return;
+      }
+      if (child.kind === "group") {
+        child.children.forEach(visit);
+        return;
+      }
+      const { spec } = child;
+      if (child.orphan || spec.animatable === false || !keysTakeEffect(spec.path)) return;
+      const inspected = this.inspect(box, spec);
+      if (!inspected || inspected.blocked !== undefined || inspected.row.value === undefined)
+        return;
+      rows.push({ row: inspected.row, time: inspected.time });
+    };
+    object.children.forEach(visit);
+    if (rows.length === 0) return undefined;
+    const all = rows.every(({ row }) => row.keyTime !== undefined);
+    const edits = rows
+      .filter(({ row }) => all || row.keyTime === undefined)
+      .flatMap(({ row, time }) => keyEdit(clip, row, time) ?? []);
+    return { all, count: rows.length, edits };
+  }
+
+  /** Keys every property of an object at the playhead, or takes them all away, in one step. */
+  toggleObjectKeys(clip: string, object: KeyedObject): void {
+    const keys = this.objectKeyEdits(clip, object);
+    if (keys && keys.edits.length > 0) this.#writer.commit(keys.edits);
+  }
+
+  /**
+   * The object a property of a clip is in, the nearest one where objects are inside others, or the
+   * clip for a property of its own.
+   */
+  objectAround(clip: string, path: string): KeyedObject | undefined {
+    const box = this.model?.boxes.get(clip);
+    if (!box) return undefined;
+    const find = (children: readonly ClipChild[], around: KeyedObject): KeyedObject | undefined => {
+      for (const child of children) {
+        if (child.kind === "property") {
+          if (child.spec.path === path) return around;
+          continue;
+        }
+        const found = find(child.children, child.kind === "object" ? child : around);
+        if (found) return found;
+      }
+      return undefined;
+    };
+    const node = this.nodeOf(this.shown(box.clip));
+    return find(node.children, node);
   }
 
   /**

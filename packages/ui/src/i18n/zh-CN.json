@@ -2206,6 +2206,8 @@
       "cut": "剪切关键帧",
       "paste": "粘贴关键帧到播放头",
       "toggleKey": "在播放头添加或删除关键帧",
+      "toggleObjectKeys": "在播放头给对象的全部属性添加或删除关键帧",
+      "toggleRecording": "自动关键帧",
       "toggleSnapping": "吸附",
       "zoomIn": "放大",
       "zoomOut": "缩小",
@@ -2216,6 +2218,11 @@
       "nextFrame": "下一帧或后移一帧",
       "backFiveFrames": "后退 5 帧或前移 5 帧",
       "forwardFiveFrames": "前进 5 帧或后移 5 帧"
+    },
+    "record": "自动关键帧",
+    "objectKey": {
+      "add": "在播放头给{{name}}的全部属性添加关键帧",
+      "remove": "删除{{name}}在播放头的全部关键帧"
     }
   },
   "errors": {

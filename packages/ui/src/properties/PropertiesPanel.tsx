@@ -16,6 +16,7 @@ import { PopupMenu } from "../app/Menu.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import type { ClipBox } from "../timeline/model.ts";
 import { CONTROLS, PlainValue, RowButton } from "./controls.tsx";
+import { RecordButton } from "../keyframes/RecordButton.tsx";
 import { inspectSelection, keyEdit, writeEdit, type Blocked, type Selected } from "./inspect.ts";
 import { groupOf, nameOf, textOf } from "./names.ts";
 import styles from "./PropertiesPanel.module.css";
@@ -394,6 +395,9 @@ function ClipProperties({ selected, rows }: { selected: ClipSelected; rows: Prop
       <header className={styles.header}>
         <span className={styles.title}>{box.clip.name ?? kindName}</span>
         {box.clip.name !== undefined && <span className={styles.kind}>{kindName}</span>}
+        <span className={styles.headerEnd}>
+          <RecordButton />
+        </span>
       </header>
       {kind === "sound" && <SoundStatus clip={box.clip} />}
       {blocked && <BlockedHint blocked={blocked} firstFrame={firstFrame} />}
