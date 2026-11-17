@@ -57,7 +57,8 @@ function transformHandles(target: ExtensionTarget, marks: Mark[]): ExtensionHand
   const angle = Math.atan2(b, a);
   const anchor = { x: transform.x, y: transform.y };
   const anchorOnScreen = transformPoint(toScreen, anchor);
-  const stretches = target.layer.fit === "stretch";
+  // Until the size of the media is known, it is placed as contained, and so it scales.
+  const stretches = target.layer.fit === "stretch" && target.knowsSize;
   const handles: ExtensionHandle[] = SIDES.map((side) => {
     const [shareX, shareY] = SIDE_AT[side];
     const inBox = { x: picture.x + picture.width * shareX, y: picture.y + picture.height * shareY };

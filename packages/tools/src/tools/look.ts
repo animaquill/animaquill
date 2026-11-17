@@ -165,7 +165,7 @@ function onFrame(time: string, fps: string): string {
 const clipText = (clip: Pick<ClipFact, "id" | "name">) => named(clip.id, clip.name);
 
 /** The lines of what is on a frame, back to front. */
-function factLines(facts: FrameFacts): string[] {
+export function factLines(facts: FrameFacts): string[] {
   const lines = [`clips, back to front (${facts.clips.length}):`];
   for (const clip of facts.clips) {
     const parts = [
@@ -177,10 +177,12 @@ function factLines(facts: FrameFacts): string[] {
     else if (Object.keys(clip.past).length > 0) parts.push(`past the edge: ${pastText(clip.past)}`);
     if (clip.cropped) parts.push("media cut to its box (fit cover)");
     if (clip.stretched) {
-      const { across, down } = clip.stretched;
-      parts.push(
-        `media out of shape: ×${ratioText(across)} across, ×${ratioText(down)} down its own size`,
-      );
+      const { fit, wider } = clip.stretched;
+      const shape =
+        wider >= 1
+          ? `${ratioText(wider)}× wider than its own proportions`
+          : `${ratioText(1 / wider)}× taller than its own proportions`;
+      parts.push(`media stretched out of shape: ${shape} (fit ${fit})`);
     }
     if (clip.overlaps.length > 0) {
       const others = clip.overlaps.map((id) => {

@@ -57,6 +57,11 @@ export interface ExtensionTarget {
   readonly clip: string;
   readonly layer: RenderLayer;
   readonly placement: Placement;
+  /**
+   * Whether the size of its media is known, without which a picture that stretches is placed as
+   * one that is contained (`boxOf`).
+   */
+  readonly knowsSize: boolean;
   /** From the world to the overlay, and back. */
   readonly toScreen: Matrix;
   readonly toWorld: Matrix;

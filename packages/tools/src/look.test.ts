@@ -3,7 +3,7 @@ import { createProject, writeProject } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import { frameFacts, planOf } from "./look-facts.ts";
 import { testHost, toolsOn } from "./test-support.ts";
-import type { LookData } from "./tools/look.ts";
+import { factLines, type LookData } from "./tools/look.ts";
 import type { LookAnswer, LookRequest, LookedShot, ToolHost } from "./types.ts";
 
 /**
@@ -179,8 +179,21 @@ describe("aq_render_frames", () => {
     // The picture is 1000 by 1000, in a box as large as the picture.
     expect(photo("stretch")).toMatchObject({
       cropped: false,
-      stretched: { across: 1.92, down: 1.08 },
+      stretched: { fit: "stretch", across: 1.92, down: 1.08 },
     });
+    expect(photo("stretch")?.stretched?.wider).toBeCloseTo(1.92 / 1.08, 9);
+    const said = (fit: RenderLayer["fit"]) => {
+      const facts = frameFacts(
+        state,
+        "main",
+        { ...plan, layers: plan.layers.map((layer) => ({ ...layer, fit })) },
+        21,
+      );
+      return factLines(facts).find((line) => line.includes("clip_photo"));
+    };
+    expect(said("stretch")).toContain(
+      "media stretched out of shape: 1.778× wider than its own proportions (fit stretch)",
+    );
     for (const fit of ["contain", "cover", "fixed"] as const) {
       expect(photo(fit)?.stretched, fit).toBeUndefined();
     }

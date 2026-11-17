@@ -69,10 +69,16 @@ export interface ClipFact {
   /** Its media is wider or taller than its box, which `cover` cuts. */
   readonly cropped: boolean;
   /**
-   * How much wider and taller its media is drawn than the media is, where `stretch` or `fixed` puts
-   * it in a box of another shape: nothing where it keeps its shape.
+   * Where `stretch` or `fixed` puts its media in a box of another shape: by which of them, how much
+   * wider than its own proportions it is drawn (below 1 is taller), and how much wider and taller
+   * than the media it is. Nothing where it keeps its shape.
    */
-  readonly stretched?: { readonly across: number; readonly down: number };
+  readonly stretched?: {
+    readonly fit: "stretch" | "fixed";
+    readonly wider: number;
+    readonly across: number;
+    readonly down: number;
+  };
   /** The clips in front of it or behind it that it overlaps, both small, by id. */
   readonly overlaps: readonly string[];
   readonly texts: readonly TextFact[];
@@ -135,7 +141,7 @@ function stretchOf(layer: RenderLayer, media: Size | undefined, box: Size): Clip
   const across = box.width / media.width;
   const down = box.height / media.height;
   if (!(down > 0) || Math.abs(across / down - 1) <= SHAPE_TOLERANCE) return undefined;
-  return { across, down };
+  return { fit: layer.fit, wider: across / down, across, down };
 }
 
 /** What a clip shows, in a word and an id. */

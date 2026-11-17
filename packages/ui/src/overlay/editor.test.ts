@@ -428,10 +428,16 @@ describe("dragging", () => {
 
 describe("a picture that stretches", () => {
   /** A 4:3 picture in a 1920 by 1080 picture, which is 960 by 540 on the overlay. */
-  async function stretched(fit = "stretch") {
+  async function stretched(fit = "stretch", info: object | null = NATURAL) {
     const context = await setup();
     const hash = "sha256-47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU=";
-    const asset = { kind: "image", path: "assets/p.png", storage: "local", hash, info: NATURAL };
+    const asset = {
+      kind: "image",
+      path: "assets/p.png",
+      storage: "local",
+      hash,
+      ...(info && { info }),
+    };
     context.run("asset.add", { id: "p", asset });
     const source = { kind: "image", media: { asset: "p" } };
     context.addClip("c", { properties: { fit } }, source);
@@ -452,6 +458,18 @@ describe("a picture that stretches", () => {
     expectAt(grip("c stretch n").at, 480, 0);
     expect(grip("c stretch e").cursor).toBe("ew-resize");
     expect(grip("c stretch n").cursor).toBe("ns-resize");
+  });
+
+  it("only scales while the size of its media is not known, which places it as contained", async () => {
+    const { grips, run } = await stretched("stretch", null);
+    const ids = () => grips().map(({ id }) => id);
+    expect(ids().filter((id) => id.includes("stretch"))).toEqual([]);
+    for (const side of ["nw", "n", "ne", "e", "se", "s", "sw", "w"]) {
+      expect(ids()).toContain(`c scale ${side}`);
+    }
+    run("asset.update", { asset: "p", changes: { info: NATURAL } });
+    expect(ids()).toContain("c stretch e");
+    expect(ids()).not.toContain("c scale e");
   });
 
   it.each(["contain", "cover", "fixed"])("with %s only scales, as before", async (fit) => {

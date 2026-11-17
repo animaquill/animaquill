@@ -37,6 +37,7 @@ import {
   type PropertyEdit,
   type Registration,
   type RenderLayer,
+  type Size,
   type RenderPlan,
   type SceneRegistry,
 } from "@animaquill/core";
@@ -207,6 +208,8 @@ interface Placed {
   readonly layer: RenderLayer;
   readonly box: ClipBox;
   readonly placement: Placement;
+  /** The size of its media as the project knows it, if it knows. */
+  readonly natural: Size | undefined;
   /** From its box to the overlay. */
   readonly boxToScreen: Matrix;
   readonly corners: readonly Point[];
@@ -563,6 +566,7 @@ export class OverlayEditor {
       layer,
       box,
       placement,
+      natural,
       boxToScreen,
       corners: cornersOf(boxToScreen, placement.picture),
     };
@@ -685,6 +689,7 @@ export class OverlayEditor {
       clip: layer.id,
       layer,
       placement,
+      knowsSize: target.natural !== undefined,
       toScreen: frame.toScreen,
       toWorld: frame.toWorld,
       properties: shownProperties(box.clip, previewed),
