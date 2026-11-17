@@ -20,6 +20,8 @@ export type GripLook = "corner" | "side" | "rotate" | "anchor" | "key" | "point"
 export type GripRole =
   /** Scales a clip. `detail` is its side. */
   | "scale"
+  /** Changes the width or the height of a clip that stretches. `detail` is its side. */
+  | "stretch"
   | "rotate"
   | "anchor"
   /** A key on the path of a clip. `detail` is its time on the clock of the clip. */

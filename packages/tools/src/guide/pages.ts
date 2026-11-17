@@ -132,7 +132,7 @@ export const TYPE_PAGES: readonly ManualPage[] = [
       "PropertyPath, the path of a property, dotted, each part made of letters, digits, _ and -:",
       "- transform.x, transform.y: the anchor in the world, world units: the origin is the center of the picture, x to the right, y down, and the short side of the picture is 1080.",
       "- transform.width, transform.height: the size of the clip box, world units; transform.anchorX, transform.anchorY: the anchor, a share of the box (0.5 by default); transform.scale (1 by default); transform.rotation: degrees, clockwise, 720 is two turns.",
-      '- opacity: 0 to 1. blend: "normal", "multiply", "screen", "overlay", "darken", "lighten" or "add". fit: "contain", "cover" or "fixed", no keyframes.',
+      '- opacity: 0 to 1. blend: "normal", "multiply", "screen", "overlay", "darken", "lighten" or "add". fit: "contain", "cover", "stretch" or "fixed", no keyframes: "stretch" fills the box out of shape, and a side of it that is not written is as large as the picture, so writing transform.width alone makes a clip narrower or wider and leaves it as tall as the picture.',
       "- audio.volume: decibels, 0 the sound as it is, 24 at most; this editor uses only the first key of it.",
       "- time.speed, audio.pan, audio.pitch, audio.preservePitch: in the format; this editor does not apply them yet.",
       "- param.<id>: a parameter of the clip's scene or sound, as its manifest declares it.",

@@ -159,7 +159,7 @@ export interface RenderLayer {
   readonly offset: number;
   readonly source: LayerSource;
   /** How the clip box comes about and how the media goes in it. See boxOf. */
-  readonly fit: "contain" | "cover" | "fixed";
+  readonly fit: "contain" | "cover" | "stretch" | "fixed";
   /** From nothing to the clip at its start, and from the clip to nothing at its end. */
   readonly enter?: PlannedTransition;
   readonly exit?: PlannedTransition;
@@ -340,7 +340,7 @@ export const firstValue = (value: PropertyValue | undefined): Value | undefined 
 
 export function fitOf(properties: Properties): RenderLayer["fit"] {
   const plain = firstValue(entryOf(properties, "fit"));
-  return plain === "cover" || plain === "fixed" ? plain : "contain";
+  return plain === "cover" || plain === "stretch" || plain === "fixed" ? plain : "contain";
 }
 
 function assetOf(state: ProjectState, clip: ClipState): Asset | undefined {

@@ -660,7 +660,7 @@ describe("the property.edit command", () => {
     ["a key out of range", { path: "opacity", op: "setKey", time: "0", value: 2 }],
     ["the wrong kind of value", { path: "opacity", op: "write", time: "0", value: "很多" }],
     ["a property that does not exist", { path: "transform.z", op: "set", value: 1 }],
-    ["a choice that does not exist", { path: "fit", op: "write", time: "0", value: "stretch" }],
+    ["a choice that does not exist", { path: "fit", op: "write", time: "0", value: "squash" }],
   ])("refuses %s", (_, edit) => {
     const { edit: run, owner, failure } = setup();
     expect(failure(run({ owner, ...edit })).code).toBe("invalid-value");

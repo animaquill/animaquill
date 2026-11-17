@@ -9,7 +9,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import type { Grip, Side } from "./editor.ts";
-import type { OverlayPointer } from "./gestures.ts";
+import type { BoxSide, OverlayPointer } from "./gestures.ts";
 import { paintOverlay, readOverlayTheme, type OverlayTheme } from "./paint.ts";
 import styles from "./PreviewOverlay.module.css";
 
@@ -31,6 +31,8 @@ function nameOf(t: TFunction, grip: Grip): string {
   switch (grip.role) {
     case "scale":
       return t(`overlay.grip.scale.${grip.detail as Side}`);
+    case "stretch":
+      return t(`overlay.grip.stretch.${grip.detail as BoxSide}`);
     case "key":
       return t("overlay.grip.key", { time: grip.detail });
     case "object":

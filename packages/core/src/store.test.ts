@@ -5679,7 +5679,7 @@ describe("clearing a property", () => {
     const store = freshProject();
     success(edit(store, "c", { path: "opacity", op: "set", value: 0.5 }));
     // Nothing that a command lets through: another program, or a version that was less careful.
-    writeLikeBefore(store, "c", "fit", "stretch");
+    writeLikeBefore(store, "c", "fit", "squash");
     writeLikeBefore(store, "c", "transform.scale", "很大");
     return store;
   }

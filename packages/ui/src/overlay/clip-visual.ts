@@ -19,14 +19,16 @@ import {
   type Mark,
   type Side,
 } from "./extension.ts";
-import { anchorGesture, pathKeyGesture } from "./gestures.ts";
+import { anchorGesture, pathKeyGesture, stretchGesture, type BoxSide } from "./gestures.ts";
 
 /**
  * The handles of a clip with a picture, as in After Effects and Figma: a box around what it shows,
  * a handle at each corner and side that scales, one above it that turns, and the anchor that both
  * go around, which can be moved itself. Keys on the position make a path, with a handle for each.
  * Scaling changes `transform.scale` and never the size of the box, which keeps a clip following
- * its stage: see the design of the animation model. So a clip always keeps its shape.
+ * its stage: see the design of the animation model. So a clip keeps its shape, except where its
+ * picture fills its box out of shape anyway (`fit` "stretch"): there the handles on the sides
+ * change the width or the height of the box, and those at the corners still scale.
  */
 
 /** Where on the part of a box with a picture each side is, as shares of it. */
@@ -55,11 +57,13 @@ function transformHandles(target: ExtensionTarget, marks: Mark[]): ExtensionHand
   const angle = Math.atan2(b, a);
   const anchor = { x: transform.x, y: transform.y };
   const anchorOnScreen = transformPoint(toScreen, anchor);
+  const stretches = target.layer.fit === "stretch";
   const handles: ExtensionHandle[] = SIDES.map((side) => {
     const [shareX, shareY] = SIDE_AT[side];
     const inBox = { x: picture.x + picture.width * shareX, y: picture.y + picture.height * shareY };
     const world = transformPoint(matrix, inBox);
     const at = transformPoint(toScreen, world);
+    if (stretches && side.length === 1) return stretchHandle(target, side as BoxSide, at, angle);
     return {
       id: `scale ${side}`,
       role: "scale",
@@ -125,6 +129,44 @@ function transformHandles(target: ExtensionTarget, marks: Mark[]): ExtensionHand
     },
   });
   return handles;
+}
+
+/**
+ * A handle on a side of a box whose picture fills it out of shape: it changes the width or the
+ * height, see `stretchGesture`. A box that has neither written gets both as they are, once.
+ */
+function stretchHandle(
+  target: ExtensionTarget,
+  side: BoxSide,
+  at: Point,
+  angle: number,
+): ExtensionHandle {
+  const { placement, toScreen, toWorld, properties } = target;
+  const { box, transform } = placement;
+  const across = side === "e" || side === "w";
+  // The way the side goes on the screen, which is the way the cursor points.
+  const [a, b, c, d] = multiply(toScreen, placement.matrix);
+  return {
+    id: `stretch ${side}`,
+    role: "stretch",
+    detail: side,
+    look: "side",
+    at,
+    angle,
+    cursor: across ? resizeCursor(a, b) : resizeCursor(c, d),
+    solve: (bind, pointer) => {
+      const written = (path: string) => entryOf(properties, path) !== undefined;
+      const width = bind("transform.width", box.width);
+      const height = bind("transform.height", box.height);
+      const x = bind("transform.x", transform.x);
+      const y = bind("transform.y", transform.y);
+      if (!width || !height || !x || !y) return undefined;
+      const [size, other] = across ? [width, height] : [height, width];
+      const neither = !written("transform.width") && !written("transform.height");
+      const binds = { size, x, y, ...(neither && { other }) };
+      return stretchGesture(side, placement, toWorld, binds, pointer);
+    },
+  };
 }
 
 /** Keys that get a handle at most: more would be in each other's way, and take the page with them. */

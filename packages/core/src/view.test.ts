@@ -169,6 +169,40 @@ describe("the clip box", () => {
     expect(boxOf(moving, 10.5, natural, stage).width).toBeCloseTo(150, 9);
   });
 
+  describe("with stretch", () => {
+    const tall = { width: 1080, height: 1920 };
+
+    it("without a size is the stage, in every format", () => {
+      expect(boxOf(layer({ fit: "stretch" }), 0, natural, stage)).toEqual(stage);
+      expect(boxOf(layer({ fit: "stretch" }), 0, natural, tall)).toEqual(tall);
+    });
+
+    it("with one side takes the other from the stage, not from the media", () => {
+      const wide = sized({ "transform.width": 200 }, "stretch");
+      expect(boxOf(wide, 0, natural, stage)).toEqual({ width: 200, height: 1080 });
+      expect(boxOf(wide, 0, natural, tall)).toEqual({ width: 200, height: 1920 });
+      const high = sized({ "transform.height": 150 }, "stretch");
+      expect(boxOf(high, 0, natural, stage)).toEqual({ width: 1920, height: 150 });
+      expect(boxOf(high, 0, natural, tall)).toEqual({ width: 1080, height: 150 });
+    });
+
+    it("with both sides is that", () => {
+      const values = { "transform.width": 300, "transform.height": 100 };
+      expect(boxOf(sized(values, "stretch"), 0, natural, stage)).toEqual({
+        width: 300,
+        height: 100,
+      });
+    });
+
+    it("leaves a plain color as it is with every fit", () => {
+      for (const values of [{}, { "transform.width": 960 }, { "transform.height": 270 }]) {
+        expect(boxOf(sized(values, "stretch"), 0, undefined, stage)).toEqual(
+          boxOf(sized(values, "contain"), 0, undefined, stage),
+        );
+      }
+    });
+  });
+
   it("does not go below nothing when a curve does", () => {
     expect(boxOf(sized({ "transform.width": -5 }, "contain"), 0, natural, stage).width).toBe(0);
   });
@@ -219,6 +253,17 @@ describe("the media in its box", () => {
     const [start, end] = corners(fitted);
     expectPoint(start as readonly [number, number], 0, 0);
     expectPoint(end as readonly [number, number], 10, 500);
+  });
+
+  it("stretch fills the box and does not care about the shape, as fixed does", () => {
+    for (const into of [box, { width: 10, height: 500 }]) {
+      const fitted = fitIn("stretch", natural, into);
+      expect(fitted).toEqual(fitIn("fixed", natural, into));
+      expect(fitted.source).toEqual({ x: 0, y: 0, ...natural });
+      const [start, end] = corners(fitted);
+      expectPoint(start as readonly [number, number], 0, 0);
+      expectPoint(end as readonly [number, number], into.width, into.height);
+    }
   });
 
   it("does not distort with contain or cover", () => {
@@ -535,6 +580,7 @@ describe("what part of a box has a picture", () => {
     const whole = { x: 0, y: 0, width: 1920, height: 1080 };
     expect(pictureIn("cover", { width: 100, height: 100 }, box)).toEqual(whole);
     expect(pictureIn("fixed", { width: 100, height: 100 }, box)).toEqual(whole);
+    expect(pictureIn("stretch", { width: 100, height: 100 }, box)).toEqual(whole);
     expect(pictureIn("contain", undefined, box)).toEqual(whole);
   });
 

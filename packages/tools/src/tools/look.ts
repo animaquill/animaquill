@@ -141,6 +141,7 @@ const round = (value: number) => String(Math.round(value));
 const rectText = (rect: Rect) =>
   `${round(rect.x)},${round(rect.y)} ${round(rect.width)}×${round(rect.height)}`;
 const percent = (share: number) => `${Math.round(share * 1000) / 10}%`;
+const ratioText = (ratio: number) => String(Math.round(ratio * 1000) / 1000);
 const pastText = (past: Partial<Record<Side, number>>) =>
   SIDES.filter((side) => past[side] !== undefined)
     .map((side) => `${side} ${round(past[side] as number)}`)
@@ -175,6 +176,12 @@ function factLines(facts: FrameFacts): string[] {
     if (clip.outside) parts.push("outside the picture");
     else if (Object.keys(clip.past).length > 0) parts.push(`past the edge: ${pastText(clip.past)}`);
     if (clip.cropped) parts.push("media cut to its box (fit cover)");
+    if (clip.stretched) {
+      const { across, down } = clip.stretched;
+      parts.push(
+        `media out of shape: ×${ratioText(across)} across, ×${ratioText(down)} down its own size`,
+      );
+    }
     if (clip.overlaps.length > 0) {
       const others = clip.overlaps.map((id) => {
         const other = facts.clips.find((each) => each.id === id);

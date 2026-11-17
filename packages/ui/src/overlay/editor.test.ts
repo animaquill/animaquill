@@ -426,6 +426,156 @@ describe("dragging", () => {
   });
 });
 
+describe("a picture that stretches", () => {
+  /** A 4:3 picture in a 1920 by 1080 picture, which is 960 by 540 on the overlay. */
+  async function stretched(fit = "stretch") {
+    const context = await setup();
+    const hash = "sha256-47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU=";
+    const asset = { kind: "image", path: "assets/p.png", storage: "local", hash, info: NATURAL };
+    context.run("asset.add", { id: "p", asset });
+    const source = { kind: "image", media: { asset: "p" } };
+    context.addClip("c", { properties: { fit } }, source);
+    return context;
+  }
+  const NATURAL = { width: 400, height: 300 };
+
+  it("has handles on its sides that stretch it and corners that scale it", async () => {
+    const { grips, grip } = await stretched();
+    const ids = grips().map(({ id }) => id);
+    for (const side of ["n", "e", "s", "w"]) {
+      expect(ids).toContain(`c stretch ${side}`);
+      expect(ids).not.toContain(`c scale ${side}`);
+    }
+    for (const corner of ["nw", "ne", "se", "sw"]) expect(ids).toContain(`c scale ${corner}`);
+    // The whole picture, out of the shape of the media.
+    expectAt(grip("c stretch e").at, 960, 270);
+    expectAt(grip("c stretch n").at, 480, 0);
+    expect(grip("c stretch e").cursor).toBe("ew-resize");
+    expect(grip("c stretch n").cursor).toBe("ns-resize");
+  });
+
+  it.each(["contain", "cover", "fixed"])("with %s only scales, as before", async (fit) => {
+    const { grips } = await stretched(fit);
+    const ids = grips().map(({ id }) => id);
+    expect(ids.filter((id) => id.includes("stretch"))).toEqual([]);
+    for (const side of ["nw", "n", "ne", "e", "se", "s", "sw", "w"]) {
+      expect(ids).toContain(`c scale ${side}`);
+    }
+  });
+
+  it("a side changes the width and keeps the side across where it is", async () => {
+    const { drag, pointer, property, grip, store } = await stretched();
+    // 100 pixels of the overlay are 200 units.
+    drag(pointer(960, 270), pointer(900, 280), pointer(860, 290));
+    // Neither was written: both are, as the box was, and from then on only the one dragged.
+    expect(property("c", "transform.width")).toBe(1720);
+    expect(property("c", "transform.height")).toBe(1080);
+    expect(property("c", "transform.x")).toBe(-100);
+    expect(property("c", "transform.y")).toBeUndefined();
+    expect(property("c", "transform.scale")).toBeUndefined();
+    expectAt(grip("c stretch w").at, 0, 270);
+    expectAt(grip("c stretch e").at, 860, 270);
+    // The top: the bottom stays, which takes the anchor in the middle along.
+    drag(pointer(430, 0), pointer(430, 100));
+    expect(property("c", "transform.height")).toBe(880);
+    expect(property("c", "transform.width")).toBe(1720);
+    expect(property("c", "transform.y")).toBe(100);
+    expectAt(grip("c stretch s").at, 430, 540);
+    store.undo();
+    expect(property("c", "transform.height")).toBe(1080);
+    expect(property("c", "transform.y")).toBeUndefined();
+    store.undo();
+    expect(property("c", "transform.width")).toBeUndefined();
+    expect(property("c", "transform.height")).toBeUndefined();
+    expect(property("c", "transform.x")).toBeUndefined();
+  });
+
+  it("the left side keeps the right one where it is", async () => {
+    const { drag, pointer, property, grip } = await stretched();
+    drag(pointer(0, 270), pointer(100, 270));
+    expect(property("c", "transform.width")).toBe(1720);
+    expect(property("c", "transform.x")).toBe(100);
+    expectAt(grip("c stretch e").at, 960, 270);
+  });
+
+  it("with Alt goes around the middle, which leaves the position as it is", async () => {
+    const { drag, pointer, property, grip } = await stretched();
+    drag(pointer(960, 270), pointer(860, 270, { alt: true }));
+    expect(property("c", "transform.width")).toBe(1520);
+    expect(property("c", "transform.x")).toBeUndefined();
+    expectAt(grip("c stretch w").at, 100, 270);
+  });
+
+  it("keeps the side across where it is, turned, scaled and with the anchor elsewhere", async () => {
+    const { set, drag, pointer, grip, property } = await stretched();
+    set("c", {
+      "transform.width": 800,
+      "transform.height": 600,
+      "transform.rotation": 30,
+      "transform.scale": 0.5,
+      "transform.anchorX": 0.2,
+      "transform.anchorY": 0.9,
+    });
+    const before = ["nw", "sw"].map((corner) => grip(`c scale ${corner}`).at);
+    const side = grip("c stretch e").at;
+    // Along the box, which is turned by 30 degrees.
+    const along = { x: Math.cos(Math.PI / 6), y: Math.sin(Math.PI / 6) };
+    drag(pointer(side.x, side.y), pointer(side.x + along.x * 50, side.y + along.y * 50));
+    // 50 pixels are 100 units of the world, which are 200 of a box at half its size.
+    expect(property("c", "transform.width")).toBeCloseTo(1000, 3);
+    expect(property("c", "transform.height")).toBe(600);
+    ["nw", "sw"].forEach((corner, index) => {
+      const was = before[index] as { x: number; y: number };
+      const now = grip(`c scale ${corner}`).at;
+      expect(now.x).toBeCloseTo(was.x, 2);
+      expect(now.y).toBeCloseTo(was.y, 2);
+    });
+  });
+
+  it("a corner still scales, and keeps the shape it has", async () => {
+    const { drag, pointer, property, grip } = await stretched();
+    const corner = grip("c scale se").at;
+    drag(pointer(corner.x, corner.y), pointer(720, 405));
+    expect(property("c", "transform.scale")).toBeCloseTo(0.5, 6);
+    expect(property("c", "transform.width")).toBeUndefined();
+    expect(property("c", "transform.height")).toBeUndefined();
+  });
+
+  it("writes a key at the playhead where the size has keys", async () => {
+    const { edit, drag, pointer, property, timeline } = await stretched();
+    edit(
+      { owner: { clip: "c" }, path: "transform.width", op: "setKey", time: "0", value: 1920 },
+      { owner: { clip: "c" }, path: "transform.width", op: "setKey", time: "2", value: 1920 },
+    );
+    timeline.seek(Math.round(timeline.model?.rate.fps ?? 30));
+    drag(pointer(960, 270), pointer(860, 270));
+    const keys = (property("c", "transform.width") as Animation).keys;
+    expect(keys.map(({ time, value }) => [time, value])).toEqual([
+      ["0", 1920],
+      ["1", 1720],
+      ["2", 1920],
+    ]);
+    // Written already, with keys: the height is not.
+    expect(property("c", "transform.height")).toBeUndefined();
+  });
+
+  it("writes nothing for a drag that ends where it started", async () => {
+    const { drag, pointer, property, store } = await stretched();
+    drag(pointer(960, 270), pointer(860, 270), pointer(960, 270));
+    expect(property("c", "transform.width")).toBeUndefined();
+    expect(property("c", "transform.height")).toBeUndefined();
+    store.undo();
+    expect(store.getState().timelines["main"]?.clips["c"]).toBeUndefined();
+  });
+
+  it("does not go past the side across", async () => {
+    const { drag, pointer, property } = await stretched();
+    drag(pointer(960, 270), pointer(-200, 270));
+    expect(property("c", "transform.width")).toBe(1);
+    expect(property("c", "transform.x")).toBeCloseTo(-959.5, 6);
+  });
+});
+
 describe("the anchor", () => {
   it("moves without moving the picture: the position goes along", async () => {
     const { addClip, set, drag, pointer, property, grip } = await setup();

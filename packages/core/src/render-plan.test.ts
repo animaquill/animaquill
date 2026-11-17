@@ -148,6 +148,7 @@ describe("a layer of the render plan", () => {
     [{}, "contain"],
     [{ fit: "contain" }, "contain"],
     [{ fit: "cover" }, "cover"],
+    [{ fit: "stretch" }, "stretch"],
     [{ fit: "fixed" }, "fixed"],
   ])("with properties %j fits by %s", (properties, fit) => {
     expect(withClip({ properties }).layer().fit).toBe(fit);

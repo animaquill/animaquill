@@ -110,7 +110,7 @@ const DESCRIBED: Readonly<Record<string, Described>> = {
   fit: {
     type: "choice",
     default: "contain",
-    options: ["cover", "contain", "fixed"],
+    options: ["contain", "cover", "stretch", "fixed"],
     animatable: false,
   },
   /** How the picture of the clip goes onto what is below it, see the project format. */

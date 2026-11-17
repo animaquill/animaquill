@@ -1,4 +1,4 @@
-import { ProjectStore, aiTask } from "@animaquill/core";
+import { ProjectStore, aiTask, type RenderLayer } from "@animaquill/core";
 import { createProject, writeProject } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import { frameFacts, planOf } from "./look-facts.ts";
@@ -164,6 +164,28 @@ describe("aq_render_frames", () => {
     ]);
   });
 
+  it("says how far a picture is out of its shape, and not when it keeps it", () => {
+    const store = project();
+    const state = store.getState();
+    const plan = planOf(state, "main", undefined);
+    if (!plan) throw new Error("no plan");
+    const photo = (fit: RenderLayer["fit"]) =>
+      frameFacts(
+        state,
+        "main",
+        { ...plan, layers: plan.layers.map((layer) => ({ ...layer, fit })) },
+        21,
+      ).clips.find(({ id }) => id === "clip_photo");
+    // The picture is 1000 by 1000, in a box as large as the picture.
+    expect(photo("stretch")).toMatchObject({
+      cropped: false,
+      stretched: { across: 1.92, down: 1.08 },
+    });
+    for (const fit of ["contain", "cover", "fixed"] as const) {
+      expect(photo(fit)?.stretched, fit).toBeUndefined();
+    }
+  });
+
   it("says when a picture cuts its media to its box, and what the scenes say of their text", async () => {
     const store = project();
     const state = store.getState();
@@ -174,6 +196,7 @@ describe("aq_render_frames", () => {
       cropped: true,
       outside: false,
     });
+    expect(facts.clips.find(({ id }) => id === "clip_photo")?.stretched).toBeUndefined();
     // Text of a scene is in the CSS pixels of its page, which is its clip box: the world, here.
     const withText = frameFacts(
       state,

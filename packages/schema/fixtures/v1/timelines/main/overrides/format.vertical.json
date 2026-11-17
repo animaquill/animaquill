@@ -15,6 +15,12 @@
         "fit": { "value": "contain", "base": "cover" }
       }
     },
+    "clip_logo": {
+      "properties": {
+        "fit": { "value": "stretch" },
+        "transform.height": { "value": 108 }
+      }
+    },
     "clip_title": {
       "properties": {
         "param.size": { "value": 48, "base": 64 }

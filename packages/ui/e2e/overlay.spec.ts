@@ -8,6 +8,7 @@ import {
   keyButton,
   panel,
   placeImage,
+  png,
   typeInto,
 } from "./property-helpers.ts";
 import {
@@ -168,6 +169,41 @@ test("a scale handle scales around the anchor, and keeps the shape", async ({ pa
   await expectNear(page, "缩放", 100, 1.5);
   await page.keyboard.press("Control+z");
   await expectNear(page, "缩放", 50, 1);
+});
+
+test("a picture that stretches gets wider by its side, out of its shape, as one step to undo", async ({
+  page,
+}) => {
+  await placeImage(page, {
+    name: "四比三.png",
+    mimeType: "image/png",
+    buffer: png(400, 300, () => [255, 0, 0]),
+  });
+  const fit = panel(page).getByRole("combobox", { name: "适应方式" });
+  await expect(fit.getByRole("option")).toHaveText(["完整显示", "铺满", "拉伸铺满", "固定大小"]);
+  await fit.selectOption("拉伸铺满");
+  for (const side of ["上", "右", "下", "左"]) {
+    await expect(handle(page, `拉伸（${side}）`)).toBeAttached();
+    await expect(handle(page, `缩放（${side}）`)).toHaveCount(0);
+  }
+  await expect(handle(page, "缩放（右上）")).toBeAttached();
+  // All of the picture, which it did not fill before.
+  await expectColor(page, 10, 540, [...RED], 4);
+  const per = await unitsPerPixel(page, 1920);
+  // Its side is at the edge of the preview, and a hand grabs it from inside.
+  const side = await middleOf(handle(page, "拉伸（右）"));
+  await drag(page, { x: side.x - 3, y: side.y }, { x: side.x - 103, y: side.y + 20 });
+  await expectNear(page, "大小 宽", 1920 - 100 * per, 2);
+  await expect(field(page, "大小 高")).toHaveValue("1080");
+  await expectNear(page, "缩放", 100, 0.01);
+  // The left side stays where it was, the right one came in.
+  await expectColor(page, 10, 540, [...RED], 4);
+  await expectColor(page, 1920 - 100 * per + 10, 540, BLACK, 4);
+  await expectColor(page, 1920 - 100 * per - 10, 540, [...RED], 4);
+  await page.keyboard.press("Control+z");
+  await expect(field(page, "大小 宽")).toHaveValue("自动");
+  await expect(field(page, "大小 高")).toHaveValue("自动");
+  await expectColor(page, 1910, 540, [...RED], 4);
 });
 
 test("the rotate handle turns around the anchor, in steps of 15 degrees with Shift", async ({

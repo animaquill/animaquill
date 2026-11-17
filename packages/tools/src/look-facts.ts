@@ -68,6 +68,11 @@ export interface ClipFact {
   readonly outside: boolean;
   /** Its media is wider or taller than its box, which `cover` cuts. */
   readonly cropped: boolean;
+  /**
+   * How much wider and taller its media is drawn than the media is, where `stretch` or `fixed` puts
+   * it in a box of another shape: nothing where it keeps its shape.
+   */
+  readonly stretched?: { readonly across: number; readonly down: number };
   /** The clips in front of it or behind it that it overlaps, both small, by id. */
   readonly overlaps: readonly string[];
   readonly texts: readonly TextFact[];
@@ -119,6 +124,19 @@ export function pastOf(box: Rect, picture: Rect): Partial<Record<Side, number>> 
 }
 
 const area = (rect: Rect) => rect.width * rect.height;
+
+/** Less than this apart, the two ways of a picture count as the same: it keeps its shape. */
+const SHAPE_TOLERANCE = 0.01;
+
+/** How a picture that does not keep its shape in its box gets drawn, see `ClipFact.stretched`. */
+function stretchOf(layer: RenderLayer, media: Size | undefined, box: Size): ClipFact["stretched"] {
+  if (layer.fit !== "stretch" && layer.fit !== "fixed") return undefined;
+  if (!media || !(media.width > 0) || !(media.height > 0)) return undefined;
+  const across = box.width / media.width;
+  const down = box.height / media.height;
+  if (!(down > 0) || Math.abs(across / down - 1) <= SHAPE_TOLERANCE) return undefined;
+  return { across, down };
+}
 
 /** What a clip shows, in a word and an id. */
 function sourceOf(layer: RenderLayer, state: ProjectState, timeline: string): string {
@@ -199,6 +217,7 @@ export function frameFacts(
       media !== undefined &&
       Math.abs(media.width / media.height - placement.box.width / placement.box.height) >
         0.01 * (media.width / media.height);
+    const stretched = stretchOf(layer, media, placement.box);
     const all = textsOf(
       layer,
       seconds,
@@ -220,6 +239,7 @@ export function frameFacts(
       past: pastOf(box, picture),
       outside: on === undefined,
       cropped,
+      ...(stretched && { stretched }),
       texts: all.slice(0, room),
     });
   }

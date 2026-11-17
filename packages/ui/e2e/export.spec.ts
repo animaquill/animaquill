@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Download, Frame, Page } from "@playwright/test";
-import { field, placeImage, red, typeInto } from "./property-helpers.ts";
+import { field, panel, placeImage, png as pngOf, red, typeInto } from "./property-helpers.ts";
 import { needsDevPage, resourcesIn } from "./support.ts";
 import {
   canCapture,
@@ -227,6 +227,32 @@ test.describe("a frame with pictures", () => {
     // The same as the preview at full quality, pixel for pixel, and not a picture made larger.
     await quality("全分辨率");
     await expect.poll(() => differenceFromPreview(page, png)).toBeLessThanOrEqual(2);
+  });
+
+  test("of a 4:3 picture stretched into 16:9 has it in all four corners", async ({ page }) => {
+    const green = [0, 255, 0];
+    await placeImage(page, {
+      name: "四比三.png",
+      mimeType: "image/png",
+      buffer: pngOf(400, 300, () => [0, 255, 0]),
+    });
+    const fit = panel(page).getByRole("combobox", { name: "适应方式" });
+    await fit.selectOption("拉伸铺满");
+    await expect(fit).toHaveValue("stretch");
+    await expect.poll(async () => close(await colorInPreview(page), green)).toBe(true);
+    const download = page.waitForEvent("download");
+    await chooseExport(page);
+    await dialog(page).getByRole("button", { name: "保存后导出" }).click();
+    const picture = await bytesOf(await download);
+    expect(sizeOf(picture)).toEqual({ width: WIDTH, height: HEIGHT });
+    for (const [x, y] of [
+      [4, 4],
+      [WIDTH - 5, 4],
+      [4, HEIGHT - 5],
+      [WIDTH - 5, HEIGHT - 5],
+    ] as const) {
+      expect(close(await pixelOf(page, picture, x, y), green), `${x}, ${y}`).toBe(true);
+    }
   });
 
   test("waits for a file that takes long, and draws nothing until then", async ({ page }) => {

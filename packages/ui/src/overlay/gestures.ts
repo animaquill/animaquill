@@ -2,6 +2,7 @@ import {
   anchoredAt,
   applyEdit,
   CommandError,
+  invert,
   secondsOf,
   solveHandle,
   straightened,
@@ -272,6 +273,85 @@ export function pathKeyGesture(
           time: there?.time ?? key.time,
           value: tidy(value + by, bound.spec),
         });
+      }
+      return edits;
+    },
+  };
+}
+
+/** A side of a box: the top, right, bottom or left. */
+export type BoxSide = "n" | "e" | "s" | "w";
+
+/** What a drag of a side of a stretched box writes. */
+export interface StretchBinds {
+  /** The width for the left and right side, the height for the top and bottom. */
+  readonly size: Bound;
+  /**
+   * The other one, which a box that has neither gets as it is, so that the box stays the shape it
+   * has on the picture.
+   */
+  readonly other?: Bound;
+  /** The position, which keeps the side across where it is. */
+  readonly x: Bound;
+  readonly y: Bound;
+}
+
+/** The smallest a side makes a box, in world units, unless it was smaller already. */
+export const SMALLEST_SIDE = 1;
+
+/**
+ * Drags a side of a box whose picture fills it out of shape (`fit` "stretch"), as Figma and
+ * PowerPoint do: the width or the height goes as far as the pointer went across that side, and the
+ * side across stays where it is, which takes the position along, whichever way the box is turned
+ * and wherever its anchor is. With Alt both sides go, around the middle. Writes like any other
+ * value, on the key of this frame where it has keys; a position that stays is not written.
+ */
+export function stretchGesture(
+  side: BoxSide,
+  placement: Placement,
+  toWorld: Matrix,
+  binds: StretchBinds,
+  pressed: OverlayPointer,
+): Gesture | undefined {
+  const { box, matrix, transform } = placement;
+  const back = invert(matrix);
+  if (!back) return undefined;
+  const across = side === "e" || side === "w";
+  const start = across ? box.width : box.height;
+  const anchor = across ? transform.anchorX : transform.anchorY;
+  // Which way the box goes in the world, per unit of the box.
+  const [a, b, c, d] = matrix;
+  const [ax, ay] = across ? [a, b] : [c, d];
+  const toBox = (pointer: OverlayPointer) => transformPoint(back, transformPoint(toWorld, pointer));
+  const from = toBox(pressed);
+  const far = side === "e" || side === "s" ? 1 : -1;
+  const smallest = Math.min(SMALLEST_SIDE, start);
+  return {
+    edits(pointer) {
+      const to = toBox(pointer);
+      const moved = across ? to.x - from.x : to.y - from.y;
+      const size = tidy(
+        Math.max(start + far * moved * (pointer.alt ? 2 : 1), smallest),
+        binds.size.spec,
+      );
+      // The share of the box that stays where it is: the side across, or with Alt the middle.
+      const stays = pointer.alt ? 0.5 : far === 1 ? 0 : 1;
+      const by = (stays - anchor) * (start - size);
+      const edits: PropertyEdit[] = [];
+      const write = (bound: Bound, value: number) => {
+        const live = bound.now();
+        if (!live) return false;
+        edits.push(live.write(tidy(value, bound.spec)));
+        return true;
+      };
+      if (!write(binds.size, size)) return undefined;
+      if (binds.other && !write(binds.other, binds.other.start)) return undefined;
+      for (const [bound, value] of [
+        [binds.x, binds.x.start + ax * by],
+        [binds.y, binds.y.start + ay * by],
+      ] as const) {
+        if (!bound.now()) return undefined;
+        if (tidy(value, bound.spec) !== tidy(bound.start, bound.spec)) write(bound, value);
       }
       return edits;
     },

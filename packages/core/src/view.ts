@@ -178,6 +178,8 @@ const sizeAt = (channel: Channel | undefined, clock: number) =>
  * The clip box at a moment, in world units. Without a size it follows the stage, so that a clip
  * stays full size in every format, or with `fixed` it is as large as the media. A size in one
  * direction takes the other from the shape of the media. A plain color has no shape of its own.
+ * With `stretch` each direction of a picture or a video is on its own: what is not written is as
+ * large as the stage, as the media gets stretched to its box anyway.
  */
 export function boxOf(
   layer: Pick<RenderLayer, "fit" | "channels" | "offset" | "start">,
@@ -188,6 +190,9 @@ export function boxOf(
   const clock = clockOf(layer, time);
   const width = sizeAt(layer.channels["transform.width"], clock);
   const height = sizeAt(layer.channels["transform.height"], clock);
+  if (layer.fit === "stretch" && natural) {
+    return { width: width ?? stage.width, height: height ?? stage.height };
+  }
   if (width === undefined && height === undefined) {
     return layer.fit === "fixed" && natural ? natural : stage;
   }
@@ -282,13 +287,14 @@ export function pictureIn(fit: RenderLayer["fit"], natural: Size | undefined, bo
 
 /**
  * Where the media goes in its box. `contain` shows all of it, `cover` fills the box and leaves out
- * what sticks out on both sides, and `fixed` fills the box whatever the shape.
+ * what sticks out on both sides, and `fixed` and `stretch` fill the box whatever the shape.
  */
 export function fitIn(fit: RenderLayer["fit"], natural: Size, box: Size): Fitted {
   const whole = { x: 0, y: 0, width: natural.width, height: natural.height };
   const wide = box.width / natural.width;
   const tall = box.height / natural.height;
-  if (fit === "fixed") return { source: whole, matrix: [wide, 0, 0, tall, 0, 0] };
+  if (fit === "fixed" || fit === "stretch")
+    return { source: whole, matrix: [wide, 0, 0, tall, 0, 0] };
   const scale = fit === "cover" ? Math.max(wide, tall) : Math.min(wide, tall);
   const x = (box.width - natural.width * scale) / 2;
   const y = (box.height - natural.height * scale) / 2;
