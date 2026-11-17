@@ -3735,3 +3735,274 @@ describe("effects from their tab", () => {
     expect(editor.effectProblem("blur")).toBe("locked");
   });
 });
+
+describe("in and out", () => {
+  it("marks at the playhead, and the out frame is part of what is marked", async () => {
+    const { editor } = await setup();
+    editor.seek(30);
+    editor.markIn();
+    editor.seek(59);
+    editor.markOut();
+    expect(editor.marks).toEqual({ in: 30, out: 59 });
+    expect(editor.markedSpan).toEqual({ from: 1, to: 2 });
+  });
+
+  it("marks up to the end without an out, and from the start without an in", async () => {
+    const { editor } = await setup();
+    editor.seek(60);
+    editor.markIn();
+    expect(editor.markedSpan).toEqual({ from: 2, to: 10 });
+    editor.clearMarks();
+    editor.markOut();
+    expect(editor.markedSpan).toEqual({ from: 0, to: 61 / 30 });
+  });
+
+  it("takes the other end away when one goes past it, as Premiere does", async () => {
+    const { editor } = await setup();
+    editor.seek(30);
+    editor.markIn();
+    editor.seek(60);
+    editor.markOut();
+    editor.seek(10);
+    editor.markOut();
+    expect(editor.marks).toEqual({ out: 10 });
+    editor.seek(20);
+    editor.markIn();
+    expect(editor.marks).toEqual({ in: 20 });
+    editor.seek(20);
+    editor.markOut();
+    expect(editor.marks).toEqual({ in: 20, out: 20 });
+  });
+
+  it("marks what the selected clips cover", async () => {
+    const { editor, addClip, audio } = await setup();
+    addClip("a", 1, 1);
+    addClip("b", 3, 2, audio);
+    editor.selectOnly("a");
+    editor.addToSelection("b");
+    expect(editor.markClip()).toBe(true);
+    expect(editor.marks).toEqual({ in: 30, out: 149 });
+  });
+
+  it("marks the clip at the playhead on the topmost track that is not locked", async () => {
+    const { editor, addClip, store, video, audio } = await setup();
+    addClip("a", 1, 2);
+    addClip("b", 0, 5, audio);
+    editor.seek(45);
+    expect(editor.markClip()).toBe(true);
+    expect(editor.marks).toEqual({ in: 30, out: 89 });
+    const locked = { timeline: "main", track: video, changes: { locked: true } };
+    expect(store.execute({ type: "track.update", params: locked }).ok).toBe(true);
+    editor.markClip();
+    expect(editor.marks).toEqual({ in: 0, out: 149 });
+    editor.seek(200);
+    expect(editor.markClip()).toBe(false);
+    expect(editor.marks).toEqual({ in: 0, out: 149 });
+  });
+
+  it("goes to either end, and clears one or both", async () => {
+    const { editor } = await setup();
+    editor.setMarks({ in: 30, out: 60 });
+    editor.goToIn();
+    expect(editor.frame).toBe(30);
+    editor.goToOut();
+    expect(editor.frame).toBe(60);
+    editor.clearIn();
+    expect(editor.marks).toEqual({ out: 60 });
+    editor.setMarks({ in: 30, out: 60 });
+    editor.clearOut();
+    expect(editor.marks).toEqual({ in: 30 });
+    editor.clearMarks();
+    expect(editor.marks).toEqual({});
+    expect(editor.markedSpan).toBeUndefined();
+  });
+
+  it("plays from the in, and stops on the out frame", async () => {
+    const { editor } = await setup();
+    editor.setMarks({ in: 30, out: 59 });
+    editor.seek(200);
+    editor.playInToOut();
+    expect(editor.frame).toBe(30);
+    editor.tick(0);
+    editor.tick(900);
+    expect(editor.getSnapshot().playing).toBe(true);
+    editor.tick(1100);
+    expect(editor.frame).toBe(59);
+    expect(editor.getSnapshot().playing).toBe(false);
+  });
+
+  it("plays on past the out when people just play", async () => {
+    const { editor } = await setup();
+    editor.setMarks({ in: 0, out: 10 });
+    editor.togglePlayback();
+    editor.tick(0);
+    editor.tick(2000);
+    expect(editor.frame).toBe(60);
+  });
+
+  it("are kept by the window for each timeline, and come back after a reload", async () => {
+    const memory = memoryWindow();
+    const { editor, session, store } = await setup(memory);
+    const id = store.getState().manifest.id;
+    editor.setMarks({ in: 30, out: 60 });
+    expect(memory.read(`timeline.${id}.marks.main`)).toBe('{"in":1,"out":2}');
+    await session.close();
+    await session.create("另一个");
+    expect(editor.marks).toEqual({});
+    await session.close();
+    await session.open(id);
+    expect(editor.marks).toEqual({ in: 30, out: 60 });
+    // Not in the project, and nothing to undo.
+    expect(JSON.stringify(store.getState())).not.toContain('"in"');
+  });
+
+  it("stay at their moment when the frame rate changes", async () => {
+    const memory = memoryWindow();
+    const { editor, store } = await setup(memory);
+    editor.setMarks({ in: 30, out: 60 });
+    const result = store.execute({ type: "project.setFrameRate", params: { fps: "60" } });
+    expect(result.ok).toBe(true);
+    expect(editor.marks).toEqual({ in: 60, out: 120 });
+  });
+
+  it.each([
+    ["no JSON", "{oops"],
+    ["an out before the in", '{"in":2,"out":1}'],
+    ["negative numbers", '{"in":-1}'],
+  ])("ignores what it cannot use: %s", async (_, text) => {
+    const memory = memoryWindow();
+    vi.spyOn(memory, "read").mockImplementation((key) =>
+      key.includes(".marks.") ? text : undefined,
+    );
+    const { editor } = await setup(memory);
+    expect(editor.marks).toEqual({});
+  });
+
+  describe("on the ruler", () => {
+    const bottom = RULER_HEIGHT - 3;
+
+    it("drags the in, which snaps to the edge of a clip", async () => {
+      const { editor, addClip, onRuler, drag } = await setup();
+      addClip("a", 2, 1);
+      editor.setMarks({ in: 30, out: 150 });
+      drag(onRuler(1), onRuler(2.02));
+      expect(editor.marks).toEqual({ in: 60, out: 150 });
+      drag(onRuler(2), onRuler(1.02, { alt: true }));
+      expect(editor.marks).toEqual({ in: 31, out: 150 });
+    });
+
+    it("drags the out by where its frame ends, and not past the in", async () => {
+      const { editor, onRuler, drag } = await setup();
+      editor.setMarks({ in: 30, out: 59 });
+      drag(onRuler(2), onRuler(3));
+      expect(editor.marks).toEqual({ in: 30, out: 89 });
+      drag(onRuler(3), onRuler(0.2));
+      expect(editor.marks).toEqual({ in: 30, out: 30 });
+    });
+
+    it("moves both by the band between them, and no further than the ends", async () => {
+      const { editor, onRuler, drag } = await setup();
+      editor.setMarks({ in: 30, out: 59 });
+      drag(onRuler(1.5, { y: bottom }), onRuler(2.5, { y: bottom, alt: true }));
+      expect(editor.marks).toEqual({ in: 60, out: 89 });
+      drag(onRuler(2.5, { y: bottom }), onRuler(-5, { y: bottom, alt: true }));
+      expect(editor.marks).toEqual({ in: 0, out: 29 });
+    });
+
+    it("leaves them as they were when dragged back, and as they were when called off", async () => {
+      const { editor, onRuler } = await setup();
+      editor.setMarks({ in: 30, out: 59 });
+      editor.press(onRuler(1));
+      editor.drag(onRuler(1.5));
+      editor.drag(onRuler(1));
+      editor.release(onRuler(1));
+      expect(editor.marks).toEqual({ in: 30, out: 59 });
+      expect(editor.frame).toBe(0);
+      editor.press(onRuler(1));
+      editor.drag(onRuler(1.5));
+      expect(editor.marks).toEqual({ in: 45, out: 59 });
+      editor.cancelDrag();
+      expect(editor.marks).toEqual({ in: 30, out: 59 });
+    });
+
+    it("moves the playhead on a click on the band, and above it", async () => {
+      const { editor, onRuler } = await setup();
+      editor.setMarks({ in: 30, out: 89 });
+      editor.press(onRuler(2, { y: bottom }));
+      editor.release(onRuler(2, { y: bottom }));
+      expect(editor.frame).toBe(60);
+      expect(editor.marks).toEqual({ in: 30, out: 89 });
+      editor.press(onRuler(1.5));
+      editor.release(onRuler(1.5));
+      expect(editor.frame).toBe(45);
+    });
+  });
+});
+
+describe("playing at other speeds", () => {
+  it("goes twice as fast at twice the rate", async () => {
+    const { editor } = await setup();
+    editor.play(2);
+    editor.tick(0);
+    editor.tick(1000);
+    expect(editor.frame).toBe(60);
+    expect(editor.playbackStart?.rate).toBe(2);
+  });
+
+  it("goes backwards, and stops at the start", async () => {
+    const { editor } = await setup();
+    editor.seek(90);
+    editor.play(-1);
+    editor.tick(0);
+    editor.tick(1000);
+    expect(editor.frame).toBe(60);
+    editor.tick(5000);
+    expect(editor.frame).toBe(0);
+    expect(editor.getSnapshot().playing).toBe(false);
+  });
+
+  it("goes slowly at a quarter of the speed", async () => {
+    const { editor } = await setup();
+    editor.play(0.25);
+    editor.tick(0);
+    editor.tick(4000);
+    expect(editor.frame).toBe(30);
+  });
+
+  it("starts over from where it is when the rate changes", async () => {
+    const { editor } = await setup();
+    editor.play(1);
+    editor.tick(0);
+    editor.tick(1000);
+    const first = editor.playbackStart;
+    editor.play(4);
+    editor.tick(1000);
+    expect(editor.playbackStart).not.toBe(first);
+    editor.tick(1500);
+    expect(editor.frame).toBe(30 + 60);
+  });
+
+  it("J, K and L drive it", async () => {
+    const { editor } = await setup();
+    editor.seek(150);
+    const { shuttle } = editor;
+    shuttle.forward();
+    shuttle.forward();
+    expect(editor.getSnapshot()).toMatchObject({ playing: true, rate: 2 });
+    shuttle.backward();
+    expect(editor.getSnapshot().rate).toBe(-1);
+    shuttle.stop();
+    expect(editor.getSnapshot().playing).toBe(false);
+    shuttle.forward();
+    expect(editor.getSnapshot().playing).toBe(false);
+    expect(editor.frame).toBe(151);
+    shuttle.forwardUp();
+    shuttle.stopUp();
+    // Space plays at the normal speed again.
+    shuttle.forward();
+    shuttle.forward();
+    editor.togglePlayback();
+    editor.togglePlayback();
+    expect(editor.getSnapshot().rate).toBe(1);
+  });
+});

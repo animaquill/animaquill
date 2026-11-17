@@ -35,6 +35,20 @@ import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
 import { readSetting } from "../workbench/settings.ts";
 import { frameAt, frameSeconds, frameTime } from "./frames.ts";
 import {
+  NO_MARKS,
+  hasMarks,
+  markedFrames,
+  marksText,
+  parseMarks,
+  sameMarks,
+  withIn,
+  withOut,
+  without,
+  type Marks,
+} from "./marks.ts";
+import { MarksGesture, type MarksPart } from "./marks-drag.ts";
+import { Shuttle } from "./shuttle.ts";
+import {
   attachCalls,
   attachContext,
   attachProblem,
@@ -136,6 +150,10 @@ const MIN_ROW_SCALE = 0.6;
 const MAX_ROW_SCALE = 3;
 const ROW_SCALE_STEP = 1.25;
 const END_HANDLE_REACH = 7;
+/** How near the pointer has to be to an end of what is marked to take it. */
+const MARK_HANDLE_REACH = 6;
+/** How far up from the bottom of the ruler the band of what is marked can be taken. */
+export const MARK_BAND_REACH = 9;
 /** How far from a cut a transition dragged there still goes between the clips, in pixels. */
 const SEAM_REACH = 10;
 const REMEMBER_DELAY_MS = 300;
@@ -246,6 +264,8 @@ function newTrackOf(model: TimelineModel, kind: "video" | "audio") {
 export type Hit =
   | { readonly kind: "ruler" }
   | { readonly kind: "end" }
+  /** The ends of the part marked with in and out, or the band between them. */
+  | { readonly kind: "marks"; readonly part: MarksPart }
   | { readonly kind: "lane"; readonly row: Row; readonly seconds: number }
   | {
       readonly kind: "clip";
@@ -324,9 +344,22 @@ export interface TimelineSnapshot {
   /** Whether a click adds to the selection, or takes away from it. For fingers above all. */
   readonly multiSelecting: boolean;
   readonly playing: boolean;
+  /** Timeline seconds per real second while playing, negative backwards: J and L change it. */
+  readonly rate: number;
+  /** What is marked with in and out, see `Marks`. */
+  readonly marks: Marks;
   readonly headerWidth: number;
   /** Cut, and waiting to be pasted somewhere else. They stay until then. */
   readonly cut: ReadonlySet<string>;
+}
+
+/** Where playing started, by the clock, and how fast it goes. */
+export interface PlaybackStart {
+  readonly frame: number;
+  /** Milliseconds of the clock. */
+  readonly since: number;
+  /** Timeline seconds per real second, negative backwards. */
+  readonly rate: number;
 }
 
 /** A clip and where it is on screen, in pixels from the top left of the timeline area. */
@@ -385,6 +418,9 @@ function parseRemembered(text: string | undefined): RememberedView | undefined {
     return undefined;
   }
 }
+
+/** Where a window keeps the marks of a timeline. */
+const marksKey = (project: string, timeline: string) => `timeline.${project}.marks.${timeline}`;
 
 const SETTINGS_KEY = "timeline";
 const SETTINGS_VERSION = 1;
@@ -447,6 +483,8 @@ export class TimelineEditor implements TouchTarget {
     overwriting: false,
     multiSelecting: false,
     playing: false,
+    rate: 1,
+    marks: NO_MARKS,
     headerWidth: DEFAULT_HEADER_WIDTH,
     cut: new Set(),
   };
@@ -462,8 +500,12 @@ export class TimelineEditor implements TouchTarget {
   #razorAt: number | undefined;
   #pointedAt: number | undefined;
   #frame = 0;
-  /** Where the clock and the playhead were together last. */
-  #playback: { readonly frame: number; readonly since: number } | undefined;
+  /** Where the clock and the playhead were together last, and how fast it goes from there. */
+  #playback: PlaybackStart | undefined;
+  /** The frame playing stops on, as when it goes from in to out. */
+  #stopAt: number | undefined;
+  /** Which project, timeline and frame rate the marks are those of. */
+  #marksOf: string | undefined;
   #edgeReach = EDGE_REACH;
   /** How to get back from showing everything, while the view is still the one that showed it. */
   #beforeFit: { readonly from: ViewPlace; readonly fitted: ViewPlace } | undefined;
@@ -925,6 +967,7 @@ export class TimelineEditor implements TouchTarget {
       (isJoinChoice(chosen)
         ? model?.joins.has(chosen.join) === true
         : model?.boxes.get(chosen.clip)?.clip[chosen.edge] !== undefined);
+    this.#followMarks(model);
     this.#snapshot = {
       ...this.#snapshot,
       model,
@@ -1141,6 +1184,9 @@ export class TimelineEditor implements TouchTarget {
 
   /* The playhead. */
 
+  /** J, K and L. */
+  readonly shuttle = new Shuttle(this);
+
   /** Starts over at the end of the timeline, like every player. */
   togglePlayback(): void {
     const { model } = this;
@@ -1150,11 +1196,25 @@ export class TimelineEditor implements TouchTarget {
       return;
     }
     if (this.#frame >= frameAt(model.duration, model.rate)) this.seek(0);
+    this.play(1);
+  }
+
+  /** Plays at a rate: timeline seconds per real second, negative backwards. */
+  play(rate: number): void {
+    if (!this.model || rate === 0 || !Number.isFinite(rate)) return;
+    this.#stopAt = undefined;
     this.#playback = undefined;
-    this.#setPlaying(true);
+    this.#snapshot = { ...this.#snapshot, playing: true, rate };
+    this.#emitter.emit();
+  }
+
+  /** How fast it plays, or undefined when it does not. */
+  get playingRate(): number | undefined {
+    return this.#snapshot.playing ? this.#snapshot.rate : undefined;
   }
 
   pause(): void {
+    this.#stopAt = undefined;
     if (this.#snapshot.playing) this.#setPlaying(false);
   }
 
@@ -1163,21 +1223,28 @@ export class TimelineEditor implements TouchTarget {
     this.#emitter.emit();
   }
 
-  /** The time from whoever keeps the clock. Later that is the audio, for now it is the screen. */
   /** Where playing started from. A new one means the sound has to start over from there. */
-  get playbackStart(): { readonly frame: number; readonly since: number } | undefined {
+  get playbackStart(): PlaybackStart | undefined {
     return this.#playback;
   }
 
   tick(milliseconds: number): void {
     const { model } = this;
-    if (!model || !this.#snapshot.playing) return;
-    this.#playback ??= { frame: this.#frame, since: milliseconds };
+    const { playing, rate } = this.#snapshot;
+    if (!model || !playing) return;
+    this.#playback ??= { frame: this.#frame, since: milliseconds, rate };
     const { frame, since } = this.#playback;
-    const next = frame + ((milliseconds - since) / 1000) * model.rate.fps;
-    const last = frameAt(model.duration, model.rate);
+    const next = frame + ((milliseconds - since) / 1000) * model.rate.fps * rate;
+    if (rate < 0) {
+      this.#seekTo(Math.max(next, 0));
+      if (next <= 0) this.pause();
+      return;
+    }
+    // The out frame is part of what is marked: it shows for as long as any other.
+    const stop = this.#stopAt;
+    const last = stop ?? frameAt(model.duration, model.rate);
     this.#seekTo(Math.min(next, last));
-    if (next >= last) this.pause();
+    if (next >= (stop === undefined ? last : stop + 1)) this.pause();
   }
 
   /** Moves the playhead, and playing carries on from there. */
@@ -1221,6 +1288,117 @@ export class TimelineEditor implements TouchTarget {
     const candidates = frames.filter((frame) => (frame - this.#frame) * direction > 0);
     if (candidates.length === 0) return;
     this.seek(direction > 0 ? Math.min(...candidates) : Math.max(...candidates));
+  }
+
+  /* In and out. */
+
+  get marks(): Marks {
+    return this.#snapshot.marks;
+  }
+
+  /** The marked part in seconds, for drawing: see `markedFrames`. */
+  get markedSpan(): { readonly from: number; readonly to: number } | undefined {
+    const { model } = this;
+    const frames = model && markedFrames(this.#snapshot.marks, frameAt(model.duration, model.rate));
+    if (!model || !frames) return undefined;
+    const seconds = (frame: number) => frameSeconds(frame, model.rate);
+    return { from: seconds(frames.from), to: seconds(frames.to) };
+  }
+
+  markIn(): void {
+    this.setMarks(withIn(this.#snapshot.marks, this.#frame));
+  }
+
+  markOut(): void {
+    this.setMarks(withOut(this.#snapshot.marks, this.#frame));
+  }
+
+  /**
+   * Marks what the selected clips cover, or else the clip at the playhead on the topmost track that
+   * is not locked. Says whether there was one.
+   */
+  markClip(): boolean {
+    const { model } = this;
+    if (!model) return false;
+    const boxes = [...this.#snapshot.selection].flatMap((id) => {
+      const box = model.boxes.get(id);
+      return box ? [box] : [];
+    });
+    if (boxes.length === 0) {
+      const seconds = frameSeconds(this.#frame, model.rate);
+      const row = model.rows.find(
+        (each) => !each.gone && each.track.locked !== true && clipAt(each, seconds),
+      );
+      const box = row && clipAt(row, seconds);
+      if (box) boxes.push(box);
+    }
+    if (boxes.length === 0) return false;
+    const from = Math.min(...boxes.map(({ start }) => frameAt(start, model.rate)));
+    const to = Math.max(...boxes.map(({ end }) => frameAt(end, model.rate)));
+    this.setMarks({ in: from, out: Math.max(to - 1, from) });
+    return true;
+  }
+
+  goToIn(): void {
+    const { in: from } = this.#snapshot.marks;
+    if (from !== undefined) this.seek(from);
+  }
+
+  goToOut(): void {
+    const { out } = this.#snapshot.marks;
+    if (out !== undefined) this.seek(out);
+  }
+
+  clearMarks(): void {
+    this.setMarks(NO_MARKS);
+  }
+
+  clearIn(): void {
+    this.setMarks(without(this.#snapshot.marks, "in"));
+  }
+
+  clearOut(): void {
+    this.setMarks(without(this.#snapshot.marks, "out"));
+  }
+
+  /** Plays what is marked, and stops on the out frame. */
+  playInToOut(): void {
+    const { model } = this;
+    if (!model) return;
+    const { in: from, out } = this.#snapshot.marks;
+    this.seek(from ?? 0);
+    this.play(1);
+    this.#stopAt = out;
+  }
+
+  /** Changes the marks, which this window keeps for each timeline, also after a reload. */
+  setMarks(marks: Marks): void {
+    if (sameMarks(marks, this.#snapshot.marks)) return;
+    this.#snapshot = { ...this.#snapshot, marks };
+    const { model } = this;
+    const store = this.#store;
+    if (model && store) {
+      this.#memory.write(marksKey(projectKeyOf(store), model.id), marksText(marks, model.rate));
+    }
+    this.#emitter.emit();
+    this.#viewEmitter.emit();
+  }
+
+  /** The marks of the timeline on screen, as this window left them. */
+  #followMarks(model: TimelineModel | undefined): void {
+    const store = this.#store;
+    const key = store && model ? `${marksKey(projectKeyOf(store), model.id)} ${model.fps}` : "";
+    if (key === this.#marksOf) return;
+    this.#marksOf = key;
+    const marks =
+      store && model
+        ? parseMarks(this.#memory.read(marksKey(projectKeyOf(store), model.id)), model.rate)
+        : NO_MARKS;
+    this.#snapshot = { ...this.#snapshot, marks };
+  }
+
+  get hasMarks(): boolean {
+    return hasMarks(this.#snapshot.marks);
   }
 
   /* Changing the project. */
@@ -1913,7 +2091,9 @@ export class TimelineEditor implements TouchTarget {
     if (!model) return { kind: "empty" };
     if (y < RULER_HEIGHT) {
       const onEnd = Math.abs(x - this.xAt(this.visibleDuration)) <= END_HANDLE_REACH;
-      return onEnd ? { kind: "end" } : { kind: "ruler" };
+      if (onEnd) return { kind: "end" };
+      const part = this.#marksAt(x, y);
+      return part ? { kind: "marks", part } : { kind: "ruler" };
     }
     const row = rowAt(model, this.laneAt(y));
     if (!row) return { kind: "empty" };
@@ -2455,8 +2635,27 @@ export class TimelineEditor implements TouchTarget {
     this.#viewEmitter.emit();
   }
 
+  /** The nearer end of what is marked, or the band along the bottom of the ruler between them. */
+  #marksAt(x: number, y: number): MarksPart | undefined {
+    const { model } = this;
+    const span = this.markedSpan;
+    if (!model || !span) return undefined;
+    const { in: from, out } = this.#snapshot.marks;
+    const ends = [
+      ...(from === undefined ? [] : [{ part: "in" as const, x: this.xAt(span.from) }]),
+      ...(out === undefined ? [] : [{ part: "out" as const, x: this.xAt(span.to) }]),
+    ]
+      .map((end) => ({ ...end, distance: Math.abs(end.x - x) }))
+      .filter(({ distance }) => distance <= MARK_HANDLE_REACH)
+      .toSorted((a, b) => a.distance - b.distance);
+    if (ends[0]) return ends[0].part;
+    const inBand = y >= RULER_HEIGHT - MARK_BAND_REACH && x > this.xAt(span.from);
+    return inBand && x < this.xAt(span.to) ? "both" : undefined;
+  }
+
   #cursorFor(hit: Hit): string {
     if (hit.kind === "end") return "ew-resize";
+    if (hit.kind === "marks") return hit.part === "both" ? "grab" : "ew-resize";
     if (hit.kind === "ruler") return "pointer";
     if (hit.kind === "join") return hit.edge ? "col-resize" : "default";
     if (hit.kind !== "clip") return "default";
@@ -2498,6 +2697,7 @@ export class TimelineEditor implements TouchTarget {
     if (
       hit.kind === "ruler" ||
       hit.kind === "end" ||
+      hit.kind === "marks" ||
       (selected && hit.kind === "clip" && hit.edge) ||
       ((selected || chosen) && handle)
     ) {
@@ -2526,6 +2726,9 @@ export class TimelineEditor implements TouchTarget {
     const host = this.#host;
     if (hit.kind === "ruler") {
       this.#gesture = new ScrubGesture(host, pointer);
+    } else if (hit.kind === "marks") {
+      const set = (marks: Marks) => this.setMarks(marks);
+      this.#gesture = new MarksGesture(host, hit.part, this.#snapshot.marks, set, pointer);
     } else if (hit.kind === "end") {
       const last = orderedSections(model.state).at(-1);
       if (!last) return;

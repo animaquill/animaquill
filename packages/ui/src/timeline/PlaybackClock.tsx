@@ -1,4 +1,4 @@
-import { PlaybackAudio } from "@animaquill/audio";
+import { PlaybackAudio, createPitchKeeper } from "@animaquill/audio";
 import { buildAudioPlan, type AudioPlan } from "@animaquill/core";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
@@ -27,6 +27,11 @@ export function PlaybackClock() {
         warned.add(file);
       },
       onNote: (kind, data) => diagnostics.note(kind, data),
+      // Its own file, because the editor runs no scripts that it did not serve itself.
+      keepPitch: async (context) => {
+        const { default: url } = await import("@animaquill/audio/stretch-worklet?worker&url");
+        return createPitchKeeper(context, url);
+      },
     });
   }, [diagnostics, notifications, projects, store, t, workbench]);
 
@@ -58,8 +63,9 @@ export function PlaybackClock() {
       if (next && plan && playbackStart === start && PlaybackAudio.sameButGains(next, plan)) {
         if (next !== plan) audio.changeGains(next);
       } else if (next) {
-        const seconds = playbackStart.frame / model.rate.fps + (now - playbackStart.since) / 1000;
-        audio.play(next, seconds, now);
+        const { frame, since, rate } = playbackStart;
+        const seconds = frame / model.rate.fps + ((now - since) / 1000) * rate;
+        audio.play(next, seconds, now, rate);
       }
       plan = next;
       start = playbackStart;

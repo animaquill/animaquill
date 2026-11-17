@@ -13,6 +13,8 @@ import { readSetting } from "./settings.ts";
 export type KeyDown = KeyEventFacts &
   Pick<KeyboardEvent, "isComposing" | "repeat" | "defaultPrevented" | "target" | "preventDefault">;
 
+export type KeyUp = Pick<KeyboardEvent, "code">;
+
 export interface KeybindingMessages {
   restoreFailed(): void;
   saveFailed(): void;
@@ -87,6 +89,8 @@ export class KeybindingService {
   #owners = new Map<string, string>();
   /** The panel in use. Menus and the like take the focus, but people stay with that panel. */
   #panel: string | undefined;
+  /** Keys that are down and ran an action that wants to hear when they come up, by physical key. */
+  readonly #held = new Map<string, Action>();
   #revision = 0;
   #saveFailed = false;
 
@@ -185,13 +189,39 @@ export class KeybindingService {
     if (event.defaultPrevented || event.isComposing) return;
     const combo = comboOf(event, this.platform);
     if (!combo) return;
+    // Held down, it goes on being what it was, whatever came or went meanwhile.
+    const holding = event.repeat ? this.#held.get(event.code) : undefined;
+    if (holding) {
+      event.preventDefault();
+      return;
+    }
     const action = this.#actionFor(combo, this.#scopeOf(event.target));
     if (!action || (only && !only.has(action.id))) return;
     if (isTextEntry(event.target) && !worksWhileTyping(combo)) return;
     if (isSlider(event.target) && SLIDER_KEYS.has(combo)) return;
     // Also for a key that is held down, or the browser would get it the second time around.
     event.preventDefault();
-    if (!event.repeat || action.repeats) this.#actions.perform(action, "keys");
+    if (event.repeat && !action.repeats) return;
+    if (action.release) {
+      this.#held.get(event.code)?.release?.();
+      this.#held.set(event.code, action);
+    }
+    this.#actions.perform(action, "keys");
+  }
+
+  /** A key came up: what it was holding down ends. */
+  handleUp(event: KeyUp): void {
+    const action = this.#held.get(event.code);
+    if (!action) return;
+    this.#held.delete(event.code);
+    action.release?.();
+  }
+
+  /** The window lost the keyboard, which never says which keys came up meanwhile. */
+  releaseAll(): void {
+    const held = [...this.#held.values()];
+    this.#held.clear();
+    for (const action of held) action.release?.();
   }
 
   /**

@@ -86,3 +86,8 @@
   color: var(--aq-timeline-playhead);
   font-weight: 600;
 }
+
+.rate {
+  color: var(--aq-text-strong);
+  font-weight: 600;
+}

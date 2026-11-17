@@ -238,12 +238,12 @@ test.describe("shortcuts", () => {
   test("a key can be added and works at once", async ({ page }) => {
     await openShortcuts(page);
     await startRecording(page, "layout.switch.animate");
-    await page.keyboard.press("KeyJ");
+    await page.keyboard.press("KeyH");
     await expect(
-      row(page, "layout.switch.animate").locator("kbd", { hasText: /^J$/ }),
+      row(page, "layout.switch.animate").locator("kbd", { hasText: /^H$/ }),
     ).toBeVisible();
     await closeShortcuts(page);
-    await page.keyboard.press("KeyJ");
+    await page.keyboard.press("KeyH");
     await expect(layoutMenu(page, "动画")).toBeVisible();
   });
 
@@ -263,11 +263,11 @@ test.describe("shortcuts", () => {
   }) => {
     await openShortcuts(page);
     await startRecording(page, "layout.switch.animate");
-    await page.keyboard.press("KeyJ");
+    await page.keyboard.press("KeyH");
     await closeShortcuts(page);
     await openPalette(page);
-    await page.keyboard.type("j");
-    await expect(input(page)).toHaveValue("j");
+    await page.keyboard.type("h");
+    await expect(input(page)).toHaveValue("h");
     await expect(layoutMenu(page, "剪辑")).toBeVisible();
     await page.keyboard.press("Alt+Shift+Digit3");
     await expect(layoutMenu(page, "音频")).toBeVisible();
@@ -352,8 +352,8 @@ test.describe("shortcuts", () => {
     await startRecording(page, id);
     await page.keyboard.press("Tab");
     await expect(row(page, id).getByText("Tab 要留给键盘导航，不能用作快捷键。")).toBeVisible();
-    await page.keyboard.press("KeyJ");
-    await expect(row(page, id).locator("kbd", { hasText: /^J$/ })).toBeVisible();
+    await page.keyboard.press("KeyH");
+    await expect(row(page, id).locator("kbd", { hasText: /^H$/ })).toBeVisible();
   });
 
   test("a key can be removed and the default restored", async ({ page }) => {
@@ -374,7 +374,7 @@ test.describe("shortcuts", () => {
       .getByRole("button", { name: /^删除快捷键/ })
       .click();
     await startRecording(page, "view.open.timeline");
-    await page.keyboard.press("KeyJ");
+    await page.keyboard.press("KeyH");
     await resetAll.click();
     await expect(row(page, "layout.switch.edit").locator("kbd")).toHaveText("Alt+Shift+1");
     await expect(row(page, "view.open.timeline").getByText("未设置")).toBeVisible();
@@ -384,13 +384,13 @@ test.describe("shortcuts", () => {
   test("changes survive a reload", async ({ page }) => {
     await openShortcuts(page);
     await startRecording(page, "layout.switch.audio");
-    await page.keyboard.press("KeyJ");
+    await page.keyboard.press("KeyH");
     await expect
       .poll(() => page.evaluate((key) => localStorage.getItem(key), KEYS_SETTING))
       .toContain("layout.switch.audio");
     await page.reload();
     await expect(tab(page, "preview")).toBeVisible();
-    await page.keyboard.press("KeyJ");
+    await page.keyboard.press("KeyH");
     await expect(layoutMenu(page, "音频")).toBeVisible();
   });
 
@@ -418,11 +418,11 @@ test.describe("shortcuts", () => {
   test("the search box of the list keeps plain keys for itself", async ({ page }) => {
     await openShortcuts(page);
     await startRecording(page, "layout.switch.animate");
-    await page.keyboard.press("KeyJ");
+    await page.keyboard.press("KeyH");
     const search = page.getByLabel("搜索命令或快捷键");
     await search.click();
-    await page.keyboard.type("j");
-    await expect(search).toHaveValue("j");
+    await page.keyboard.type("h");
+    await expect(search).toHaveValue("h");
     await expect(layoutMenu(page, "剪辑")).toBeVisible();
   });
 });

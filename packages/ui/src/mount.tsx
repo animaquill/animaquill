@@ -188,6 +188,9 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     else workbench.keybindings.handle(event);
   };
   window.addEventListener("keydown", onKeyDown);
+  // Keys held down, like K for J and L, end when they come up, wherever that is.
+  window.addEventListener("keyup", (event) => workbench.keybindings.handleUp(event));
+  window.addEventListener("blur", () => workbench.keybindings.releaseAll());
 
   // A file dropped next to where it can go would replace the whole page. The browser goes by the
   // last of `dragenter` and `dragover`: when the page changes under the pointer, as the start page

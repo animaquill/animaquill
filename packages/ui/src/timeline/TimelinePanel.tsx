@@ -568,6 +568,43 @@ function DropStatus({ editor }: { editor: TimelineEditor }) {
   );
 }
 
+/**
+ * The in and the out, which the canvas draws on the ruler, for screen readers and for finding them:
+ * where they are and at which frame, and nothing that shows.
+ */
+function MarkList({ editor }: { editor: TimelineEditor }) {
+  const { t } = useTranslation();
+  const { marks, model } = useSyncExternalStore(editor.subscribe, editor.getSnapshot);
+  // Text, so that it stays the same while nothing moves.
+  const places = useEditorView(editor, () => {
+    const span = editor.markedSpan;
+    return span ? `${editor.xAt(span.from)} ${editor.xAt(span.to)}` : "";
+  });
+  if (!model || places === "") return null;
+  const [left = 0, right = 0] = places.split(" ").map(Number);
+  const ends = [
+    { end: "in", frame: marks.in, x: left },
+    { end: "out", frame: marks.out, x: right },
+  ] as const;
+  return ends.map(({ end, frame, x }) =>
+    frame === undefined ? null : (
+      <div
+        key={end}
+        className={styles.mark}
+        style={{ transform: `translateX(${x}px)`, height: RULER_HEIGHT }}
+        role="slider"
+        aria-label={t(end === "in" ? "timeline.inPoint" : "timeline.outPoint")}
+        aria-valuemin={0}
+        aria-valuemax={Math.round(model.duration * model.rate.fps)}
+        aria-valuenow={frame}
+        aria-valuetext={formatTimecode(frame, model.rate)}
+        aria-orientation="horizontal"
+        tabIndex={-1}
+      />
+    ),
+  );
+}
+
 function ClipList({ editor }: { editor: TimelineEditor }) {
   const { t } = useTranslation();
   const workbench = useWorkbench();
@@ -967,6 +1004,7 @@ function Surface({
       >
         <canvas ref={canvas} className={styles.canvas} />
         <ClipList editor={editor} />
+        <MarkList editor={editor} />
         <DropStatus editor={editor} />
         <KeyList area={lanes} />
         {model.boxes.size === 0 && <p className={styles.hint}>{t("timeline.emptyHint")}</p>}

@@ -1,12 +1,34 @@
 import type { AudioPlan, SoundLayer } from "@animaquill/core";
 import { describe, expect, it, vi } from "vitest";
-import { PlaybackAudio, type SoundChunk } from "./index.ts";
+import {
+  PlaybackAudio,
+  backwardsOf,
+  joined,
+  type PitchKeeper,
+  type PlaybackAudioOptions,
+  type SoundChunk,
+} from "./index.ts";
 
 interface Started {
   readonly when: number;
   readonly offset: number;
   readonly duration: number;
   readonly stop: ReturnType<typeof vi.fn>;
+  /** How fast it plays. */
+  readonly rate: number;
+  readonly buffer: unknown;
+}
+
+/** Enough of an AudioBuffer for what playing backwards does to one. */
+function fakeBuffer(channels: number, length: number, sampleRate: number) {
+  const data = Array.from({ length: channels }, () => new Float32Array(length));
+  return {
+    numberOfChannels: channels,
+    length,
+    sampleRate,
+    duration: length / sampleRate,
+    getChannelData: (channel: number) => data[channel] as Float32Array,
+  };
 }
 
 function fakeContext(latency = 0) {
@@ -17,25 +39,36 @@ function fakeContext(latency = 0) {
     currentTime: 10,
     outputLatency: latency,
     baseLatency: 0,
-    destination: {},
+    destination: { name: "speakers" },
     resume: async () => {},
+    createBuffer: fakeBuffer,
     close: async () => {},
     createGain() {
-      const gain = { gain: { value: 1 }, connect() {}, disconnect() {} };
+      const gain = {
+        gain: { value: 1 },
+        to: undefined as unknown,
+        connect(to: unknown) {
+          gain.to = to;
+        },
+        disconnect() {},
+      };
       queueMicrotask(() => gains.push(gain.gain.value));
       return gain;
     },
     createBufferSource() {
       const stop = vi.fn();
-      return {
-        buffer: undefined,
+      const node = {
+        buffer: undefined as unknown,
+        playbackRate: { value: 1 },
         connect() {},
         addEventListener() {},
         stop,
         start(when: number, offset: number, duration: number) {
-          started.push({ when, offset, duration, stop });
+          const { buffer } = node;
+          started.push({ when, offset, duration, stop, rate: node.playbackRate.value, buffer });
         },
       };
+      return node;
     },
   };
   return { context, started, gains };
@@ -63,6 +96,7 @@ function setup(
     file?: boolean;
     /** Says whether the file is here by now. */
     arrived?: () => boolean;
+    keepPitch?: PlaybackAudioOptions["keepPitch"];
   } = {},
 ) {
   const fake = fakeContext(options.latency);
@@ -82,6 +116,7 @@ function setup(
     read,
     createContext: () => fake.context as unknown as AudioContext,
     wallClock: () => wall,
+    ...(options.keepPitch && { keepPitch: options.keepPitch }),
   });
   const walk = (ms: number) => {
     wall += ms;
@@ -355,5 +390,166 @@ describe("changing how loud something is", () => {
     walk(100);
     await vi.waitFor(() => expect(gains).toEqual([0.25]));
     audio.stop();
+  });
+});
+
+/** Chunks of a second with four samples each, which say where they are: 0, 1, 2, 3, then 4, 5… */
+const counted = (...times: number[]) =>
+  times.map((timestamp) => {
+    const buffer = fakeBuffer(1, 4, 4);
+    buffer.getChannelData(0).set([0, 1, 2, 3].map((index) => timestamp * 4 + index));
+    return { buffer, timestamp, duration: 1 } as unknown as SoundChunk;
+  });
+
+const samplesOf = (buffer: unknown) => [
+  ...(buffer as ReturnType<typeof fakeBuffer>).getChannelData(0),
+];
+
+function keeper(latency = 0) {
+  const shifts: (number | undefined)[] = [];
+  const input = { name: "keeper" };
+  const keepPitch = vi.fn(async (): Promise<PitchKeeper> => ({
+    input: input as unknown as AudioNode,
+    latency,
+    shift: (semitones) => shifts.push(semitones),
+  }));
+  return { keepPitch, shifts, input };
+}
+
+describe("playing faster and slower", () => {
+  it("lines chunks up at twice the speed, each played twice as fast", async () => {
+    const { keepPitch } = keeper();
+    const { audio, started, settled } = setup({ keepPitch });
+    audio.play(planOf(sound()), 0, audio.now(), 2);
+    await settled();
+    await vi.waitFor(() => expect(started).toHaveLength(3));
+    expect(started.map(({ when }) => when)).toEqual([close(10), close(10.5), close(11)]);
+    expect(started.map(({ rate }) => rate)).toEqual([2, 2, 2]);
+    audio.stop();
+  });
+
+  it("goes through what keeps the pitch, shifted down an octave at twice the speed", async () => {
+    const { keepPitch, shifts, input } = keeper();
+    const { audio, context, settled } = setup({ keepPitch });
+    const gains: { to: unknown }[] = [];
+    const make = context.createGain.bind(context);
+    context.createGain = () => {
+      const gain = make();
+      gains.push(gain);
+      return gain;
+    };
+    audio.play(planOf(sound()), 0, audio.now(), 2);
+    await settled();
+    await vi.waitFor(() => expect(gains).toHaveLength(1));
+    expect(gains[0]?.to).toBe(input);
+    expect(shifts).toEqual([-12]);
+    audio.stop();
+    await vi.waitFor(() => expect(shifts).toEqual([-12, undefined]));
+    // At normal speed sound goes straight to the speakers.
+    audio.play(planOf(sound()), 0, audio.now());
+    await vi.waitFor(() => expect(gains).toHaveLength(2));
+    expect(gains[1]?.to).toBe(context.destination);
+    expect(keepPitch).toHaveBeenCalledTimes(1);
+    audio.stop();
+  });
+
+  it("shifts slow sound up: two octaves at a quarter of the speed", async () => {
+    const { keepPitch, shifts } = keeper();
+    const { audio, started, settled } = setup({ keepPitch });
+    audio.play(planOf(sound()), 0, audio.now(), 0.25);
+    await settled();
+    await vi.waitFor(() => expect(started.length).toBeGreaterThan(0));
+    expect(shifts).toEqual([24]);
+    expect(started[0]).toMatchObject({ when: close(10), rate: 0.25 });
+    audio.stop();
+  });
+
+  it("starts earlier by what keeping the pitch holds back", async () => {
+    const { keepPitch } = keeper(0.05);
+    const { audio, started, settled } = setup({ keepPitch });
+    audio.play(planOf(sound({ start: 0.5 })), 0, audio.now(), 2);
+    await settled();
+    await vi.waitFor(() => expect(started.length).toBeGreaterThan(0));
+    expect(started[0]?.when).toBeCloseTo(10.2);
+    audio.stop();
+  });
+
+  it("still plays, at another pitch, when the pitch cannot be kept", async () => {
+    const keepPitch = vi.fn(async (): Promise<PitchKeeper> => {
+      throw new Error("no worklets here");
+    });
+    const { audio, started, settled } = setup({ keepPitch });
+    audio.play(planOf(sound()), 0, audio.now(), 4);
+    await settled();
+    await vi.waitFor(() => expect(started).toHaveLength(3));
+    expect(started[0]).toMatchObject({ when: close(10), rate: 4 });
+    audio.stop();
+  });
+});
+
+describe("playing backwards", () => {
+  it("plays each second from its end, turned around, one after the other", async () => {
+    const { keepPitch, shifts } = keeper();
+    const { audio, started, read, settled } = setup({ keepPitch, list: counted(0, 1, 2) });
+    audio.play(planOf(sound()), 3, audio.now(), -1);
+    await settled();
+    await vi.waitFor(() => expect(started).toHaveLength(3));
+    expect(read.mock.calls.map((call) => call.slice(1))).toEqual([
+      [2, 3],
+      [1, 2],
+      [0, 1],
+    ]);
+    expect(started.map(({ when }) => when)).toEqual([close(10), close(11), close(12)]);
+    expect(started.map(({ rate }) => rate)).toEqual([1, 1, 1]);
+    expect(samplesOf(started[0]?.buffer)).toEqual([11, 10, 9, 8]);
+    expect(samplesOf(started[2]?.buffer)).toEqual([3, 2, 1, 0]);
+    // Backwards at normal speed the pitch is what it is.
+    expect(shifts).toEqual([]);
+    audio.stop();
+  });
+
+  it("starts in the middle of a clip, and plays no part twice", async () => {
+    const { audio, started, settled } = setup({ list: counted(0, 1, 2) });
+    audio.play(planOf(sound()), 2.5, audio.now(), -1);
+    await settled();
+    await vi.waitFor(() => expect(started).toHaveLength(3));
+    expect(started[0]).toMatchObject({ when: close(10), offset: close(0.5), duration: close(1) });
+    expect(started[1]).toMatchObject({ when: close(11), offset: close(0.5), duration: close(1) });
+    expect(started[2]).toMatchObject({ when: close(12), offset: close(0.5), duration: close(0.5) });
+    audio.stop();
+  });
+
+  it("goes twice as fast, shifted down to its own pitch", async () => {
+    const { keepPitch, shifts } = keeper();
+    const { audio, started, settled } = setup({ keepPitch, list: counted(0, 1, 2) });
+    audio.play(planOf(sound()), 3, audio.now(), -2);
+    await settled();
+    await vi.waitFor(() => expect(started.length).toBeGreaterThan(0));
+    expect(started[0]).toMatchObject({ when: close(10), rate: 2, offset: close(0) });
+    expect(shifts).toEqual([-12]);
+    audio.stop();
+  });
+
+  it("leaves alone what lies after where it starts", async () => {
+    const { audio, read } = setup();
+    audio.play(planOf(sound({ start: 5, end: 6 })), 4, audio.now(), -1);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(read).not.toHaveBeenCalled();
+    audio.stop();
+  });
+});
+
+describe("pieces of sound", () => {
+  const make = fakeBuffer as unknown as (c: number, l: number, r: number) => AudioBuffer;
+
+  it("join into one, in their places", () => {
+    const piece = joined(counted(1, 2), make);
+    expect(piece?.timestamp).toBe(1);
+    expect(samplesOf(piece?.buffer)).toEqual([4, 5, 6, 7, 8, 9, 10, 11]);
+  });
+
+  it("turn around", () => {
+    const [chunk] = counted(0);
+    expect(samplesOf(backwardsOf(chunk?.buffer as AudioBuffer, make))).toEqual([3, 2, 1, 0]);
   });
 });

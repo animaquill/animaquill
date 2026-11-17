@@ -469,3 +469,58 @@ describe("a key held down", () => {
     expect(event.preventDefault).toHaveBeenCalledOnce();
   });
 });
+
+describe("keys that are held", () => {
+  async function holding() {
+    const context = await setup();
+    const released = vi.fn<() => void>();
+    const hold = { ...action("hold", ["k"]), release: released };
+    const other = { ...action("other", ["l"]), release: vi.fn<() => void>() };
+    context.actions.register(hold);
+    context.actions.register(other);
+    context.service.refresh();
+    return { ...context, hold, other, released };
+  }
+
+  it("hear when their key comes up, once", async () => {
+    const { service, hold, released } = await holding();
+    service.handle(keyDown("KeyK"));
+    expect(hold.run).toHaveBeenCalledOnce();
+    expect(released).not.toHaveBeenCalled();
+    service.handle(keyDown("KeyK", { repeat: true }));
+    expect(hold.run).toHaveBeenCalledOnce();
+    service.handleUp({ code: "KeyK" });
+    service.handleUp({ code: "KeyK" });
+    expect(released).toHaveBeenCalledOnce();
+  });
+
+  it("each hear of their own key, also with both held", async () => {
+    const { service, released, other } = await holding();
+    service.handle(keyDown("KeyK"));
+    service.handle(keyDown("KeyL"));
+    service.handleUp({ code: "KeyL" });
+    expect(other.release).toHaveBeenCalledOnce();
+    expect(released).not.toHaveBeenCalled();
+    service.handleUp({ code: "KeyK" });
+    expect(released).toHaveBeenCalledOnce();
+  });
+
+  it("all come up when the window loses the keyboard", async () => {
+    const { service, released, other } = await holding();
+    service.handle(keyDown("KeyK"));
+    service.handle(keyDown("KeyL"));
+    service.releaseAll();
+    expect(released).toHaveBeenCalledOnce();
+    expect(other.release).toHaveBeenCalledOnce();
+    service.handleUp({ code: "KeyK" });
+    expect(released).toHaveBeenCalledOnce();
+  });
+
+  it("go by the physical key, as a Chinese input method leaves it", async () => {
+    const { service, hold, released } = await holding();
+    service.handle({ ...keyDown("KeyK"), key: "Process" } as KeyDown);
+    expect(hold.run).toHaveBeenCalledOnce();
+    service.handleUp({ code: "KeyK" });
+    expect(released).toHaveBeenCalledOnce();
+  });
+});

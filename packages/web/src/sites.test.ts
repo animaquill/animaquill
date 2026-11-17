@@ -55,7 +55,7 @@ describe("checkSites", () => {
 describe("policies", () => {
   test("the editor shows only the compositor, and adds the pictures a deployment has", () => {
     expect(editorPolicy(deployed, { images: ["https://pictures.example"] })).toBe(
-      "default-src 'none'; script-src 'self'; worker-src 'self'; " +
+      "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; " +
         "style-src 'self' 'unsafe-inline'; " +
         "img-src 'self' data: blob: https://raw.githubusercontent.com https://pictures.example; " +
         "font-src 'self'; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; " +

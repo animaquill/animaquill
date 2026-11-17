@@ -34,6 +34,10 @@ export interface Theme {
   readonly flash: string;
   /** The mark of what came from GitHub lately, see `TimelineEditor.repoMarked`. */
   readonly repo: string;
+  /** What is marked with in and out: the band on the ruler and its ends. */
+  readonly marked: string;
+  /** Over the tracks where something is marked, a little lighter. */
+  readonly markedLanes: string;
 }
 
 export function readTheme(element: Element): Theme {
@@ -69,6 +73,8 @@ export function readTheme(element: Element): Theme {
     effect: color("effect"),
     flash: color("flash"),
     repo: color("repo"),
+    marked: color("marked"),
+    markedLanes: color("marked-lanes"),
   };
 }
 

@@ -1559,3 +1559,50 @@ describe("the view menu", () => {
     expect(listed).toContain("view.open.preview");
   });
 });
+
+describe("default keys of everything there is", () => {
+  const keyed = () => {
+    const { workbench } = setup(noFolders, {}, { panels: builtinPanels });
+    return workbench.actions
+      .list()
+      .flatMap((action) => (action.keys ?? []).map((key) => ({ key, action })));
+  };
+
+  it("are each used once where they work", () => {
+    const seen = new Map<string, string>();
+    const twice: string[] = [];
+    for (const { key, action } of keyed()) {
+      const slot = `${action.scope ?? ""} ${key}`;
+      const other = seen.get(slot);
+      if (other) twice.push(`${slot}: ${other} and ${action.id}`);
+      seen.set(slot, action.id);
+    }
+    expect(twice).toEqual([]);
+  });
+
+  // J, K and L, in and out, and the key for keyframes work everywhere, so no panel may have them.
+  it("leave the keys of playing, marking and keying to them alone", () => {
+    const own = new Map([
+      ["j", "timeline.shuttleBackward"],
+      ["k", "timeline.shuttleStop"],
+      ["l", "timeline.shuttleForward"],
+      ["i", "timeline.markIn"],
+      ["o", "timeline.markOut"],
+      ["x", "timeline.markClip"],
+      ["shift+i", "timeline.goToIn"],
+      ["shift+o", "timeline.goToOut"],
+      ["mod+shift+x", "timeline.clearMarks"],
+      ["mod+shift+space", "timeline.playInToOut"],
+      ["alt+k", "keyframes.toggleKey"],
+    ]);
+    const taken = keyed().filter(({ key, action }) => own.has(key) && own.get(key) !== action.id);
+    expect(taken.map(({ key, action }) => `${key}: ${action.id}`)).toEqual([]);
+    const found = new Map(keyed().map(({ key, action }) => [key, action.id]));
+    for (const [key, id] of own) expect(found.get(key)).toBe(id);
+  });
+
+  it("give the switch for overwriting none: O is the out", () => {
+    const { workbench } = setup();
+    expect(workbench.actions.get("timeline.toggleOverwriting")?.keys).toBeUndefined();
+  });
+});

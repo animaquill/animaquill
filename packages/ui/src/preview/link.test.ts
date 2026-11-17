@@ -97,8 +97,9 @@ function setup(
   const view: (() => void)[] = [];
   const clock = {
     playing: false,
+    rate: 1,
     frame: 0,
-    playbackStart: undefined as { frame: number; since: number } | undefined,
+    playbackStart: undefined as { frame: number; since: number; rate: number } | undefined,
   };
   const timeline = {
     subscribe: () => () => {},
@@ -106,7 +107,7 @@ function setup(
       view.push(listener);
       return () => {};
     },
-    getSnapshot: () => ({ playing: clock.playing }),
+    getSnapshot: () => ({ playing: clock.playing, rate: clock.rate }),
     model: { id: "main", rate: { fps: 30 } },
     get frame() {
       return clock.frame;
@@ -637,7 +638,7 @@ describe("a compositor that said hello", () => {
 });
 
 describe("how time goes over", () => {
-  const start = { frame: 0, since: 0 };
+  const start = { frame: 0, since: 0, rate: 1 };
 
   it("while paused, as a jump for every move", () => {
     const { hello, tick, ofType } = setup();
@@ -688,7 +689,7 @@ describe("how time goes over", () => {
     clock.playbackStart = start;
     tick(1);
     tick(2);
-    clock.playbackStart = { frame: 90, since: 500 };
+    clock.playbackStart = { frame: 90, since: 500, rate: 1 };
     tick(90);
     expect(ofType("play").at(-1)).toMatchObject({ seconds: 3, jump: true });
   });
@@ -711,6 +712,50 @@ describe("how time goes over", () => {
     tick(1);
     tick(2);
     expect(ofType("pause")).toEqual([]);
+  });
+
+  it("faster, tells how fast, for scenes to follow by themselves", () => {
+    const { hello, clock, tick, ofType } = setup();
+    hello();
+    clock.playing = true;
+    clock.rate = 2;
+    clock.playbackStart = { ...start, rate: 2 };
+    tick(60);
+    expect(ofType("play")).toHaveLength(1);
+    expect(ofType("play")[0]).toMatchObject({ seconds: 2, rate: 2, jump: true });
+  });
+
+  for (const rate of [-1, -8, 0.25, -0.25]) {
+    it(`at ${rate} times, moves the picture frame by frame, as a drag would`, () => {
+      const { hello, clock, tick, ofType } = setup();
+      hello();
+      clock.playing = true;
+      clock.rate = rate;
+      clock.playbackStart = { ...start, rate };
+      tick(30);
+      tick(29);
+      tick(28);
+      expect(ofType("play")).toEqual([]);
+      expect(ofType("seek").slice(-3)).toEqual([
+        { type: "seek", seconds: 1, jump: true },
+        { type: "seek", seconds: 29 / 30, jump: true },
+        { type: "seek", seconds: 28 / 30, jump: true },
+      ]);
+    });
+  }
+
+  it("going from fast to backwards stops scenes running by themselves", () => {
+    const { hello, clock, tick, ofType } = setup();
+    hello();
+    clock.playing = true;
+    clock.rate = 2;
+    clock.playbackStart = { ...start, rate: 2 };
+    tick(30);
+    clock.rate = -1;
+    clock.playbackStart = { frame: 30, since: 100, rate: -1 };
+    tick(29);
+    expect(ofType("play")).toHaveLength(1);
+    expect(ofType("pause")).toHaveLength(1);
   });
 
   it("a compositor that loaded again starts over", () => {

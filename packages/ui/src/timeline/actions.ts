@@ -46,7 +46,7 @@ export function registerTimelineActions(
     {
       group,
       ...extra
-    }: Pick<Action, "keys" | "repeats" | "enabled" | "selected"> & {
+    }: Pick<Action, "keys" | "repeats" | "enabled" | "selected" | "release"> & {
       readonly group?: string;
     } = {},
   ) =>
@@ -135,7 +135,8 @@ export function registerTimelineActions(
     group: "tools",
   });
   add("toggleSnapping", () => editor.toggleSnapping(), { keys: ["s"], group: "tools" });
-  add("toggleOverwriting", () => editor.toggleOverwriting(), { keys: ["o"], group: "tools" });
+  // O is for the out, as in Premiere, which has no such switch. People can give it a key.
+  add("toggleOverwriting", () => editor.toggleOverwriting(), { group: "tools" });
   add("toggleMultiSelecting", () => editor.toggleMultiSelecting(), { group: "tools" });
 
   add("zoomIn", () => editor.zoomIn(), { keys: ["="], repeats: true, group: "zoom" });
@@ -148,7 +149,21 @@ export function registerTimelineActions(
     group: "zoom",
   });
 
-  // Space is for playing wherever people are.
+  // Space and J, K and L are for playing wherever people are, as are in and out.
+  const everywhere = (
+    id: TimelineAction,
+    run: () => void,
+    extra: Pick<Action, "keys" | "enabled" | "release" | "repeats"> = {},
+    group = "play",
+  ) =>
+    actions.register({
+      id: `timeline.${id}`,
+      title: (t) => t("timeline.command", { action: t(`timeline.action.${id}`) }),
+      run,
+      enabled: hasTimeline,
+      menu: { name: "timeline", group, title: (t) => t(`timeline.action.${id}`) },
+      ...extra,
+    });
   actions.register({
     id: "timeline.play",
     title: (t) => t("timeline.action.play"),
@@ -157,6 +172,37 @@ export function registerTimelineActions(
     enabled: hasTimeline,
     menu: { name: "timeline", group: "play" },
   });
+  const { shuttle } = editor;
+  everywhere("shuttleBackward", () => shuttle.backward(), {
+    keys: ["j"],
+    release: () => shuttle.backwardUp(),
+  });
+  everywhere("shuttleStop", () => shuttle.stop(), {
+    keys: ["k"],
+    release: () => shuttle.stopUp(),
+  });
+  everywhere("shuttleForward", () => shuttle.forward(), {
+    keys: ["l"],
+    release: () => shuttle.forwardUp(),
+  });
+  everywhere("playInToOut", () => editor.playInToOut(), { keys: ["mod+shift+space"] });
+
+  const hasIn = () => hasTimeline() && editor.marks.in !== undefined;
+  const hasOut = () => hasTimeline() && editor.marks.out !== undefined;
+  everywhere("markIn", () => editor.markIn(), { keys: ["i"] }, "marks");
+  everywhere("markOut", () => editor.markOut(), { keys: ["o"] }, "marks");
+  everywhere("markClip", () => editor.markClip(), { keys: ["x"] }, "marks");
+  everywhere("goToIn", () => editor.goToIn(), { keys: ["shift+i"], enabled: hasIn }, "marks");
+  everywhere("goToOut", () => editor.goToOut(), { keys: ["shift+o"], enabled: hasOut }, "marks");
+  // Premiere clears one end with Ctrl+Shift+I and Ctrl+Shift+O, which Chrome keeps for itself.
+  everywhere("clearIn", () => editor.clearIn(), { enabled: hasIn }, "marks");
+  everywhere("clearOut", () => editor.clearOut(), { enabled: hasOut }, "marks");
+  everywhere(
+    "clearMarks",
+    () => editor.clearMarks(),
+    { keys: ["mod+shift+x"], enabled: () => hasTimeline() && editor.hasMarks },
+    "marks",
+  );
   for (const [id, by, key] of [
     ["previousFrame", -1, "left"],
     ["nextFrame", 1, "right"],

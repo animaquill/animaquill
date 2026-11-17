@@ -6,14 +6,16 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./meter": "./src/meter.ts"
+    "./meter": "./src/meter.ts",
+    "./stretch-worklet": "./src/stretch-worklet.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@animaquill/core": "workspace:*",
-    "mediabunny": "1.65.2"
+    "mediabunny": "1.65.2",
+    "signalsmith-stretch": "1.3.2"
   },
   "devDependencies": {
     "typescript": "7.0.2",

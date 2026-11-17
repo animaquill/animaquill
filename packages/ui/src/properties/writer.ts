@@ -9,7 +9,7 @@ import {
   type PropertyEdit,
   type CommandFailure,
 } from "@animaquill/core";
-import { isAnimation, type Key, type PropertyValue } from "@animaquill/schema";
+import { isAnimation, type Key, type PropertySpec, type PropertyValue } from "@animaquill/schema";
 import { Emitter } from "../workbench/emitter.ts";
 import type { ProjectSession } from "../workbench/session.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
@@ -64,6 +64,7 @@ export class PropertyWriter {
   readonly #emitter = new Emitter();
   #dragged = NOTHING;
   #previewed = NOTHING;
+  #lastProperty: { readonly clip: string; readonly spec: PropertySpec } | undefined;
 
   constructor(
     session: ProjectSession,
@@ -81,6 +82,16 @@ export class PropertyWriter {
   subscribe = this.#emitter.subscribe;
 
   getPreviewed = (): PreviewedValues => this.#previewed;
+
+  /** Takes note of the property people work with, in the properties or the keyframes. */
+  noteProperty(clip: string, spec: PropertySpec): void {
+    this.#lastProperty = { clip, spec };
+  }
+
+  /** The property people worked with last, which a key for keyframes is about. */
+  get lastProperty(): { readonly clip: string; readonly spec: PropertySpec } | undefined {
+    return this.#lastProperty;
+  }
 
   #refresh = (): void => {
     const tried = this.#trials.getValues();

@@ -51,6 +51,11 @@ export interface Action {
   readonly scope?: string;
   /** Keeps running while the key is held down, like moving through frames. */
   readonly repeats?: boolean;
+  /**
+   * Runs when the key that ran it comes up, for what goes on while a key is held, like K with J or
+   * L. Menus and the palette never call it.
+   */
+  readonly release?: () => void;
 }
 
 /** How people got an action to run. */

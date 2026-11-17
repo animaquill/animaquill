@@ -467,7 +467,10 @@ export class PreviewLink {
     const { model, frame, playbackStart } = this.#timeline;
     if (!this.#ready || !model) return;
     // Moving the playhead while playing starts playing over from there.
-    const { playing } = this.#timeline.getSnapshot();
+    const { playing: moving, rate } = this.#timeline.getSnapshot();
+    // Backwards and slower than normal, the picture follows the playhead frame by frame, as when
+    // people drag it: scenes cannot run backwards, and their timers would run at another speed.
+    const playing = moving && rate >= 1;
     const carried = playing && playbackStart && playbackStart === this.#lastPlayback;
     this.#lastPlayback = playbackStart;
     const seconds = frame / model.rate.fps;
@@ -475,11 +478,11 @@ export class PreviewLink {
       this.#lastSeconds = seconds;
       this.#send({ type: "seek", seconds, jump: !carried });
     }
-    this.#sendPlaying(playing, Boolean(carried), seconds);
+    this.#sendPlaying(playing, Boolean(carried), seconds, rate);
   };
 
   /** Scenes follow time by themselves, because being told every frame is too slow for them. */
-  #sendPlaying(playing: boolean, carried: boolean, seconds: number): void {
+  #sendPlaying(playing: boolean, carried: boolean, seconds: number, rate: number): void {
     const now = performance.now();
     if (!playing) {
       if (this.#playingSince !== undefined) this.#send({ type: "pause" });
@@ -490,7 +493,7 @@ export class PreviewLink {
     if (carried && since !== undefined && now - since < CORRECT_TIME_EVERY_MS) return;
     this.#playingSince = now;
     const at = performance.timeOrigin + now;
-    this.#send({ type: "play", seconds, at, rate: 1, jump: !carried });
+    this.#send({ type: "play", seconds, at, rate, jump: !carried });
   }
 
   async #sendScene(scene: string, revision: string): Promise<void> {

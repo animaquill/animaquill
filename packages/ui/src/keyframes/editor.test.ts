@@ -2243,7 +2243,7 @@ describe("what the keys of the timeline are about", () => {
   /** Keys on X at 2 and 3 of a clip that starts at 1 and is open on the timeline, and a clip after it. */
   async function onTimeline() {
     const setting = await setup();
-    const { addClip, keys, keyframes, timeline, main } = setting;
+    const { addClip, keys, keyframes, timeline, main, writer } = setting;
     addClip("a", 1, 8);
     keys("a", X, 2, 3);
     addClip("b", 10, 4);
@@ -2266,7 +2266,7 @@ describe("what the keys of the timeline are about", () => {
     };
     const actions = new ActionRegistry();
     registerTimelineActions(actions, timeline, inTimeline);
-    registerKeyframeActions(actions, keyframes, timeline);
+    registerKeyframeActions(actions, keyframes, timeline, writer);
     /** What a key does: nothing at all while what it does cannot be done. */
     const press = (id: string) => {
       const action = actions.get(id);
@@ -2290,6 +2290,24 @@ describe("what the keys of the timeline are about", () => {
     expect(clips()).toEqual(["a", "b"]);
     expect(shownTimes("a", X)).toEqual(["2", "3"]);
     expect(comparing).toHaveBeenCalledOnce();
+  });
+
+  it("Alt+K keys the property people worked with last at the playhead, and takes it away again", async () => {
+    const { writer, keyframes, timeline, press, shownTimes } = await onTimeline();
+    const lane = keyframes.inTimeline.lanes.find((one) => one.id === laneOf("a", X));
+    if (lane?.node.kind !== "property") throw new Error("no lane");
+    timeline.seek(150);
+    press("keyframes.toggleKey");
+    expect(shownTimes("a", X)).toEqual(["2", "3"]);
+    writer.noteProperty("a", lane.node.spec);
+    press("keyframes.toggleKey");
+    expect(shownTimes("a", X)).toEqual(["2", "3", "4"]);
+    press("keyframes.toggleKey");
+    expect(shownTimes("a", X)).toEqual(["2", "3"]);
+    // Where the clip is not, there is nothing to key.
+    timeline.seek(0);
+    press("keyframes.toggleKey");
+    expect(shownTimes("a", X)).toEqual(["2", "3"]);
   });
 
   it("on a locked track, Delete is about the selected key, and no clip goes, wherever it is", async () => {

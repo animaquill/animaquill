@@ -59,6 +59,9 @@ const CUT_LINE = "#ffffff80";
 /** Points along a speed curve, enough for it to look smooth at the size of a clip. */
 const CURVE_STEPS = 24;
 const END_HANDLE = 6;
+/** How tall the band of what is marked is along the bottom of the ruler, and the feet of its ends. */
+const MARK_BAND = 4;
+const MARK_FOOT = 6;
 /** Zoomed far out a pixel covers minutes. A few samples of them look the same and cost far less. */
 const MAX_SLOTS_PER_BAR = 8;
 
@@ -199,6 +202,7 @@ export class TimelinePainter extends StagePainter {
     this.#paintLanes(model);
     this.#paintClips(model);
     this.#paintJoins(model);
+    this.#paintMarkedLanes();
     this.#paintPreview();
     this.#below?.(context, this.theme, (value) => this.sharp(value));
     this.#paintOutside();
@@ -974,6 +978,7 @@ export class TimelinePainter extends StagePainter {
     const theme = this.theme;
     const look = { ...theme, background: theme.ruler };
     paintRuler(context, editor, model.rate, RULER_HEIGHT, look, (value) => this.sharp(value));
+    this.#paintMarks();
 
     const end = this.sharp(editor.xAt(editor.visibleDuration));
     context.fillStyle = theme.end;
@@ -983,6 +988,43 @@ export class TimelinePainter extends StagePainter {
     context.lineTo(end + END_HANDLE, RULER_HEIGHT - 1);
     context.closePath();
     context.fill();
+  }
+
+  /** The tracks are a little lighter where something is marked, as in Premiere. */
+  #paintMarkedLanes(): void {
+    const editor = this.#editor;
+    const span = editor.markedSpan;
+    if (!span) return;
+    const left = Math.max(this.sharp(editor.xAt(span.from)), 0);
+    const right = Math.min(this.sharp(editor.xAt(span.to)), editor.width);
+    if (right <= left) return;
+    this.context.fillStyle = this.theme.markedLanes;
+    this.context.fillRect(left, RULER_HEIGHT, right - left, editor.height - RULER_HEIGHT);
+  }
+
+  /** A band along the bottom of the ruler, between brackets at the in and the out. */
+  #paintMarks(): void {
+    const editor = this.#editor;
+    const span = editor.markedSpan;
+    if (!span) return;
+    const { context } = this;
+    const { in: from, out } = editor.marks;
+    const left = this.sharp(editor.xAt(span.from));
+    const right = this.sharp(editor.xAt(span.to));
+    context.fillStyle = this.theme.marked;
+    context.globalAlpha = 0.16;
+    context.fillRect(left, 0, right - left, RULER_HEIGHT - 1);
+    context.globalAlpha = 1;
+    context.fillRect(left, RULER_HEIGHT - 1 - MARK_BAND, right - left, MARK_BAND);
+    // [ at the in and ] at the out, as tall as the ruler.
+    const bracket = (x: number, toward: 1 | -1) => {
+      context.fillRect(toward > 0 ? x : x - 2, 1, 2, RULER_HEIGHT - 2);
+      const foot = toward > 0 ? x : x - MARK_FOOT;
+      context.fillRect(foot, 1, MARK_FOOT, 2);
+      context.fillRect(foot, RULER_HEIGHT - 3, MARK_FOOT, 2);
+    };
+    if (from !== undefined) bracket(left, 1);
+    if (out !== undefined) bracket(right, -1);
   }
 
   /** Lines across everything, for what is happening right now. */

@@ -94,6 +94,8 @@ const Row = memo(function Row({ rows, clip, spec, startsGroup }: RowProps) {
         aria-label={label}
         data-tried={tried || undefined}
         data-readonly={readOnly || undefined}
+        onFocusCapture={() => properties.noteProperty(clip, spec)}
+        onPointerDownCapture={() => properties.noteProperty(clip, spec)}
         onContextMenu={(event) => {
           if (!tried) return;
           event.preventDefault();

@@ -385,6 +385,12 @@ const LaneRow = memo(function LaneRow({ area, lane, canPin }: LaneRowProps) {
       data-tried={tried || undefined}
       data-tall={lane.tall || undefined}
       style={{ top: lane.top, height: lane.height }}
+      {...(isProperty && box
+        ? {
+            onFocusCapture: () => properties.noteProperty(box.id, node.spec),
+            onPointerDownCapture: () => properties.noteProperty(box.id, node.spec),
+          }
+        : {})}
       onContextMenu={(event) => {
         if (!tried && !orphan) return;
         event.preventDefault();

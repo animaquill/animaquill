@@ -168,6 +168,8 @@
   --aq-timeline-effect: #9a5ce6;
   /** What came from GitHub lately, as AI's changes have the colour of selection. */
   --aq-timeline-repo: #b07cff;
+  --aq-timeline-marked: #5aa9ff;
+  --aq-timeline-marked-lanes: #ffffff0f;
   --aq-timeline-flash: #2aaaff;
 
   /* What the preview draws over the picture: it has to stand out on any picture, in both themes. */
@@ -256,6 +258,8 @@
   --aq-timeline-handle: #5c5c5c;
   --aq-timeline-effect: #8447d6;
   --aq-timeline-repo: #8a4fe0;
+  --aq-timeline-marked: #0a6fd1;
+  --aq-timeline-marked-lanes: #0078d40f;
   --aq-timeline-flash: #0078d4;
 }
 

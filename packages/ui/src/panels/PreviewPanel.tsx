@@ -8,6 +8,7 @@ import { PreviewNotices } from "../preview/PreviewNotices.tsx";
 import { QualityButton } from "../preview/Quality.tsx";
 import { PreviewOverlay } from "../overlay/PreviewOverlay.tsx";
 import { formatTimecode, frameAt } from "../timeline/frames.ts";
+import { rateText } from "../timeline/shuttle.ts";
 import { ToolButton } from "../timeline/ToolButton.tsx";
 import styles from "./PreviewPanel.module.css";
 import { NO_PROGRESS } from "../folder/assets.ts";
@@ -149,7 +150,7 @@ export function PreviewPanel() {
   const workbench = useWorkbench();
   const { timeline, preview, trials } = workbench;
   const { t } = useTranslation();
-  const { playing, model } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
+  const { playing, model, rate } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
   const frame = useSyncExternalStore(timeline.subscribeView, () => timeline.frame);
   const { compositor, generation } = useSyncExternalStore(preview.subscribe, preview.getSnapshot);
   const { count, comparing } = useSyncExternalStore(trials.subscribe, trials.getSnapshot);
@@ -205,6 +206,11 @@ export function PreviewPanel() {
             <span className={styles.time}>
               <output aria-live="off">{formatTimecode(frame, model.rate)}</output>
               <span>| {formatTimecode(frameAt(model.duration, model.rate), model.rate)}</span>
+              {playing && rate !== 1 && (
+                <span className={styles.rate} data-testid="play-rate">
+                  {rateText(rate)}
+                </span>
+              )}
             </span>
           </Tip>
         )}

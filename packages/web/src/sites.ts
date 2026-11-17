@@ -92,12 +92,14 @@ export const PACK_PICTURES = "https://raw.githubusercontent.com";
  * The code editor (Monaco) writes `<style>` elements and `style=""` attributes and does not work
  * without `'unsafe-inline'` for styles. A style can still reach nothing outside, because `img-src`
  * and `font-src` stay with this site. Workers are files of this site, never blobs.
+ * `'wasm-unsafe-eval'` lets WebAssembly compile, and nothing else: no `eval` of scripts. What keeps
+ * the pitch of sound at other speeds (Signalsmith Stretch, in an audio worklet) is WebAssembly.
  */
 export function editorPolicy(sites: Sites, options: PolicyOptions = {}): string {
   const images = ["'self'", "data:", "blob:", PACK_PICTURES, ...(options.images ?? [])];
   return [
     "default-src 'none'",
-    "script-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval'",
     "worker-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     `img-src ${images.join(" ")}`,

@@ -1277,7 +1277,7 @@ export class Workbench {
     this.#registerViewActions();
     this.#registerHelpActions();
     registerTimelineActions(this.actions, this.timeline, this.keyframes.inTimeline);
-    registerKeyframeActions(this.actions, this.keyframes, this.timeline);
+    registerKeyframeActions(this.actions, this.keyframes, this.timeline, this.properties);
   }
 
   /** The proxies of whatever project folder is open, see `ProxyFiles`. */
