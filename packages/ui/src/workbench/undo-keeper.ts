@@ -8,7 +8,7 @@ import {
   type UndoObstacle,
   type UndoResult,
 } from "@animaquill/core";
-import type { UndoGone, UndoStore, UndoUsage } from "@animaquill/host";
+import type { UndoGone, UndoStore, UndoToSave, UndoUsage } from "@animaquill/host";
 import { Emitter } from "./emitter.ts";
 
 /** What lists show of an AI task or a batch of files whose changes can be taken back. */
@@ -317,54 +317,54 @@ export class UndoKeeper {
     return next;
   }
 
+  /**
+   * Saves the logs of the origins in one write, which nothing waits for: a page that goes right
+   * after (as at the end of an AI task) has them all, not only the first.
+   */
   async #save(store: ProjectStore, key: string, origins: readonly Origin[]): Promise<void> {
     const host = this.#options.host;
-    if (!host) return;
-    for (const origin of origins) {
-      try {
-        await this.#saveOne(host, store, key, origin);
-      } finally {
-        const left = (this.#unsaved.get(origin) ?? 1) - 1;
-        if (left > 0) this.#unsaved.set(origin, left);
-        else this.#unsaved.delete(origin);
-      }
-    }
-  }
-
-  async #saveOne(host: UndoStore, store: ProjectStore, key: string, origin: Origin): Promise<void> {
     try {
-      const record = store.saveUndo(origin);
-      if (!record) {
-        await host.remove(key, origin);
-        return;
-      }
-      const told = this.#options.describe(origin);
-      const known = this.#about.get(origin);
+      if (!host) return;
+      const saved: UndoToSave[] = [];
+      const removed: Origin[] = [];
       const now = Date.now();
-      const about: UndoAbout = {
-        kind: kindOf(origin),
-        count: 0,
-        from: now,
-        to: now,
-        ...known,
-        ...told,
-      };
-      this.#about.set(origin, about);
-      const { dropped } = await host.save({
-        project: key,
-        origin,
-        record,
-        about,
-        madeAt: about.from,
-      });
-      this.#foreign.delete(origin);
+      for (const origin of origins) {
+        try {
+          const record = store.saveUndo(origin);
+          if (!record) {
+            removed.push(origin);
+            continue;
+          }
+          const about: UndoAbout = {
+            kind: kindOf(origin),
+            count: 0,
+            from: now,
+            to: now,
+            ...this.#about.get(origin),
+            ...this.#options.describe(origin),
+          };
+          this.#about.set(origin, about);
+          saved.push({ project: key, origin, record, about, madeAt: about.from });
+        } catch (error) {
+          // The others go all the same.
+          console.warn("An undo log could not be saved", error);
+        }
+      }
+      const { dropped } = await host.saveAll(key, saved, removed);
+      for (const { origin } of saved) this.#foreign.delete(origin);
       if (dropped.length > 0) {
         for (const away of dropped) store.forgetUndo(away);
         this.#gone = await host.gone(key);
         this.#emit();
       }
     } catch (error) {
-      console.warn("An undo log could not be saved", error);
+      console.warn("Undo logs could not be saved", error);
+    } finally {
+      for (const origin of origins) {
+        const left = (this.#unsaved.get(origin) ?? 1) - 1;
+        if (left > 0) this.#unsaved.set(origin, left);
+        else this.#unsaved.delete(origin);
+      }
     }
   }
 

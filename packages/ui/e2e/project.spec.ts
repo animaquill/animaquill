@@ -140,6 +140,23 @@ test.describe("with a project", () => {
     await expect(statusName(page, "马上刷新")).toBeVisible();
   });
 
+  test("keeps a change when the page goes the moment it is made, on a slow computer", async ({
+    page,
+  }) => {
+    // The reload comes right as the change is made, without waiting for anything on the screen,
+    // and a slow page (as on a busy computer) leaves it no time for what it would still do for the
+    // write: the write has to be committed by then.
+    test.slow();
+    await chooseFrom(page, "文件", "重命名项目");
+    await page.getByRole("textbox", { name: "项目名称" }).fill("马上刷新");
+    const client = await page.context().newCDPSession(page);
+    await client.send("Emulation.setCPUThrottlingRate", { rate: 20 });
+    await page.keyboard.press("Enter");
+    await page.reload();
+    await client.send("Emulation.setCPUThrottlingRate", { rate: 1 });
+    await expect(statusName(page, "马上刷新")).toBeVisible({ timeout: 20_000 });
+  });
+
   test("undoes and redoes with the keyboard", async ({ page }) => {
     await renameTo(page, "第二个名字");
     await page.keyboard.press("Control+KeyZ");

@@ -1,4 +1,4 @@
-import { IDBFactory } from "fake-indexeddb";
+import { IDBFactory, IDBObjectStore } from "fake-indexeddb";
 import { describe, expect, it } from "vitest";
 import {
   MemoryUndoPlace,
@@ -104,5 +104,51 @@ describe("windows that share undo logs", () => {
       });
     expect(await Promise.all([undo(one), undo(two)])).toEqual([0, 1]);
     expect(taken).toBe(1);
+  });
+});
+
+describe("undo logs in the browser, as the page goes right after they are saved", () => {
+  /** A transaction the page did not commit by then is taken back, as a browser does. */
+  async function goingRightAfter<T>(run: () => Promise<T>) {
+    const proto = IDBObjectStore.prototype;
+    const put = proto.put;
+    proto.put = function (this: IDBObjectStore, ...args: Parameters<typeof put>) {
+      const request = put.apply(this, args);
+      const transaction = this.transaction;
+      queueMicrotask(() => {
+        try {
+          transaction.abort();
+        } catch {
+          // Committed already: it stays.
+        }
+      });
+      return request;
+    };
+    try {
+      return await run().catch(() => undefined);
+    } finally {
+      proto.put = put;
+    }
+  }
+
+  it("are kept, though the page never hears back from the write", async () => {
+    const factory = new IDBFactory();
+    const store = browserUndo(
+      () => factory,
+      () => undefined,
+    );
+    await goingRightAfter(() => store.save(saved("a")));
+    expect(await store.get("p", "a")).toMatchObject({ record: { origin: "a" } });
+  });
+
+  it("are kept all, several at once, and one taken away with them", async () => {
+    const factory = new IDBFactory();
+    const store = browserUndo(
+      () => factory,
+      () => undefined,
+    );
+    await store.save(saved("gone"));
+    await goingRightAfter(() => store.saveAll("p", [saved("a"), saved("b")], ["gone"]));
+    expect((await store.list("p")).map(({ origin }) => origin).toSorted()).toEqual(["a", "b"]);
   });
 });

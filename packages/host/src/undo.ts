@@ -87,37 +87,31 @@ export function browserUndo(
 
   const toSaved = ({ bytes: _bytes, ...saved }: Row): SavedUndo => saved;
 
-  return {
-    window,
-    async list(project) {
-      const transaction = (await database()).transaction(RECORDS, "readonly");
-      const rows = await rowsOf(transaction.objectStore(RECORDS), project);
-      return rows.toSorted((a, b) => a.savedAt - b.savedAt).map(toSaved);
-    },
-    async get(project, origin) {
-      const transaction = (await database()).transaction(RECORDS, "readonly");
-      const row = (await resultOf(transaction.objectStore(RECORDS).get([project, origin]))) as
-        Row | undefined;
-      return row && toSaved(row);
-    },
-    async save(saved) {
-      const { project, origin, madeAt: made, ...kept } = saved;
-      const now = clock();
-      const row: Row = {
-        ...kept,
-        project,
-        origin,
-        window,
-        savedAt: now,
-        madeAt: made ?? now,
-        bytes: sizeOf(saved),
-      };
-      // The log first, on its own, with nothing to read before it: a page that goes away right
-      // after still has it. What goes for it comes after, in a transaction of its own.
-      const writing = (await database()).transaction(RECORDS, "readwrite");
-      writing.objectStore(RECORDS).put(row);
-      await committed(writing);
-      tell(project, origin);
+  const saveAll: UndoStore["saveAll"] = async (project, saved, removed = []) => {
+    const now = clock();
+    const rows = saved.map(({ project: _project, origin, madeAt: made, ...kept }): Row => ({
+      ...kept,
+      project,
+      origin,
+      window,
+      savedAt: now,
+      madeAt: made ?? now,
+      bytes: sizeOf(kept),
+    }));
+    // The logs first, on their own, with nothing to read before them, and committed right away:
+    // a page that goes away right after still has them (a transaction the page did not commit is
+    // taken back as it goes). What goes for them comes after, in a transaction of its own.
+    const writing = (await database()).transaction(RECORDS, "readwrite");
+    const kept = writing.objectStore(RECORDS);
+    for (const row of rows) kept.put(row);
+    for (const origin of removed) kept.delete([project, origin]);
+    writing.commit?.();
+    await committed(writing);
+    for (const { origin } of rows) tell(project, origin);
+    for (const origin of removed) tell(project, origin);
+    if (rows.length === 0) return { dropped: [] };
+    // The logs are kept by now: where this fails, the save did not, and what goes goes next time.
+    try {
       const transaction = (await database()).transaction([RECORDS, GONE], "readwrite");
       const records = transaction.objectStore(RECORDS);
       const gone = transaction.objectStore(GONE);
@@ -134,7 +128,27 @@ export function browserUndo(
       await committed(transaction);
       for (const { origin: away } of dropped) tell(project, away);
       return { dropped: dropped.map(({ origin: away }) => away) };
+    } catch (error) {
+      console.warn("The oldest undo logs could not go", error);
+      return { dropped: [] };
+    }
+  };
+
+  return {
+    window,
+    async list(project) {
+      const transaction = (await database()).transaction(RECORDS, "readonly");
+      const rows = await rowsOf(transaction.objectStore(RECORDS), project);
+      return rows.toSorted((a, b) => a.savedAt - b.savedAt).map(toSaved);
     },
+    async get(project, origin) {
+      const transaction = (await database()).transaction(RECORDS, "readonly");
+      const row = (await resultOf(transaction.objectStore(RECORDS).get([project, origin]))) as
+        Row | undefined;
+      return row && toSaved(row);
+    },
+    save: (saved) => saveAll(saved.project, [saved]),
+    saveAll,
     async remove(project, origin) {
       const transaction = (await database()).transaction(RECORDS, "readwrite");
       transaction.objectStore(RECORDS).delete([project, origin]);
@@ -206,6 +220,33 @@ export function memoryUndo(
   const window = newWindow();
   const toSaved = ({ bytes: _bytes, ...saved }: Row): SavedUndo => saved;
   const key = (project: string, origin: string) => JSON.stringify([project, origin]);
+  const saveAll: UndoStore["saveAll"] = async (project, saved, removed = []) => {
+    const now = clock();
+    for (const { madeAt, ...kept } of saved) {
+      const row: Row = {
+        ...kept,
+        project,
+        window,
+        savedAt: now,
+        madeAt: madeAt ?? now,
+        bytes: sizeOf(kept),
+      };
+      shared.rows.set(key(project, kept.origin), row);
+    }
+    for (const origin of removed) shared.rows.delete(key(project, origin));
+    for (const { origin } of saved) shared.tell(window, project, origin);
+    for (const origin of removed) shared.tell(window, project, origin);
+    if (saved.length === 0) return { dropped: [] };
+    const rows = [...shared.rows.values()].filter((each) => each.project === project);
+    const dropped = undoDropped(rows, now);
+    for (const { origin, why } of dropped) {
+      shared.rows.delete(key(project, origin));
+      shared.gone.set(key(project, origin), why);
+    }
+    for (const { origin } of dropped) shared.tell(window, project, origin);
+    return { dropped: dropped.map(({ origin }) => origin) };
+  };
+
   return {
     window,
     list: async (project) =>
@@ -217,27 +258,8 @@ export function memoryUndo(
       const row = shared.rows.get(key(project, origin));
       return row && toSaved(row);
     },
-    async save(saved) {
-      const now = clock();
-      const { madeAt, ...kept } = saved;
-      const row: Row = {
-        ...kept,
-        window,
-        savedAt: now,
-        madeAt: madeAt ?? now,
-        bytes: sizeOf(saved),
-      };
-      shared.rows.set(key(saved.project, saved.origin), row);
-      const rows = [...shared.rows.values()].filter((each) => each.project === saved.project);
-      const dropped = undoDropped(rows, now);
-      for (const { origin, why } of dropped) {
-        shared.rows.delete(key(saved.project, origin));
-        shared.gone.set(key(saved.project, origin), why);
-      }
-      shared.tell(window, saved.project, saved.origin);
-      for (const { origin } of dropped) shared.tell(window, saved.project, origin);
-      return { dropped: dropped.map(({ origin }) => origin) };
-    },
+    save: (saved) => saveAll(saved.project, [saved]),
+    saveAll,
     async remove(project, origin) {
       shared.rows.delete(key(project, origin));
       shared.tell(window, project, origin);

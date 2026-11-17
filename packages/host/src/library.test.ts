@@ -1,4 +1,4 @@
-import { IDBDatabase, IDBFactory, IDBKeyRange } from "fake-indexeddb";
+import { IDBDatabase, IDBFactory, IDBKeyRange, IDBObjectStore } from "fake-indexeddb";
 import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createBrowserHost } from "./browser.ts";
 import type { ProjectLog } from "./index.ts";
@@ -380,6 +380,137 @@ describe("a window on a project that is gone", () => {
   });
 });
 
+/**
+ * The page goes right after a change starts to be written: its transaction is taken back unless it
+ * was committed by then, as a browser does with a page that goes away.
+ */
+async function goingRightAfter<T>(method: "add" | "put", run: () => Promise<T>) {
+  const proto = IDBObjectStore.prototype;
+  const write = proto[method];
+  proto[method] = function (this: IDBObjectStore, ...args: Parameters<typeof write>) {
+    const request = write.apply(this, args);
+    const transaction = this.transaction;
+    queueMicrotask(() => {
+      try {
+        transaction.abort();
+      } catch {
+        // Committed already: it stays.
+      }
+    });
+    return request;
+  };
+  try {
+    return await run().catch(() => undefined);
+  } finally {
+    proto[method] = write;
+  }
+}
+
+/** The page goes once a change is written, before anything else of it: no other transaction opens. */
+async function goneAfterWrite<T>(run: () => Promise<T>) {
+  const proto = IDBDatabase.prototype;
+  const transaction = proto.transaction;
+  let opened = 0;
+  proto.transaction = function (this: IDBDatabase, ...args: Parameters<typeof transaction>) {
+    opened += 1;
+    if (opened > 1) throw new DOMException("The page went", "InvalidStateError");
+    return transaction.apply(this, args);
+  };
+  try {
+    return await run().catch(() => undefined);
+  } finally {
+    proto.transaction = transaction;
+  }
+}
+
+const allUpdates = (setup: ReturnType<typeof browser>) =>
+  new Promise<Record<string, unknown>[]>((resolve, reject) => {
+    const opening = setup.factory.open("animaquill");
+    opening.addEventListener("error", () => reject(opening.error));
+    opening.addEventListener("success", () => {
+      const request = opening.result.transaction("updates").objectStore("updates").getAll();
+      request.addEventListener("success", () => {
+        opening.result.close();
+        resolve(request.result as Record<string, unknown>[]);
+      });
+    });
+  });
+
+describe("a change as the page goes right after it", () => {
+  const UPDATE = new Uint8Array([9]);
+
+  it("is kept, though the page never hears back from the write", async () => {
+    const setup = browser();
+    await setup.library.create(PROJECT, STATE);
+    const log = await logOf(setup.library);
+    await goingRightAfter("add", () => log.append(UPDATE, "名字"));
+    expect(await (await logOf(setup.window())).load()).toEqual([STATE, UPDATE]);
+  });
+
+  it("is kept as the page goes before the project is noted, and the next change notes it", async () => {
+    const setup = browser();
+    await setup.library.create(PROJECT, STATE);
+    const log = await logOf(setup.library);
+    await goneAfterWrite(() => log.append(UPDATE, "新的名字"));
+    expect(await (await logOf(setup.window())).load()).toEqual([STATE, UPDATE]);
+    await log.append(new Uint8Array([8]), "新的名字");
+    expect((await setup.library.list())[0]?.name).toBe("新的名字");
+  });
+
+  it("of a window of a project that is gone, written as that page went: nobody reads it, and it goes", async () => {
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    onTestFinished(() => void vi.unstubAllGlobals());
+    const setup = browser();
+    const { library } = setup;
+    await library.create(PROJECT, STATE);
+    const stale = await logOf(library);
+    await library.remove(PROJECT.id);
+    await library.create(PROJECT, new Uint8Array([7]));
+    await goneAfterWrite(() => stale.append(UPDATE, "名字"));
+    expect(await allUpdates(setup)).toHaveLength(2);
+    const log = await logOf(library);
+    expect(await log.load()).toEqual([new Uint8Array([7])]);
+    const entries = (await log.entries?.()) ?? [];
+    expect(entries.map(({ update }) => [...update])).toEqual([[7]]);
+    // The log ends where its entries say: starting anew is not held up by it.
+    expect(
+      await library.renew?.(PROJECT.id, [{ update: STATE }], "copy1", {
+        expectedLast: entries.at(-1)?.mark ?? 0,
+      }),
+    ).toBe(true);
+    expect(await (await logOf(library)).load()).toEqual([STATE]);
+    expect(await library.backupUpdates?.(PROJECT.id, "copy1")).toEqual([new Uint8Array([7])]);
+    expect(await allUpdates(setup)).toHaveLength(2);
+  });
+
+  it("of a window of the log before it started anew: nobody reads it, and shortening takes it away", async () => {
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    onTestFinished(() => void vi.unstubAllGlobals());
+    const setup = browser();
+    const { library } = setup;
+    await library.create(PROJECT, STATE);
+    const before = await logOf(library);
+    await library.renew?.(PROJECT.id, [{ update: new Uint8Array([5]) }], "copy1");
+    await goneAfterWrite(() => before.append(UPDATE, "名字"));
+    const log = await logOf(library);
+    await log.append(new Uint8Array([6]), "名字");
+    expect(await log.load()).toEqual([new Uint8Array([5]), new Uint8Array([6])]);
+    await log.compact(() => new Uint8Array([0]));
+    expect(await log.load()).toEqual([new Uint8Array([0])]);
+    expect((await allUpdates(setup)).filter((each) => each.project === PROJECT.id)).toHaveLength(1);
+  });
+
+  it("of a window of a project that is gone, where the page stays: refused, and not kept", async () => {
+    const setup = browser();
+    const { library } = setup;
+    await library.create(PROJECT, STATE);
+    const stale = await logOf(library);
+    await library.remove(PROJECT.id);
+    await expect(stale.append(UPDATE, "名字")).rejects.toThrow();
+    expect(await allUpdates(setup)).toEqual([]);
+  });
+});
+
 describe("a project saved before projects told each other apart", () => {
   const UPDATE = new Uint8Array([9]);
 
@@ -455,6 +586,13 @@ describe("what is being tried out", () => {
     const place = await trials().open(PROJECT.id);
     await place.save({ changes: [{ value: 1 }] });
     expect(await place.load()).toEqual({ changes: [{ value: 1 }] });
+  });
+
+  it("keeps what was tried as the page goes right after, though it never hears back", async () => {
+    const { trials } = await setup();
+    const place = await trials().open(PROJECT.id);
+    await goingRightAfter("put", () => place.save("试改"));
+    expect(await place.load()).toBe("试改");
   });
 
   it("gives every window a place of its own", async () => {

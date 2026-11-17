@@ -2562,6 +2562,11 @@ export interface SavedUndo {
   readonly madeAt: number;
 }
 
+/** A log as it is kept, see `UndoStore.save`: the store says which window and when. */
+export type UndoToSave = Omit<SavedUndo, "window" | "savedAt" | "madeAt"> & {
+  readonly madeAt?: number;
+};
+
 /** Why the log of an origin is no longer kept: there were newer ones, or it got too old. */
 export type UndoGone = "count" | "age";
 
@@ -2586,8 +2591,15 @@ export interface UndoStore {
    * origins whose logs went for it. `madeAt` is when the changes began, which the caller knows;
    * without it, now.
    */
-  save(
-    saved: Omit<SavedUndo, "window" | "savedAt" | "madeAt"> & { readonly madeAt?: number },
+  save(saved: UndoToSave): Promise<{ readonly dropped: readonly string[] }>;
+  /**
+   * Keeps several logs of a project and takes others away (`removed`), as `save` and `remove` do,
+   * in one write that nothing waits for: a page that goes right after has all of them or none.
+   */
+  saveAll(
+    project: string,
+    saved: readonly UndoToSave[],
+    removed?: readonly string[],
   ): Promise<{ readonly dropped: readonly string[] }>;
   remove(project: string, origin: string): Promise<void>;
   /** The origins of a project whose logs went, and why. */

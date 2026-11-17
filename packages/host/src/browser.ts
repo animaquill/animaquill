@@ -79,6 +79,12 @@ interface UpdateRecord {
   readonly update: Uint8Array;
   /** Who made it, see `ChangeSource`. Records of older editors have none. */
   readonly source?: ChangeSource;
+  /**
+   * The log it was written for (`logKey`), where nothing checked as it was written that this log
+   * is the project's: see `ProjectLog.append`. Reads take it only while it is, see `belongs`.
+   * Records written where that was checked have none.
+   */
+  readonly of?: string;
 }
 
 /** What the log puts together when it gets shorter, see `ProjectLog.compact`. */
@@ -121,6 +127,19 @@ interface ProjectRecord extends ProjectSummary {
 const backupKey = (id: string, backup: string) => `${id}\u0000backup\u0000${backup}`;
 
 const newInstance = () => crypto.getRandomValues(new Uint32Array(4)).join("-");
+
+/** Which log of which project, see `UpdateRecord.of`. */
+const logKey = (instance: string | undefined, log: string | undefined) =>
+  `${instance ?? ""}\n${log ?? ""}`;
+
+/**
+ * Whether an update is of the log a project has now: checked as it was written, or written for
+ * this log. One a window wrote for a project that went meanwhile, or whose log started anew, is not:
+ * nothing reads it, and what notices it takes it away.
+ */
+const belongs = (update: UpdateRecord, record: ProjectRecord | undefined) =>
+  update.of === undefined ||
+  (record !== undefined && !record.incoming && update.of === logKey(record.instance, record.log));
 
 const resultOf = <T>(request: IDBRequest<T>) =>
   new Promise<T>((resolve, reject) => {
@@ -218,9 +237,11 @@ function openLog(
   );
   const isOurs = (record: ProjectRecord | undefined) =>
     isInstance(record, instance) && record?.log === log;
+  const ours = logKey(instance, log);
   /**
    * Rejects where the log of this project started anew since this one opened: what it has now is
-   * another document, which a window of the log before must not take for more of its own.
+   * another document, which a window of the log before must not take for more of its own. Resolves
+   * to the project as it is.
    */
   const refuseRenewed = async (transaction: IDBTransaction) => {
     const record = await resultOf<ProjectRecord | undefined>(
@@ -228,6 +249,7 @@ function openLog(
     );
     if (record && isInstance(record, instance) && record.log !== log)
       throw new Error("The log of the project started anew");
+    return record;
   };
 
   return {
@@ -240,14 +262,14 @@ function openLog(
     },
     async load() {
       const transaction = (await database()).transaction([UPDATES, PROJECTS]);
-      await refuseRenewed(transaction);
+      const project = await refuseRenewed(transaction);
       const index = transaction.objectStore(UPDATES).index(BY_PROJECT);
       const records = await resultOf<UpdateRecord[]>(index.getAll(id));
-      return records.map((record) => record.update);
+      return records.filter((record) => belongs(record, project)).map((record) => record.update);
     },
     async entries(after = 0) {
       const transaction = (await database()).transaction([UPDATES, PROJECTS]);
-      await refuseRenewed(transaction);
+      const project = await refuseRenewed(transaction);
       const index = transaction.objectStore(UPDATES).index(BY_PROJECT);
       // The index has the records of a project in the order they came in: from the first one after
       // the mark on, and nothing of other projects.
@@ -270,31 +292,53 @@ function openLog(
             return;
           }
           isFirst = false;
-          if (mark > after) found.push({ update: record.update, source: record.source, mark });
+          if (mark > after && belongs(record, project))
+            found.push({ update: record.update, source: record.source, mark });
           cursor.continue();
         });
       });
       return found;
     },
     async append(update, name, source) {
-      // "strict" waits for the disk, so that a power cut cannot take back what looks saved. Slow
-      // writes do no harm: changes that arrive in the meantime go along with the next one.
-      const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite", {
+      // The change goes on its own, committed in the same turn as it opens: a page that goes right
+      // after (a reload, the tab closes) keeps it only if nothing of the write waits for the page
+      // any more. Whether the project is still this one is not asked first, which would take a
+      // read: the record says which log it is for (`of`), and reads take it only while that is the
+      // project's (`belongs`), so that a project that took over the id, or a log that started
+      // anew, never has it. "strict" waits for the disk, so that a power cut cannot take back what
+      // looks saved. Slow writes do no harm: changes that arrive in the meantime go along with the
+      // next one.
+      const writing = (await database()).transaction(UPDATES, "readwrite", {
         durability: "strict",
       });
-      transaction
+      const added = writing
         .objectStore(UPDATES)
-        .add({ project: id, update, ...(source && { source }) } satisfies UpdateRecord);
+        .add({ project: id, update, ...(source && { source }), of: ours } satisfies UpdateRecord);
+      writing.commit?.();
+      await committed(writing);
+      const seq = added.result as number;
+      // Then the project: its name and when it changed for the list, or, where it is not this one
+      // any more, the change goes again, as nothing would ever read it.
+      const transaction = (await database()).transaction([UPDATES, PROJECTS], "readwrite");
       const projects = transaction.objectStore(PROJECTS);
       const read = projects.get(id);
+      let isGone = false;
       read.addEventListener("success", () => {
         const record = read.result as ProjectRecord | undefined;
-        // Writing on would leave data behind that nothing can ever reach, and to a project that
-        // has taken over the id it would be changes to a document it does not have.
-        if (isOurs(record)) projects.put({ ...record, name, updatedAt: Date.now() });
-        else transaction.abort();
+        if (record && isOurs(record)) {
+          projects.put({ ...record, name, updatedAt: Date.now() } satisfies ProjectRecord);
+          return;
+        }
+        isGone = true;
+        const updates = transaction.objectStore(UPDATES);
+        const again = updates.get(seq);
+        again.addEventListener("success", () => {
+          const kept = again.result as UpdateRecord | undefined;
+          if (kept?.project === id && kept.of === ours) updates.delete(seq);
+        });
       });
       await committed(transaction);
+      if (isGone) throw new Error(`Project ${id} is gone, or not the one this window has`);
       // oxlint-disable-next-line unicorn/require-post-message-target-origin -- not a window
       channel?.postMessage(update);
     },
@@ -316,11 +360,19 @@ function openLog(
       const owner = transaction.objectStore(PROJECTS).get(id);
       const read = updates.index(BY_PROJECT).getAll(id);
       read.addEventListener("success", () => {
+        const project = owner.result as ProjectRecord | undefined;
+        if (!isOurs(project)) return;
+        const all = read.result as UpdateRecord[];
+        // What a window wrote for what is not this project's log is of nobody: it goes.
+        for (const record of all)
+          if (!belongs(record, project)) updates.delete(record.seq as number);
         // What is not on a platform yet stays as it is, see `ProjectLog.compact`.
-        const records = (read.result as UpdateRecord[]).filter(
-          (record) => through === undefined || (record.seq as number) <= through,
+        const records = all.filter(
+          (record) =>
+            belongs(record, project) &&
+            (through === undefined || (record.seq as number) <= through),
         );
-        if (records.length < 2 || !isOurs(owner.result as ProjectRecord | undefined)) return;
+        if (records.length < 2) return;
         const merged = merge(records.map((record) => record.update));
         for (const record of records) updates.delete(record.seq as number);
         updates.add({ project: id, update: merged, source: MERGED } satisfies UpdateRecord);
@@ -456,14 +508,26 @@ function deleteLog(transaction: IDBTransaction, key: string): void {
 
 /**
  * Moves the records of a log from one key to another, as part of a transaction: they keep where they
- * are in it (`seq`), and so their order.
+ * are in it (`seq`), and so their order. With `project`, the log is that project's: what is not of
+ * it (`belongs`) goes. What is moved counts as checked from then on (no `of`): the log it goes to is
+ * a backup, or becomes the project's.
  */
-function moveLog(transaction: IDBTransaction, from: string, to: string): void {
+function moveLog(
+  transaction: IDBTransaction,
+  from: string,
+  to: string,
+  project?: ProjectRecord,
+): void {
   const updates = transaction.objectStore(UPDATES);
   const read = updates.index(BY_PROJECT).getAll(from);
   read.addEventListener("success", () => {
     for (const record of read.result as UpdateRecord[]) {
-      updates.put({ ...record, project: to } satisfies UpdateRecord);
+      if (project && !belongs(record, project)) {
+        updates.delete(record.seq as number);
+        continue;
+      }
+      const { of: _of, ...checked } = record;
+      updates.put({ ...checked, project: to } satisfies UpdateRecord);
     }
   });
 }
@@ -677,11 +741,17 @@ function createLibrary(
       const updates = transaction.objectStore(UPDATES);
       const read = projects.get(id);
       // The last entry of the log, by its mark, in the same step: what came since stays where it is.
-      const last = updates.index(BY_PROJECT).openKeyCursor(IDBKeyRange.only(id), "prev");
+      // Only what is of the log counts, as `entries` has it (the project is read by then).
+      const last = updates.index(BY_PROJECT).openCursor(IDBKeyRange.only(id), "prev");
       let refused: string | undefined;
       let moved = false;
       last.addEventListener("success", () => {
-        const mark = (last.result?.primaryKey as number | undefined) ?? 0;
+        const at = last.result;
+        if (at && !belongs(at.value as UpdateRecord, read.result as ProjectRecord | undefined)) {
+          at.continue();
+          return;
+        }
+        const mark = (at?.primaryKey as number | undefined) ?? 0;
         if (expectedLast === undefined || mark === expectedLast) return;
         moved = true;
         transaction.abort();
@@ -695,7 +765,7 @@ function createLibrary(
           return;
         }
         // What the log had goes out of its way first: the new entries come after it.
-        moveLog(transaction, id, backupKey(id, backup));
+        moveLog(transaction, id, backupKey(id, backup), record);
         for (const { update, source } of entries) {
           updates.add({ project: id, update, ...(source && { source }) } satisfies UpdateRecord);
         }
@@ -902,6 +972,8 @@ function createPlaces(
           const record: PlaceRecord = { project, place, instance, savedAt: Date.now(), trial };
           kept.put(record);
         }
+        // Committed right away, not once the page hears back: one that goes takes it back otherwise.
+        transaction.commit?.();
         await committed(transaction);
       },
       close: release,

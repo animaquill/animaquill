@@ -98,6 +98,28 @@ describe("undo logs that last across reloads", () => {
     }
   });
 
+  it("saves the logs of several origins in one write, so that a page that goes right after has all", async () => {
+    const place = new MemoryUndoPlace();
+    const { store, add } = opened();
+    const host = memoryUndo(place);
+    const writes: string[][] = [];
+    const saveAll = host.saveAll;
+    const first = window(store, {
+      ...host,
+      window: host.window,
+      saveAll: (project, saved, removed) => {
+        writes.push(saved.map(({ origin }) => origin));
+        return saveAll(project, saved, removed);
+      },
+    });
+    add(store, "c1", TASK);
+    add(store, "c2", aiTask("t2"), "2");
+    await first.keeper.flush();
+    expect(writes).toEqual([[TASK, aiTask("t2")]]);
+    expect(place.rows.size).toBe(2);
+    first.keeper.destroy();
+  });
+
   it("says once what was saved is taken up, which a change of the same origin before keeps out", async () => {
     const place = new MemoryUndoPlace();
     const { store, add } = opened();
