@@ -1,12 +1,26 @@
 {
-  "about": "Ripple edits (pro-editing P3a): closing a stretch that clips on other tracks are in moves nothing and says which clips and tracks; with rippleTracks only those tracks move. Extracting takes what is in a stretch away on all tracks and closes it.",
+  "about": "Ripple edits (pro-editing P3a): closing a stretch that clips on other tracks are in moves nothing and says which clips and tracks; with rippleTracks only those tracks move, and sections and markers stay, since other tracks still have something after it. Extracting takes what is in a stretch away on all tracks and closes it.",
   "steps": [
-    { "tool": "aq_timeline_read", "expect": { "ok": true } },
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
     {
       "tool": "aq_edit",
       "args": {
         "operations": [
-          { "op": "timeline.closeGap", "timeline": "main", "ranges": [{ "from": "0", "to": "6" }] }
+          {
+            "op": "timeline.closeGap",
+            "timeline": "main",
+            "ranges": [
+              {
+                "from": "0",
+                "to": "6"
+              }
+            ]
+          }
         ]
       },
       "expect": {
@@ -24,19 +38,20 @@
           {
             "op": "timeline.closeGap",
             "timeline": "main",
-            "ranges": [{ "from": "0", "to": "6" }],
+            "ranges": [
+              {
+                "from": "0",
+                "to": "6"
+              }
+            ],
             "rippleTracks": ["track_overlay"]
           }
         ]
       },
       "expect": {
         "ok": true,
-        "lines": [
-          "clip_lottie: start 6→0",
-          "clip_idea \"样片：换个开场\": start 10→4",
-          "section_intro: removed",
-          "marker marker_turn \"转折\": duration 2→1; time 5→0"
-        ]
+        "lines": ["clip_lottie: start 6→0", "clip_idea \"样片：换个开场\": start 10→4"],
+        "absent": ["section_intro", "marker_hook", "marker_turn"]
       }
     },
     {
@@ -57,10 +72,12 @@
         "lines": [
           "clip_logo: duration 7.5→2.5",
           "clip_card: start 25→23",
-          "section_end \"结尾\": duration 11.005→9.005"
+          "section_body \"讲解\": duration 20→18"
         ]
       }
     }
   ],
-  "end": { "undoAll": true }
+  "end": {
+    "undoAll": true
+  }
 }

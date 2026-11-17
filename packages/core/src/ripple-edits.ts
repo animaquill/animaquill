@@ -141,8 +141,9 @@ function oneFrame(draft: Draft): Rational {
  * Takes stretches out of a timeline: clips on the tracks that ripple that start at the end of one
  * or later move back by as much, and by all of those before them together. On those tracks, the
  * stretches have to be empty, or this fails with `ripple-blocked` and writes nothing. Sections
- * and markers move back with the timeline, see `closingPlan`; joins go along while their clips stay
- * together. A clip on a track that does not ripple and now ends past the end of the timeline makes
+ * and markers move back with the timeline, see `closingPlan`, but only when all of it moves: a
+ * track that does not ripple and has something after the first stretch keeps them where they are.
+ * Joins go along while their clips stay together. A clip on a track that does not ripple and now ends past the end of the timeline makes
  * its last section longer again, as far as it was. Stretches go through `mergeSpans` first.
  */
 export function closeGaps(
@@ -188,10 +189,18 @@ export function closeGaps(
     moved.push(clip.id);
   }
 
+  // Sections and markers are about the whole timeline: they move only when all of it from the
+  // first gap on moves, with no track that stays there and has something after that moment.
+  const first = gaps[0];
+  const stays =
+    first !== undefined &&
+    Object.values(target.clips).some(
+      (clip) => !rippling(clip) && compare(clipEnd(clip), first.from) > 0,
+    );
   // From the last gap back, so that each is still where it was.
   const least = oneFrame(draft);
   const sectionsRemoved: string[] = [];
-  for (const { from, to } of gaps.toReversed()) {
+  for (const { from, to } of stays ? [] : gaps.toReversed()) {
     const plan = closingPlan(timelineOf(draft, timeline), from, to, least);
     applyGapPlan(draft, timeline, plan);
     sectionsRemoved.push(...plan.removed);
@@ -252,7 +261,7 @@ export interface Opened {
  * Puts a stretch of `length` into a timeline at `at`, as inserting does in an editor: on the tracks
  * that ripple, clips from `at` on move on by as much, and a clip across `at` is cut there, its part
  * after the cut moving on with them (linked parts get a link of their own, see `PieceLinks`).
- * Sections and markers make room too, see `openingPlan`. Taking the same stretch out again with
+ * Sections and markers make room too, see `openingPlan`, when all of the timeline from `at` on moves. Taking the same stretch out again with
  * `closeGaps` puts everything back where it was, apart from the cuts and joins across `at`.
  */
 export function openGap(
@@ -287,6 +296,10 @@ export function openGap(
       split.push({ clip: clip.id, piece });
     }
   }
-  applyGapPlan(draft, timeline, openingPlan(timelineOf(draft, timeline), at, length));
+  // As `closeGaps`: sections and markers make room only when all of the timeline from `at` on moves.
+  const stays = Object.values(target.clips).some(
+    (clip) => !rippling(clip) && compare(clipEnd(clip), at) > 0,
+  );
+  if (!stays) applyGapPlan(draft, timeline, openingPlan(timelineOf(draft, timeline), at, length));
   return { moved, split, joinsRemoved: followJoins(draft, timeline, together) };
 }

@@ -486,12 +486,27 @@ function checkEdit(step: Step, before: TimelineState, after: TimelineState, resu
   }
   checkGroups(before, after, takesPart);
 
-  // 7. Sections and markers move with what was taken out, and no marker goes.
+  // 7. Sections and markers move with what was taken out, and no marker goes; but only when all of
+  // the timeline after the first stretch moves. A track that does not take part and has something
+  // after it keeps them exactly where they are.
+  const stays =
+    gaps[0] !== undefined &&
+    Object.values(before.clips).some(
+      (clip) =>
+        !removed.has(clip.id) &&
+        !takesPart(clip.track) &&
+        compare(clipEnd(clip), gaps[0]!.from) > 0,
+    );
+  const timelineGaps = stays ? [] : gaps;
+  if (stays) {
+    expect(after.sections).toEqual(before.sections);
+    expect(after.markers).toEqual(before.markers);
+  }
   const placedBefore = placedSections(before);
   const expected = placedBefore
     .map(({ id, start, end }) => ({
       id,
-      length: subtract(closedMoment(gaps, end), closedMoment(gaps, start)),
+      length: subtract(closedMoment(timelineGaps, end), closedMoment(timelineGaps, start)),
     }))
     .filter(({ length }) => compare(length, ZERO) > 0);
   const all = expected.length === 0;
@@ -511,12 +526,15 @@ function checkEdit(step: Step, before: TimelineState, after: TimelineState, resu
   );
   expect(Object.keys(after.markers).toSorted()).toEqual(Object.keys(before.markers).toSorted());
   for (const marker of Object.values(before.markers)) {
-    const time = closedMoment(gaps, parseTime(marker.time));
+    const time = closedMoment(timelineGaps, parseTime(marker.time));
     const now = after.markers[marker.id]!;
     expect(now.time).toBe(t(time));
     if (marker.duration === undefined) expect(now.duration).toBeUndefined();
     else {
-      const end = closedMoment(gaps, add(parseTime(marker.time), parseTime(marker.duration)));
+      const end = closedMoment(
+        timelineGaps,
+        add(parseTime(marker.time), parseTime(marker.duration)),
+      );
       const length = subtract(end, time);
       expect(now.duration).toBe(compare(length, ZERO) > 0 ? t(length) : undefined);
     }

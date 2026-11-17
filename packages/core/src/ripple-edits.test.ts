@@ -200,6 +200,37 @@ describe("timeline.closeGap", () => {
     expect(markers()).toEqual(["m1@1", "m2@2", "m3@2", "m4@1+1", "m5@2"]);
   });
 
+  it("leaves sections and markers where they are when a track that stays has something after the gap", () => {
+    const { run, startOf, sections, markers } = project({
+      overlay: [color("o", "1", "1"), color("p", "6", "2")],
+      video: [color("long", "0", "20")],
+      sections: [
+        { id: "s1", duration: "4" },
+        { id: "s2", duration: "16" },
+      ],
+      markers: [{ id: "m", time: "7" }],
+    });
+    // Only the empty time on the overlay, as with every other track locked.
+    const result = success(
+      run("timeline.closeGap", { ranges: [{ from: "2", to: "6" }], rippleTracks: ["V2"] }),
+    );
+    expect(result.results[0]).toEqual({ moved: ["p"] });
+    expect([startOf("p"), startOf("long")]).toEqual(["2", "0"]);
+    expect(sections()).toEqual(["s1:4", "s2:16"]);
+    expect(markers()).toEqual(["m@7"]);
+  });
+
+  it("moves sections and markers when the tracks that stay have nothing after the gap", () => {
+    const { run, sections, markers } = project({
+      overlay: [color("o", "1", "1"), color("p", "6", "2")],
+      video: [color("early", "0", "1")],
+      markers: [{ id: "m", time: "7" }],
+    });
+    success(run("timeline.closeGap", { ranges: [{ from: "2", to: "6" }], rippleTracks: ["V2"] }));
+    expect(sections()).toEqual(["s1:16"]);
+    expect(markers()).toEqual(["m@3"]);
+  });
+
   it("takes out several stretches at once, each moving what is after it by all before it", () => {
     const { run, startOf } = project({
       video: [color("a", "1", "1"), color("b", "4", "1"), color("c", "8", "1")],
