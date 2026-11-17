@@ -1,4 +1,5 @@
-import { bezierProgress } from "@animaquill/core";
+import { bezierProgress, presetProgress } from "@animaquill/core";
+import { EASE_PRESET_NAMES } from "@animaquill/schema";
 import type { Locator, Page } from "@playwright/test";
 import {
   BLACK,
@@ -542,6 +543,78 @@ test.describe("with changes written right away", () => {
     await bubble.getByRole("radio", { name: "保持" }).click();
     await page.keyboard.press("Escape");
     await measure(() => 0);
+  });
+
+  test("a bounce lands and bounces, the other way round goes in, and undo is one step", async ({
+    page,
+  }) => {
+    const bounce = (name: "bounceOut" | "bounceIn") => (share: number) =>
+      presetProgress(EASE_PRESET_NAMES.indexOf(name), 1, 0.3, 1, share);
+    await keyedColor(page);
+    await makeTall(page, "位置 X");
+    const first = await centerOf(keys(page, "位置 X").first());
+    const last = await centerOf(keys(page, "位置 X").nth(1));
+    const lane = await row(page, "位置 X").boundingBox();
+    if (!lane) throw new Error("no row");
+    // Where the curve is flat, so that a column of it is a point: the tops of the bounces.
+    const OUT = [0.1, 6 / 11, 9 / 11];
+    const IN = OUT.map((share) => 1 - share);
+    const measure = async (progress: (share: number) => number, shares: readonly number[]) => {
+      for (const share of shares) {
+        const x = first.x + (last.x - first.x) * share;
+        const expected = first.y + (last.y - first.y) * progress(share);
+        const found = () => curveAt(page, x, lane.y, lane.y + lane.height);
+        await expect.poll(async () => Math.abs(((await found()) ?? 0) - expected)).toBeLessThan(2);
+      }
+    };
+    await page.mouse.click(first.x, first.y);
+    await page.keyboard.down("Control");
+    await page.mouse.click(last.x, last.y);
+    await page.keyboard.up("Control");
+    await expect(keys(page, "位置 X").first()).toHaveAttribute("aria-selected", "true");
+    await expect(keys(page, "位置 X").nth(1)).toHaveAttribute("aria-selected", "true");
+
+    await panel(page).getByRole("button", { name: "插值" }).click();
+    const bubble = page.getByRole("dialog", { name: "插值" });
+    await expect(bubble.getByRole("radio")).toHaveCount(10);
+    await bubble.getByRole("radio", { name: "弹跳" }).click();
+    await expect(bubble.getByRole("radio", { name: "弹跳" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await expect(keys(page, "位置 X").first()).toHaveAttribute("data-mark", "eased");
+    const directions = bubble.getByRole("radiogroup", { name: "方向" });
+    await expect(directions.getByRole("radio", { name: "出" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+    await measure(bounce("bounceOut"), OUT);
+
+    // The clip comes down on 300 and goes back up a few times: down, up, and down again.
+    const at = async (time: string, share: number) => {
+      await goTo(page, time);
+      const expected = 300 * bounce("bounceOut")(share);
+      await expect
+        .poll(async () => Math.abs(Number(await value(page, "位置 X").inputValue()) - expected))
+        .toBeLessThan(0.02);
+      return expected;
+    };
+    const landed = await at("0:02/13", (2 + 13 / 30 - 1) / 2);
+    const up = await at("0:02/19", (2 + 19 / 30 - 1) / 2);
+    const down = await at("0:02/25", (2 + 25 / 30 - 1) / 2);
+    expect(up).toBeLessThan(landed - 5);
+    expect(down).toBeGreaterThan(up + 10);
+
+    await panel(page).getByRole("button", { name: "插值" }).click();
+    await bubble
+      .getByRole("radiogroup", { name: "方向" })
+      .getByRole("radio", { name: "进" })
+      .click();
+    await measure(bounce("bounceIn"), IN);
+    await page.keyboard.press("Escape");
+    await expect(bubble).toHaveCount(0);
+    await page.keyboard.press("Control+z");
+    await measure(bounce("bounceOut"), OUT);
   });
 
   test("a handle of a selected key bends the curve, and the picture follows, in one step", async ({

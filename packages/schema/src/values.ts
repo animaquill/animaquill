@@ -31,6 +31,20 @@ export const Value = z.union([
 /** As in CSS: time has to go forwards, so x stays within the segment, and y can overshoot. */
 export const Handle = z.tuple([z.number().min(0).max(1), z.number()]);
 
+/** What a preset takes, see the project format. Only steps have to say something. */
+export const PresetParams = z.strictObject({
+  amplitude: z.number().min(1).optional(),
+  period: z.number().positive().optional(),
+  steps: z.number().int().positive().optional(),
+});
+
+/** A damped spring from rest, in seconds on the clock: see the project format. */
+export const Spring = z.strictObject({
+  stiffness: z.number().positive(),
+  damping: z.number().nonnegative(),
+  mass: z.number().positive().optional(),
+});
+
 /** How a value changes from one key to the next. Times are on the clock of the clip: see `offset`. */
 export const Key = z
   .strictObject({
@@ -43,21 +57,8 @@ export const Key = z
     in: Handle.optional(),
     tangent: z.enum(["auto", "aligned", "broken"]).optional(),
     preset: z.string().min(1).optional(),
-    /** What a preset takes, see the project format. Only steps have to say something. */
-    presetParams: z
-      .strictObject({
-        amplitude: z.number().min(1).optional(),
-        period: z.number().positive().optional(),
-        steps: z.number().int().positive().optional(),
-      })
-      .optional(),
-    spring: z
-      .strictObject({
-        stiffness: z.number().positive(),
-        damping: z.number().nonnegative(),
-        mass: z.number().positive().optional(),
-      })
-      .optional(),
+    presetParams: PresetParams.optional(),
+    spring: Spring.optional(),
   })
   .superRefine((key, context) => {
     const needs = (field: "out" | "preset" | "spring", message: string) => {

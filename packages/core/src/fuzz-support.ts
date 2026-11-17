@@ -120,6 +120,9 @@ export const EASES: readonly KeyEase[] = [
   { interp: "hold" },
   { interp: "bezier", out: [0.42, 0] },
   { interp: "bezier", out: [0.42, 0], in: [0.58, 1] },
+  { interp: "preset", preset: "bounceOut" },
+  { interp: "preset", preset: "stepsStart", presetParams: { steps: 3 } },
+  { interp: "spring", spring: { stiffness: 158, damping: 15 } },
 ];
 export const HOLD = { interp: "hold" } as const;
 

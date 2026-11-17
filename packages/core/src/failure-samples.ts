@@ -27,6 +27,8 @@ const RULES: { readonly [R in InvalidValue["rule"]]: Extract<InvalidValue, { rul
   "cut-outside": { rule: "cut-outside", clip: "c1", at: "9" },
   "key-taken": { rule: "key-taken", time: "1" },
   "key-moved-twice": { rule: "key-moved-twice", time: "1" },
+  "unknown-preset": { rule: "unknown-preset", preset: "wobble" },
+  "preset-params": { rule: "preset-params", ease: "stepsEnd" },
   "effect-outside": { rule: "effect-outside" },
   "effect-backwards": { rule: "effect-backwards" },
   "replace-same": { rule: "replace-same", kind: "asset", id: "a1" },

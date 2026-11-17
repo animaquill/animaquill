@@ -93,6 +93,10 @@ export const InvalidValue = z.discriminatedUnion("rule", [
   z.strictObject({ rule: z.literal("key-taken"), time: z.string() }),
   /** One key moved twice in a step. */
   z.strictObject({ rule: z.literal("key-moved-twice"), time: z.string() }),
+  /** A preset of easing that is not in the table of the project format. */
+  z.strictObject({ rule: z.literal("unknown-preset"), preset: z.string() }),
+  /** A preset or a spring (`ease` is its name, or "spring") without what it needs, or out of range. */
+  z.strictObject({ rule: z.literal("preset-params"), ease: z.string() }),
   /** An effect works within its clip. */
   z.strictObject({ rule: z.literal("effect-outside") }),
   /** An effect starts before it ends. */

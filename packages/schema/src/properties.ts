@@ -74,7 +74,7 @@ export interface PropertySpec {
   /** The range a control suggests while dragging. Not a check. */
   readonly softMin?: number;
   readonly softMax?: number;
-  /** For showing and converting: world, deg, ratio, db, semitone, m. */
+  /** For showing and converting: world, deg, ratio, db, semitone, m, s, count (whole numbers). */
   readonly unit?: string;
   /** For choices. */
   readonly options?: readonly string[];

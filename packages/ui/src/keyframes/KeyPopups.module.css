@@ -1,6 +1,10 @@
+.bubble {
+  max-width: none;
+}
+
 .presets {
   display: grid;
-  grid-template-columns: repeat(3, 72px);
+  grid-template-columns: repeat(5, 68px);
   gap: 4px;
 }
 
@@ -31,8 +35,56 @@
   overflow: visible;
 }
 
+/* What the chosen preset is tuned with, under the choices. */
+.tuning {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+  max-width: 356px;
+  padding-top: 8px;
+  border-top: 1px solid var(--aq-border);
+}
+
+.choices {
+  display: flex;
+  gap: 2px;
+}
+
+.choice {
+  display: grid;
+  place-items: center;
+  width: calc(44px * var(--aq-size-scale));
+  height: calc(32px * var(--aq-size-scale));
+  padding: 0;
+  color: var(--aq-text);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.choice:hover {
+  background: var(--aq-bg-hover);
+}
+
+.choice[aria-checked="true"] {
+  border-color: var(--aq-accent);
+}
+
+.number {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  color: var(--aq-text-muted);
+}
+
+.number input {
+  width: 64px;
+}
+
 .hint {
-  max-width: 228px;
+  max-width: 356px;
   margin: 8px 0 0;
   color: var(--aq-text-muted);
   font-size: var(--aq-font-12);

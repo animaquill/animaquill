@@ -83,6 +83,10 @@ export const INVALID_VALUE_TEXTS: RuleTexts = {
   "cut-outside": ({ clip, at }) => `${at} is not inside clip ${clip}: a cut has to be within it.`,
   "key-taken": ({ time }) => `There can be only one key at a time: two at ${time}.`,
   "key-moved-twice": ({ time }) => `The same key cannot be moved twice in one step: ${time}.`,
+  "unknown-preset": ({ preset }) =>
+    `There is no preset ${JSON.stringify(preset)}: the Key of topic "types/PropertyValue" lists them.`,
+  "preset-params": ({ ease }) =>
+    `${ease} lacks what it needs or has a value out of range: the Key of topic "types/PropertyValue" says what it takes.`,
   "effect-outside": () =>
     "An effect has to work within its clip: start and end are from its start.",
   "effect-backwards": () => "The start of an effect has to come before its end.",

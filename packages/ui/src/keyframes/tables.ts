@@ -1,5 +1,6 @@
 import { canMix, effectiveProperties, entryOf, secondsOf, type ClipState } from "@animaquill/core";
 import {
+  STEP_PRESETS,
   isAnimation,
   type Animation,
   type Key,
@@ -28,8 +29,9 @@ export interface KeyTable {
   readonly numbers?: Float64Array;
 }
 
-function markOf({ interp }: Key): KeyMark {
-  if (interp === "hold") return KEY_HOLD;
+/** Steps hold from one step to the next, so they are square too. */
+function markOf({ interp, preset }: Key): KeyMark {
+  if (interp === "hold" || (interp === "preset" && STEP_PRESETS.has(preset ?? ""))) return KEY_HOLD;
   return interp === undefined || interp === "linear" ? KEY_LINEAR : KEY_EASED;
 }
 

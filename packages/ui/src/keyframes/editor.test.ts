@@ -26,6 +26,7 @@ import { ActionRegistry } from "../workbench/actions.ts";
 import { registerTimelineActions } from "../timeline/actions.ts";
 import { ProjectSession } from "../workbench/session.ts";
 import { registerKeyframeActions } from "./actions.ts";
+import { tuningOfSpring } from "./easing.ts";
 import { KeyframeEditor } from "./editor.ts";
 import {
   DEFAULT_TALL_HEIGHT,
@@ -924,6 +925,80 @@ describe("what else can be done to keys", () => {
     expect(keyframes.selectedPreset).toBeUndefined();
   });
 
+  it("chooses a tuned preset and tunes it, one step each, and a drag only shows", async () => {
+    const { keyframes, click, at, trials, timeline, writer } = await keyed();
+    const keysNow = () => {
+      const box = timeline.model?.boxes.get("a");
+      if (!box) throw new Error("no clip");
+      return ((keyframes.shown(box.clip).properties ?? {})[X] as Animation).keys;
+    };
+    click(at(1, laneOf("a", X)));
+    expect(keyframes.selectedTuning).toBeUndefined();
+    keyframes.choosePreset("bounce");
+    expect(keysNow()[0]).toMatchObject({ interp: "preset", preset: "bounceOut" });
+    expect(keyframes.selectedPreset).toBe("bounce");
+    expect(keyframes.selectedTuning).toMatchObject({
+      preset: "bounce",
+      tuning: { direction: "out" },
+      span: 1,
+    });
+    // The same object while nothing changes, which React needs.
+    expect(keyframes.selectedTuning).toBe(keyframes.selectedTuning);
+    keyframes.tunePreset({ direction: "in" }, "commit");
+    expect(keysNow()[0]).toMatchObject({ preset: "bounceIn" });
+    // Choosing what it is already keeps how it is tuned.
+    keyframes.choosePreset("bounce");
+    expect(keysNow()[0]).toMatchObject({ preset: "bounceIn" });
+
+    keyframes.choosePreset("elastic");
+    keyframes.tunePreset({ amplitude: 2 }, "preview");
+    const previewed = writer.getPreviewed().get("a")?.get(X) as Animation;
+    expect(previewed.keys[0]).toMatchObject({ presetParams: { amplitude: 2 } });
+    expect(keysNow()[0]).not.toHaveProperty("presetParams");
+    keyframes.cancelEdits();
+    const back = writer.getPreviewed().get("a")?.get(X) as Animation | undefined;
+    expect(back?.keys[0]).not.toHaveProperty("presetParams");
+    keyframes.tunePreset({ amplitude: 2 }, "commit");
+    expect(keysNow()[0]).toEqual({
+      time: "1",
+      value: 0,
+      interp: "preset",
+      preset: "elasticOut",
+      presetParams: { amplitude: 2 },
+    });
+    trials.undo();
+    expect(keysNow()[0]).toEqual({ time: "1", value: 0, interp: "preset", preset: "elasticOut" });
+    trials.undo();
+    expect(keysNow()[0]).toMatchObject({ preset: "bounceIn" });
+    keyframes.choosePreset("linear");
+    expect(keysNow()[0]).toEqual({ time: "1", value: 0 });
+  });
+
+  it("gives each selected key a spring that is at rest by its next key", async () => {
+    const { keyframes, click, at, timeline, keys, open } = await keyed();
+    keys("a", Y, 1, 3);
+    open("a", "position");
+    click(at(1, laneOf("a", X)));
+    click(at(1, laneOf("a", Y), { mod: true }));
+    keyframes.choosePreset("spring");
+    const box = timeline.model?.boxes.get("a");
+    if (!box) throw new Error("no clip");
+    const properties = keyframes.shown(box.clip).properties ?? {};
+    // x goes on for a second, y for two: each swings in half of it.
+    const swingOf = (path: string) =>
+      tuningOfSpring((properties[path] as Animation).keys[0]?.spring)?.swing;
+    expect(swingOf(X)).toBeCloseTo(0.5, 9);
+    expect(swingOf(Y)).toBeCloseTo(1, 9);
+    // Tuning the bounce keeps the swing of each.
+    keyframes.tunePreset({ bounce: 0.2 }, "commit");
+    const after =
+      keyframes.shown(timeline.model?.boxes.get("a")?.clip ?? box.clip).properties ?? {};
+    const tuned = (path: string) => tuningOfSpring((after[path] as Animation).keys[0]?.spring);
+    expect(tuned(X)?.swing).toBeCloseTo(0.5, 9);
+    expect(tuned(Y)?.swing).toBeCloseTo(1, 9);
+    expect(tuned(Y)?.bounce).toBeCloseTo(0.2, 9);
+  });
+
   describe("copying", () => {
     it("comes back at the playhead, as far apart as it was, with how it goes on", async () => {
       const { keyframes, click, at, timeline, shownTimes, selected } = await keyed();
@@ -941,6 +1016,26 @@ describe("what else can be done to keys", () => {
       expect(keys[2]).toMatchObject({ value: 0, interp: "hold" });
       expect(keys[3]).toMatchObject({ value: 10 });
       expect(timeline.frame).toBe(120);
+    });
+
+    it("takes a preset along with what it takes", async () => {
+      const { keyframes, click, at, timeline } = await keyed();
+      click(at(1, laneOf("a", X)));
+      keyframes.choosePreset("steps");
+      keyframes.tunePreset({ steps: 6, jump: "start" }, "commit");
+      keyframes.copySelected();
+      timeline.seek(120);
+      keyframes.paste();
+      const box = timeline.model?.boxes.get("a");
+      if (!box) throw new Error("no clip");
+      const { keys } = (keyframes.shown(box.clip).properties ?? {})[X] as Animation;
+      expect(keys.find(({ time }) => time === "4")).toEqual({
+        time: "4",
+        value: 0,
+        interp: "preset",
+        preset: "stepsStart",
+        presetParams: { steps: 6 },
+      });
     });
 
     it("goes by the earliest key, whichever got selected first", async () => {

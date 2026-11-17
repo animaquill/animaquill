@@ -1,0 +1,112 @@
+{
+  "about": "Easing presets and springs (keyframes K3): setInterp writes a preset and a spring as the format has them; a name that is not a preset and steps without steps fail and write nothing.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "property.edit",
+            "timeline": "main",
+            "edits": [
+              {
+                "owner": { "clip": "clip_logo" },
+                "path": "transform.y",
+                "op": "set",
+                "value": {
+                  "keys": [
+                    { "time": "0", "value": -600 },
+                    { "time": "1", "value": 0 }
+                  ]
+                }
+              },
+              {
+                "owner": { "clip": "clip_logo" },
+                "path": "transform.y",
+                "op": "setInterp",
+                "times": ["0"],
+                "ease": { "interp": "preset", "preset": "bounceOut" }
+              },
+              {
+                "owner": { "clip": "clip_logo" },
+                "path": "transform.x",
+                "op": "set",
+                "value": {
+                  "keys": [
+                    { "time": "0", "value": -400 },
+                    { "time": "1.5", "value": 0 }
+                  ]
+                }
+              },
+              {
+                "owner": { "clip": "clip_logo" },
+                "path": "transform.x",
+                "op": "setInterp",
+                "times": ["0"],
+                "ease": { "interp": "spring", "spring": { "stiffness": 157.91, "damping": 15.08 } }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": { "ok": true }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "property.edit",
+            "timeline": "main",
+            "edits": [
+              {
+                "owner": { "clip": "clip_logo" },
+                "path": "transform.y",
+                "op": "setInterp",
+                "times": ["0"],
+                "ease": { "interp": "preset", "preset": "wobble" }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": { "error": "invalid-value", "lines": ["wobble", "nothing was written"] }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "property.edit",
+            "timeline": "main",
+            "edits": [
+              {
+                "owner": { "clip": "clip_logo" },
+                "path": "transform.y",
+                "op": "setInterp",
+                "times": ["0"],
+                "ease": { "interp": "preset", "preset": "stepsEnd" }
+              }
+            ]
+          }
+        ]
+      },
+      "expect": { "error": "invalid-value", "lines": ["stepsEnd", "nothing was written"] }
+    }
+  ],
+  "end": {
+    "files": {
+      "timelines/main/timeline.json": ["\"preset\": \"bounceOut\"", "\"stiffness\": 157.91"]
+    },
+    "absent": {
+      "timelines/main/timeline.json": ["wobble", "stepsEnd"]
+    },
+    "undoAll": true
+  }
+}

@@ -101,9 +101,11 @@ export {
   Key,
   KnownProperties,
   MediaRef,
+  PresetParams,
   Properties,
   PropertyPath,
   PropertyValue,
+  Spring,
   Value,
 } from "./values.ts";
 export { CURRENT_FORMAT_VERSION, CURRENT_SCENE_RUNTIME } from "./version.ts";

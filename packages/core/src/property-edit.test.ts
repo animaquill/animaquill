@@ -762,3 +762,148 @@ describe("the older commands for properties", () => {
     expect(failure(result).code).toBe("not-animatable");
   });
 });
+
+describe("presets and springs through property.edit", () => {
+  const bounce = { interp: "preset", preset: "bounceOut" } as const;
+  const steps = { interp: "preset", preset: "stepsEnd", presetParams: { steps: 4 } } as const;
+  const spring = { interp: "spring", spring: { stiffness: 157.9, damping: 15.1 } } as const;
+  const elastic = {
+    interp: "preset",
+    preset: "elasticInOut",
+    presetParams: { amplitude: 1.5, period: 0.4 },
+  } as const;
+
+  /** A clip with x going from 0 to 100 in two seconds, and what easing it does. */
+  function easing() {
+    const { store, edit, value, owner, failure, run } = setup();
+    const x = { owner, path: "transform.x" };
+    edit({ ...x, op: "set", value: straight });
+    const ease = (to: object, times = ["0"]) => edit({ ...x, op: "setInterp", times, ease: to });
+    const first = () => (value("transform.x") as Animation).keys[0];
+    return { store, edit, value, owner, failure, run, x, ease, first };
+  }
+
+  it("writes a preset with what it takes, and a spring", () => {
+    const { ease, first, store } = easing();
+    for (const to of [bounce, steps, elastic, spring]) {
+      expect(ease(to).ok).toBe(true);
+      const { interp: _interp, ...said } = to;
+      expect(first()).toEqual({ time: "0", value: 0, interp: to.interp, ...said });
+    }
+    // Each one replaces what the one before said, and each is a step of its own.
+    store.undo();
+    expect(first()).toEqual({ time: "0", value: 0, ...elastic });
+  });
+
+  it("refuses a name that is not a preset, steps without steps, and a spring that cannot be", () => {
+    const { ease, first, failure } = easing();
+    const unknown = failure(ease({ interp: "preset", preset: "wobble" }));
+    expect(unknown).toMatchObject({
+      code: "invalid-value",
+      params: { rule: "unknown-preset", preset: "wobble" },
+    });
+    const stepless = failure(ease({ interp: "preset", preset: "stepsStart" }));
+    expect(stepless.params).toEqual({ rule: "preset-params", ease: "stepsStart" });
+    const overflowing = { stiffness: 1e300, damping: 1, mass: 1e-300 };
+    const wild = failure(ease({ interp: "spring", spring: overflowing }));
+    expect(wild.params).toEqual({ rule: "preset-params", ease: "spring" });
+    // Out of the range of the format, which the parameters of the command already say.
+    const small = { interp: "preset", preset: "elasticOut", presetParams: { amplitude: 0.5 } };
+    expect(failure(ease(small)).code).toBe("invalid-params");
+    expect(failure(ease({ interp: "spring", spring: { stiffness: 0, damping: 1 } })).code).toBe(
+      "invalid-params",
+    );
+    expect(
+      failure(ease({ interp: "preset", preset: "bounceOut", spring: spring.spring })).code,
+    ).toBe("invalid-params");
+    expect(first()).toEqual({ time: "0", value: 0 });
+  });
+
+  it("takes everything a preset or a spring said away when it goes linear, hold or bezier", () => {
+    const { ease, first } = easing();
+    for (const to of [
+      { interp: "linear" },
+      { interp: "hold" },
+      { interp: "bezier", out: [0.42, 0] },
+    ] as const) {
+      for (const from of [elastic, steps, spring]) {
+        ease(from);
+        expect(ease(to).ok).toBe(true);
+        const { interp, ...said } = to;
+        expect(first()).toEqual({
+          time: "0",
+          value: 0,
+          ...(interp === "linear" ? {} : { interp, ...said }),
+        });
+      }
+    }
+  });
+
+  it("a cut leaves both parts with the preset and what it takes", () => {
+    const { ease, run, value } = easing();
+    const three: Animation = {
+      keys: [
+        { time: "0", value: 0, ...elastic },
+        { time: "2", value: 1, ...steps },
+        { time: "4", value: 2 },
+      ],
+    };
+    ease({ interp: "linear" });
+    run("property.edit", {
+      timeline: "main",
+      edits: [{ owner: { clip: "c" }, path: "transform.x", op: "set", value: three }],
+    });
+    run("clip.split", { timeline: "main", clip: "c", at: "3", piece: "d" });
+    expect(value("transform.x")).toEqual(three);
+    expect(value("transform.x", "d")).toEqual(three);
+  });
+
+  it("a rename takes the preset and what it takes along", () => {
+    const { run, value } = easing();
+    const animation: Animation = {
+      keys: [
+        { time: "0", value: 0, ...steps },
+        { time: "2", value: 1, ...spring },
+        { time: "3", value: 2 },
+      ],
+    };
+    run("property.edit", {
+      timeline: "main",
+      edits: [{ owner: { clip: "c" }, path: "param.size", op: "set", value: animation }],
+    });
+    run("property.rename", {
+      timeline: "main",
+      renames: [{ owner: { clip: "c" }, from: "param.size", to: "param.height", scale: 2 }],
+    });
+    expect(value("param.height")).toEqual({
+      keys: animation.keys.map((key) => ({ ...key, value: (key.value as number) * 2 })),
+    });
+  });
+
+  it("a copy of a clip, which is a clip with the same properties, has them too", () => {
+    const { run, value, store } = easing();
+    const animation: Animation = {
+      keys: [
+        { time: "0", value: 0, ...elastic },
+        { time: "1", value: 5 },
+      ],
+    };
+    const track = orderedTracks(store.getState().timelines["main"] as never)[0]?.id;
+    run("clip.add", {
+      timeline: "main",
+      track,
+      id: "copy",
+      start: "6",
+      duration: "2",
+      source: { kind: "color", color: "#00ff00" },
+      properties: {
+        opacity: { ...animation, keys: animation.keys.map((key) => ({ ...key, value: 1 })) },
+      },
+    });
+    expect((value("opacity", "copy") as Animation).keys[0]).toEqual({
+      time: "0",
+      value: 1,
+      ...elastic,
+    });
+  });
+});

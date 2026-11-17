@@ -56,7 +56,17 @@ import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
 import { readSetting } from "../workbench/settings.ts";
 import { momentOfKey, type KeyArea } from "./area.ts";
 import type { ValueLabel } from "./paint.ts";
-import { presetOf, type EasePreset } from "./easing.ts";
+import {
+  DEFAULT_TUNING,
+  easeOf,
+  isTuned,
+  presetOf,
+  springFor,
+  tuningOf,
+  type EasePreset,
+  type EaseTuning,
+  type TunedEase,
+} from "./easing.ts";
 import { moveEdits, movedSelection, type KeyPreview, type MovingChannel } from "./gestures.ts";
 import { tangentOf, withTangent, type TangentMode } from "./handles.ts";
 import {
@@ -100,6 +110,14 @@ export interface KeyframeMessages {
 export type ShownClips = (clip: string) => boolean;
 
 const ALL_CLIPS: ShownClips = () => true;
+
+/** How the selected keys are tuned, see `KeyframeEditor.selectedTuning`. */
+export interface SelectedTuning {
+  readonly preset: TunedEase;
+  readonly tuning: EaseTuning;
+  /** How long the stretch of the first of them is, in seconds. The last key has none. */
+  readonly span?: number;
+}
 
 /** What React shows. The view changes far more often and goes through `subscribeView`. */
 export interface KeyframeSnapshot {
@@ -1069,6 +1087,105 @@ export class KeyframeEditor {
       }
     }
     return [...found][0];
+  }
+
+  /**
+   * The selected keys that start a stretch, with the keys of their property as people see them, of
+   * the properties that ease: what choosing and tuning a preset goes through.
+   */
+  #easedKeys(): readonly { clip: string; path: string; keys: readonly Key[]; index: number }[] {
+    const found: { clip: string; path: string; keys: readonly Key[]; index: number }[] = [];
+    for (const { clip, path, times } of this.#gradualChannels()) {
+      const selected = this.#selectedIndices(clip, path, times);
+      for (const index of selected?.indices ?? []) {
+        found.push({ clip, path, keys: selected?.keys ?? [], index });
+      }
+    }
+    return found;
+  }
+
+  #tuning: SelectedTuning | undefined;
+
+  /**
+   * How the first selected key is tuned when the selected keys are all one tuned preset, and how
+   * long its stretch is. The same object while it stays the same, for React.
+   */
+  get selectedTuning(): SelectedTuning | undefined {
+    const preset = this.selectedPreset;
+    if (!isTuned(preset)) return (this.#tuning = undefined);
+    const [first] = this.#easedKeys();
+    if (!first) return (this.#tuning = undefined);
+    const { keys, index } = first;
+    const tuning = tuningOf(keys[index] as Key);
+    const next = keys[index + 1];
+    const span = next ? secondsOf(next.time) - secondsOf((keys[index] as Key).time) : undefined;
+    const known = this.#tuning;
+    if (
+      known?.preset === preset &&
+      known.span === span &&
+      (Object.keys(tuning) as (keyof EaseTuning)[]).every(
+        (name) => known.tuning[name] === tuning[name],
+      )
+    ) {
+      return known;
+    }
+    return (this.#tuning = { preset, tuning, ...(span !== undefined && { span }) });
+  }
+
+  /**
+   * Gives the selected keys one of the presets people pick from. A tuned one starts out as it is by
+   * default, and a spring comes to rest by the next key; choosing the one they are keeps how they
+   * are tuned.
+   */
+  choosePreset(preset: EasePreset): void {
+    if (!isTuned(preset)) {
+      this.setEase(easeOf(preset));
+      return;
+    }
+    if (this.selectedPreset === preset) return;
+    this.#easeEach(
+      () => true,
+      (key, next) => {
+        const length = next ? secondsOf(next.time) - secondsOf(key.time) : undefined;
+        return easeOf(
+          preset,
+          preset === "spring" ? { ...DEFAULT_TUNING, ...springFor(length) } : DEFAULT_TUNING,
+        );
+      },
+      "commit",
+    );
+  }
+
+  /**
+   * Changes some of the tuning of the selected keys, each one keeping the rest of its own: a spring
+   * keeps its swing when its bounce changes. `preview` only shows it, as dragging a number does.
+   */
+  tunePreset(change: Partial<EaseTuning>, mode: "preview" | "commit"): void {
+    const preset = this.selectedPreset;
+    if (!isTuned(preset)) return;
+    this.#easeEach(
+      (key, next) => presetOf(key, next) === preset,
+      (key) => easeOf(preset, { ...tuningOf(key), ...change }),
+      mode,
+    );
+  }
+
+  #easeEach(
+    takes: (key: Key, next: Key | undefined) => boolean,
+    easeFor: (key: Key, next: Key | undefined) => KeyEase,
+    mode: "preview" | "commit",
+  ): void {
+    const edits: PropertyEdit[] = [];
+    for (const { clip, path, keys, index } of this.#easedKeys()) {
+      const key = keys[index] as Key;
+      const next = keys[index + 1];
+      if (!takes(key, next)) continue;
+      const ease = easeFor(key, next);
+      edits.push({ owner: { clip }, path, op: "setInterp", times: [key.time], ease });
+    }
+    if (edits.length === 0) return;
+    if (mode === "preview") this.#writer.preview(edits);
+    else this.#writer.commit(edits);
   }
 
   /**

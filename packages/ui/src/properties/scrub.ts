@@ -5,7 +5,7 @@ const SHOWN_DIGITS = 2;
 /** Enough for anything a person means, and it keeps float noise out of project files. */
 const KEPT_DIGITS = 6;
 /** What one pixel of dragging is worth, by unit. */
-const STEPS: Readonly<Record<string, number>> = { world: 1, deg: 1, ratio: 0.01 };
+const STEPS: Readonly<Record<string, number>> = { world: 1, deg: 1, ratio: 0.01, count: 0.1 };
 const DEFAULT_STEP = 0.01;
 
 export interface ScrubKeys {
@@ -17,6 +17,10 @@ const fixed = (value: number, digits: number) => Number(value.toFixed(digits));
 
 const limited = (value: number, low: number | undefined, high: number | undefined) =>
   Math.min(Math.max(value, low ?? -Infinity), high ?? Infinity);
+
+/** A count, such as how many steps, only takes whole numbers. */
+const whole = (spec: PropertySpec, value: number) =>
+  spec.unit === "count" ? Math.round(value) : value;
 
 /** A share reads better as a percentage, and it is what people expect of opacity. */
 const isShare = ({ unit }: PropertySpec) => unit === "ratio";
@@ -40,7 +44,7 @@ export function scrubbed(
   // The suggested range is for the hand. A value typed outside of it does not jump back.
   const low = Math.max(spec.min ?? -Infinity, Math.min(spec.softMin ?? -Infinity, start));
   const high = Math.min(spec.max ?? Infinity, Math.max(spec.softMax ?? Infinity, start));
-  return limited(fixed(start + pixels * step, KEPT_DIGITS), low, high);
+  return limited(whole(spec, fixed(start + pixels * step, KEPT_DIGITS)), low, high);
 }
 
 /** What people typed, or undefined when it is not a number. Too much becomes the limit. */
@@ -53,5 +57,5 @@ export function parseNumber(text: string, spec: PropertySpec): number | undefine
   const number = plain === "" ? Number.NaN : Number(plain);
   if (!Number.isFinite(number)) return undefined;
   const value = isShare(spec) ? number / 100 : number;
-  return limited(fixed(value, KEPT_DIGITS), spec.min, spec.max);
+  return limited(whole(spec, fixed(value, KEPT_DIGITS)), spec.min, spec.max);
 }

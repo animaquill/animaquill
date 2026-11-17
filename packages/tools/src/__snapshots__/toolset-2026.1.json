@@ -2971,6 +2971,71 @@
               "interp",
               "out"
              ]
+            },
+            {
+             "type": "object",
+             "properties": {
+              "interp": {
+               "const": "spring"
+              },
+              "spring": {
+               "type": "object",
+               "properties": {
+                "stiffness": {
+                 "type": "number",
+                 "exclusiveMinimum": 0
+                },
+                "damping": {
+                 "type": "number",
+                 "minimum": 0
+                },
+                "mass": {
+                 "type": "number",
+                 "exclusiveMinimum": 0
+                }
+               },
+               "required": [
+                "stiffness",
+                "damping"
+               ]
+              }
+             },
+             "required": [
+              "interp",
+              "spring"
+             ]
+            },
+            {
+             "type": "object",
+             "properties": {
+              "interp": {
+               "const": "preset"
+              },
+              "preset": {
+               "type": "string"
+              },
+              "presetParams": {
+               "type": "object",
+               "properties": {
+                "amplitude": {
+                 "type": "number",
+                 "minimum": 1
+                },
+                "period": {
+                 "type": "number",
+                 "exclusiveMinimum": 0
+                },
+                "steps": {
+                 "type": "integer",
+                 "exclusiveMinimum": 0
+                }
+               }
+              }
+             },
+             "required": [
+              "interp",
+              "preset"
+             ]
             }
            ]
           }

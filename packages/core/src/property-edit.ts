@@ -3,7 +3,9 @@ import {
   Id,
   Key,
   PropertyPath,
+  PresetParams,
   PropertyValue,
+  Spring,
   Time,
   Value,
   compare,
@@ -14,17 +16,34 @@ import {
   type Rational,
 } from "@animaquill/schema";
 import { z } from "zod";
-import { joinBezier, splitBezier, type Handles, type KeyPoint } from "./curve.ts";
+import {
+  joinBezier,
+  presetProblem,
+  springOf,
+  splitBezier,
+  type Handles,
+  type KeyPoint,
+} from "./curve.ts";
 import { fail } from "./draft.ts";
 
 /** Whose property it is. Tracks and effects get their own shape of this later. */
 const Target = { owner: z.strictObject({ clip: Id }), path: PropertyPath };
 
-/** How a key gets to the next one. A bezier says how it leaves, and how it arrives at the next. */
+/**
+ * How a key gets to the next one. A bezier says how it leaves, and how it arrives at the next. A
+ * spring or a preset is all about the key it leaves; the names and what they take are those of the
+ * project format, and a command takes only what can be worked out (see `eased`).
+ */
 export const KeyEase = z.discriminatedUnion("interp", [
   z.strictObject({ interp: z.literal("linear") }),
   z.strictObject({ interp: z.literal("hold") }),
   z.strictObject({ interp: z.literal("bezier"), out: Handle, in: Handle.optional() }),
+  z.strictObject({ interp: z.literal("spring"), spring: Spring }),
+  z.strictObject({
+    interp: z.literal("preset"),
+    preset: z.string().min(1),
+    presetParams: PresetParams.optional(),
+  }),
 ]);
 
 export type KeyEase = z.output<typeof KeyEase>;
@@ -209,12 +228,53 @@ function withKeysMoved(
   return { ...(animation as Animation), keys: placed(staying, moved) as Key[] };
 }
 
+/**
+ * A spring or a preset that a file has goes linearly when it cannot be worked out, and is a problem.
+ * A command is stricter: it does not write one.
+ */
+function checkEase(ease: KeyEase): void {
+  if (ease.interp === "spring" && !springOf(ease.spring)) {
+    fail("invalid-value", { rule: "preset-params", ease: "spring" });
+  }
+  if (ease.interp !== "preset") return;
+  const problem = presetProblem(ease);
+  if (problem === "unknown") fail("invalid-value", { rule: "unknown-preset", preset: ease.preset });
+  if (problem !== undefined) fail("invalid-value", { rule: "preset-params", ease: ease.preset });
+}
+
+/** Without what says how a key goes on, as when a new way of going on replaces it. */
+export function withoutEase(key: Key): Key {
+  const {
+    interp: _interp,
+    out: _out,
+    preset: _preset,
+    presetParams: _presetParams,
+    spring: _spring,
+    ...rest
+  } = key;
+  return rest;
+}
+
 /** Only what is about how a key goes on: how it arrives is about the stretch before it. */
 function eased(key: Key, ease: KeyEase): Key {
-  const { interp: _interp, out: _out, preset: _preset, spring: _spring, ...rest } = key;
-  if (ease.interp === "linear") return rest;
-  if (ease.interp === "hold") return { ...rest, interp: "hold" };
-  return { ...rest, interp: "bezier", out: ease.out };
+  const rest = withoutEase(key);
+  switch (ease.interp) {
+    case "linear":
+      return rest;
+    case "hold":
+      return { ...rest, interp: "hold" };
+    case "bezier":
+      return { ...rest, interp: "bezier", out: ease.out };
+    case "spring":
+      return { ...rest, interp: "spring", spring: ease.spring };
+    case "preset":
+      return {
+        ...rest,
+        interp: "preset",
+        preset: ease.preset,
+        ...(ease.presetParams && { presetParams: ease.presetParams }),
+      };
+  }
 }
 
 function arriving(key: Key, ease: KeyEase): Key {
@@ -227,6 +287,7 @@ function withEase(
   times: readonly string[],
   ease: KeyEase,
 ): Animation {
+  checkEase(ease);
   const keys = [...(animation?.keys ?? [])];
   for (const time of times) {
     const index = indexOfKey(keys, time);

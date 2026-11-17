@@ -6,6 +6,7 @@ import {
   keyWithComponent,
   secondsOf,
   withAutoTangents,
+  withoutEase,
 } from "@animaquill/core";
 import type { Key } from "@animaquill/schema";
 
@@ -168,12 +169,6 @@ export type ChangedKeys = Map<number, Key>;
 const keyIn = (keys: readonly Key[], changed: ChangedKeys, index: number) =>
   changed.get(index) ?? (keys[index] as Key);
 
-/** Without what says how a key goes on, as when a new way of going on replaces it. */
-function plain(key: Key): Key {
-  const { interp: _interp, out: _out, preset: _preset, spring: _spring, ...rest } = key;
-  return rest;
-}
-
 /** Puts one handle where it goes. A straight stretch becomes a bezier that it was a line of. */
 function setShare(
   keys: readonly Key[],
@@ -192,7 +187,11 @@ function setShare(
   // What steers the start of a stretch that was a bezier already stays as it is, unwritten.
   if (side === "out" || !wasBezier) {
     const out = side === "out" ? [...share] : lineOut;
-    changed.set(from, { ...(wasBezier ? start : plain(start)), interp: "bezier", out } as Key);
+    changed.set(from, {
+      ...(wasBezier ? start : withoutEase(start)),
+      interp: "bezier",
+      out,
+    } as Key);
   }
   if (side === "in") changed.set(from + 1, { ...end, in: [...share] as [number, number] });
   else if (!wasBezier) changed.set(from + 1, { ...end, in: lineIn });
