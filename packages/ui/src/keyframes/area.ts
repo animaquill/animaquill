@@ -354,21 +354,34 @@ export abstract class KeyArea {
 
   /**
    * What is at a place. The ruler covers what has scrolled under it, so there is nothing there. The
-   * handles of selected keys are on top of everything, also where they reach over another row.
+   * handles of selected keys are over the rows, also where they reach over another row. Where a
+   * handle and a key are both in reach, the nearer one is hit, and the key when they are as near:
+   * keys close together would otherwise hide each other behind their handles.
    */
   hitAt(pointer: Pointer): LaneHit {
     if (pointer.y < this.lanesTop) return { kind: "empty" };
-    const handle = this.#handleNear(pointer);
-    if (handle) return { kind: "handle", handle };
+    const near = this.#handleNear(pointer);
+    const handle: LaneHit | undefined = near && { kind: "handle", handle: near.handle };
     const y = this.laneY(pointer.y);
     const lane = laneAt(this.lanes, y);
-    if (!lane) return { kind: "empty" };
+    if (!lane) return handle ?? { kind: "empty" };
     const fromBottom = lane.top + lane.height - y;
-    if (lane.tall && fromBottom <= TALL_EDGE_REACH) return { kind: "edge", lane };
+    if (lane.tall && fromBottom <= TALL_EDGE_REACH) return handle ?? { kind: "edge", lane };
     const spot = this.#spotNear(lane, pointer.x, pointer.y);
-    return spot
-      ? { kind: "key", ...spot }
-      : { kind: "lane", lane, seconds: this.timeAt(pointer.x) };
+    if (spot && (!near || this.#pixelsTo(spot, pointer) <= near.distance)) {
+      return { kind: "key", ...spot };
+    }
+    return handle ?? { kind: "lane", lane, seconds: this.timeAt(pointer.x) };
+  }
+
+  /** How far from a place a key is drawn, in pixels. */
+  #pixelsTo({ lane, box, clock }: KeySpot, pointer: Pointer): number {
+    const table = this.tableOf(lane, box);
+    if (!table) return 0;
+    const index = indexAt(table.seconds, clock);
+    const x = this.xAt(box.start + clock - box.offset);
+    const y = this.screenY(lane.top) + this.keyY(lane, table, index, this.scaleOf(lane, box));
+    return Math.hypot(x - pointer.x, y - pointer.y);
   }
 
   /** Whether a handle is at a place, which can be over something that is not a row of keys. */
@@ -376,14 +389,14 @@ export abstract class KeyArea {
     return pointer.y >= this.lanesTop && this.#handleNear(pointer) !== undefined;
   }
 
-  #handleNear(pointer: Pointer): ShownHandle | undefined {
+  #handleNear(pointer: Pointer): { handle: ShownHandle; distance: number } | undefined {
     let best: ShownHandle | undefined;
     let distance = this.#reach;
     for (const handle of this.visibleHandles()) {
       const away = Math.hypot(handle.x - pointer.x, handle.y - pointer.y);
       if (away <= distance) [best, distance] = [handle, away];
     }
-    return best;
+    return best && { handle: best, distance };
   }
 
   /** What the pointer looks like over a place. */

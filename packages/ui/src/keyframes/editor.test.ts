@@ -1659,6 +1659,45 @@ describe("handles", () => {
     expect(keysNow()[1]?.tangent).toBe("broken");
     expect(keysNow()[1]?.out).toEqual(after?.out);
   });
+
+  for (const tall of [true, false]) {
+    it(`a key next to a selected one is in reach although a handle reaches over it (tall: ${tall})`, async () => {
+      const { panel, keyframes, handle, keysNow, selected, edit } = await selectedKey();
+      if (!tall) keyframes.toggleTall("a", X);
+      // 18 pixels after the selected key and level with it, as keys are when zoomed out: the
+      // handle that leaves the selected key reaches past the half way to the next one.
+      const after = Math.round((2 + 18 / panel.pixelsPerSecond) * 100) / 100;
+      edit(
+        { owner: { clip: "a" }, path: X, op: "removeKey", time: "3" },
+        { owner: { clip: "a" }, path: X, op: "setKey", time: String(after), value: 100 },
+      );
+      const keyAt = (seconds: number): Pointer => {
+        const found = panel
+          .visibleKeys(50)
+          .find(
+            ({ lane, seconds: at }) => lane.id === laneOf("a", X) && Math.abs(at - seconds) < 1e-6,
+          );
+        if (!found) throw new Error(`no key at ${seconds}`);
+        return { x: found.x, y: found.y, shift: false, alt: false, mod: false };
+      };
+      const next = keyAt(after);
+      const out = handle("out");
+      expect(Math.hypot(out.x - next.x, out.y - next.y)).toBeLessThan(7);
+      // What the menu of keys opens on, and what a click selects.
+      expect(panel.hitAt(next)).toMatchObject({ kind: "key", clock: after });
+      panel.press(next);
+      panel.release(next);
+      expect(selected()).toEqual([`a ${X} ${keysNow()[2]?.time}`]);
+      // The handle is still the nearer one where it is, and drags as before.
+      keyframes.select(KeySelection.of([{ clip: "a", path: X, time: "2" }]));
+      const from = handle("out");
+      expect(panel.hitAt(from)).toMatchObject({ kind: "handle", handle: { side: "out" } });
+      panel.press(from);
+      panel.drag({ ...from, y: from.y - 20 });
+      panel.release({ ...from, y: from.y - 20 });
+      expect(keysNow()[1]).toMatchObject({ interp: "bezier" });
+    });
+  }
 });
 
 describe("what happens elsewhere while a drag goes on", () => {

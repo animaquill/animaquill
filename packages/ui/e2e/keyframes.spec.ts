@@ -422,14 +422,25 @@ test.describe("with changes written right away", () => {
     page,
   }) => {
     await threeKeys(page);
-    // Close enough together, a press on a key would take hold of a handle of the next one.
-    for (let times = 0; times < 3; times += 1) {
-      await panel(page).getByRole("button", { name: "放大" }).click();
+    // Zoomed out the keys are close together, and the handle that leaves the middle one reaches
+    // over the last one: a press a little toward it is still for the key, which is nearer.
+    const gap = async () => {
+      await settled(() => keyPlaces(page));
+      const [middle, end] = await Promise.all(
+        [1, 2].map((index) => centerOf(keys(page, "位置 X").nth(index))),
+      );
+      return (end?.x ?? 0) - (middle?.x ?? 0);
+    };
+    while ((await gap()) > 20) {
+      await panel(page).getByRole("button", { name: "缩小" }).click();
     }
-    await settled(() => keyPlaces(page));
-    // The playhead is at the last key, which is what zooming keeps in its place.
-    const last = await centerOf(keys(page, "位置 X").last());
-    await page.mouse.click(last.x, last.y, { button: "right" });
+    const key = await centerOf(keys(page, "位置 X").last());
+    const handle = await centerOf(
+      panel(page).locator('[data-handle="out"][data-of="位置 X"]').nth(1),
+    );
+    const towards = { x: key.x + (handle.x - key.x) * 0.4, y: key.y + (handle.y - key.y) * 0.4 };
+    expect(Math.hypot(handle.x - towards.x, handle.y - towards.y)).toBeLessThan(7);
+    await page.mouse.click(towards.x, towards.y, { button: "right" });
     await page.getByRole("menuitem", { name: "反转时间" }).click();
     expect(await valueAt(page, "0:02/00")).toBe(300);
     expect(await valueAt(page, "0:03/00")).toBe(0);
