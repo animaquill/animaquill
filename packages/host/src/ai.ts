@@ -271,18 +271,23 @@ export function browserChats(
       writing.objectStore(CHATS).put(chat);
       writing.commit?.();
       await committed(writing);
-      // The oldest go after, in a transaction of their own.
-      const transaction = (await database()).transaction(CHATS, "readwrite");
-      const store = transaction.objectStore(CHATS);
-      const all = (await resultOf(store.index(BY_PROJECT).getAll(chat.project))) as SavedChat[];
-      // The oldest go, so that one project does not fill the disk with what nobody reads again.
-      const others = all.filter(({ id }) => id !== chat.id);
-      const over = others.length + 1 - limit;
-      if (over > 0) {
-        const oldest = others.toSorted((a, b) => a.updatedAt - b.updatedAt).slice(0, over);
-        for (const { id } of oldest) store.delete([chat.project, id]);
+      // The oldest go after, in a transaction of their own, so that one project does not fill the
+      // disk with what nobody reads again. The conversation is kept by now: where this fails, the
+      // save did not, and the oldest go the next time.
+      try {
+        const transaction = (await database()).transaction(CHATS, "readwrite");
+        const store = transaction.objectStore(CHATS);
+        const all = (await resultOf(store.index(BY_PROJECT).getAll(chat.project))) as SavedChat[];
+        const others = all.filter(({ id }) => id !== chat.id);
+        const over = others.length + 1 - limit;
+        if (over > 0) {
+          const oldest = others.toSorted((a, b) => a.updatedAt - b.updatedAt).slice(0, over);
+          for (const { id } of oldest) store.delete([chat.project, id]);
+        }
+        await committed(transaction);
+      } catch (error) {
+        console.warn("The oldest conversations could not go", error);
       }
-      await committed(transaction);
     },
     async remove(project, id) {
       const transaction = (await database()).transaction(CHATS, "readwrite");

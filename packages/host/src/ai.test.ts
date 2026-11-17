@@ -199,6 +199,27 @@ describe("conversations with AI", () => {
     expect(await chats.load("p", "last")).toEqual(chat("last", 2));
   });
 
+  it("keep a conversation as saved where taking the oldest away after it fails", async () => {
+    const factory = new IDBFactory();
+    const chats = browserChats(() => factory, 2);
+    await chats.save(chat("a", 1));
+    await chats.save(chat("b", 2));
+    const index = IDBIndex.prototype;
+    const getAll = index.getAll;
+    index.getAll = function () {
+      throw new DOMException("gone", "UnknownError");
+    };
+    try {
+      await expect(chats.save(chat("c", 3))).resolves.toBeUndefined();
+    } finally {
+      index.getAll = getAll;
+    }
+    expect(await chats.load("p", "c")).toEqual(chat("c", 3));
+    // The next save takes the oldest away.
+    await chats.save(chat("d", 4));
+    expect((await chats.list("p")).map(({ id }) => id)).toEqual(["d", "c"]);
+  });
+
   it("say how many there are of each project, and about how much they take", async () => {
     const factory = new IDBFactory();
     for (const chats of [browserChats(() => factory), memoryChats()]) {
