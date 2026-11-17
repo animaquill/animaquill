@@ -32,6 +32,8 @@ const RULES: { readonly [R in InvalidValue["rule"]]: Extract<InvalidValue, { rul
   "extend-needs-keys": { rule: "extend-needs-keys", path: "opacity" },
   "continue-needs-numbers": { rule: "continue-needs-numbers", path: "param.tint" },
   "noise-needs-numbers": { rule: "noise-needs-numbers", path: "param.tint" },
+  "retime-span": { rule: "retime-span", path: "transform.rotation" },
+  "keys-collide": { rule: "keys-collide", path: "transform.rotation", time: "1" },
   "effect-outside": { rule: "effect-outside" },
   "effect-backwards": { rule: "effect-backwards" },
   "replace-same": { rule: "replace-same", kind: "asset", id: "a1" },

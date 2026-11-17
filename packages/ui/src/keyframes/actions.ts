@@ -46,6 +46,8 @@ export function registerKeyframeActions(
     keys: ["mod+v"],
     enabled: () => keyframes.getSnapshot().hasClipboard,
   });
+  // No key of its own, as in After Effects: it is a few clicks a day at most.
+  add("reverse", () => keyframes.reverseSelected(), { enabled: () => keyframes.canReverse() });
   add("toggleSnapping", () => timeline.toggleSnapping(), { keys: ["s"] });
   add("zoomIn", () => keyframes.panel.zoomIn(), { keys: ["="], repeats: true });
   add("zoomOut", () => keyframes.panel.zoomOut(), { keys: ["-"], repeats: true });

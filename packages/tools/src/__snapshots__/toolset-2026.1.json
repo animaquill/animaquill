@@ -2197,7 +2197,7 @@
           "type": "string"
          },
          "edits": {
-          "description": "Each {\"owner\":{\"clip\":id},\"path\",…,\"op\"}: \"set\" a value or keyframes, \"clear\", \"write\" at a time, or \"setKey\", \"removeKey\", \"moveKey\", \"putKeys\", \"setInterp\", \"setExtend\", \"setNoise\".",
+          "description": "Each {\"owner\":{\"clip\":id},\"path\",…,\"op\"}: \"set\" a value or keyframes, \"clear\", \"write\" at a time, or \"setKey\", \"removeKey\", \"moveKey\", \"putKeys\", \"setInterp\", \"setExtend\", \"setNoise\", \"retimeKeys\".",
           "minItems": 1,
           "type": "array",
           "items": {
@@ -3179,6 +3179,76 @@
           "path",
           "op",
           "noise"
+         ]
+        },
+        {
+         "type": "object",
+         "properties": {
+          "owner": {
+           "type": "object",
+           "properties": {
+            "clip": {
+             "type": "string"
+            }
+           },
+           "required": [
+            "clip"
+           ]
+          },
+          "path": {
+           "$ref": "#/properties/operations/$defs/PropertyPath"
+          },
+          "op": {
+           "const": "retimeKeys"
+          },
+          "times": {
+           "minItems": 1,
+           "type": "array",
+           "items": {
+            "type": "string"
+           }
+          },
+          "from": {
+           "type": "array",
+           "prefixItems": [
+            {
+             "type": "string",
+             "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$"
+            },
+            {
+             "type": "string",
+             "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$"
+            }
+           ],
+           "items": false,
+           "minItems": 2
+          },
+          "to": {
+           "type": "array",
+           "prefixItems": [
+            {
+             "type": "string",
+             "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$"
+            },
+            {
+             "type": "string",
+             "pattern": "^-?(?:\\d+(?:\\.\\d+)?|\\d+\\/0*[1-9]\\d*)$"
+            }
+           ],
+           "items": false,
+           "minItems": 2
+          },
+          "frames": {
+           "const": true
+          }
+         },
+         "required": [
+          "owner",
+          "path",
+          "op",
+          "times",
+          "from",
+          "to"
          ]
         },
         {

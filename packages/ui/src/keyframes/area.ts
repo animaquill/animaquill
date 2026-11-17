@@ -37,6 +37,13 @@ import {
 } from "./gestures.ts";
 import { farPoint, handlePoint, type CurvePoint, type HandleSide } from "./handles.ts";
 import { firstLaneBelow, laneAt, specOfLane, type Lane } from "./lanes.ts";
+import {
+  RetimeGesture,
+  retimeSpanOf,
+  retimedSeconds,
+  type RetimeSide,
+  type RetimeSpan,
+} from "./retime.ts";
 import { perPixel, scaleOf, valueIn, yIn, type ValueScale } from "./scale.ts";
 import { KeySelection, type KeyRef } from "./selection.ts";
 import {
@@ -69,6 +76,29 @@ const MAX_HANDLES = 400;
 const MAX_SNAP_KEYS = 4000;
 /** Pixels between keys that are worth telling apart in a list for people who cannot see them. */
 const MIN_KEY_GAP = 3;
+/** How far the edges of the box around selected keys are out from the keys, clear of grabbing one. */
+export const RETIME_PAD = 16;
+/** How far from an edge of that box the pointer can be and still take hold of it. */
+const RETIME_REACH = 4;
+
+/** The box around the selected keys on screen, with the span it stands for. */
+export interface RetimeBox {
+  readonly span: RetimeSpan;
+  readonly left: number;
+  readonly right: number;
+  readonly top: number;
+  readonly bottom: number;
+}
+
+/** What of that box is at a place. */
+export type RetimePart = RetimeSide | "body";
+
+interface RetimeRows {
+  readonly span: RetimeSpan;
+  /** From the top of the first lane. */
+  readonly top: number;
+  readonly bottom: number;
+}
 
 /** A place keys are at. It can be more than one in a summary. */
 export interface KeySpot {
@@ -133,6 +163,11 @@ export abstract class KeyArea {
   #reach = KEY_REACH;
   /** The property rows here, by clip and path, for finding them again while a drag goes on. */
   readonly #rows = new WeakMap<readonly Lane[], ReadonlyMap<string, Lane>>();
+  /** The span of the selected keys and the rows they are in, worked out once for what it depends on. */
+  #retimeKnown: { readonly by: readonly unknown[]; readonly found: RetimeRows | undefined } = {
+    by: [],
+    found: undefined,
+  };
 
   constructor(keyframes: KeyframeEditor) {
     this.keyframes = keyframes;
@@ -348,16 +383,33 @@ export abstract class KeyArea {
 
   /** What the pointer looks like over a place. */
   protected cursorAt(pointer: Pointer): string {
+    const part = this.retimeAt(pointer);
+    if (part === "start" || part === "end") return "ew-resize";
     const { kind } = this.hitAt(pointer);
+    if (part === "body" && kind !== "key") return "move";
     if (kind === "edge") return "ns-resize";
     return kind === "key" || kind === "handle" ? "pointer" : "default";
   }
 
   /** What a press on the lanes means. */
   protected pressLanes(pointer: Pointer): Gesture {
+    const around = this.retimeAt(pointer);
+    const retime = around && this.retimeBox();
+    if (retime && (around === "start" || around === "end")) {
+      return new RetimeGesture(this.#host, around, retime.span, pointer);
+    }
     const hit = this.hitAt(pointer);
-    if (hit.kind === "key") return this.#pressKey(hit, pointer);
     if (hit.kind === "handle") return this.#pressHandle(hit.handle, pointer);
+    if (hit.kind === "key") return this.#pressKey(hit, pointer);
+    // Inside the box, what is selected moves together, as when one of the keys is dragged. Shift
+    // and Ctrl still draw a box to add to what is selected.
+    const adding = pointer.shift || pointer.mod || this.keyframes.multiSelecting;
+    if (retime && around === "body" && !adding) {
+      const { first, firstSeconds } = retime.span;
+      const grabbed = { seconds: firstSeconds, exact: () => first };
+      const { keyframes } = this;
+      return new KeyMoveGesture(this.#host, grabbed, pointer, () => keyframes.clearSelection());
+    }
     if (hit.kind === "edge" && hit.lane.node.kind === "property" && hit.lane.box) {
       const { box, node, component } = hit.lane;
       const { keyframes } = this;
@@ -588,6 +640,8 @@ export abstract class KeyArea {
 
   /** What a finger starts on a key: only selected keys go along right away. */
   protected touchAtLanes(pointer: Pointer): TouchStart {
+    const part = this.retimeAt(pointer);
+    if (part === "start" || part === "end") return "grab";
     const hit = this.hitAt(pointer);
     if (hit.kind === "edge" || hit.kind === "handle") return "grab";
     const held = hit.kind === "key" && this.keyframes.selection.includes(hit.keys);
@@ -638,13 +692,118 @@ export abstract class KeyArea {
   }
 
   /**
+   * Where the selected keys that can change are in time, and from the top of which row to the bottom
+   * of which they are, when they are at two moments or more.
+   */
+  #retimeRows(): RetimeRows | undefined {
+    const { keyframes, lanes } = this;
+    const { selection, model, comparing } = keyframes;
+    // Locked tracks are in the model; comparing with what is saved makes nothing movable.
+    const by = [selection, lanes, model, comparing];
+    const known = this.#retimeKnown;
+    if (known.by.length === by.length && known.by.every((item, index) => item === by[index])) {
+      return known.found;
+    }
+    const found = this.#findRetimeRows();
+    this.#retimeKnown = { by, found };
+    return found;
+  }
+
+  #findRetimeRows(): RetimeRows | undefined {
+    const { keyframes } = this;
+    if (keyframes.selection.size < 2) return undefined;
+    const channels = keyframes.movingChannels(this.shownClips);
+    const clipOf = (clip: string) => keyframes.model?.boxes.get(clip)?.clip;
+    const span = retimeSpanOf(channels, clipOf);
+    if (!span) return undefined;
+    const paths = new Map<string, Set<string>>();
+    for (const { clip, path } of channels) {
+      const set = paths.get(clip) ?? new Set<string>();
+      set.add(path);
+      paths.set(clip, set);
+    }
+    let top = Number.POSITIVE_INFINITY;
+    let bottom = Number.NEGATIVE_INFINITY;
+    for (const lane of this.lanes) {
+      const shows = [...lane.listed].some(([clip, listed]) =>
+        listed.some((path) => paths.get(clip)?.has(path) === true),
+      );
+      if (!shows) continue;
+      top = Math.min(top, lane.top);
+      bottom = Math.max(bottom, lane.top + lane.height);
+    }
+    return top < bottom ? { span, top, bottom } : undefined;
+  }
+
+  /**
+   * The box around the selected keys, where it shows: while its edge is dragged, where the keys are
+   * going. Nothing while keys are dragged some other way.
+   */
+  retimeBox(): RetimeBox | undefined {
+    const { keyframes } = this;
+    const { preview } = keyframes;
+    if (preview?.shift !== undefined || preview?.lift !== undefined) return undefined;
+    const rows = this.#retimeRows();
+    if (!rows) return undefined;
+    const retime = keyframes.isPreviewOf(this) ? preview?.retime : undefined;
+    let { firstSeconds: from, lastSeconds: to } = rows.span;
+    if (retime) {
+      const fps = keyframes.model?.rate.fps ?? 30;
+      const ends = [retimedSeconds(retime, from, fps), retimedSeconds(retime, to, fps)];
+      [from, to] = [Math.min(...ends), Math.max(...ends)];
+    }
+    return {
+      span: rows.span,
+      left: this.xAt(from) - RETIME_PAD,
+      right: this.xAt(to) + RETIME_PAD,
+      top: this.screenY(rows.top),
+      bottom: this.screenY(rows.bottom),
+    };
+  }
+
+  /**
+   * What of the box around the selected keys is at a place: an edge, inside it, or nothing. A key or
+   * a handle that is nearer to the pointer than the edge is what the pointer is on.
+   */
+  retimeAt(pointer: Pointer): RetimePart | undefined {
+    if (pointer.y < RULER_HEIGHT) return undefined;
+    const box = this.retimeBox();
+    if (!box || pointer.y < box.top || pointer.y > box.bottom) return undefined;
+    const { x } = pointer;
+    const [toStart, toEnd] = [Math.abs(x - box.left), Math.abs(x - box.right)];
+    const edge = Math.min(toStart, toEnd);
+    if (edge <= RETIME_REACH && edge < this.#nearestOther(pointer)) {
+      return toStart <= toEnd ? "start" : "end";
+    }
+    return x > box.left && x < box.right ? "body" : undefined;
+  }
+
+  /** How far the key or the handle under the pointer is from it, if there is one. */
+  #nearestOther(pointer: Pointer): number {
+    const hit = this.hitAt(pointer);
+    if (hit.kind === "handle")
+      return Math.hypot(hit.handle.x - pointer.x, hit.handle.y - pointer.y);
+    if (hit.kind !== "key") return Number.POSITIVE_INFINITY;
+    const { box, clock } = hit;
+    return Math.abs(this.xAt(box.start + clock - box.offset) - pointer.x);
+  }
+
+  /** The name of what is at a place, for the pointer to show: only the edges of the box have one. */
+  titleAt(pointer: Pointer): string | undefined {
+    const part = this.retimeAt(pointer);
+    return part === "start" || part === "end" ? `keyframes.retime.${part}` : undefined;
+  }
+
+  /**
    * The handles of the selected keys on screen, in rows of numbers, where they show. A handle right
    * on its key shows a little way out along the curve, so that it can be taken hold of. Nothing
    * shows while keys move, or where keys are too close together to have room for handles.
    */
   visibleHandles(): readonly ShownHandle[] {
     const { keyframes } = this;
-    if (keyframes.selection.size === 0 || keyframes.preview?.shift !== undefined) return [];
+    const { preview } = keyframes;
+    if (keyframes.selection.size === 0 || preview?.shift !== undefined || preview?.retime)
+      return [];
     const found: ShownHandle[] = [];
     const from = this.timeAt(0);
     const to = this.timeAt(this.width);

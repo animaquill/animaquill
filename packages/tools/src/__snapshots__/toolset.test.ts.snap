@@ -20,19 +20,19 @@ topic ops/property.edit
 
 Sets properties of clips and their keyframes, in one step.
 
-Changes properties of clips: values that can change over time with keyframes, such as opacity, transform.x, param.<scene param> or effect.<effect id>.<parameter> (topic "howto/keyframes"). edits run in order as one step, each on what the ones before made, and can be about several clips of the timeline. Each edit names the clip (owner), the property (path) and what to do (op): "set" the whole property to a value or keyframes, "clear" it, "write" a value at a time (a keyframe there when it has keyframes, else the value), "setKey" a keyframe, "removeKey", "moveKey", "putKeys" (whole keyframes in place of what is at those times), "setInterp" (how keyframes go on to the next), "setExtend" (what it does before the first keyframe and after the last: hold, loop, pingpong, continue) or "setNoise" (shaking on top, or null to stop it), as topic "types/PropertyEdit" has it. Keyframe times are on the clip's clock (topic "howto/times"). aq_object_read gives the properties a clip has and those its scene describes.
+Changes properties of clips: values that can change over time with keyframes, such as opacity, transform.x, param.<scene param> or effect.<effect id>.<parameter> (topic "howto/keyframes"). edits run in order as one step, each on what the ones before made, and can be about several clips of the timeline. Each edit names the clip (owner), the property (path) and what to do (op): "set" the whole property to a value or keyframes, "clear" it, "write" a value at a time (a keyframe there when it has keyframes, else the value), "setKey" a keyframe, "removeKey", "moveKey", "putKeys" (whole keyframes in place of what is at those times), "setInterp" (how keyframes go on to the next), "setExtend" (what it does before the first keyframe and after the last: hold, loop, pingpong, continue), "setNoise" (shaking on top, or null to stop it) or "retimeKeys" (stretch, squeeze, move or reverse keyframes in time, keeping their values; the result lists in removed the keyframes that gave way where one landed), as topic "types/PropertyEdit" has it. Keyframe times are on the clip's clock (topic "howto/times"). aq_object_read gives the properties a clip has and those its scene describes.
 
 Shape: property.edit {timeline, edits:[PropertyEdit]}
 
 Parameters:
 - timeline (string, required): Timeline id (aq_project_status).
-- edits (list of PropertyEdit, topic "types/PropertyEdit", required): Each {"owner":{"clip":id},"path",…,"op"}: "set" a value or keyframes, "clear", "write" at a time, or "setKey", "removeKey", "moveKey", "putKeys", "setInterp", "setExtend", "setNoise".
+- edits (list of PropertyEdit, topic "types/PropertyEdit", required): Each {"owner":{"clip":id},"path",…,"op"}: "set" a value or keyframes, "clear", "write" at a time, or "setKey", "removeKey", "moveKey", "putKeys", "setInterp", "setExtend", "setNoise", "retimeKeys".
 
 Result: "changed:" has a line for each object it changed.
 
 Errors of its own:
 - not-found: There is no timeline or clip with this id, or an edit is about a keyframe at a time where there is none (the error gives the time).
-- invalid-value: A value does not fit the property (the error says why), the path is no property, two keyframes would be at one time, or setExtend and setNoise do not fit the property (the error says why).
+- invalid-value: A value does not fit the property (the error says why), the path is no property, two keyframes would be at one time, setExtend and setNoise do not fit the property, or retimeKeys maps from or onto a single moment or lands two keyframes on one frame (the error says why).
 - not-animatable: A property that cannot have keyframes gets them, such as fit.
 Errors that any batch can give, such as conflict, not-read and invalid-params: topic "howto/batches".
 

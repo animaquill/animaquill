@@ -21,6 +21,7 @@ import { paintRuler } from "../timeline/ruler.ts";
 import { StagePainter, type Theme } from "../timeline/stage-painter.ts";
 import type { KeyArea, ShownHandle } from "./area.ts";
 import { liftKey, withinSpec } from "./gestures.ts";
+import { retimedSeconds } from "./retime.ts";
 import { specOfLane, type Lane } from "./lanes.ts";
 import { yIn, type ValueScale } from "./scale.ts";
 import {
@@ -60,6 +61,12 @@ const SEGMENT_ALPHA = 0.5;
 /** How wide a step of the colors on the way from one key to the next is. */
 const GRADIENT_STEP = 3;
 const GRADIENT_ALPHA = 0.85;
+/** The box around selected keys that stretches them in time: barely there, so keys stay clear. */
+const RETIME_FILL_ALPHA = 0.06;
+const RETIME_FRAME_ALPHA = 0.55;
+const RETIME_BAR_WIDTH = 2;
+const RETIME_GRIP_WIDTH = 5;
+const RETIME_GRIP_HEIGHT = 18;
 
 /** What a value says, in words. */
 export type ValueLabel = (spec: PropertySpec, value: unknown) => string;
@@ -279,9 +286,47 @@ export class LanePainter {
       this.#content(context, theme, lane, { ...band, y });
       this.#keys(theme, marks, lane, { ...band, y });
     }
+    this.#retimeBox(context, theme, sharp);
     // Handles reach over other rows, and the keys they belong to are on top of them.
     this.#handles(context, theme);
     marks.fill(context);
+  }
+
+  /**
+   * The box around selected keys at two moments or more: a thin frame, and at each end a bar to
+   * pull, which says what it is without words.
+   */
+  #retimeBox(
+    context: CanvasRenderingContext2D,
+    theme: Theme,
+    sharp: (value: number) => number,
+  ): void {
+    const box = this.#area.retimeBox();
+    if (!box) return;
+    const left = sharp(box.left);
+    const right = sharp(box.right);
+    const top = sharp(Math.max(box.top, RULER_HEIGHT));
+    const bottom = sharp(box.bottom);
+    if (bottom <= top) return;
+    context.save();
+    context.globalAlpha = RETIME_FILL_ALPHA;
+    context.fillStyle = theme.selected;
+    context.fillRect(left, top, right - left, bottom - top);
+    context.globalAlpha = RETIME_FRAME_ALPHA;
+    context.strokeStyle = theme.selected;
+    context.lineWidth = 1;
+    context.strokeRect(left + 0.5, top + 0.5, right - left - 1, bottom - top - 1);
+    context.globalAlpha = 1;
+    context.fillStyle = theme.selected;
+    const half = Math.floor(RETIME_BAR_WIDTH / 2);
+    for (const x of [left, right]) context.fillRect(x - half, top, RETIME_BAR_WIDTH, bottom - top);
+    // A grip in the middle of each bar, which is where people look for something to hold.
+    const middle = (top + bottom) / 2;
+    const grip = Math.min(RETIME_GRIP_HEIGHT, bottom - top);
+    for (const x of [left, right]) {
+      context.fillRect(x - RETIME_GRIP_WIDTH / 2, middle - grip / 2, RETIME_GRIP_WIDTH, grip);
+    }
+    context.restore();
   }
 
   #background(
@@ -531,7 +576,9 @@ export class LanePainter {
     const { from, to } = band;
     const reach = KEY_RADIUS / area.pixelsPerSecond;
     const { keyframes } = area;
-    const widest = Math.abs(keyframes.preview?.shift ?? 0);
+    const { preview } = keyframes;
+    const retime = preview?.retime;
+    const widest = Math.abs(preview?.shift ?? (retime ? retime.to - retime.edge : 0));
     let covered = Number.NEGATIVE_INFINITY;
     area.forEachBox(lane, from - reach - widest, to + reach + widest, (box) => {
       // Zoomed out a pixel holds many clips, and it does not take all of them to say that.
@@ -565,6 +612,8 @@ export class LanePainter {
     const tried = keyframes.triedSeconds(lane, box);
     const { preview } = keyframes;
     const shift = preview?.shift;
+    const retime = keyframes.isPreviewOf(area) ? preview?.retime : undefined;
+    const fps = keyframes.model?.rate.fps ?? 30;
     const canMove = keyframes.canMove(box.id);
     const scale = area.scaleOf(lane, box);
     const numbers = scale ? table.numbers : undefined;
@@ -572,7 +621,9 @@ export class LanePainter {
     const lift = spec && preview?.lift?.get(liftKey(box.id, spec.path, lane.component?.index));
     const yOf = (index: number) =>
       numbers && scale ? y + yIn(scale, numbers[index] as number) : middle;
-    const reach = (KEY_RADIUS * 2) / pixelsPerSecond + Math.abs(shift ?? 0);
+    const reach =
+      (KEY_RADIUS * 2) / pixelsPerSecond +
+      Math.abs(shift ?? (retime ? retime.to - retime.edge : 0));
     const first = firstFrom(seconds, from + toClock - reach);
     const clockEnd = to + toClock + reach;
     // A summary joins its keys. A row of a number has its curve, and what holds has its values.
@@ -613,20 +664,20 @@ export class LanePainter {
       const mark = area.markIn(lane, shapes[index] as number);
       const isTrimmed = moment < box.start || moment >= box.end;
       const alpha = isTrimmed ? TRIMMED_ALPHA : 1;
-      const moving = isSelected && canMove && (shift !== undefined || lift !== undefined);
+      const moving =
+        isSelected &&
+        canMove &&
+        (shift !== undefined || lift !== undefined || retime !== undefined);
       if (moving) {
         const lifted =
           lift !== undefined && numbers && scale && spec
             ? y + yIn(scale, withinSpec(spec, (numbers[index] as number) + lift))
             : keyY;
+        const movedX = retime
+          ? area.xAt(retimedSeconds(retime, moment, fps))
+          : x + (shift ?? 0) * pixelsPerSecond;
         traceKey(marks.in(color, GHOST_ALPHA), mark, x, keyY, radius);
-        traceKey(
-          marks.in(theme.selected),
-          mark,
-          x + (shift ?? 0) * pixelsPerSecond,
-          lifted,
-          radius,
-        );
+        traceKey(marks.in(theme.selected), mark, movedX, lifted, radius);
       } else if (isSelected) {
         traceKey(marks.in(theme.selected, alpha), mark, x, keyY, radius);
       } else if (isTried) {

@@ -411,6 +411,14 @@ export function useKeyPopups(area: KeyArea): KeyPopups {
         ],
         [
           {
+            id: "reverse",
+            label: t("keyframes.action.reverse"),
+            disabled: !canMove || !keyframes.canReverse(area.shownClips),
+            run: () => keyframes.reverseSelected(area.shownClips),
+          },
+        ],
+        [
+          {
             id: "row",
             label: t("keyframes.selectRow"),
             run: () => area.selectLane(spot.lane, false),

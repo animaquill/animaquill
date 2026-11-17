@@ -45,7 +45,7 @@ import {
   MIN_TALL_HEIGHT,
   type Lane,
 } from "./lanes.ts";
-import type { ShownHandle } from "./area.ts";
+import { RETIME_PAD, type ShownHandle } from "./area.ts";
 import { handlePoint, type CurvePoint } from "./handles.ts";
 import { KeySelection, type KeyRef } from "./selection.ts";
 
@@ -3165,5 +3165,197 @@ describe("the diamond of an object", () => {
     timeline.updateTrack(video, { locked: false });
     timeline.seek(0);
     expect(keyframes.objectKeyEdits("c", visual())).toBeUndefined();
+  });
+});
+
+describe("the box around selected keys", () => {
+  async function keyed() {
+    const setting = await setup();
+    setting.addClip("a", 0, 8);
+    setting.keys("a", X, 1, 2, 3);
+    setting.open("a", "position");
+    const { click, at, panel } = setting;
+    const selectAll = () => {
+      click(at(1, laneOf("a", X)));
+      click(at(2, laneOf("a", X), { mod: true }));
+      click(at(3, laneOf("a", X), { mod: true }));
+    };
+    /** A place on an edge of the box, in the row of transform.x. */
+    const edge = (side: "start" | "end", extra: Partial<Pointer> = {}): Pointer => {
+      const box = panel.retimeBox();
+      if (!box) throw new Error("no box");
+      return { ...at(0, laneOf("a", X)), x: side === "start" ? box.left : box.right, ...extra };
+    };
+    /** Where an edge that was at a key goes to, with the pointer as far from it as the box is. */
+    const toward = (from: Pointer, seconds: number, extra: Partial<Pointer> = {}): Pointer => {
+      const box = panel.retimeBox();
+      if (!box) throw new Error("no box");
+      const away = from.x === box.left ? -RETIME_PAD : RETIME_PAD;
+      return { ...from, x: panel.xAt(seconds) + away, ...extra };
+    };
+    const shownKeys = () => {
+      const box = setting.timeline.model?.boxes.get("a");
+      if (!box) throw new Error("no clip");
+      const value = setting.keyframes.shown(box.clip).properties?.[X] as Animation;
+      return value.keys.map(({ time, value: number }) => `${time}:${String(number)}`);
+    };
+    return { ...setting, selectAll, edge, toward, shownKeys };
+  }
+
+  it("is there only for keys at two moments or more, around the rows they are in", async () => {
+    const { panel, click, at, keys, open, selectAll, lane } = await keyed();
+    keys("a", Y, 1);
+    open("a", "position");
+    click(at(1, laneOf("a", X)));
+    expect(panel.retimeBox()).toBeUndefined();
+    // Two keys at one moment have nothing to stretch.
+    click(at(1, laneOf("a", Y), { mod: true }));
+    expect(panel.retimeBox()).toBeUndefined();
+    click(at(2, laneOf("a", Y), { mod: true }));
+    expect(panel.retimeBox()).toBeUndefined();
+    selectAll();
+    const box = panel.retimeBox();
+    expect(box?.left).toBeCloseTo(panel.xAt(1) - RETIME_PAD, 6);
+    expect(box?.right).toBeCloseTo(panel.xAt(3) + RETIME_PAD, 6);
+    const row = lane(laneOf("a", X));
+    expect(box?.top).toBeLessThanOrEqual(panel.screenY(row.top));
+    expect(box?.bottom).toBeGreaterThanOrEqual(panel.screenY(row.top + row.height));
+    // Its edges have a name, and the pointer says they go sideways.
+    expect(panel.titleAt(at(3, laneOf("a", X), { x: box?.right ?? 0 }))).toBe(
+      "keyframes.retime.end",
+    );
+    expect(panel.hover(at(3, laneOf("a", X), { x: box?.left ?? 0 }))).toBe("ew-resize");
+    expect(panel.titleAt(at(2.5, laneOf("a", X)))).toBeUndefined();
+  });
+
+  it("an edge stretches all of it from the other edge, values as they were, in one step", async () => {
+    const { panel, selectAll, edge, toward, shownKeys, writer, trials, selected } = await keyed();
+    selectAll();
+    const from = edge("end");
+    panel.press(from);
+    panel.drag(toward(from, 4));
+    panel.drag(toward(from, 5));
+    // While it goes, only what shows changes.
+    expect(writer.getPreviewed().get("a")?.has(X)).toBe(true);
+    expect(trials.getSnapshot().count).toBe(0);
+    panel.release(toward(from, 5));
+    expect(shownKeys()).toEqual(["1:0", "3:10", "5:20"]);
+    expect(trials.getSnapshot().count).toBe(1);
+    expect(selected()).toEqual(["a transform.x 1", "a transform.x 3", "a transform.x 5"]);
+    trials.undo();
+    expect(shownKeys()).toEqual(["1:0", "2:10", "3:20"]);
+  });
+
+  it("the start edge squeezes from the end, and stops where keys would be a frame apart", async () => {
+    const { selectAll, edge, toward, shownKeys, drag } = await keyed();
+    selectAll();
+    drag(edge("start"), toward(edge("start"), 2));
+    expect(shownKeys()).toEqual(["2:0", "2.5:10", "3:20"]);
+    // As far as it goes: the two keys a second apart of two seconds are a frame apart.
+    drag(edge("start"), toward(edge("start"), 2.99));
+    expect(shownKeys()).toEqual(["44/15:0", "89/30:10", "3:20"]);
+  });
+
+  it("past the other edge it turns around, values and all", async () => {
+    const { panel, selectAll, edge, toward, shownKeys, drag, trials } = await keyed();
+    selectAll();
+    drag(edge("end"), toward(edge("end"), 0.5));
+    // 0.75 is half way between frames, and goes to the later one.
+    expect(shownKeys()).toEqual(["0.5:20", "23/30:10", "1:0"]);
+    trials.undo();
+    expect(shownKeys()).toEqual(["1:0", "2:10", "3:20"]);
+    expect(panel.retimeBox()).toBeUndefined();
+  });
+
+  it("goes no further back than where the clock of its clip starts", async () => {
+    const { panel, selectAll, edge, shownKeys, drag } = await keyed();
+    selectAll();
+    drag(edge("end"), { ...edge("end"), x: panel.xAt(-3) });
+    expect(shownKeys()).toEqual(["0:20", "0.5:10", "1:0"]);
+  });
+
+  it("sticks to the playhead and to other keys, exactly; Alt goes between frames", async () => {
+    const { panel, selectAll, edge, toward, shownKeys, drag, timeline, keys, open, trials } =
+      await keyed();
+    keys("a", Y, "13/3");
+    open("a", "position");
+    selectAll();
+    timeline.seek(107);
+    const near = (seconds: number, extra: Partial<Pointer> = {}) => ({
+      ...toward(edge("end"), seconds),
+      x: toward(edge("end"), seconds).x + 2,
+      ...extra,
+    });
+    drag(edge("end"), near(107 / 30));
+    expect(shownKeys().at(-1)).toBe("107/30:20");
+    trials.undo();
+    selectAll();
+    drag(edge("end"), near(13 / 3));
+    expect(shownKeys().at(-1)).toBe("13/3:20");
+    trials.undo();
+    selectAll();
+    drag(edge("end", { alt: true }), near(4.011, { alt: true }));
+    const last = shownKeys().at(-1)?.split(":")[0] as string;
+    expect(secondsOf(last)).toBeCloseTo(4.011 + 2 / panel.pixelsPerSecond, 2);
+    expect((secondsOf(last) * 30) % 1).not.toBe(0);
+    expect(panel.retimeBox()).toBeDefined();
+  });
+
+  it("back where it was it sticks, and nothing happened; Escape leaves no trace", async () => {
+    const { panel, selectAll, edge, toward, trials, writer, keyframes } = await keyed();
+    selectAll();
+    const from = edge("end");
+    panel.press(from);
+    panel.drag(toward(from, 5));
+    panel.drag({ ...from, x: from.x + 3 });
+    panel.release({ ...from, x: from.x + 3 });
+    expect(trials.canUndo).toBe(false);
+    expect(writer.getPreviewed().get("a")?.has(X) ?? false).toBe(false);
+    panel.press(from);
+    panel.drag(toward(from, 5));
+    panel.cancelDrag();
+    expect(trials.canUndo).toBe(false);
+    expect(keyframes.preview).toBeUndefined();
+  });
+
+  it("inside the box everything moves together, as when a key is dragged", async () => {
+    const { panel, selectAll, at, shownKeys, drag } = await keyed();
+    selectAll();
+    expect(panel.hover(at(2.5, laneOf("a", X)))).toBe("move");
+    drag(at(2.5, laneOf("a", X)), at(3.5, laneOf("a", X)));
+    expect(shownKeys()).toEqual(["2:0", "3:10", "4:20"]);
+  });
+
+  it("works across clips, each on its own clock, by the same share, in one step", async () => {
+    const setting = await keyed();
+    const { addClip, keys, keyframes, open, click, at, edge, toward, drag, shownTimes, trials } =
+      setting;
+    addClip("b", 8, 4, { offset: "5" });
+    keys("b", X, 5, 6);
+    keyframes.setRange("all");
+    open("b", "position");
+    click(at(1, laneOf("a", X)));
+    click(at(9, laneOf("b", X), { mod: true }));
+    // From 1 to 9 on the timeline, stretched to 1 to 17: twice as long.
+    drag(edge("end"), toward(edge("end"), 17));
+    expect(shownTimes("a", X)).toEqual(["1", "2", "3"]);
+    expect(shownTimes("b", X)).toEqual(["5", "14"]);
+    // The key on the other clip is where the edge stays.
+    expect(trials.getSnapshot().count).toBe(1);
+    trials.undo();
+    expect(shownTimes("b", X)).toEqual(["5", "6"]);
+  });
+
+  it("the menu turns the selected keys around where they are, in one step", async () => {
+    const { keyframes, selectAll, shownKeys, trials, selected, click, at } = await keyed();
+    click(at(1, laneOf("a", X)));
+    expect(keyframes.canReverse()).toBe(false);
+    selectAll();
+    expect(keyframes.canReverse()).toBe(true);
+    keyframes.reverseSelected();
+    expect(shownKeys()).toEqual(["1:20", "2:10", "3:0"]);
+    expect(selected()).toEqual(["a transform.x 1", "a transform.x 2", "a transform.x 3"]);
+    trials.undo();
+    expect(shownKeys()).toEqual(["1:0", "2:10", "3:20"]);
   });
 });

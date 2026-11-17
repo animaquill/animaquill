@@ -648,6 +648,8 @@
       "extend-needs-keys": "{{path}} 没有关键帧，没有开始之前和结束之后",
       "continue-needs-numbers": "只有数字和角度能延续：{{path}} 不是",
       "noise-needs-numbers": "只有数字、角度和向量能抖动：{{path}} 不是，或者还没有值",
+      "retime-span": "{{path}} 伸缩时间的前后两端不能是同一时刻",
+      "keys-collide": "{{path}} 有两个关键帧会落到同一帧 {{time}}",
       "effect-outside": "效果的生效时间要在片段之内",
       "effect-backwards": "效果的开始要在结束之前",
       "replace-same": "换成的{{kind}}和原来的是同一个：{{id}}",
@@ -2217,7 +2219,12 @@
       "previousFrame": "上一帧或前移一帧",
       "nextFrame": "下一帧或后移一帧",
       "backFiveFrames": "后退 5 帧或前移 5 帧",
-      "forwardFiveFrames": "前进 5 帧或后移 5 帧"
+      "forwardFiveFrames": "前进 5 帧或后移 5 帧",
+      "reverse": "反转时间"
+    },
+    "retime": {
+      "start": "伸缩时间",
+      "end": "伸缩时间"
     },
     "record": "自动关键帧",
     "recordOff": "关掉自动关键帧",

@@ -38,6 +38,7 @@ import {
   type CurvePoint,
   type HandleSide,
 } from "./handles.ts";
+import type { RetimePreview } from "./retime.ts";
 import { KeySelection, NO_KEYS, type KeyRef } from "./selection.ts";
 
 /** Without snapping a key can go anywhere, to the millisecond. */
@@ -76,6 +77,8 @@ export interface KeyPreview {
   readonly snap?: number;
   readonly marquee?: Marquee;
   readonly handle?: HandleHint;
+  /** Where the box around the selected keys is being dragged, see `RetimeGesture`. */
+  readonly retime?: RetimePreview;
 }
 
 /** The selected keys of one property that can move. */

@@ -1,0 +1,123 @@
+{
+  "about": "Stretching and reversing keys (keyframes K6): retimeKeys stretches three keys to twice as long on frames and the key where the last one lands gives way, which the result says; reversing them in place plays the bounce backwards; a stretch from one moment and two keys on one frame fail and write nothing.",
+  "steps": [
+    {
+      "tool": "aq_timeline_read",
+      "expect": {
+        "ok": true
+      }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "property.edit",
+            "timeline": "main",
+            "edits": [
+              {
+                "owner": { "clip": "clip_logo" },
+                "path": "transform.x",
+                "op": "set",
+                "value": {
+                  "keys": [
+                    { "time": "0", "value": 0, "interp": "preset", "preset": "bounceOut" },
+                    { "time": "0.5", "value": 100 },
+                    { "time": "1", "value": 200 },
+                    { "time": "2", "value": 50 }
+                  ]
+                }
+              },
+              {
+                "owner": { "clip": "clip_logo" },
+                "path": "transform.x",
+                "op": "retimeKeys",
+                "times": ["0", "0.5", "1"],
+                "from": ["0", "1"],
+                "to": ["0", "2"],
+                "frames": true
+              }
+            ]
+          }
+        ]
+      },
+      "expect": { "ok": true, "lines": ["keys that gave way: clip_logo transform.x at 2"] }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "property.edit",
+            "timeline": "main",
+            "edits": [
+              {
+                "owner": { "clip": "clip_logo" },
+                "path": "transform.x",
+                "op": "retimeKeys",
+                "times": ["0", "1", "2"],
+                "from": ["0", "2"],
+                "to": ["2", "0"]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": { "ok": true }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "property.edit",
+            "timeline": "main",
+            "edits": [
+              {
+                "owner": { "clip": "clip_logo" },
+                "path": "transform.x",
+                "op": "retimeKeys",
+                "times": ["0"],
+                "from": ["1", "1"],
+                "to": ["0", "2"]
+              }
+            ]
+          }
+        ]
+      },
+      "expect": { "error": "invalid-value", "lines": ["transform.x", "nothing was written"] }
+    },
+    {
+      "tool": "aq_edit",
+      "args": {
+        "operations": [
+          {
+            "op": "property.edit",
+            "timeline": "main",
+            "edits": [
+              {
+                "owner": { "clip": "clip_logo" },
+                "path": "transform.x",
+                "op": "retimeKeys",
+                "times": ["0", "1", "2"],
+                "from": ["0", "2"],
+                "to": ["0", "1/100"],
+                "frames": true
+              }
+            ]
+          }
+        ]
+      },
+      "expect": { "error": "invalid-value", "lines": ["one frame", "nothing was written"] }
+    }
+  ],
+  "end": {
+    "files": {
+      "timelines/main/timeline.json": ["\"preset\": \"bounceIn\""]
+    },
+    "absent": {
+      "timelines/main/timeline.json": ["\"value\": 50"]
+    },
+    "undoAll": true
+  }
+}

@@ -346,6 +346,97 @@ test.describe("with changes written right away", () => {
     await expect.poll(() => timesOf(keys(page, "位置 X"))).toEqual(moved);
   });
 
+  /** A clip with keys on X at 2, 2.5 and 3 seconds of 0, 100 and 300, all of them selected. */
+  async function threeKeys(page: Page) {
+    await addColor(page);
+    await goTo(page, "0:02/00");
+    await keyButton(page, "位置 X").click();
+    await goTo(page, "0:02/15");
+    await typeInto(field(page, "位置 X"), "100");
+    await goTo(page, "0:03/00");
+    await typeInto(field(page, "位置 X"), "300");
+    await animate(page);
+    await showAll(page);
+    await open(page, "纯色");
+    await open(page, "位置");
+    await expect(keys(page, "位置 X")).toHaveCount(3);
+    const [first, last] = await Promise.all(
+      [0, 2].map((index) => centerOf(keys(page, "位置 X").nth(index))),
+    );
+    if (!first || !last) throw new Error("no keys");
+    await page.mouse.click(first.x, first.y, { button: "right" });
+    await page.getByRole("menuitem", { name: "选中这一行" }).click();
+    for (const index of [0, 1, 2]) {
+      await expect(keys(page, "位置 X").nth(index)).toHaveAttribute("aria-selected", "true");
+    }
+    return { first, last };
+  }
+
+  const valueAt = async (page: Page, time: string) => {
+    await goTo(page, time);
+    return Number(await value(page, "位置 X").inputValue());
+  };
+
+  test("the box around three keys stretches them, past its other edge plays them backwards, one step each", async ({
+    page,
+  }) => {
+    const { first, last } = await threeKeys(page);
+    // The right edge of the box is a little past the last key. It has a name, and nothing else.
+    await page.mouse.move(last.x + 16, last.y);
+    await expect(stage(page)).toHaveAttribute("title", "伸缩时间");
+    const second = last.x - first.x;
+    const pull = async (from: number, to: number) => {
+      await page.mouse.move(from, last.y);
+      await page.mouse.down();
+      await page.mouse.move((from + to) / 2, last.y, { steps: 4 });
+      await page.mouse.move(to, last.y, { steps: 4 });
+      await page.mouse.up();
+    };
+
+    // Twice as long: what took half a second takes one, so at 3 seconds it is where it was at 2.5.
+    await pull(last.x + 16, last.x + second + 16);
+    await expect
+      .poll(() => timesOf(keys(page, "位置 X")))
+      .toEqual(["0:02/00", "0:03/00", "0:04/00"]);
+    expect(await valueAt(page, "0:03/00")).toBe(100);
+
+    // Past the left edge it turns around: the last key first, at 1 second.
+    await pull(last.x + second + 16, first.x - second + 16);
+    await expect
+      .poll(() => timesOf(keys(page, "位置 X")))
+      .toEqual(["0:01/00", "0:01/15", "0:02/00"]);
+    expect(await valueAt(page, "0:01/00")).toBe(300);
+    expect(await valueAt(page, "0:02/00")).toBe(0);
+
+    await page.keyboard.press("Control+z");
+    await expect
+      .poll(() => timesOf(keys(page, "位置 X")))
+      .toEqual(["0:02/00", "0:03/00", "0:04/00"]);
+    await page.keyboard.press("Control+z");
+    await expect
+      .poll(() => timesOf(keys(page, "位置 X")))
+      .toEqual(["0:02/00", "0:02/15", "0:03/00"]);
+  });
+
+  test("the menu of selected keys turns them around where they are, in one step", async ({
+    page,
+  }) => {
+    await threeKeys(page);
+    // Close enough together, a press on a key would take hold of a handle of the next one.
+    for (let times = 0; times < 3; times += 1) {
+      await panel(page).getByRole("button", { name: "放大" }).click();
+    }
+    await settled(() => keyPlaces(page));
+    // The playhead is at the last key, which is what zooming keeps in its place.
+    const last = await centerOf(keys(page, "位置 X").last());
+    await page.mouse.click(last.x, last.y, { button: "right" });
+    await page.getByRole("menuitem", { name: "反转时间" }).click();
+    expect(await valueAt(page, "0:02/00")).toBe(300);
+    expect(await valueAt(page, "0:03/00")).toBe(0);
+    await page.keyboard.press("Control+z");
+    expect(await valueAt(page, "0:02/00")).toBe(0);
+  });
+
   test("Escape takes a drag back", async ({ page }) => {
     await keyedColor(page);
     const start = await centerOf(keys(page, "位置 X").nth(1));

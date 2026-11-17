@@ -126,6 +126,7 @@ export {
   type EditContext,
   type ValueEdit,
 } from "./property-edit.ts";
+export { retimedTime, type ClockFrames } from "./retime.ts";
 export * from "./problems/index.ts";
 export {
   PropertyRename,

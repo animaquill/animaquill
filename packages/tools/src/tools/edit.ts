@@ -575,6 +575,13 @@ export const edit: ToolDefinition<EditArgs> = {
       const id = (value as { readonly id?: unknown } | undefined)?.id;
       return typeof id === "string" ? [`${id} (operations[${index}])`] : [];
     });
+    // Keys that gave way where retimeKeys put others: nothing else would say that they are gone.
+    const removed = result.results.flatMap((value, index) => {
+      const gone = (value as { readonly removed?: readonly RemovedKeys[] } | undefined)?.removed;
+      return (gone ?? []).map(
+        ({ clip, path, times }) => `${clip} ${path} at ${times.join(", ")} (operations[${index}])`,
+      );
+    });
     const most = call.limits.changed;
     const shown = changes.slice(0, most).map((change) => `  ${changeLine(result.state, change)}`);
     const more =
@@ -590,6 +597,7 @@ export const edit: ToolDefinition<EditArgs> = {
       [
         first,
         ...(created.length > 0 ? [`created: ${created.join(" | ")}`] : []),
+        ...(removed.length > 0 ? [`keys that gave way: ${removed.join(" | ")}`] : []),
         ...(shown.length > 0 ? ["changed:", ...shown, ...more] : []),
         ...problems.lines,
       ],
@@ -605,6 +613,13 @@ export const edit: ToolDefinition<EditArgs> = {
     );
   },
 };
+
+/** Keys of a property that `retimeKeys` took away where others landed, as `property.edit` gives them. */
+interface RemovedKeys {
+  readonly clip: string;
+  readonly path: string;
+  readonly times: readonly string[];
+}
 
 /** Every operation of the registry by name, also those AI cannot use, for words about them. */
 export const ALL_OPERATIONS: readonly Operation[] = OPERATIONS as readonly Operation[];

@@ -93,6 +93,10 @@ export const INVALID_VALUE_TEXTS: RuleTexts = {
     `"continue" goes on at the slope of the ends, which only a number or an angle has; ${path} is not one: "hold", "loop" or "pingpong" work.`,
   "noise-needs-numbers": ({ path }) =>
     `Only numbers, angles and vectors shake; ${path} is not one of them, or has no value to start from yet (setKey one first).`,
+  "retime-span": ({ path }) =>
+    `retimeKeys on ${path} maps "from" onto "to", and neither can start and end at the same moment.`,
+  "keys-collide": ({ path, time }) =>
+    `Two of the keys of ${path} would land on one frame at ${time}: stretch less, or leave out "frames".`,
   "effect-outside": () =>
     "An effect has to work within its clip: start and end are from its start.",
   "effect-backwards": () => "The start of an effect has to come before its end.",

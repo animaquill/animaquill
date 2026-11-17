@@ -84,6 +84,7 @@ import {
   type Shaking,
 } from "./shaking.ts";
 import { tangentOf, withTangent, type TangentMode } from "./handles.ts";
+import { retimeEdits, retimeSpanOf, retimedSelection } from "./retime.ts";
 import {
   DEFAULT_TALL_HEIGHT,
   MAX_TALL_HEIGHT,
@@ -1064,6 +1065,28 @@ export class KeyframeEditor {
     const moved = KeySelection.of(movedSelection(this.selection, channels, by));
     this.commitMove(moveEdits(channels, by), moved);
   }
+
+  /** Whether the selected keys that can change are at two moments or more: what can turn around. */
+  canReverse(shown: ShownClips = ALL_CLIPS): boolean {
+    return retimeSpanOf(this.movingChannels(shown), this.#clipOf) !== undefined;
+  }
+
+  /**
+   * Turns the selected keys around in time, where they are: the first goes where the last was, and
+   * the other way round. One step; the easing turns with them (see `retimeKeys`).
+   */
+  reverseSelected(shown: ShownClips = ALL_CLIPS): void {
+    const channels = this.#changeable(shown);
+    const span = retimeSpanOf(channels, this.#clipOf);
+    if (!span) return;
+    const from = [span.first, span.last] as const;
+    const to = [span.last, span.first] as const;
+    const edits = retimeEdits(channels, this.#clipOf, from, to, false);
+    const moved = retimedSelection(this.selection, channels, this.#clipOf, from, to, undefined);
+    this.commitMove(edits, moved);
+  }
+
+  #clipOf = (clip: string): ClipState | undefined => this.model?.boxes.get(clip)?.clip;
 
   /** Takes the selected keys away, in one step, or says why that cannot be. */
   deleteSelected(shown: ShownClips = ALL_CLIPS): void {

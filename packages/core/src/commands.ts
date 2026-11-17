@@ -130,7 +130,7 @@ import {
 } from "./project-edits.ts";
 import { deepEqual } from "./patch.ts";
 import { StorageChange, setStorage } from "./places.ts";
-import { PropertyEdit, applyEdit, editContextOf } from "./property-edit.ts";
+import { PropertyEdit, applyEdit, editContextOf, retimedValue } from "./property-edit.ts";
 import { PropertyRename, convertedValue, movesOf } from "./rename.ts";
 import { isInUse } from "./references.ts";
 import { SourceReplace, removeUses, replaceSource } from "./resource-edits.ts";
@@ -326,6 +326,15 @@ const rippled = ({ moved, joinsRemoved, sectionsRemoved }: Rippled) => ({
   ...apart(joinsRemoved),
   ...(sectionsRemoved.length > 0 && { sectionsRemoved }),
 });
+
+/** Keys that gave way to keys that `retimeKeys` put where they were, by property. */
+const RemovedKeys = z.strictObject({
+  clip: Id,
+  path: z.string(),
+  times: z.array(z.string()).readonly(),
+});
+type RemovedKeys = z.output<typeof RemovedKeys>;
+const EditedProperties = z.strictObject({ removed: z.array(RemovedKeys).readonly() }).optional();
 
 /** A stretch of a timeline, from a moment to a later one. */
 const Range = z.strictObject({ from: Time, to: Time });
@@ -578,16 +587,28 @@ export function checkWrite(
  * through here. What does not change writes nothing, so that a drag that ends where it started leaves
  * no step to undo, and taking something away always works, because that is the way out of bad data.
  */
-function editProperties(draft: Draft, timeline: string, edits: readonly PropertyEdit[]): void {
+function editProperties(
+  draft: Draft,
+  timeline: string,
+  edits: readonly PropertyEdit[],
+): readonly RemovedKeys[] {
   const target = timelineOf(draft, timeline);
   const changes = new Map<string, Map<string, PropertyValue | undefined>>();
+  const removed: RemovedKeys[] = [];
   for (const edit of edits) {
     const { path, owner } = edit;
     const clip = clipOf(target, owner.clip);
     const values = changes.get(clip.id) ?? new Map<string, PropertyValue | undefined>();
     changes.set(clip.id, values);
     const before = values.has(path) ? values.get(path) : entryOf(clip.properties, path);
-    values.set(path, applyEdit(before, edit, editContextOf(draft.state, clip, path)));
+    const context = editContextOf(draft.state, clip, path);
+    if (edit.op === "retimeKeys") {
+      const retimed = retimedValue(before, edit, context);
+      values.set(path, retimed.value);
+      if (retimed.removed.length > 0) removed.push({ clip: clip.id, path, times: retimed.removed });
+    } else {
+      values.set(path, applyEdit(before, edit, context));
+    }
   }
   for (const [id, values] of changes) {
     const clip = entryOf(target.clips, id) as ClipState;
@@ -604,6 +625,7 @@ function editProperties(draft: Draft, timeline: string, edits: readonly Property
       }
     }
   }
+  return removed;
 }
 
 type ClipOverrides = NonNullable<TimelineState["overrides"][string]["clips"]>[string];
@@ -2002,12 +2024,13 @@ export const OPERATIONS = [
   /** Everything people, tools and AI do to properties, in one step however much it is. */
   define(
     "property.edit",
-    "一步里批量改片段的属性和关键帧：写值、加删移关键帧、改插值、整个设置或清除。",
+    "一步里批量改片段的属性和关键帧：写值、加删移关键帧、改插值、伸缩和反转关键帧的时间、整个设置或清除。",
     z.strictObject({ timeline: Id, edits: z.array(PropertyEdit).min(1) }),
     (draft, { timeline, edits }) => {
-      editProperties(draft, timeline, edits);
+      const removed = editProperties(draft, timeline, edits);
+      return removed.length > 0 ? { removed } : undefined;
     },
-    { group: "property", result: Nothing, failures: PROPERTY_FAILURES },
+    { group: "property", result: EditedProperties, failures: PROPERTY_FAILURES },
   ),
 
   /**

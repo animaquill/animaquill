@@ -59,7 +59,7 @@ export const PARAM_TEXTS = {
   "params.keep": "Linked clip ids that stay whole.",
   "params.rippleTracks": "Track ids (aq_timeline_read) whose clips move; without, all tracks.",
   "params.edits":
-    'Each {"owner":{"clip":id},"path",…,"op"}: "set" a value or keyframes, "clear", "write" at a time, or "setKey", "removeKey", "moveKey", "putKeys", "setInterp", "setExtend", "setNoise".',
+    'Each {"owner":{"clip":id},"path",…,"op"}: "set" a value or keyframes, "clear", "write" at a time, or "setKey", "removeKey", "moveKey", "putKeys", "setInterp", "setExtend", "setNoise", "retimeKeys".',
   "params.renames": 'Each {"owner":{"clip":id},"from","to"}; paths may end in ".*".',
   "params.time": 'Seconds as a string: "12.5".',
   "params.note": "A longer note.",

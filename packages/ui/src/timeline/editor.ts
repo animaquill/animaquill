@@ -353,6 +353,8 @@ export interface RowExtras {
   press(pointer: Pointer): Gesture | undefined;
   /** The cursor there, or undefined when the pointer is somewhere else. */
   hover(pointer: Pointer): string | undefined;
+  /** The name of what is at a place, as a key of the interface texts, for the pointer to show. */
+  titleAt?(pointer: Pointer): string | undefined;
   /** What a finger starts there, or undefined when it is somewhere else. */
   touchAt(pointer: Pointer): TouchStart | undefined;
   /** A long press there. Says whether it was. */
@@ -3534,6 +3536,8 @@ export class TimelineEditor implements TouchTarget {
    */
   titleAt(pointer: Pointer): string | undefined {
     if (pointer.y < RULER_HEIGHT) return undefined;
+    const below = this.#extras?.titleAt?.(pointer);
+    if (below !== undefined) return below;
     const hit = this.hitAt(pointer);
     if (hit.kind !== "join") return undefined;
     const { join, row } = hit;

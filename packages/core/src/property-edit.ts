@@ -8,14 +8,17 @@ import {
   PresetParams,
   PropertyValue,
   Spring,
+  TIME_PATTERN,
   Time,
   Value,
   builtInEffect,
   compare,
   effectOfPath,
   isAnimation,
+  normalizeTime,
   parameterOf,
   parseTime,
+  subtract,
   toSeconds,
   type Animation,
   type Rational,
@@ -33,7 +36,16 @@ import {
   type KeyPoint,
 } from "./curve.ts";
 import { fail } from "./draft.ts";
-import { effectsOf, entryOf, type ClipState, type ProjectState } from "./model.ts";
+import {
+  clipOffset,
+  clipStart,
+  effectsOf,
+  entryOf,
+  projectFrameRate,
+  type ClipState,
+  type ProjectState,
+} from "./model.ts";
+import { retimeKeys, type ClockFrames, type Retimed } from "./retime.ts";
 
 /** Whose property it is. Tracks and effects get their own shape of this later. */
 const Target = { owner: z.strictObject({ clip: Id }), path: PropertyPath };
@@ -59,6 +71,12 @@ export type KeyEase = z.output<typeof KeyEase>;
 
 const KeyMove = z.strictObject({ from: Time, to: Time });
 
+/** A reading of the clock of a clip, which for mapping one stretch onto another can be before it starts. */
+const Reading = z
+  .string()
+  .regex(TIME_PATTERN, '时间要写成字符串，单位是秒，可以是负数，比如 "-0.5" 或 "1/30"')
+  .overwrite(normalizeTime);
+
 /** Shaking as `setNoise` writes it. What it leaves out stays as the shaking there has it. */
 export const NoiseEdit = z.strictObject({
   amount: z.number(),
@@ -79,6 +97,8 @@ export const NoiseEdit = z.strictObject({
  * - `setExtend` says what the value does before the first key and after the last one.
  * - `setNoise` shakes the value, or stops it with null. A property without keys gets one at the first
  *   frame of the clip, as the format has shaking on keys.
+ * - `retimeKeys` maps `from` onto `to` for some keys, exactly: stretching, squeezing, moving, and
+ *   reversing when the order turns around. With `frames` they go to the nearest frame. See retime.ts.
  * - `set` replaces the whole property, `clear` takes it away.
  */
 export const PropertyEdit = z.discriminatedUnion("op", [
@@ -104,6 +124,14 @@ export const PropertyEdit = z.discriminatedUnion("op", [
       message: "setExtend 至少要写 before 或 after",
     }),
   z.strictObject({ ...Target, op: z.literal("setNoise"), noise: NoiseEdit.nullable() }),
+  z.strictObject({
+    ...Target,
+    op: z.literal("retimeKeys"),
+    times: z.array(Time).min(1),
+    from: z.tuple([Reading, Reading]),
+    to: z.tuple([Reading, Reading]),
+    frames: z.literal(true).optional(),
+  }),
   z.strictObject({ ...Target, op: z.literal("set"), value: PropertyValue }),
   z.strictObject({ ...Target, op: z.literal("clear") }),
 ]);
@@ -341,6 +369,8 @@ export interface EditContext {
   readonly type?: ValueType | undefined;
   /** What it is without a value of its own, when that is known. */
   readonly fallback?: Value | undefined;
+  /** The frames of the project on the clock of the clip, when there is a project. */
+  readonly frames?: ClockFrames | undefined;
 }
 
 /** Seeds that people can read and type. */
@@ -386,11 +416,16 @@ export function editContextOf(
   path: string,
 ): EditContext {
   const spec = specOf(state, clip, path);
+  const frames: ClockFrames | undefined = state && {
+    rate: parseTime(projectFrameRate(state.manifest)),
+    shift: subtract(clipOffset(clip), clipStart(clip)),
+  };
   return {
     path,
     firstFrame: clip.offset ?? "0",
     seed: seedOf(clip.id, path),
     ...(spec && { type: spec.type, fallback: spec.default }),
+    ...(frames && { frames }),
   };
 }
 
@@ -476,6 +511,16 @@ function withNoise(
   return { ...animation, modifiers: [...others, shaking] };
 }
 
+/** What `retimeKeys` does to a value, with the keys that gave way. */
+export function retimedValue(
+  value: PropertyValue | undefined,
+  edit: Extract<ValueEdit, { op: "retimeKeys" }>,
+  context: EditContext | undefined,
+): Retimed {
+  const keyed = value !== undefined && isAnimation(value) ? value : undefined;
+  return retimeKeys(keyed, edit, context?.path ?? "", context?.frames);
+}
+
 /**
  * What a property holds after an edit, and undefined when nothing is left of it. Previewing, trying
  * out and writing all come through here, so what people see is what gets saved. Fails when an edit
@@ -504,6 +549,8 @@ export function applyEdit(
       return withExtend(keyed, edit, needContext(context));
     case "setNoise":
       return withNoise(value, edit.noise, needContext(context));
+    case "retimeKeys":
+      return retimedValue(value, edit, context).value;
     case "set":
       return edit.value;
     case "clear":

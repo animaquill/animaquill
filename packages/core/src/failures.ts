@@ -103,6 +103,10 @@ export const InvalidValue = z.discriminatedUnion("rule", [
   z.strictObject({ rule: z.literal("continue-needs-numbers"), path: z.string() }),
   /** Shaking needs numbers, angles or vectors, and a value to start from. */
   z.strictObject({ rule: z.literal("noise-needs-numbers"), path: z.string() }),
+  /** Retiming maps one stretch onto another, and neither can be a single moment. */
+  z.strictObject({ rule: z.literal("retime-span"), path: z.string() }),
+  /** Two keys that move would land on one moment, which only frames can do. */
+  z.strictObject({ rule: z.literal("keys-collide"), path: z.string(), time: z.string() }),
   /** An effect works within its clip. */
   z.strictObject({ rule: z.literal("effect-outside") }),
   /** An effect starts before it ends. */
