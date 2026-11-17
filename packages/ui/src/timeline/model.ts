@@ -27,6 +27,7 @@ import {
   type Transition,
 } from "@animaquill/schema";
 import { frameRate, type FrameRate } from "./frames.ts";
+import { markerBoxesOf, sectionBoxesOf, type MarkerBox, type SectionBox } from "./markers.ts";
 
 const ROW_HEIGHTS: Readonly<Record<TrackState["kind"], number>> = {
   caption: 32,
@@ -172,6 +173,10 @@ export interface TimelineModel {
   readonly joins: ReadonlyMap<string, JoinBox>;
   /** The files of the project, which say how much of them is past the ends of clips. */
   readonly assets: ProjectState["assets"];
+  /** In order of time. */
+  readonly markers: readonly MarkerBox[];
+  /** End to end from zero. */
+  readonly sections: readonly SectionBox[];
 }
 
 const secondsOf = (time: string) =>
@@ -336,6 +341,8 @@ export function buildModel(
     ends: joinedEndsOf(state),
     joins,
     assets: project?.assets,
+    markers: markerBoxesOf(state),
+    sections: sectionBoxesOf(state),
   };
 }
 

@@ -35,6 +35,9 @@ const RULES: { readonly [R in InvalidValue["rule"]]: Extract<InvalidValue, { rul
   "sound-entry": { rule: "sound-entry", entry: "index.html" },
   "size-unknown": { rule: "size-unknown", asset: "a1" },
   "time-outside": { rule: "time-outside", path: "cover.time", time: "12", length: "10" },
+  "section-edge": { rule: "section-edge", path: "at", time: "5" },
+  "boundary-outside": { rule: "boundary-outside", path: "at", time: "12", from: "5", to: "10" },
+  "no-next-section": { rule: "no-next-section", section: "s1" },
 };
 
 const CODES: { readonly [C in FailureCode]: CommandFailure & { readonly code: C } } = {

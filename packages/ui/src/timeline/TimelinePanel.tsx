@@ -54,6 +54,13 @@ import { TRANSITION_DRAG_TYPE, transitionDrag } from "./transition-drag.ts";
 import { transitionName } from "./transition-names.ts";
 import { pointerOf, useStage } from "./stage.ts";
 import { ToolButton } from "./ToolButton.tsx";
+import {
+  MarkerBubble,
+  MarkerList,
+  SectionBand,
+  markerMenu,
+  useShowsSections,
+} from "./MarkersAndSections.tsx";
 import styles from "./TimelinePanel.module.css";
 import { ZoomBar } from "./ZoomBar.tsx";
 
@@ -474,6 +481,8 @@ function TrackHeaders({
     run: () => editor.addTrack(kind),
   }));
 
+  const withSections = useShowsSections(editor);
+
   return (
     <div className={styles.headers} style={{ width: headerWidth }}>
       <div
@@ -497,6 +506,7 @@ function TrackHeaders({
           resizing.current = undefined;
         }}
       />
+      {withSections && <div className={styles.sectionCorner} />}
       <div className={styles.corner} style={{ height: RULER_HEIGHT }}>
         <ToolButton
           name={t("timeline.addTrack")}
@@ -857,6 +867,11 @@ function Surface({
     const hit = editor.hitAt(pointer);
     const x = pointer.x + box.left;
     const y = pointer.y + box.top;
+    if (hit.kind === "marker") {
+      editor.selectMarker(hit.box.id);
+      showMenu(markerMenu(editor, hit.box, x, y, (key) => t(key as never)));
+      return;
+    }
     if (hit.kind === "join") {
       const { join, row } = hit;
       editor.selectJoin(join.id);
@@ -979,9 +994,16 @@ function Surface({
   };
 
   const lanesHeight = () => editor.height - RULER_HEIGHT;
+  const withSections = useShowsSections(editor);
 
   return (
-    <div className={styles.surface}>
+    <div className={withSections ? `${styles.surface} ${styles.withSections}` : styles.surface}>
+      {withSections && (
+        <>
+          <SectionBand editor={editor} showMenu={showMenu} />
+          <div className={styles.sectionBar} />
+        </>
+      )}
       <div
         ref={stage}
         className={styles.stage}
@@ -989,7 +1011,12 @@ function Surface({
         role="group"
         aria-label={t("panel.timeline.title")}
         {...events}
-        onDoubleClick={(event) => popups.doubleClick(pointerOf(event, event.currentTarget))}
+        onDoubleClick={(event) => {
+          const pointer = pointerOf(event, event.currentTarget);
+          const hit = pointer.y < RULER_HEIGHT ? editor.hitAt(pointer) : undefined;
+          if (hit?.kind === "marker") editor.editMarker(hit.box.id);
+          else popups.doubleClick(pointer);
+        }}
         onContextMenu={onContextMenu}
         // The browser goes by the last of the two, and the one under the pointer changes as the
         // drop shows: without this a drop right after would not come.
@@ -1005,6 +1032,7 @@ function Surface({
         <canvas ref={canvas} className={styles.canvas} />
         <ClipList editor={editor} />
         <MarkList editor={editor} />
+        <MarkerList editor={editor} />
         <DropStatus editor={editor} />
         <KeyList area={lanes} />
         {model.boxes.size === 0 && <p className={styles.hint}>{t("timeline.emptyHint")}</p>}
@@ -1058,6 +1086,7 @@ function Surface({
         }}
       />
       {popups.element}
+      <MarkerBubble editor={editor} stage={stage} />
     </div>
   );
 }

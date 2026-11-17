@@ -68,7 +68,9 @@ ops/timeline.setBackground — sets the background color of a timeline
 ops/timeline.setDefault — makes a timeline open first
 ops/section.add — adds a section to a timeline, which makes it longer
 ops/section.update — changes the duration or name of a section
-ops/section.remove — removes a section; a timeline keeps at least one
+ops/section.split — splits a section in two at a moment; the length stays
+ops/section.moveBoundary — moves the boundary after a section; the length stays
+ops/section.remove — removes a section; its time goes to the one before it
 ops/track.add — adds a video, audio or caption track
 ops/track.update — changes the name, hidden, muted, solo, locked, group or role of a track
 ops/track.move — moves a track behind another one, or in front of all

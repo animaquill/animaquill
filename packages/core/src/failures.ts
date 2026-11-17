@@ -120,6 +120,18 @@ export const InvalidValue = z.discriminatedUnion("rule", [
     time: z.string(),
     length: z.string(),
   }),
+  /** A section splits inside it, not where it starts or ends. */
+  z.strictObject({ rule: z.literal("section-edge"), path: z.string(), time: z.string() }),
+  /** The boundary of two sections stays inside them, after `from` and before `to`. */
+  z.strictObject({
+    rule: z.literal("boundary-outside"),
+    path: z.string(),
+    time: z.string(),
+    from: z.string(),
+    to: z.string(),
+  }),
+  /** The last section ends where the timeline does, with no section after it to give way. */
+  z.strictObject({ rule: z.literal("no-next-section"), section: z.string() }),
 ]);
 export type InvalidValue = z.output<typeof InvalidValue>;
 

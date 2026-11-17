@@ -1,5 +1,5 @@
 import { clipEnd, clipStart, timelineLength } from "@animaquill/core";
-import { ZERO, type Rational } from "@animaquill/schema";
+import { ZERO, add, parseTime, type Rational } from "@animaquill/schema";
 import { frameSeconds, frameTime } from "./frames.ts";
 import type { TimelineModel } from "./model.ts";
 
@@ -35,12 +35,17 @@ export class SnapPoints {
   }
 }
 
-/** What people expect edges to stick to: other clips, the playhead and both ends of the timeline. */
+/**
+ * What people expect edges to stick to: other clips, the playhead, both ends of the timeline, the
+ * boundaries of sections and markers, both ends of one with a duration. A marker that is being
+ * dragged is not something to stick to.
+ */
 export function snapPointsOf(
   model: TimelineModel,
   frame: number,
   except: ReadonlySet<string>,
   more: readonly SnapPoint[] = [],
+  exceptMarker?: string,
 ): SnapPoints {
   const points: SnapPoint[] = [
     ...more,
@@ -48,6 +53,18 @@ export function snapPointsOf(
     { seconds: model.duration, exact: () => timelineLength(model.state) },
     { seconds: frameSeconds(frame, model.rate), exact: () => frameTime(frame, model.rate) },
   ];
+  for (const section of model.sections.slice(0, -1)) {
+    points.push({ seconds: section.end, exact: () => section.endExact });
+  }
+  for (const { id, marker, time, end } of model.markers) {
+    if (id === exceptMarker) continue;
+    const start = parseTime(marker.time);
+    points.push({ seconds: time, exact: () => start });
+    const { duration } = marker;
+    if (end !== undefined && duration !== undefined) {
+      points.push({ seconds: end, exact: () => add(start, parseTime(duration)) });
+    }
+  }
   for (const box of model.boxes.values()) {
     if (except.has(box.id)) continue;
     points.push(

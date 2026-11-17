@@ -213,7 +213,7 @@
  },
  {
   "name": "aq_edit",
-  "description": "Changes the open project with a batch of operations — the same operations the editor's own commands use — on timelines, sections, tracks, clips, transitions, joins, effects, properties and keyframes, markers, scenes, sounds and assets. It does not change the text of code files; aq_file_edit and aq_file_write do. scene.add and sound.add take the first files of a new scene or sound.\n\nAll operations of one call succeed together or nothing is written, and the batch is one step the user can undo. Operations run in order, so a later one can refer to an object that an earlier one created with an id given in the batch, such as \"clip_title2\". Times are strings in seconds, such as \"12.5\" or \"1001/30000\"; positions and sizes are in world units, with the origin at the center of the picture. Ids of existing objects come from the reading tools; an id that does not exist fails with not-found.\n\nChanges are checked against what you have read: a change to an object that the user changed after you last read it fails with conflict, and a change to an existing object before anything was read in this conversation fails with not-read; in both cases nothing is written. dry_run: true checks the batch and reports everything it would change or remove, including what uses those objects, without writing. A failed call says which operation failed, why, the correct shape and an example.\n\nThe result lists the objects that changed, the ids of new objects, and the problems this batch introduced or resolved. summary is one short sentence that the user sees for this batch, saying what it does.\n\nOperations, by what they change. Each operation's parameters are in the schema; aq_guide topic \"ops/<operation>\" has its full page with examples.\nproject: project.rename, project.setFrameRate, project.setDescription, project.setCredits, project.setFormats, project.setLanguages, project.setCover\ntimeline: timeline.rename, timeline.setBackground, timeline.setDefault, section.add, section.update, section.remove\ntrack: track.add, track.update, track.move, track.remove\nclip: source.replace, clip.add, clip.remove, clip.update, clip.move, clip.trim, clip.split\ntransition: clip.setTransition, join.add, join.update, join.remove\neffect: effect.add, effect.remove, effect.move, effect.update\nproperty: property.edit, property.rename\nmarker: marker.add, marker.update, marker.remove\nscene: scene.add, scene.update, scene.remove\nsound: sound.add, sound.update, sound.remove\nasset: asset.update, asset.remove\nfile: file.remove, file.rename\n\nExamples of operations (illustrative; their ids come from a sample project, not from the open one):\n[{\"op\":\"clip.add\",\"timeline\":\"main\",\"track\":\"track_video\",\"id\":\"clip_title2\",\"start\":\"31\",\"duration\":\"4\",\"source\":{\"kind\":\"scene\",\"scene\":\"title\"}},{\"op\":\"property.edit\",\"timeline\":\"main\",\"edits\":[{\"owner\":{\"clip\":\"clip_title2\"},\"path\":\"transform.y\",\"op\":\"set\",\"value\":{\"keys\":[{\"time\":\"0\",\"value\":-200},{\"time\":\"0.6\",\"value\":0}]}}]}]\n[{\"op\":\"clip.move\",\"timeline\":\"main\",\"clips\":[{\"clip\":\"clip_lottie\",\"start\":\"7\"},{\"clip\":\"clip_idea\",\"start\":\"12\"}]}]",
+  "description": "Changes the open project with a batch of operations — the same operations the editor's own commands use — on timelines, sections, tracks, clips, transitions, joins, effects, properties and keyframes, markers, scenes, sounds and assets. It does not change the text of code files; aq_file_edit and aq_file_write do. scene.add and sound.add take the first files of a new scene or sound.\n\nAll operations of one call succeed together or nothing is written, and the batch is one step the user can undo. Operations run in order, so a later one can refer to an object that an earlier one created with an id given in the batch, such as \"clip_title2\". Times are strings in seconds, such as \"12.5\" or \"1001/30000\"; positions and sizes are in world units, with the origin at the center of the picture. Ids of existing objects come from the reading tools; an id that does not exist fails with not-found.\n\nChanges are checked against what you have read: a change to an object that the user changed after you last read it fails with conflict, and a change to an existing object before anything was read in this conversation fails with not-read; in both cases nothing is written. dry_run: true checks the batch and reports everything it would change or remove, including what uses those objects, without writing. A failed call says which operation failed, why, the correct shape and an example.\n\nThe result lists the objects that changed, the ids of new objects, and the problems this batch introduced or resolved. summary is one short sentence that the user sees for this batch, saying what it does.\n\nOperations, by what they change. Each operation's parameters are in the schema; aq_guide topic \"ops/<operation>\" has its full page with examples.\nproject: project.rename, project.setFrameRate, project.setDescription, project.setCredits, project.setFormats, project.setLanguages, project.setCover\ntimeline: timeline.rename, timeline.setBackground, timeline.setDefault, section.add, section.update, section.split, section.moveBoundary, section.remove\ntrack: track.add, track.update, track.move, track.remove\nclip: source.replace, clip.add, clip.remove, clip.update, clip.move, clip.trim, clip.split\ntransition: clip.setTransition, join.add, join.update, join.remove\neffect: effect.add, effect.remove, effect.move, effect.update\nproperty: property.edit, property.rename\nmarker: marker.add, marker.update, marker.remove\nscene: scene.add, scene.update, scene.remove\nsound: sound.add, sound.update, sound.remove\nasset: asset.update, asset.remove\nfile: file.remove, file.rename\n\nExamples of operations (illustrative; their ids come from a sample project, not from the open one):\n[{\"op\":\"clip.add\",\"timeline\":\"main\",\"track\":\"track_video\",\"id\":\"clip_title2\",\"start\":\"31\",\"duration\":\"4\",\"source\":{\"kind\":\"scene\",\"scene\":\"title\"}},{\"op\":\"property.edit\",\"timeline\":\"main\",\"edits\":[{\"owner\":{\"clip\":\"clip_title2\"},\"path\":\"transform.y\",\"op\":\"set\",\"value\":{\"keys\":[{\"time\":\"0\",\"value\":-200},{\"time\":\"0.6\",\"value\":0}]}}]}]\n[{\"op\":\"clip.move\",\"timeline\":\"main\",\"clips\":[{\"clip\":\"clip_lottie\",\"start\":\"7\"},{\"clip\":\"clip_idea\",\"start\":\"12\"}]}]",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -899,6 +899,16 @@
          "name": {
           "description": "Name people see.",
           "type": "string"
+         },
+         "clear": {
+          "description": "[\"name\"] takes the name away.",
+          "type": "array",
+          "items": {
+           "type": "string",
+           "enum": [
+            "name"
+           ]
+          }
          }
         },
         "required": [
@@ -910,7 +920,66 @@
        },
        {
         "type": "object",
-        "description": "Removes a section; a timeline keeps at least one.",
+        "description": "Splits a section in two at a moment; the length stays.",
+        "properties": {
+         "op": {
+          "const": "section.split"
+         },
+         "timeline": {
+          "description": "Timeline id (aq_project_status).",
+          "type": "string"
+         },
+         "at": {
+          "description": "Moment of the timeline to split at, seconds.",
+          "type": "string"
+         },
+         "id": {
+          "description": "New id, to use later in the batch; optional.",
+          "type": "string"
+         },
+         "name": {
+          "description": "Name people see.",
+          "type": "string"
+         }
+        },
+        "required": [
+         "op",
+         "timeline",
+         "at"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "description": "Moves the boundary after a section; the length stays.",
+        "properties": {
+         "op": {
+          "const": "section.moveBoundary"
+         },
+         "timeline": {
+          "description": "Timeline id (aq_project_status).",
+          "type": "string"
+         },
+         "section": {
+          "description": "Section id (aq_timeline_read); the boundary is at its end.",
+          "type": "string"
+         },
+         "at": {
+          "description": "Where the boundary goes, seconds of the timeline.",
+          "type": "string"
+         }
+        },
+        "required": [
+         "op",
+         "timeline",
+         "section",
+         "at"
+        ],
+        "additionalProperties": false
+       },
+       {
+        "type": "object",
+        "description": "Removes a section; its time goes to the one before it.",
         "properties": {
          "op": {
           "const": "section.remove"
@@ -1959,6 +2028,19 @@
            "duration": {
             "type": "string"
            }
+          }
+         },
+         "clear": {
+          "description": "Fields to take away: \"name\", \"note\", \"color\", \"duration\".",
+          "type": "array",
+          "items": {
+           "type": "string",
+           "enum": [
+            "name",
+            "note",
+            "color",
+            "duration"
+           ]
           }
          }
         },

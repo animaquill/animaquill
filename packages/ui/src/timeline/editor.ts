@@ -33,7 +33,7 @@ import type { SettingsStore, WindowMemory } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
 import { projectKeyOf, type ProjectSession } from "../workbench/session.ts";
 import { readSetting } from "../workbench/settings.ts";
-import { frameAt, frameSeconds, frameTime } from "./frames.ts";
+import { formatTimecode, frameAt, frameSeconds, frameTime } from "./frames.ts";
 import {
   NO_MARKS,
   hasMarks,
@@ -47,6 +47,15 @@ import {
   type Marks,
 } from "./marks.ts";
 import { MarksGesture, type MarksPart } from "./marks-drag.ts";
+import { MarkerGesture, type MarkerPart } from "./marker-drag.ts";
+import {
+  markerFrameFrom,
+  markersOnFrame,
+  showsSections,
+  type MarkerBox,
+  type SectionBox,
+} from "./markers.ts";
+import { BoundaryGesture } from "./section-drag.ts";
 import { Shuttle } from "./shuttle.ts";
 import {
   attachCalls,
@@ -154,6 +163,17 @@ const END_HANDLE_REACH = 7;
 const MARK_HANDLE_REACH = 6;
 /** How far up from the bottom of the ruler the band of what is marked can be taken. */
 export const MARK_BAND_REACH = 9;
+/**
+ * Markers sit in the lower part of the ruler, under the head of the playhead: the top of the flag
+ * of each, half its width, and how far down its sides go before it points at its moment.
+ */
+export const MARKER_TOP = 13;
+export const MARKER_HALF = 5;
+export const MARKER_BAND = 8;
+/** How near the pointer has to be to the end of a marker with a duration to take that end. */
+const MARKER_END_REACH = 4;
+/** How far up from the bottom of the ruler the bar of a marker with a duration can be taken. */
+const MARKER_BAR_REACH = 8;
 /** How far from a cut a transition dragged there still goes between the clips, in pixels. */
 const SEAM_REACH = 10;
 const REMEMBER_DELAY_MS = 300;
@@ -266,6 +286,8 @@ export type Hit =
   | { readonly kind: "end" }
   /** The ends of the part marked with in and out, or the band between them. */
   | { readonly kind: "marks"; readonly part: MarksPart }
+  /** A marker on the ruler, or the end of one with a duration. */
+  | { readonly kind: "marker"; readonly box: MarkerBox; readonly part: MarkerPart }
   | { readonly kind: "lane"; readonly row: Row; readonly seconds: number }
   | {
       readonly kind: "clip";
@@ -351,6 +373,10 @@ export interface TimelineSnapshot {
   readonly headerWidth: number;
   /** Cut, and waiting to be pasted somewhere else. They stay until then. */
   readonly cut: ReadonlySet<string>;
+  /** Selected instead of clips, by id. Like them it is no part of the project. */
+  readonly marker: string | undefined;
+  /** The marker whose name, colour, duration and note are open to change, by id. */
+  readonly editingMarker: string | undefined;
 }
 
 /** Where playing started, by the clock, and how fast it goes. */
@@ -487,6 +513,8 @@ export class TimelineEditor implements TouchTarget {
     marks: NO_MARKS,
     headerWidth: DEFAULT_HEADER_WIDTH,
     cut: new Set(),
+    marker: undefined,
+    editingMarker: undefined,
   };
   /** What was copied, in this window. */
   #clipboard: readonly ClipState[] = [];
@@ -939,6 +967,8 @@ export class TimelineEditor implements TouchTarget {
       selection: new Set(),
       transition: undefined,
       cut: new Set(),
+      marker: undefined,
+      editingMarker: undefined,
     };
     this.#clipboard = [];
     this.#clipboardJoins = [];
@@ -968,12 +998,18 @@ export class TimelineEditor implements TouchTarget {
         ? model?.joins.has(chosen.join) === true
         : model?.boxes.get(chosen.clip)?.clip[chosen.edge] !== undefined);
     this.#followMarks(model);
+    const markerThere = (id: string | undefined) =>
+      id !== undefined && model !== undefined && Object.hasOwn(model.state.markers, id)
+        ? id
+        : undefined;
     this.#snapshot = {
       ...this.#snapshot,
       model,
       selection: same ? this.#snapshot.selection : selection,
       transition: there ? chosen : undefined,
       cut: sameSet(cut, this.#snapshot.cut) ? this.#snapshot.cut : cut,
+      marker: markerThere(this.#snapshot.marker),
+      editingMarker: markerThere(this.#snapshot.editingMarker),
     };
     if (model) this.#frame = Math.min(this.#frame, frameAt(model.duration, model.rate));
     if (model && this.#gesture?.isStale?.(model)) this.#cancelGesture();
@@ -1078,7 +1114,8 @@ export class TimelineEditor implements TouchTarget {
 
   /** Whether there is anything in the selection that can be deleted. A transition can be. */
   get canChangeSelection(): boolean {
-    const { selection, transition } = this.#snapshot;
+    const { selection, transition, marker } = this.#snapshot;
+    if (marker !== undefined) return true;
     if (isJoinChoice(transition)) {
       const join = this.model?.joins.get(transition.join);
       return join !== undefined && this.model?.state.tracks[join.join.track]?.locked !== true;
@@ -1100,9 +1137,9 @@ export class TimelineEditor implements TouchTarget {
   #setSelection(wanted: ReadonlySet<string>): void {
     // A drag can hold on to a clip that is gone by now.
     const selection = new Set(this.#present(wanted, this.model));
-    const { transition } = this.#snapshot;
-    if (sameSet(selection, this.#snapshot.selection) && !transition) return;
-    this.#snapshot = { ...this.#snapshot, selection, transition: undefined };
+    const { transition, marker } = this.#snapshot;
+    if (sameSet(selection, this.#snapshot.selection) && !transition && marker === undefined) return;
+    this.#snapshot = { ...this.#snapshot, selection, transition: undefined, marker: undefined };
     this.#emitter.emit();
     this.#viewEmitter.emit();
   }
@@ -1116,7 +1153,12 @@ export class TimelineEditor implements TouchTarget {
     const { transition, selection } = this.#snapshot;
     const same = transition && !isJoinChoice(transition) && transition.clip === clip;
     if (same && transition.edge === edge && selection.size === 0) return;
-    this.#snapshot = { ...this.#snapshot, selection: new Set(), transition: { clip, edge } };
+    this.#snapshot = {
+      ...this.#snapshot,
+      selection: new Set(),
+      transition: { clip, edge },
+      marker: undefined,
+    };
     this.#emitter.emit();
     this.#viewEmitter.emit();
   }
@@ -1126,7 +1168,12 @@ export class TimelineEditor implements TouchTarget {
     if (!this.model?.joins.has(join)) return;
     const { transition, selection } = this.#snapshot;
     if (isJoinChoice(transition) && transition.join === join && selection.size === 0) return;
-    this.#snapshot = { ...this.#snapshot, selection: new Set(), transition: { join } };
+    this.#snapshot = {
+      ...this.#snapshot,
+      selection: new Set(),
+      transition: { join },
+      marker: undefined,
+    };
     this.#emitter.emit();
     this.#viewEmitter.emit();
   }
@@ -1401,11 +1448,209 @@ export class TimelineEditor implements TouchTarget {
     return hasMarks(this.#snapshot.marks);
   }
 
+  /* Markers. */
+
+  /** The selected marker, which Delete takes away. */
+  get selectedMarker(): string | undefined {
+    return this.#snapshot.marker;
+  }
+
+  /** Selects a marker instead of clips, or nothing. */
+  selectMarker(id: string | undefined): void {
+    const there = id !== undefined && this.model?.markers.some((box) => box.id === id) === true;
+    const marker = there ? id : undefined;
+    const { selection, transition } = this.#snapshot;
+    if (marker === this.#snapshot.marker && (!there || (selection.size === 0 && !transition))) {
+      return;
+    }
+    this.#snapshot = {
+      ...this.#snapshot,
+      marker,
+      ...(there && { selection: new Set<string>(), transition: undefined }),
+    };
+    // What people do next is about the marker, not about keys.
+    if (there) this.#chosen.emit();
+    this.#emitter.emit();
+    this.#viewEmitter.emit();
+  }
+
+  /** Opens the name, colour, duration and note of a marker, or closes them. */
+  editMarker(id: string | undefined): void {
+    const there = id !== undefined && this.model?.markers.some((box) => box.id === id) === true;
+    const editingMarker = there ? id : undefined;
+    if (editingMarker === this.#snapshot.editingMarker) return;
+    this.#snapshot = { ...this.#snapshot, editingMarker };
+    this.#emitter.emit();
+  }
+
+  /**
+   * M: a marker at the playhead, or, where there is one already, what it says, open to change. Says
+   * which marker that is.
+   */
+  addMarker(): string | undefined {
+    const { model } = this;
+    if (!model) return undefined;
+    const there = markersOnFrame(model.markers, this.#frame, model.rate)[0];
+    if (there) {
+      this.editMarker(there.id);
+      return there.id;
+    }
+    const id = newId("marker");
+    const time = formatTime(frameTime(this.#frame, model.rate));
+    const added = this.#run([{ type: "marker.add", params: { timeline: model.id, id, time } }]);
+    return added ? id : undefined;
+  }
+
+  /** Moves the playhead to the next marker, or to the one before. Says whether there was one. */
+  goToMarker(direction: 1 | -1): boolean {
+    const { model } = this;
+    const frame = model && markerFrameFrom(model.markers, this.#frame, direction, model.rate);
+    if (frame === undefined) return false;
+    this.seek(frame);
+    return true;
+  }
+
+  /** Whether there is a marker after the playhead, or before it. */
+  hasMarkerFrom(direction: 1 | -1): boolean {
+    const { model } = this;
+    return (
+      model !== undefined &&
+      markerFrameFrom(model.markers, this.#frame, direction, model.rate) !== undefined
+    );
+  }
+
+  /** Whether a marker starts on the frame of the playhead. */
+  get hasMarkerHere(): boolean {
+    const { model } = this;
+    return model !== undefined && markersOnFrame(model.markers, this.#frame, model.rate).length > 0;
+  }
+
+  /** Takes away the markers that start on the frame of the playhead, in one step. */
+  clearMarkersHere(): void {
+    const { model } = this;
+    if (!model) return;
+    const here = markersOnFrame(model.markers, this.#frame, model.rate);
+    if (here.length === 0) return;
+    this.#run(
+      here.map(({ id }) => ({ type: "marker.remove", params: { timeline: model.id, marker: id } })),
+    );
+  }
+
+  /** Changes what a marker says, and takes away fields of it, in one step. */
+  updateMarker(
+    id: string,
+    changes: Readonly<Record<string, string>>,
+    clear: readonly ("name" | "note" | "color" | "duration")[] = [],
+  ): boolean {
+    const { model } = this;
+    const marker = model?.state.markers[id];
+    if (!model || !marker) return false;
+    const changing = Object.entries(changes).filter(
+      ([key, value]) => marker[key as keyof typeof marker] !== value,
+    );
+    const clearing = clear.filter((field) => marker[field] !== undefined);
+    if (changing.length === 0 && clearing.length === 0) return false;
+    const params = {
+      timeline: model.id,
+      marker: id,
+      changes: Object.fromEntries(changing),
+      ...(clearing.length > 0 && { clear: clearing }),
+    };
+    return this.#run([{ type: "marker.update", params }]);
+  }
+
+  removeMarker(id: string): void {
+    const { model } = this;
+    if (!model || !Object.hasOwn(model.state.markers, id)) return;
+    this.#run([{ type: "marker.remove", params: { timeline: model.id, marker: id } }]);
+  }
+
+  /** What the ruler says of the marker under the pointer, when it hovers: its name and its note. */
+  markerTextAt(pointer: Pointer): string | undefined {
+    const hit = pointer.y < RULER_HEIGHT ? this.hitAt(pointer) : undefined;
+    if (hit?.kind !== "marker" || !this.model) return undefined;
+    const { name, note } = hit.box.marker;
+    const words = [name, note].filter((part) => part !== undefined && part !== "");
+    if (words.length > 0) return words.join("\n");
+    return formatTimecode(frameAt(hit.box.time, this.model.rate), this.model.rate);
+  }
+
+  /* Sections. */
+
+  /** Whether the band of sections shows: with more than one, or one with a name. */
+  get showsSections(): boolean {
+    return this.model !== undefined && showsSections(this.model.sections);
+  }
+
+  /** The section that the playhead is inside of, not where it starts. */
+  get #sectionToSplit(): SectionBox | undefined {
+    const { model } = this;
+    if (!model) return undefined;
+    const at = frameTime(this.#frame, model.rate);
+    return model.sections.find(
+      ({ startExact, endExact }) => compare(startExact, at) < 0 && compare(at, endExact) < 0,
+    );
+  }
+
+  get canSplitSection(): boolean {
+    return this.#sectionToSplit !== undefined;
+  }
+
+  /** Splits the section at the playhead in two, and the length and what is on it stay. */
+  splitSectionAtPlayhead(): void {
+    const { model } = this;
+    if (!model || !this.#sectionToSplit) return;
+    const at = formatTime(frameTime(this.#frame, model.rate));
+    this.#run([{ type: "section.split", params: { timeline: model.id, at } }]);
+  }
+
+  /**
+   * Takes a section away, and its time goes to the one before it, or after it for the first:
+   * merging with the one before is the same. The last section stays.
+   */
+  removeSection(id: string): void {
+    const { model } = this;
+    if (!model || model.sections.length < 2) return;
+    this.#run([{ type: "section.remove", params: { timeline: model.id, section: id } }]);
+  }
+
+  /** A name for a section, or none for an empty one. */
+  renameSection(id: string, name: string): void {
+    const { model } = this;
+    const section = model?.state.sections[id];
+    if (!model || !section) return;
+    const wanted = name.trim();
+    if (wanted === (section.name ?? "")) return;
+    const params = { timeline: model.id, section: id };
+    this.#run([
+      {
+        type: "section.update",
+        params: wanted === "" ? { ...params, clear: ["name"] } : { ...params, name: wanted },
+      },
+    ]);
+  }
+
+  /** Starts dragging the boundary at the end of a section, from the band of sections. */
+  pressBoundary(section: string, pointer: Pointer): void {
+    const { model } = this;
+    if (!model) return;
+    this.#cancelGesture();
+    const index = model.sections.findIndex(({ id }) => id === section);
+    const before = model.sections[index];
+    const after = model.sections[index + 1];
+    if (!before || !after) return;
+    this.#gesture = new BoundaryGesture(this.#host, before, after, pointer);
+  }
+
   /* Changing the project. */
 
   deleteSelection(): void {
     const { model } = this;
-    const { transition } = this.#snapshot;
+    const { transition, marker } = this.#snapshot;
+    if (marker !== undefined) {
+      this.removeMarker(marker);
+      return;
+    }
     if (isJoinChoice(transition)) {
       this.removeJoin(transition.join);
       return;
@@ -2092,7 +2337,11 @@ export class TimelineEditor implements TouchTarget {
     if (y < RULER_HEIGHT) {
       const onEnd = Math.abs(x - this.xAt(this.visibleDuration)) <= END_HANDLE_REACH;
       if (onEnd) return { kind: "end" };
+      // The ends of in and out first, then markers, which can be inside the band between them.
       const part = this.#marksAt(x, y);
+      if (part && part !== "both") return { kind: "marks", part };
+      const marker = this.#markerAt(x, y);
+      if (marker) return { kind: "marker", ...marker };
       return part ? { kind: "marks", part } : { kind: "ruler" };
     }
     const row = rowAt(model, this.laneAt(y));
@@ -2596,6 +2845,9 @@ export class TimelineEditor implements TouchTarget {
       (hit.kind === "join" &&
         before.kind === "join" &&
         (hit.join !== before.join || hit.edge !== before.edge)) ||
+      (hit.kind === "marker" &&
+        before.kind === "marker" &&
+        (hit.box.id !== before.box.id || hit.part !== before.part)) ||
       (hit.kind === "clip" &&
         before.kind === "clip" &&
         (hit.box !== before.box ||
@@ -2653,8 +2905,36 @@ export class TimelineEditor implements TouchTarget {
     return inBand && x < this.xAt(span.to) ? "both" : undefined;
   }
 
+  /**
+   * The marker under the pointer on the ruler: the end of one with a duration, its flag, or its
+   * band. Where several are, the nearest flag, and later ones over earlier ones.
+   */
+  #markerAt(x: number, y: number): { box: MarkerBox; part: MarkerPart } | undefined {
+    const { model } = this;
+    if (!model || y < MARKER_TOP) return undefined;
+    let best: { box: MarkerBox; part: MarkerPart; distance: number } | undefined;
+    for (const box of model.markers) {
+      const at = this.xAt(box.time);
+      const end = box.end === undefined ? undefined : this.xAt(box.end);
+      const candidates: { part: MarkerPart; distance: number }[] = [];
+      if (end !== undefined && Math.abs(x - end) <= MARKER_END_REACH) {
+        candidates.push({ part: "end", distance: Math.abs(x - end) });
+      }
+      if (Math.abs(x - at) <= MARKER_HALF)
+        candidates.push({ part: "body", distance: Math.abs(x - at) });
+      if (end !== undefined && x > at && x < end && y >= RULER_HEIGHT - MARKER_BAR_REACH) {
+        candidates.push({ part: "body", distance: MARKER_HALF });
+      }
+      for (const candidate of candidates) {
+        if (!best || candidate.distance <= best.distance) best = { box, ...candidate };
+      }
+    }
+    return best && { box: best.box, part: best.part };
+  }
+
   #cursorFor(hit: Hit): string {
     if (hit.kind === "end") return "ew-resize";
+    if (hit.kind === "marker") return hit.part === "end" ? "ew-resize" : "grab";
     if (hit.kind === "marks") return hit.part === "both" ? "grab" : "ew-resize";
     if (hit.kind === "ruler") return "pointer";
     if (hit.kind === "join") return hit.edge ? "col-resize" : "default";
@@ -2698,6 +2978,7 @@ export class TimelineEditor implements TouchTarget {
       hit.kind === "ruler" ||
       hit.kind === "end" ||
       hit.kind === "marks" ||
+      hit.kind === "marker" ||
       (selected && hit.kind === "clip" && hit.edge) ||
       ((selected || chosen) && handle)
     ) {
@@ -2729,6 +3010,9 @@ export class TimelineEditor implements TouchTarget {
     } else if (hit.kind === "marks") {
       const set = (marks: Marks) => this.setMarks(marks);
       this.#gesture = new MarksGesture(host, hit.part, this.#snapshot.marks, set, pointer);
+    } else if (hit.kind === "marker") {
+      this.selectMarker(hit.box.id);
+      this.#gesture = new MarkerGesture(host, hit.box, hit.part, pointer);
     } else if (hit.kind === "end") {
       const last = orderedSections(model.state).at(-1);
       if (!last) return;

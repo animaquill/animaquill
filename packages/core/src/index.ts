@@ -463,3 +463,12 @@ export {
   type UsedResource,
 } from "./uses.ts";
 export { versionsAbout } from "./project-edits.ts";
+export {
+  applyGapPlan,
+  closingPlan,
+  openingPlan,
+  placedSections,
+  type GapPlan,
+  type MarkerShift,
+  type PlacedSection,
+} from "./section-edits.ts";

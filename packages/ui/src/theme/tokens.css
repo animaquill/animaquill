@@ -171,6 +171,18 @@
   --aq-timeline-marked: #5aa9ff;
   --aq-timeline-marked-lanes: #ffffff0f;
   --aq-timeline-flash: #2aaaff;
+  /* Markers, in the eight colours they can have (timeline/markers.ts), and the band of sections. */
+  --aq-timeline-marker-green: #4caf50;
+  --aq-timeline-marker-red: #e5484d;
+  --aq-timeline-marker-purple: #a371f7;
+  --aq-timeline-marker-orange: #f0883e;
+  --aq-timeline-marker-yellow: #e3b341;
+  --aq-timeline-marker-white: #e6e6e6;
+  --aq-timeline-marker-blue: #4f8ff7;
+  --aq-timeline-marker-cyan: #39c5cf;
+  --aq-timeline-section: #34414f;
+  --aq-timeline-section-alt: #26303b;
+  --aq-timeline-section-text: #c9d3de;
 
   /* What the preview draws over the picture: it has to stand out on any picture, in both themes. */
   --aq-overlay-line: #2aaaff;
@@ -261,6 +273,17 @@
   --aq-timeline-marked: #0a6fd1;
   --aq-timeline-marked-lanes: #0078d40f;
   --aq-timeline-flash: #0078d4;
+  --aq-timeline-marker-green: #2e8b37;
+  --aq-timeline-marker-red: #d0343a;
+  --aq-timeline-marker-purple: #7a4fd8;
+  --aq-timeline-marker-orange: #cf6114;
+  --aq-timeline-marker-yellow: #b08300;
+  --aq-timeline-marker-white: #8a8a8a;
+  --aq-timeline-marker-blue: #1f6fd6;
+  --aq-timeline-marker-cyan: #0f8c96;
+  --aq-timeline-section: #d2dceb;
+  --aq-timeline-section-alt: #e6ecf4;
+  --aq-timeline-section-text: #2f3c4b;
 }
 
 /*

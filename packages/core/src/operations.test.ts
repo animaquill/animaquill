@@ -44,7 +44,7 @@ describe("the registry of operations", () => {
   it("has every operation once, each with what it runs on", () => {
     const names = OPERATIONS.map(({ name }) => name);
     expect(new Set(names).size).toBe(names.length);
-    expect(names).toHaveLength(54);
+    expect(names).toHaveLength(56);
     for (const op of OPERATIONS as readonly Operation[]) {
       expect(op.type).toBe(op.name);
       expect(["edit", "outside", "human"]).toContain(op.level);
@@ -59,10 +59,10 @@ describe("the registry of operations", () => {
     }
   });
 
-  it("says who can use what: people only, and the 47 that AI can", () => {
+  it("says who can use what: people only, and the 49 that AI can", () => {
     const human = OPERATIONS.filter(({ level }) => level === "human").map(({ name }) => name);
     expect(human).toEqual(["project.setTags", "conflict.take", "asset.setStorage"]);
-    expect(OPERATIONS.filter((op) => op.ai === "yes")).toHaveLength(47);
+    expect(OPERATIONS.filter((op) => op.ai === "yes")).toHaveLength(49);
     expect(OPERATIONS.filter((op) => op.ai !== "yes").map(({ name }) => name)).toEqual([
       "project.setTags",
       "conflict.take",
@@ -191,6 +191,7 @@ describe("ids of sections, tracks and clips", () => {
   /** One id for all three, as the format says: each command checks all of them. */
   it.each([
     ["section.add", { timeline: "main", id: "track_video", duration: "1" }, "section", "track"],
+    ["section.split", { timeline: "main", id: "clip_title", at: "12" }, "section", "clip"],
     ["track.add", { timeline: "main", id: "clip_title", kind: "video" }, "track", "clip"],
     [
       "clip.add",

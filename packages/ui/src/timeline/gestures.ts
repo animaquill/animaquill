@@ -95,6 +95,14 @@ export interface Preview {
   }[];
   /** Where a transition dragged from the transitions tab would go, in seconds on a track. */
   readonly transitionDrop?: { readonly row: string; readonly start: number; readonly end: number };
+  /** Where a marker is while it is dragged, in seconds; `end` for one with a duration. */
+  readonly marker?: {
+    readonly id: string;
+    readonly time: number;
+    readonly end?: number | undefined;
+  };
+  /** Where the boundary after a section is while it is dragged, in seconds. */
+  readonly boundary?: { readonly section: string; readonly seconds: number };
 }
 
 /** Something people do with the mouse, from pressing the button to letting go. */

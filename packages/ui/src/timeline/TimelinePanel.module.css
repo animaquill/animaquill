@@ -352,3 +352,176 @@
   padding: 16px;
   color: var(--aq-text-muted);
 }
+
+/* The markers on the ruler, which the canvas draws: the same list for screen readers. */
+.markerList {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+
+.markerItem {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+}
+
+.markerBubble {
+  width: 260px;
+}
+
+.markerFields {
+  display: grid;
+  gap: 8px;
+}
+
+.markerLabel {
+  display: grid;
+  gap: 4px;
+  color: var(--aq-text-muted);
+}
+
+.markerInput,
+.markerNote {
+  min-width: 0;
+  padding: 3px 6px;
+  color: var(--aq-text-strong);
+  font: inherit;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+  outline: none;
+}
+
+.markerInput {
+  height: calc(24px * var(--aq-size-scale));
+}
+
+.markerNote {
+  resize: vertical;
+}
+
+.markerInput:focus,
+.markerNote:focus {
+  border-color: var(--aq-accent);
+}
+
+.swatches {
+  display: flex;
+  gap: 6px;
+}
+
+.swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid var(--aq-border);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.swatch[aria-checked="true"] {
+  box-shadow:
+    0 0 0 2px var(--aq-bg-menu),
+    0 0 0 4px var(--aq-text-strong);
+}
+
+.swatch:focus-visible {
+  outline: 2px solid var(--aq-accent);
+  outline-offset: 2px;
+}
+
+/* The band of sections over the ruler, and the room the headers and the scroll bar leave for it. */
+.withSections {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.sectionBand {
+  position: relative;
+  height: calc(20px * var(--aq-size-scale));
+  overflow: hidden;
+  background: var(--aq-timeline-background);
+  border-bottom: 1px solid var(--aq-timeline-line);
+  user-select: none;
+  touch-action: none;
+}
+
+.sectionBar {
+  background: var(--aq-bg-panel);
+  border-bottom: 1px solid var(--aq-timeline-line);
+}
+
+.sectionCorner {
+  flex: none;
+  height: calc(20px * var(--aq-size-scale));
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.section {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0 6px;
+  overflow: hidden;
+  color: var(--aq-timeline-section-text);
+  font-size: var(--aq-font-11);
+  background: var(--aq-timeline-section);
+  cursor: default;
+}
+
+.sectionAlt {
+  background: var(--aq-timeline-section-alt);
+}
+
+.sectionName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sectionInput {
+  width: 100%;
+  min-width: 0;
+  height: calc(18px * var(--aq-size-scale));
+  padding: 0 4px;
+  color: var(--aq-text-strong);
+  font: inherit;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-accent);
+  border-radius: 3px;
+  outline: none;
+}
+
+/* What can be taken hold of between two sections: wider than it looks. */
+.boundary {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  z-index: 1;
+  width: 9px;
+  cursor: col-resize;
+}
+
+.boundary::after {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 1px;
+  background: var(--aq-timeline-end);
+  content: "";
+}
+
+.boundary:hover::after {
+  left: 3px;
+  width: 3px;
+  background: var(--aq-accent);
+}

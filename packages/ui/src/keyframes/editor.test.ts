@@ -689,6 +689,22 @@ describe("moving keys", () => {
     expect(pixels).toBeGreaterThan(0);
   });
 
+  it("sticks to markers, both ends of one with a duration, exactly", async () => {
+    const { panel, store, at, drag, shownTimes, trials } = await keyed();
+    const added = store.executeBatch([
+      { type: "marker.add", params: { timeline: "main", time: "137/30" } },
+      { type: "marker.add", params: { timeline: "main", time: "5.5", duration: "1/3" } },
+    ]);
+    expect(added.ok).toBe(true);
+    const from = at(2, laneOf("a", X));
+    const go = (seconds: number) => drag(from, { ...from, x: panel.xAt(seconds) + 2 });
+    go(137 / 30);
+    expect(shownTimes("a", X)).toEqual(["1", "137/30"]);
+    trials.undo();
+    go(5.5 + 1 / 3);
+    expect(shownTimes("a", X)).toEqual(["1", "35/6"]);
+  });
+
   it("does not stick to keys of its own row, because landing there replaces them", async () => {
     const { panel, keys, at, keyframes, drag, shownTimes } = await keyed();
     keys("a", X, "4.5");

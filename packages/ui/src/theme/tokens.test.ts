@@ -116,6 +116,8 @@ const PAIRS: readonly { text: string; on: Surface; large?: true }[] = [
   { text: "timeline-label", on: "timeline-lane" },
   { text: "timeline-label", on: "timeline-background" },
   { text: "timeline-label", on: "timeline-ruler" },
+  { text: "timeline-section-text", on: "timeline-section" },
+  { text: "timeline-section-text", on: "timeline-section-alt" },
 ];
 
 const nameOf = (surface: Surface) =>

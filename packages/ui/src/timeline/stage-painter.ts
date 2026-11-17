@@ -1,3 +1,5 @@
+import { MARKER_COLORS } from "./markers.ts";
+
 /** Canvas cannot read CSS variables, so the colours come over once. */
 export interface Theme {
   readonly font: string;
@@ -38,6 +40,8 @@ export interface Theme {
   readonly marked: string;
   /** Over the tracks where something is marked, a little lighter. */
   readonly markedLanes: string;
+  /** The colours of markers, as `MARKER_COLORS` has them. */
+  readonly markers: readonly string[];
 }
 
 export function readTheme(element: Element): Theme {
@@ -75,6 +79,7 @@ export function readTheme(element: Element): Theme {
     repo: color("repo"),
     marked: color("marked"),
     markedLanes: color("marked-lanes"),
+    markers: MARKER_COLORS.map(({ id }) => color(`marker-${id}`)),
   };
 }
 

@@ -86,7 +86,9 @@ export const DIRECTIVE_OVERRIDES = {
   "ops.timeline.rename.summary": "rename a timeline",
   "ops.section.add.summary": "add a section to a timeline, which makes it longer",
   "ops.section.update.summary": "change the duration or name of a section",
-  "ops.section.remove.summary": "remove a section; a timeline keeps at least one",
+  "ops.section.split.summary": "split a section in two at a moment; the length stays",
+  "ops.section.moveBoundary.summary": "move the boundary after a section; the length stays",
+  "ops.section.remove.summary": "remove a section; its time goes to the one before it",
   "ops.track.add.summary": "add a video, audio or caption track",
   "ops.track.update.summary":
     "change the name, hidden, muted, solo, locked, group or role of a track",

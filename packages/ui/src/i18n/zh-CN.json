@@ -647,7 +647,10 @@
       "join-incomplete": "这个衔接转场不完整：{{join}}",
       "sound-entry": "声音的入口要是 .js 或 .mjs 文件",
       "size-unknown": "素材还不知道文件有多大，记不下它放在哪里：别的电脑要靠大小核对",
-      "time-outside": "{{path}} 的 {{time}} 秒不在时间轴里：时间轴只有 {{length}} 秒长"
+      "time-outside": "{{path}} 的 {{time}} 秒不在时间轴里：时间轴只有 {{length}} 秒长",
+      "section-edge": "{{time}} 秒是段落的开头或结尾，要在段落中间才能分段",
+      "boundary-outside": "段落的分界要在 {{from}} 秒和 {{to}} 秒之间，{{time}} 秒不行",
+      "no-next-section": "最后一段后面没有段落，它的结尾就是时间轴的结尾：改它的时长"
     }
   },
   "panel": {
@@ -1296,7 +1299,45 @@
       "goToOut": "转到出点",
       "clearIn": "清除入点",
       "clearOut": "清除出点",
-      "clearMarks": "清除入点和出点"
+      "clearMarks": "清除入点和出点",
+      "addMarker": "添加标记",
+      "nextMarker": "转到下一个标记",
+      "previousMarker": "转到上一个标记",
+      "clearMarkersHere": "清除播放头处的标记",
+      "splitSection": "在播放头分段"
+    },
+    "marker": {
+      "list": "标记",
+      "named": "标记“{{name}}”，{{time}}",
+      "unnamed": "标记，{{time}}",
+      "title": "标记",
+      "name": "名字",
+      "color": "颜色",
+      "duration": "时长",
+      "note": "备注",
+      "edit": "编辑标记",
+      "remove": "删除标记",
+      "colors": {
+        "green": "绿色",
+        "red": "红色",
+        "purple": "紫色",
+        "orange": "橙色",
+        "yellow": "黄色",
+        "white": "白色",
+        "blue": "蓝色",
+        "cyan": "青色"
+      }
+    },
+    "section": {
+      "band": "段落",
+      "named": "段落“{{name}}”，{{start}} 到 {{end}}",
+      "unnamed": "第 {{number}} 段，{{start}} 到 {{end}}",
+      "boundary": "第 {{number}} 段和第 {{next}} 段的分界",
+      "name": "段落名字",
+      "rename": "重命名",
+      "split": "在播放头分段",
+      "merge": "和前一段合并",
+      "remove": "删除段落"
     },
     "color": "纯色片段",
     "scene": "场景",

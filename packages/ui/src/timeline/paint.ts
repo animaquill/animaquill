@@ -3,11 +3,15 @@ import { bezierProgress, type ClipState } from "@animaquill/core";
 import type { Transition, TransitionRef, TransitionUse } from "@animaquill/schema";
 import {
   EXPANDER_SIZE,
+  MARKER_BAND,
+  MARKER_HALF,
+  MARKER_TOP,
   RULER_HEIGHT,
   TRANSITION_BAND,
   isJoinChoice,
   type TimelineEditor,
 } from "./editor.ts";
+import { MARKER_COLORS, markerColorOf, type MarkerBox } from "./markers.ts";
 import {
   EDGES,
   edgeWorks,
@@ -65,6 +69,16 @@ const MARK_BAR = 3;
 const MARK_FOOT = 7;
 /** How far the handles reach down past the ruler. */
 const MARK_OVERHANG = 4;
+/** Names of markers: how far from the flag, the least room they take, and where they sit. */
+const MARKER_NAME_GAP = 3;
+const MARKER_NAME_MIN = 18;
+/** Below the numbers of the ruler, whose words end about here. */
+const MARKER_NAME_TOP = 15;
+const MARKER_NAME_Y = 20.5;
+/** The bar of a marker with a duration, along the bottom of the ruler. */
+const MARKER_BAR = 5;
+/** The handle at the end of a marker with a duration. */
+const MARKER_END_BAR = 2;
 /** Zoomed far out a pixel covers minutes. A few samples of them look the same and cost far less. */
 const MAX_SLOTS_PER_BAR = 8;
 
@@ -981,6 +995,7 @@ export class TimelinePainter extends StagePainter {
     const theme = this.theme;
     const look = { ...theme, background: theme.ruler };
     paintRuler(context, editor, model.rate, RULER_HEIGHT, look, (value) => this.sharp(value));
+    this.#paintMarkers(model);
     this.#paintMarks();
 
     const end = this.sharp(editor.xAt(editor.visibleDuration));
@@ -991,6 +1006,87 @@ export class TimelinePainter extends StagePainter {
     context.lineTo(end + END_HANDLE, RULER_HEIGHT - 1);
     context.closePath();
     context.fill();
+  }
+
+  /** The colour a marker shows in: one of the theme's, or its own. */
+  #markerColor(box: MarkerBox): string {
+    const id = markerColorOf(box.marker);
+    const index = MARKER_COLORS.findIndex((color) => color.id === id);
+    return index < 0 ? (box.marker.color ?? "") : (this.theme.markers[index] ?? "");
+  }
+
+  /**
+   * Markers along the lower part of the ruler, as Premiere has them: a flag that points down at
+   * its moment, with a bar along the bottom as long as its duration, and its name to its right where
+   * there is room before the next one, on the ruler's colour, under the numbers of the ruler. The
+   * selected one is outlined, and one being dragged shows where it goes.
+   */
+  #paintMarkers(model: TimelineModel): void {
+    const editor = this.#editor;
+    const { context } = this;
+    const moving = editor.preview?.marker;
+    const selected = editor.getSnapshot().marker;
+    const boxes = model.markers
+      .map((box) => (moving?.id === box.id ? { ...box, time: moving.time, end: moving.end } : box))
+      .toSorted((a, b) => a.time - b.time);
+    const bottom = RULER_HEIGHT - 1;
+    const bar = (from: number, to: number, color: string) => {
+      context.fillStyle = color;
+      context.globalAlpha = 0.5;
+      context.fillRect(from, bottom - MARKER_BAR, to - from, MARKER_BAR);
+      context.globalAlpha = 1;
+    };
+    context.save();
+    context.font = `${11 * this.theme.fontScale}px ${this.theme.font}`;
+    boxes.forEach((box, index) => {
+      const x = this.sharp(editor.xAt(box.time));
+      const end = box.end === undefined ? undefined : this.sharp(editor.xAt(box.end));
+      if ((end ?? x) + MARKER_HALF < 0 || x - MARKER_HALF > editor.width) return;
+      const color = this.#markerColor(box);
+      if (end !== undefined) {
+        bar(x, end, color);
+        context.fillStyle = color;
+        context.fillRect(end - MARKER_END_BAR, MARKER_TOP, MARKER_END_BAR, bottom - MARKER_TOP);
+      }
+      const name = box.marker.name;
+      const next = boxes[index + 1];
+      const left = x + MARKER_HALF + MARKER_NAME_GAP;
+      const right = Math.min(
+        next
+          ? this.sharp(editor.xAt(next.time)) - MARKER_HALF - MARKER_NAME_GAP
+          : Number.POSITIVE_INFINITY,
+        end === undefined ? Number.POSITIVE_INFINITY : end - MARKER_END_BAR - 1,
+        editor.width,
+      );
+      const text =
+        name && right - left >= MARKER_NAME_MIN ? fitText(context, name, right - left) : "";
+      if (text !== "") {
+        const width = context.measureText(text).width;
+        context.fillStyle = this.theme.ruler;
+        context.fillRect(left - 2, MARKER_NAME_TOP, width + 4, bottom - MARKER_NAME_TOP);
+        if (end !== undefined) bar(left - 2, left + width + 2, color);
+        context.fillStyle = this.theme.label;
+        context.fillText(text, left, MARKER_NAME_Y);
+      }
+      context.beginPath();
+      context.moveTo(x - MARKER_HALF, MARKER_TOP);
+      context.lineTo(x + MARKER_HALF, MARKER_TOP);
+      context.lineTo(x + MARKER_HALF, MARKER_TOP + MARKER_BAND);
+      context.lineTo(x, bottom);
+      context.lineTo(x - MARKER_HALF, MARKER_TOP + MARKER_BAND);
+      context.closePath();
+      context.fillStyle = color;
+      context.fill();
+      if (box.id === selected) {
+        context.strokeStyle = this.theme.selected;
+        context.lineWidth = 1.5;
+        context.stroke();
+        if (end !== undefined) {
+          context.strokeRect(x, bottom - MARKER_BAR - 0.5, end - x, MARKER_BAR);
+        }
+      }
+    });
+    context.restore();
   }
 
   /** The tracks are a little lighter where something is marked, as in Premiere. */

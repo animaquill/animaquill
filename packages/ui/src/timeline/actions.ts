@@ -203,6 +203,34 @@ export function registerTimelineActions(
     { keys: ["mod+shift+x"], enabled: () => hasTimeline() && editor.hasMarks },
     "marks",
   );
+  // Markers, as in Premiere, but for the previous one: Ctrl+Shift+M opens the problems, as in VS
+  // Code, and Chrome may keep it for switching people.
+  everywhere("addMarker", () => editor.addMarker(), { keys: ["m"] }, "markers");
+  everywhere(
+    "nextMarker",
+    () => editor.goToMarker(1),
+    { keys: ["shift+m"], enabled: () => editor.hasMarkerFrom(1) },
+    "markers",
+  );
+  everywhere(
+    "previousMarker",
+    () => editor.goToMarker(-1),
+    { keys: ["alt+shift+m"], enabled: () => editor.hasMarkerFrom(-1) },
+    "markers",
+  );
+  everywhere(
+    "clearMarkersHere",
+    () => editor.clearMarkersHere(),
+    { keys: ["mod+alt+m"], enabled: () => editor.hasMarkerHere },
+    "markers",
+  );
+  // Editors without sections have no key for it to follow.
+  everywhere(
+    "splitSection",
+    () => editor.splitSectionAtPlayhead(),
+    { enabled: () => editor.canSplitSection },
+    "sections",
+  );
   for (const [id, by, key] of [
     ["previousFrame", -1, "left"],
     ["nextFrame", 1, "right"],

@@ -90,6 +90,7 @@ import {
   type TrackState,
 } from "./model.ts";
 import { STORAGE, type Origin } from "./origin.ts";
+import { moveBoundary, removeSection, splitSection } from "./section-edits.ts";
 import {
   BackgroundSet,
   CoverSet,
@@ -636,6 +637,7 @@ const TrackChanges = z
   .partial();
 
 const MarkerChanges = Marker.omit({ id: true }).partial();
+const ClearableMarkerField = z.enum(["name", "note", "color", "duration"]);
 
 /** What writing properties can run into, whichever operation does it. */
 const PROPERTY_FAILURES: readonly FailureCode[] = ["not-found", "invalid-value", "not-animatable"];
@@ -1028,33 +1030,58 @@ export const OPERATIONS = [
 
   define(
     "section.update",
-    "改段落的时长或名字。",
+    "改段落的时长或名字，clear 去掉名字。",
     z.strictObject({
       timeline: Id,
       section: Id,
       duration: Duration.optional(),
       name: z.string().optional(),
+      clear: z.array(z.enum(["name"])).optional(),
     }),
-    (draft, { timeline, section, duration, name }) => {
+    (draft, { timeline, section, duration, name, clear }) => {
       const target = entryOf(timelineOf(draft, timeline).sections, section);
       if (!target) fail("not-found", { kind: "section", id: section });
       const path = [...timelinePath(timeline), "sections", section];
       if (duration !== undefined) draft.set([...path, "duration"], duration);
       if (name !== undefined) draft.set([...path, "name"], name);
+      else if (clear?.includes("name") && target?.name !== undefined) {
+        draft.delete([...path, "name"]);
+      }
     },
     { group: "timeline", result: Nothing, failures: ["not-found"] },
   ),
 
   define(
-    "section.remove",
-    "删除一个段落，时间轴至少要留一个。",
-    z.strictObject({ timeline: Id, section: Id }),
-    (draft, { timeline, section }) => {
-      const { sections } = timelineOf(draft, timeline);
-      if (!entryOf(sections, section)) fail("not-found", { kind: "section", id: section });
-      if (Object.keys(sections).length === 1) fail("last-section", { timeline });
-      draft.delete([...timelinePath(timeline), "sections", section]);
+    "section.split",
+    "在一个时刻把它所在的段落分成两段：前一段留着原来的段落和名字，后一段是新的。时间轴的长度和上面的内容都不动。",
+    z.strictObject({ timeline: Id, at: Time, id: Id.optional(), name: z.string().optional() }),
+    (draft, { timeline, at, id: wanted, name }) => {
+      const target = timelineOf(draft, timeline);
+      const id = wanted ?? newId("section");
+      assertIdFree(target, id, "section");
+      splitSection(draft, timeline, parseTime(at), id, name);
+      return { id };
     },
+    { group: "timeline", result: Made, failures: ["not-found", "id-taken", "invalid-value"] },
+  ),
+
+  define(
+    "section.moveBoundary",
+    "把一个段落的结尾、也就是下一个段落的开头移到一个时刻：一段变长、一段变短，时间轴的长度和上面的内容都不动。",
+    z.strictObject({ timeline: Id, section: Id, at: Time }),
+    (draft, { timeline, section, at }) => moveBoundary(draft, timeline, section, parseTime(at)),
+    { group: "timeline", result: Nothing, failures: ["not-found", "invalid-value"] },
+  ),
+
+  /**
+   * Clips and markers are where they are on the whole timeline, so a section that goes gives its
+   * time to the one before it: the length and the other boundaries stay with what is on them.
+   */
+  define(
+    "section.remove",
+    "删除一个段落，它的时长并进前一段（第一段并进后一段），时间轴的长度、其他分界和上面的内容都不动；时间轴至少要留一个段落。",
+    z.strictObject({ timeline: Id, section: Id }),
+    (draft, { timeline, section }) => removeSection(draft, timeline, section),
     { group: "timeline", result: Nothing, failures: ["not-found", "last-section"] },
   ),
 
@@ -1591,14 +1618,22 @@ export const OPERATIONS = [
 
   define(
     "marker.update",
-    "改标记的时间、名字等。",
-    z.strictObject({ timeline: Id, marker: Id, changes: MarkerChanges }),
-    (draft, { timeline, marker, changes }) => {
-      if (!entryOf(timelineOf(draft, timeline).markers, marker)) {
-        fail("not-found", { kind: "marker", id: marker });
-      }
+    "改标记的时间、名字、备注、颜色或时长，clear 去掉名字、备注、颜色或时长（变成点标记）。",
+    z.strictObject({
+      timeline: Id,
+      marker: Id,
+      changes: MarkerChanges,
+      clear: z.array(ClearableMarkerField).optional(),
+    }),
+    (draft, { timeline, marker, changes, clear }) => {
+      const current = entryOf(timelineOf(draft, timeline).markers, marker);
+      if (!current) fail("not-found", { kind: "marker", id: marker });
       for (const [key, value] of Object.entries(changes)) {
         draft.set([...timelinePath(timeline), "markers", marker, key], value);
+      }
+      for (const field of clear ?? []) {
+        if (field in changes || current?.[field] === undefined) continue;
+        draft.delete([...timelinePath(timeline), "markers", marker, field]);
       }
     },
     { group: "marker", result: Nothing, failures: ["not-found"] },

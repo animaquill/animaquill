@@ -13,7 +13,13 @@ import { MemoryLibrary, memoryAddress, memoryWindow } from "../workbench/memory-
 import { ProjectSession } from "../workbench/session.ts";
 import { ActionRegistry } from "../workbench/actions.ts";
 import { registerTimelineActions } from "./actions.ts";
-import { FLASH_MS, RULER_HEIGHT, TimelineEditor, type TransitionChoice } from "./editor.ts";
+import {
+  FLASH_MS,
+  MARKER_TOP,
+  RULER_HEIGHT,
+  TimelineEditor,
+  type TransitionChoice,
+} from "./editor.ts";
 import { frameAt } from "./frames.ts";
 import { builtInPick, greysOut, type TransitionPick } from "./transition-place.ts";
 import type { Pointer } from "./gestures.ts";
@@ -4004,5 +4010,347 @@ describe("playing at other speeds", () => {
     editor.togglePlayback();
     editor.togglePlayback();
     expect(editor.getSnapshot().rate).toBe(1);
+  });
+});
+
+describe("markers", () => {
+  /** On the ruler, where flags are, at a moment. */
+  const onFlag = (
+    editor: TimelineEditor,
+    seconds: number,
+    keys: Partial<Pointer> = {},
+  ): Pointer => ({
+    x: editor.xAt(seconds),
+    y: MARKER_TOP + 4,
+    shift: false,
+    alt: false,
+    mod: false,
+    ...keys,
+  });
+  const markersOf = (store: ProjectStore) =>
+    Object.values(store.getState().timelines["main"]?.markers ?? {}).map(
+      ({ time, duration, name }) =>
+        [time, duration, name].filter((part) => part !== undefined).join(" "),
+    );
+  const addMarker = (store: ProjectStore, params: Record<string, string>) => {
+    const result = store.execute({ type: "marker.add", params: { timeline: "main", ...params } });
+    if (!result.ok) throw new Error(result.error.code);
+    return (result.results[0] as { id: string }).id;
+  };
+
+  it("M adds one at the playhead, in a step of its own, and opens the one that is there", async () => {
+    const { editor, store } = await setup();
+    editor.seek(45);
+    const id = editor.addMarker();
+    expect(markersOf(store)).toEqual(["1.5"]);
+    expect(editor.model?.markers.map((box) => box.id)).toEqual([id]);
+    expect(editor.getSnapshot().editingMarker).toBeUndefined();
+    expect(editor.addMarker()).toBe(id);
+    expect(markersOf(store)).toEqual(["1.5"]);
+    expect(editor.getSnapshot().editingMarker).toBe(id);
+    store.undo();
+    expect(markersOf(store)).toEqual([]);
+    expect(editor.getSnapshot().editingMarker).toBeUndefined();
+  });
+
+  it("goes to the next and to the one before, and says where there is none", async () => {
+    const { editor, store } = await setup();
+    addMarker(store, { time: "1" });
+    addMarker(store, { time: "3", duration: "1" });
+    editor.seek(45);
+    expect([editor.hasMarkerFrom(1), editor.hasMarkerFrom(-1)]).toEqual([true, true]);
+    expect(editor.goToMarker(1)).toBe(true);
+    expect(editor.frame).toBe(90);
+    expect(editor.hasMarkerFrom(1)).toBe(false);
+    expect(editor.goToMarker(1)).toBe(false);
+    expect(editor.frame).toBe(90);
+    editor.goToMarker(-1);
+    expect(editor.frame).toBe(30);
+    expect(editor.goToMarker(-1)).toBe(false);
+  });
+
+  it("go at the playhead in one step, with Ctrl+Alt+M", async () => {
+    const { editor, store } = await setup();
+    addMarker(store, { time: "1" });
+    addMarker(store, { time: "1", name: "两个" });
+    addMarker(store, { time: "2" });
+    editor.seek(30);
+    expect(editor.hasMarkerHere).toBe(true);
+    editor.clearMarkersHere();
+    expect(markersOf(store)).toEqual(["2"]);
+    store.undo();
+    expect(markersOf(store).toSorted()).toEqual(["1", "1 两个", "2"]);
+  });
+
+  it("are selected instead of clips, and Delete takes the selected one away", async () => {
+    const { editor, store, addClip, selection } = await setup();
+    addClip("a", 0, 2);
+    const marker = addMarker(store, { time: "3" });
+    editor.selectOnly("a");
+    editor.press(onFlag(editor, 3));
+    editor.release(onFlag(editor, 3));
+    expect(editor.selectedMarker).toBe(marker);
+    expect(selection()).toEqual([]);
+    expect(editor.canChangeSelection).toBe(true);
+    editor.selectOnly("a");
+    expect(editor.selectedMarker).toBeUndefined();
+    editor.selectMarker(marker);
+    editor.deleteSelection();
+    expect(markersOf(store)).toEqual([]);
+    expect(store.getState().timelines["main"]?.clips["a"]).toBeDefined();
+  });
+
+  it("move on the ruler, onto frames and what they snap to, in one step", async () => {
+    const { editor, store, addClip, drag } = await setup();
+    addClip("a", 2, 1);
+    addMarker(store, { time: "1" });
+    drag(onFlag(editor, 1), onFlag(editor, 1.51, { alt: true }));
+    expect(markersOf(store)).toEqual(["1.5"]);
+    drag(onFlag(editor, 1.5), onFlag(editor, 2.98));
+    expect(markersOf(store)).toEqual(["3"]);
+    store.undo();
+    expect(markersOf(store)).toEqual(["1.5"]);
+  });
+
+  it("stay where they are when dragged back, also between frames, or called off", async () => {
+    const { editor, store } = await setup();
+    addMarker(store, { time: "0.342" });
+    const { revision } = store;
+    editor.press(onFlag(editor, 0.342));
+    editor.drag(onFlag(editor, 1, { alt: true }));
+    expect(editor.preview?.marker?.time).toBeCloseTo(1, 5);
+    editor.drag(onFlag(editor, 0.342, { alt: true }));
+    editor.release(onFlag(editor, 0.342, { alt: true }));
+    expect(markersOf(store)).toEqual(["0.342"]);
+    expect(store.revision).toBe(revision);
+    editor.press(onFlag(editor, 0.342));
+    editor.drag(onFlag(editor, 2));
+    editor.cancelDrag();
+    expect(markersOf(store)).toEqual(["0.342"]);
+    expect(editor.preview).toBeUndefined();
+  });
+
+  it("get longer and shorter by the end of a duration, a frame long at least", async () => {
+    const { editor, store, drag } = await setup();
+    addMarker(store, { time: "1", duration: "1" });
+    drag(onFlag(editor, 2), onFlag(editor, 3.5, { alt: true }));
+    expect(markersOf(store)).toEqual(["1 2.5"]);
+    drag(onFlag(editor, 3.5), onFlag(editor, 0, { alt: true }));
+    expect(markersOf(store)).toEqual(["1 1/30"]);
+  });
+
+  it("are what clips, the playhead and in and out snap to", async () => {
+    const { editor, store, addClip, at, drag, clip, onRuler } = await setup();
+    addClip("a", 0, 1);
+    addMarker(store, { time: "137/30" });
+    addMarker(store, { time: "6", duration: "1/3" });
+    drag(at(0.5), at(0.5 + 137 / 30 + 0.02));
+    expect(clip("a").start).toBe("137/30");
+    drag(at(5), at(5 + 19 / 3 - (137 / 30 + 1) + 0.02));
+    expect(clipEnd(clip("a"))).toEqual(parseTime("19/3"));
+    // Above the flags, where the ruler moves the playhead.
+    editor.press(onRuler(5.98, { shift: true, y: 5 }));
+    editor.release(onRuler(5.98, { shift: true, y: 5 }));
+    expect(editor.frame).toBe(180);
+    editor.setMarks({ in: 30, out: 300 });
+    drag(onRuler(1, { y: RULER_HEIGHT - 3 }), onRuler(137 / 30 + 0.02, { y: RULER_HEIGHT - 3 }));
+    expect(editor.marks.in).toBe(137);
+  });
+
+  it("say their name and note under the pointer, and their time without", async () => {
+    const { editor, store } = await setup();
+    addMarker(store, { time: "1", name: "钩子", note: "第一句话" });
+    addMarker(store, { time: "3" });
+    expect(editor.markerTextAt(onFlag(editor, 1))).toBe("钩子\n第一句话");
+    expect(editor.markerTextAt(onFlag(editor, 3))).toBe("0:03/00");
+    expect(editor.markerTextAt(onFlag(editor, 2))).toBeUndefined();
+    expect(editor.hover(onFlag(editor, 1))).toBe("grab");
+  });
+
+  it("change what they say, a step for each, and take fields away", async () => {
+    const { editor, store } = await setup();
+    const id = addMarker(store, { time: "1", name: "a", note: "n", duration: "2" });
+    expect(editor.updateMarker(id, { name: "b" })).toBe(true);
+    expect(editor.updateMarker(id, { name: "b" })).toBe(false);
+    expect(editor.updateMarker(id, {}, ["note", "duration"])).toBe(true);
+    expect(store.getState().timelines["main"]?.markers[id]).toEqual({ id, time: "1", name: "b" });
+    store.undo();
+    expect(store.getState().timelines["main"]?.markers[id]?.note).toBe("n");
+  });
+
+  it("are in the menu, greyed out where they cannot go", async () => {
+    const { editor, store } = await setup();
+    const actions = new ActionRegistry();
+    const noKeys = {
+      hasSelection: false,
+      canChangeSelection: false,
+      hasClipboard: false,
+      nudge: () => {},
+      deleteSelected: () => {},
+      copySelected: () => {},
+      cutSelected: () => {},
+      paste: () => {},
+    };
+    registerTimelineActions(actions, editor, noKeys);
+    const enabled = (id: string) => actions.get(`timeline.${id}`)?.enabled?.() !== false;
+    expect(actions.get("timeline.addMarker")?.keys).toEqual(["m"]);
+    expect(actions.get("timeline.nextMarker")?.keys).toEqual(["shift+m"]);
+    expect(actions.get("timeline.previousMarker")?.keys).toEqual(["alt+shift+m"]);
+    expect(actions.get("timeline.clearMarkersHere")?.keys).toEqual(["mod+alt+m"]);
+    expect(["nextMarker", "previousMarker", "clearMarkersHere"].map(enabled)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    addMarker(store, { time: "1" });
+    expect(["nextMarker", "previousMarker", "clearMarkersHere"].map(enabled)).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    editor.seek(30);
+    expect(enabled("clearMarkersHere")).toBe(true);
+  });
+});
+
+describe("sections", () => {
+  const layoutOf = (editor: TimelineEditor) =>
+    editor.model?.sections.map(({ name, startExact, endExact }) =>
+      [name ?? "-", formatTime(startExact), formatTime(endExact)].join(" "),
+    );
+  /** Two sections of five seconds, and a clip across the boundary. */
+  async function twoSections() {
+    const setting = await setup();
+    const { store, main, addClip } = setting;
+    const [first] = Object.keys(main().sections);
+    const results = store.executeBatch([
+      { type: "section.update", params: { timeline: "main", section: first, duration: "5" } },
+      {
+        type: "section.add",
+        params: { timeline: "main", id: "second", duration: "5", name: "后" },
+      },
+    ]);
+    if (!results.ok) throw new Error(results.error.code);
+    addClip("a", 4, 2);
+    return { ...setting, first: first as string };
+  }
+  /** Where a boundary is on the band of sections, which spans the timeline as the stage does. */
+  const onBand = (editor: TimelineEditor, seconds: number, keys: Partial<Pointer> = {}) => ({
+    x: editor.xAt(seconds),
+    y: 4,
+    shift: false,
+    alt: false,
+    mod: false,
+    ...keys,
+  });
+
+  it("show with more than one, or one with a name", async () => {
+    const { editor, store, main } = await setup();
+    expect(editor.showsSections).toBe(false);
+    const [first] = Object.keys(main().sections);
+    store.execute({
+      type: "section.update",
+      params: { timeline: "main", section: first, name: "开头" },
+    });
+    expect(editor.showsSections).toBe(true);
+    editor.renameSection(first as string, "  ");
+    expect(main().sections[first as string]?.name).toBeUndefined();
+    expect(editor.showsSections).toBe(false);
+  });
+
+  it("split at the playhead, inside a section only, and the length stays", async () => {
+    const { editor, main, clip } = await twoSections();
+    const before = JSON.stringify(clip("a"));
+    editor.seek(150);
+    expect(editor.canSplitSection).toBe(false);
+    editor.seek(210);
+    expect(editor.canSplitSection).toBe(true);
+    editor.splitSectionAtPlayhead();
+    expect(layoutOf(editor)).toEqual(["- 0 5", "后 5 7", "- 7 10"]);
+    expect(JSON.stringify(clip("a"))).toBe(before);
+    expect(Object.keys(main().sections)).toHaveLength(3);
+    editor.seek(300);
+    expect(editor.canSplitSection).toBe(false);
+  });
+
+  it("merge into the one before, the first into the next, and the last stays", async () => {
+    const { editor, store, first } = await twoSections();
+    editor.removeSection("second");
+    expect(layoutOf(editor)).toEqual(["- 0 10"]);
+    store.undo();
+    editor.removeSection(first);
+    expect(layoutOf(editor)).toEqual(["后 0 10"]);
+    editor.removeSection("second");
+    expect(layoutOf(editor)).toEqual(["后 0 10"]);
+  });
+
+  it("move their boundary by a drag, onto frames and what it snaps to, in one step", async () => {
+    const { editor, store, first, clip } = await twoSections();
+    const before = JSON.stringify(clip("a"));
+    const press = (seconds: number) => editor.pressBoundary(first, onBand(editor, seconds));
+    press(5);
+    editor.drag(onBand(editor, 4.6, { alt: true }));
+    expect(editor.preview?.boundary).toEqual({ section: first, seconds: 4.6 });
+    editor.release(onBand(editor, 4.6, { alt: true }));
+    expect(layoutOf(editor)).toEqual(["- 0 4.6", "后 4.6 10"]);
+    // The end of the clip is something to stick to.
+    press(4.6);
+    editor.drag(onBand(editor, 5.98));
+    editor.release(onBand(editor, 5.98));
+    expect(layoutOf(editor)).toEqual(["- 0 6", "后 6 10"]);
+    expect(JSON.stringify(clip("a"))).toBe(before);
+    store.undo();
+    expect(layoutOf(editor)).toEqual(["- 0 4.6", "后 4.6 10"]);
+  });
+
+  it("keep a frame each, and stay when the boundary goes back to where it was", async () => {
+    const { editor, store, first } = await twoSections();
+    editor.pressBoundary(first, onBand(editor, 5));
+    editor.drag(onBand(editor, 20, { alt: true }));
+    editor.release(onBand(editor, 20, { alt: true }));
+    expect(layoutOf(editor)).toEqual(["- 0 299/30", "后 299/30 10"]);
+    const { revision } = store;
+    editor.pressBoundary(first, onBand(editor, 299 / 30));
+    editor.drag(onBand(editor, 3, { alt: true }));
+    editor.drag(onBand(editor, 299 / 30, { alt: true }));
+    editor.release(onBand(editor, 299 / 30, { alt: true }));
+    expect(store.revision).toBe(revision);
+    editor.pressBoundary(first, onBand(editor, 299 / 30));
+    editor.drag(onBand(editor, 3, { alt: true }));
+    editor.cancelDrag();
+    expect(store.revision).toBe(revision);
+    expect(editor.preview).toBeUndefined();
+  });
+
+  it("are in the menu: splitting at the playhead", async () => {
+    const { editor } = await twoSections();
+    const actions = new ActionRegistry();
+    const noKeys = {
+      hasSelection: false,
+      canChangeSelection: false,
+      hasClipboard: false,
+      nudge: () => {},
+      deleteSelected: () => {},
+      copySelected: () => {},
+      cutSelected: () => {},
+      paste: () => {},
+    };
+    registerTimelineActions(actions, editor, noKeys);
+    const split = actions.get("timeline.splitSection");
+    expect(split?.keys).toBeUndefined();
+    editor.seek(150);
+    expect(split?.enabled?.()).toBe(false);
+    editor.seek(60);
+    expect(split?.enabled?.()).toBe(true);
+    split?.run();
+    expect(layoutOf(editor)).toEqual(["- 0 2", "- 2 5", "后 5 10"]);
+  });
+
+  it("are what clips snap to", async () => {
+    const { store, addClip, at, drag, clip } = await twoSections();
+    store.execute({ type: "clip.remove", params: { timeline: "main", clips: ["a"] } });
+    addClip("b", 0, 1);
+    drag(at(0.5), at(4.5 + 0.02));
+    expect(clip("b").start).toBe("4");
   });
 });

@@ -390,18 +390,55 @@ export const OPERATION_TEXTS = {
 
   "ops.section.update.summary": "changes the duration or name of a section",
   "ops.section.update.description":
-    "Changes the duration or the name of a section. The timeline gets longer or shorter by as much; clips keep their start times, so a shorter section can leave clips past the end of the timeline.",
+    "Changes the duration or the name of a section; clear takes the name away. The timeline gets longer or shorter by as much and the sections after it move; clips keep their start times, so a shorter section can leave clips past the end of the timeline. section.moveBoundary moves a boundary without changing the length.",
+  "ops.section.update.params.clear": '["name"] takes the name away.',
   "ops.section.update.errors.not-found": "There is no timeline or section with this id.",
   "ops.section.update.examples": [
     {
       title: "A longer section",
       params: { timeline: "main", section: "section_intro", duration: "6" },
     },
+    {
+      title: "A section without its name",
+      params: { timeline: "main", section: "section_body", clear: ["name"] },
+    },
   ],
 
-  "ops.section.remove.summary": "removes a section; a timeline keeps at least one",
+  "ops.section.split.summary": "splits a section in two at a moment; the length stays",
+  "ops.section.split.description":
+    "Splits the section that at is in: the part before at keeps the section, its id, name and version durations; the part after it is a new section right after it, with id and name. at has to be inside a section, not where one starts or ends. The length of the timeline and everything on it stay. Sections, tracks and clips of one timeline share their ids.",
+  "ops.section.split.params.at": "Moment of the timeline to split at, seconds.",
+  "ops.section.split.errors.not-found": "There is no timeline with this id.",
+  "ops.section.split.errors.id-taken":
+    "A section, track or clip of the timeline has this id already.",
+  "ops.section.split.errors.invalid-value":
+    "at is where a section starts or ends, or not before the end of the timeline.",
+  "ops.section.split.examples": [
+    {
+      title: "A new section from 12 seconds on",
+      params: { timeline: "main", at: "12", name: "Outro" },
+    },
+  ],
+
+  "ops.section.moveBoundary.summary": "moves the boundary after a section; the length stays",
+  "ops.section.moveBoundary.description":
+    "Moves the end of a section, which is the start of the next one, to at: one of the two gets longer and the other shorter by as much. at has to stay inside the two. The length of the timeline, the other boundaries and everything on the timeline stay. The last section has no boundary after it: section.update changes its duration, and with it the length.",
+  "ops.section.moveBoundary.params.section":
+    "Section id (aq_timeline_read); the boundary is at its end.",
+  "ops.section.moveBoundary.params.at": "Where the boundary goes, seconds of the timeline.",
+  "ops.section.moveBoundary.errors.not-found": "There is no timeline or section with this id.",
+  "ops.section.moveBoundary.errors.invalid-value":
+    "at is not inside the section and the next one, or the section is the last one.",
+  "ops.section.moveBoundary.examples": [
+    {
+      title: "The intro ends at 6 seconds",
+      params: { timeline: "main", section: "section_intro", at: "6" },
+    },
+  ],
+
+  "ops.section.remove.summary": "removes a section; its time goes to the one before it",
   "ops.section.remove.description":
-    "Takes a section away; the timeline is shorter by its duration. Clips keep their start times. The last section of a timeline stays.",
+    "Takes a section away and adds its duration to the section before it, or to the next one when it is the first; version durations of the two add up the same way. The length of the timeline, the other boundaries and everything on the timeline stay. The last section of a timeline stays.",
   "ops.section.remove.errors.not-found": "There is no timeline or section with this id.",
   "ops.section.remove.errors.last-section": "It is the only section of the timeline.",
   "ops.section.remove.examples": [
@@ -958,12 +995,17 @@ export const OPERATION_TEXTS = {
 
   "ops.marker.update.summary": "changes the time, name, note, color or duration of a marker",
   "ops.marker.update.description":
-    "Changes fields of a marker; what changes leaves out stays as it is.",
+    "Changes fields of a marker; what changes leaves out stays as it is. clear takes away the name, note, color or duration; without a duration it is a point.",
+  "ops.marker.update.params.clear": 'Fields to take away: "name", "note", "color", "duration".',
   "ops.marker.update.errors.not-found": "There is no timeline or marker with this id.",
   "ops.marker.update.examples": [
     {
       title: "A marker at another time",
       params: { timeline: "main", marker: "marker_turn", changes: { time: "6" } },
+    },
+    {
+      title: "A stretch that becomes a point",
+      params: { timeline: "main", marker: "marker_turn", changes: {}, clear: ["duration"] },
     },
   ],
 

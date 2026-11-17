@@ -32,6 +32,8 @@ export interface StageEditor extends TouchTarget {
   hover(pointer: Pointer): string;
   /** What to tell about what is under the pointer, as a key of the interface texts. */
   titleAt?(pointer: Pointer): string | undefined;
+  /** What a marker under the pointer says, as it is, which goes before anything else. */
+  markerTextAt?(pointer: Pointer): string | undefined;
   leave(): void;
   scrollDuringDrag(pointer: Pointer, dx: number, dy: number): void;
   setTouchInput(on: boolean): void;
@@ -240,8 +242,10 @@ export function useStage(
     const { currentTarget } = event;
     const pointer = pointerOf(event, currentTarget);
     const about = editor.titleAt?.(pointer);
+    const marker = editor.markerTextAt?.(pointer);
     currentTarget.title =
-      pointer.y < RULER_HEIGHT ? t("timeline.timeFormat") : about ? t(about as never) : "";
+      marker ??
+      (pointer.y < RULER_HEIGHT ? t("timeline.timeFormat") : about ? t(about as never) : "");
     lastPointer.current = pointer;
     if (input.isTouch(event.pointerType)) {
       touch.current?.move(event.pointerId, pointer.x, pointer.y);

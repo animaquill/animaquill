@@ -95,6 +95,12 @@ export const INVALID_VALUE_TEXTS: RuleTexts = {
   "size-unknown": ({ asset }) => `The size of the file of asset ${asset} is not known yet.`,
   "time-outside": ({ path, time, length }) =>
     `${path} ${time} is not before the end of the timeline, which is ${length} seconds long.`,
+  "section-edge": ({ path, time }) =>
+    `${path} ${time} is where a section starts or ends: a section splits only inside it.`,
+  "boundary-outside": ({ path, time, from, to }) =>
+    `${path} ${time} is outside the two sections: the boundary has to be after ${from} and before ${to}.`,
+  "no-next-section": ({ section }) =>
+    `Section ${section} is the last one and ends where the timeline ends: section.update changes its duration.`,
 };
 
 function invalidValue(params: InvalidValue): string {
