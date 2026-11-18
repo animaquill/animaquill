@@ -57,9 +57,14 @@ const KEEP_BEHIND = MIX_RATE / 2;
 /**
  * Milliseconds of a quantum (2.67 ms) it spends at most working out what effects remember before
  * playing (see `MixEngine.ready`), so that the audio thread is never stuck: about as many blocks as
- * the engine gets done in that time, two at a time.
+ * the engine gets done in that time, two at a time. While it does, the quantum is silent anyway.
  */
-const PREROLL_MS = 1;
+const PREROLL_MS = 1.75;
+/**
+ * The same while it plays, for the safe limiter it works out on the side (see
+ * `MixEngine.quickStart`): what is left of the quantum after mixing it.
+ */
+const CATCH_UP_MS = 1;
 const PREROLL_STEP = 2;
 const clock: () => number =
   typeof performance === "object" ? () => performance.now() : () => Date.now();
@@ -103,6 +108,8 @@ export class MixerCore {
   #scratch = [new Float32Array(BLOCK + 2), new Float32Array(BLOCK + 2)] as const;
   /** Since when it has been getting ready to play, in samples of the timeline, and for how many quanta. */
   #warming: { readonly from: number; quanta: number } | undefined;
+  /** Quanta that the safe limiter on the side waited for samples, see `#catchUp`. */
+  #caughtWaits = 0;
 
   constructor(post: (report: MixerReport, transfer?: Transferable[]) => void, contextRate: number) {
     this.#post = post;
@@ -113,6 +120,8 @@ export class MixerCore {
       (sound, from, count) => this.#missing(sound, from, count),
     );
     this.#engine.metering = true;
+    // Sound at once where only the safe limiter remembers anything.
+    this.#engine.quickStart = true;
     this.#levels = new MasterLevels(contextRate);
     this.#levelEvery = Math.round(contextRate / LEVELS_PER_SECOND);
   }
@@ -127,8 +136,9 @@ export class MixerCore {
         this.#run = message.run;
         this.#setPlan(message.plan);
         this.#playing = { frame: message.frame, sample: message.sample, rate: message.rate };
-        // Backwards, effects cannot remember what comes after: they are left out.
-        this.#engine.dry = message.rate < 0;
+        // Backwards, effects cannot remember what comes after; faster, they would cost as many
+        // times as much: they are left out, as for finding a place with J, K and L.
+        this.#engine.dry = message.rate < 0 || message.rate > 1;
         this.#warming = undefined;
         // The loudness of what plays now, not of what played before.
         this.#levels = new MasterLevels(this.#contextRate);
@@ -182,6 +192,7 @@ export class MixerCore {
       left.fill(0, 0, silent);
       right.fill(0, 0, silent);
     }
+    this.#catchUp();
     this.#reportLate();
     this.#measure(left, right);
     if (this.#capture) {
@@ -246,6 +257,27 @@ export class MixerCore {
     if (warming) warming.quanta += 1;
     else this.#warming = { from: first, quanta: 1 };
     return false;
+  }
+
+  /**
+   * Works out the safe limiter that should be there on the side, a little in each quantum, waiting
+   * a while for the samples of sounds from before where playing started.
+   */
+  #catchUp(): void {
+    const engine = this.#engine;
+    if (!engine.catchingUp) {
+      this.#caughtWaits = 0;
+      return;
+    }
+    const wait = this.#caughtWaits < MOST_WAIT;
+    const started = clock();
+    let done = engine.catchUp(PREROLL_STEP, wait);
+    let worked = clock() - started;
+    while (!done && !engine.waiting && worked < CATCH_UP_MS) {
+      done = engine.catchUp(PREROLL_STEP, wait);
+      worked = clock() - started;
+    }
+    if (engine.waiting) this.#caughtWaits += 1;
   }
 
   /** What the meters show: what is heard, and the tracks as the engine mixed them. */

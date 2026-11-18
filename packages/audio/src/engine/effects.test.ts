@@ -187,6 +187,31 @@ describe("effects in the mix", () => {
     expect(left).toEqual(plain.left);
   });
 
+  it("take a sample that is no number as silence, and go on as before", () => {
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const stores = {
+        a: storeOf(
+          chunksOf({
+            frames: MIX_RATE,
+            value: (frame) => (frame === 10_000 ? bad : 0.3 * Math.sin(frame / 20)),
+          }),
+        ),
+      };
+      const effects = [
+        effectOf("eq", { "mid2.gain": 6 }, "e"),
+        effectOf("compressor", { threshold: -20, ratio: 4 }, "c"),
+        effectOf("reverb", { mix: 0.3 }, "r"),
+      ];
+      const plan = {
+        ...planOf([sound({ id: "a", file: "a", start: 0, end: 1, effects })], [track({ effects })]),
+        master: master({ effects }),
+      };
+      const out = mix(plan, stores, 0, MIX_RATE);
+      expect(out.left.every(Number.isFinite)).toBe(true);
+      expect(Math.max(...out.left.subarray(20_000).map(Math.abs))).toBeGreaterThan(0.05);
+    }
+  });
+
   it("take parameters with keys every 32 samples", () => {
     const stores = { a: tone(0.5, 1000) };
     const eq: MixEffect = {

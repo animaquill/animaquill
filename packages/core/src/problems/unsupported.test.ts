@@ -165,6 +165,21 @@ describe("what this editor does not do yet", () => {
       said({ tracks: [video([]), audio([tone("t", { effects: [effect] })])], assets: TONE }),
     ).toEqual([]);
     expect(said({ tracks: [video([]), audio([], { effects: [effect] })] })).toEqual([]);
+    // What this editor does not have for sound still says so: it is left out of the mix.
+    const duck = { id: "d", type: "duck" };
+    const blurred = { id: "b", type: "blur" };
+    expect(
+      said({ tracks: [video([]), audio([tone("t", { effects: [duck, effect] })])], assets: TONE }),
+    ).toEqual(['unsupported-audio-effect t {"count":1,"where":"clip"} sound']);
+    expect(said({ tracks: [video([]), audio([], { effects: [blurred] })] })).toEqual([
+      'unsupported-audio-effect a {"count":1,"where":"track"} sound',
+    ]);
+    expect(
+      said({
+        tracks: [video([]), audio([])],
+        mix: { master: { effects: [{ id: "x", type: "x.y" }] } },
+      }),
+    ).toEqual(['unsupported-audio-effect main {"count":1,"where":"master"} sound']);
     const mix = { buses: [{ id: "bus" }] };
     expect(said({ tracks: [video([]), audio([])], mix })).toEqual([
       'unsupported-audio-effect main {"count":1,"where":"mix"} sound',

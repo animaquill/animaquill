@@ -1,6 +1,7 @@
 import {
   add,
   compare,
+  findEffect,
   isAnimation,
   parseTime,
   type PropertyValue,
@@ -43,6 +44,20 @@ const AUDIO_PROPERTIES: Readonly<Record<string, number | boolean>> = {
   "audio.pitch": 0,
   "audio.preservePitch": false,
 };
+
+/**
+ * The effects of sound that are on and that this editor cannot do: a type it does not have, of a
+ * plugin, or one for pictures. They are left out of the mix.
+ */
+const unknownSoundEffects = (
+  effects: readonly { type?: string | undefined; enabled?: boolean | undefined }[],
+) =>
+  effects.filter(
+    (effect) =>
+      typeof effect.type === "string" &&
+      effect.enabled !== false &&
+      findEffect(effect.type, "sound").kind !== "built-in",
+  ).length;
 
 /** Kinds of clips that make sound here: the others are a problem of their own, or silent. */
 const SOUNDING = new Set(["audio", "sound"]);
@@ -186,6 +201,12 @@ export function unsupportedProblems(state: ProjectState): readonly ProjectProble
       const track = timeline.tracks[clip.track];
       const sounding = track?.kind === "audio" && SOUNDING.has(kind);
       if (kind === "music") report("unsupported-music-clip", subject, {}, part);
+      if (track?.kind === "audio") {
+        const unknown = unknownSoundEffects(Object.values(clip.effects ?? {}));
+        if (unknown > 0) {
+          report("unsupported-audio-effect", subject, { where: "clip", count: unknown }, part);
+        }
+      }
       if (kind === "timeline") {
         const nested = (clip.source as { readonly timeline?: unknown }).timeline;
         const params = typeof nested === "string" ? { timeline: nested } : {};
@@ -239,6 +260,15 @@ export function unsupportedProblems(state: ProjectState): readonly ProjectProble
       }
       if (track.kind !== "audio") continue;
       const part = heard(track) ? "sound" : undefined;
+      const unknown = unknownSoundEffects(track.effects ?? []);
+      if (unknown > 0) {
+        report(
+          "unsupported-audio-effect",
+          trackOf(track),
+          { where: "track", count: unknown },
+          part,
+        );
+      }
       const properties = track.properties ?? {};
       for (const [path, fallback] of Object.entries(AUDIO_PROPERTIES)) {
         if (!differs(properties[path], fallback)) continue;
@@ -264,7 +294,17 @@ export function unsupportedProblems(state: ProjectState): readonly ProjectProble
       report("unsupported-library", subject, { library, join: id }, part);
     }
 
-    // Buses come later: the master, its effects and its limiter work.
+    // Buses come later: the master, its effects and its limiter work, those it has.
+    const unknownOnMaster = unknownSoundEffects(timeline.mix?.master?.effects ?? []);
+    if (unknownOnMaster > 0) {
+      report(
+        "unsupported-audio-effect",
+        whole,
+        { where: "master", count: unknownOnMaster },
+        tracks.some(heard) ? "sound" : undefined,
+        "mix.master",
+      );
+    }
     const buses = timeline.mix?.buses?.length ?? 0;
     if (buses > 0) {
       const anyHeard = tracks.some(heard);

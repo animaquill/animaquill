@@ -1,6 +1,7 @@
 import { compileChannel, numberAt, type Channel } from "@animaquill/core/curve";
 import {
   type MixEffect,
+  type MixMaster,
   audibleTracks,
   canSound,
   clockOfSound,
@@ -14,7 +15,13 @@ import {
 import { fadesDuring, fadesGainAt } from "@animaquill/core/sound-fades";
 import { MIX_RATE, WHOLE, kernelFor, resample } from "./resample.ts";
 import { SampleStore } from "./samples.ts";
-import { EffectChain, latencyOf, memoryOf, type ClockOf } from "./effects/chain.ts";
+import {
+  EffectChain,
+  finiteAndSilent,
+  latencyOf,
+  memoryOf,
+  type ClockOf,
+} from "./effects/chain.ts";
 import { LOOKAHEAD, Limiter, limiterMemoryOf } from "./effects/limiter.ts";
 
 /**
@@ -129,6 +136,11 @@ export function mixLookahead(plan: MixPlan): number {
 export const prerollSeconds = (plan: MixPlan): number =>
   (mixMemory(plan) + mixLookahead(plan) + 2 * BLOCK) / MIX_RATE;
 
+/** The master without its safe limiter. */
+function withoutLimit({ limit: _limit, ...rest }: MixMaster): MixMaster {
+  return rest;
+}
+
 /**
  * The release of the safe limiter of the master, in milliseconds: the default of `limiter`, which it
  * is with its own ceiling.
@@ -161,7 +173,29 @@ export class MixEngine {
   #lanes: readonly Lane[] = [];
   #heard: ReadonlySet<MixSound> = new Set();
   #masterChain: EffectChain | undefined;
-  readonly #safe = new Limiter(2);
+  #safe = new Limiter(2);
+  /** The ceiling of the safe limiter, in dBTP. */
+  #ceiling = -1;
+  /**
+   * Whether the safe limiter is all it remembers: then, with `quickStart`, it starts over with a
+   * cold limiter at once, and works out what it would remember on the side, see `catchUp`.
+   */
+  #onlyLimiter = false;
+  /**
+   * The safe limiter as it would be had it started `mixMemory` before: worked out on the side
+   * up to block `next`, and put in the place of the cold one once it is there.
+   */
+  #shadow: { readonly limiter: Limiter; next: number; waited: number } | undefined;
+  /** While it works out the shadow: no meters, no samples said to be late. */
+  #aside = false;
+  /**
+   * Whether starting over in the middle may start with a cold safe limiter right away, when that is
+   * all it remembers, rather than mixing what comes before first: the preview, which should sound
+   * at once. A cold limiter looks ahead the same and keeps under its ceiling; it differs from the
+   * export only where it was taking something off in the second before, until `catchUp` puts in
+   * the limiter that was there. The export and what AI hears never do this.
+   */
+  quickStart = false;
   #limiting = false;
   /** Samples the master's effects and its limiter put the sound later. */
   #masterLatency = 0;
@@ -186,6 +220,8 @@ export class MixEngine {
   /** How many plans it had: a block of an older one is mixed again where nothing remembers. */
   #plans = 0;
   readonly #master = [new Float64Array(BLOCK), new Float64Array(BLOCK)] as const;
+  /** The master through the cold limiter, while the other one takes over. */
+  readonly #cold2 = [new Float64Array(BLOCK), new Float64Array(BLOCK)] as const;
   readonly #lane = [new Float64Array(BLOCK), new Float64Array(BLOCK)] as const;
   readonly #sound = [new Float64Array(BLOCK), new Float64Array(BLOCK)] as const;
   readonly #mono = [this.#sound[0]] as const;
@@ -254,8 +290,11 @@ export class MixEngine {
           : new EffectChain(effects, 2);
     const limit = plan.master?.limit;
     if (limit) {
-      this.#safe.setCeiling(limit.ceiling);
-      this.#safe.setRelease(SAFE_RELEASE);
+      this.#ceiling = limit.ceiling;
+      for (const limiter of [this.#safe, this.#shadow?.limiter]) {
+        limiter?.setCeiling(limit.ceiling);
+        limiter?.setRelease(SAFE_RELEASE);
+      }
     }
     const lookahead = this.#lookahead;
     const limiting = this.#limiting;
@@ -267,6 +306,10 @@ export class MixEngine {
       this.#masterLatency +
       Math.max(0, ...this.#lanes.map((lane) => lane.latency + lane.reach));
     this.#memory = mixMemory(plan);
+    this.#onlyLimiter =
+      limit !== undefined &&
+      mixMemory({ ...plan, master: withoutLimit(plan.master as MixMaster) }) === 0;
+    if (!this.#onlyLimiter) this.#shadow = undefined;
     this.#plan = plan;
     this.#plans += 1;
     if (this.#lookahead !== lookahead || this.#limiting !== limiting) this.#startOver();
@@ -421,9 +464,9 @@ export class MixEngine {
   }
 
   /** Where it starts over to give out a block, see `mixMemory`. */
-  #restartAt(block: number): number {
+  #restartAt(block: number, cold = this.#cold): number {
     const lookahead = this.lookahead;
-    const memory = this.#cold ? 0 : this.memory;
+    const memory = cold ? 0 : this.memory;
     // Before the timeline all is silence, and starting there is starting from nothing.
     return Math.max(blockOf(block - memory - lookahead), blockOf(-lookahead) - BLOCK);
   }
@@ -431,9 +474,15 @@ export class MixEngine {
   /** Works out blocks up to and with `block`, at most `blocks` of them. */
   #reach(block: number, blocks: number, wait: boolean): boolean {
     if (!this.#follows(block)) {
-      this.#next = this.#restartAt(block);
+      const quick = this.quickStart && this.#onlyLimiter && !this.#dry && !this.#cold;
+      this.#next = this.#restartAt(block, quick || this.#cold);
       this.#cold = false;
       this.#reset();
+      const from = this.#restartAt(block);
+      this.#shadow =
+        quick && from < this.#next
+          ? { limiter: this.#limiter(), next: from, waited: 0 }
+          : undefined;
     }
     let left = blocks;
     while ((this.#next as number) <= block) {
@@ -446,6 +495,49 @@ export class MixEngine {
       }
       this.#store(next);
       this.#next = next + BLOCK;
+      left -= 1;
+    }
+    return true;
+  }
+
+  /** A safe limiter as the master has it, cold. */
+  #limiter(): Limiter {
+    const limiter = new Limiter(2);
+    limiter.setCeiling(this.#ceiling);
+    limiter.setRelease(SAFE_RELEASE);
+    return limiter;
+  }
+
+  /** Whether a safe limiter is still being worked out on the side, see `quickStart`. */
+  get catchingUp(): boolean {
+    return this.#shadow !== undefined && this.#shadow.next < (this.#next ?? 0);
+  }
+
+  /**
+   * Works out at most `blocks` blocks of the safe limiter that should be there, on the side (see
+   * `quickStart`), waiting for the samples of sounds with `wait`. Once it is where the cold one
+   * is, it takes its place at the next block, the gain going from one to the other over that block.
+   * Returns whether there is nothing more to do.
+   */
+  catchUp(blocks: number, wait: boolean): boolean {
+    this.#waiting = false;
+    const shadow = this.#shadow;
+    if (!shadow) return true;
+    let left = blocks;
+    while (shadow.next < (this.#next ?? 0)) {
+      if (left <= 0) return false;
+      if (wait && !this.#covered(shadow.next)) {
+        this.#waiting = true;
+        return false;
+      }
+      this.#aside = true;
+      try {
+        this.#preLimit(shadow.next);
+      } finally {
+        this.#aside = false;
+      }
+      shadow.limiter.process(this.#master, 0, BLOCK);
+      shadow.next += BLOCK;
       left -= 1;
     }
     return true;
@@ -505,6 +597,48 @@ export class MixEngine {
 
   /** The block from sample `block` into the master. */
   #block(block: number): void {
+    this.#preLimit(block);
+    const [masterLeft, masterRight] = this.#master;
+    const dry = this.#dry;
+    if (this.#plan.master && this.#limiting && !dry) this.#limit(block);
+    if (!this.#plan.master) return;
+    for (let index = 0; index < BLOCK; index += 1) {
+      const l = masterLeft[index] as number;
+      const r = masterRight[index] as number;
+      masterLeft[index] = f32(l > 1 ? 1 : l < -1 ? -1 : l);
+      masterRight[index] = f32(r > 1 ? 1 : r < -1 ? -1 : r);
+    }
+  }
+
+  /**
+   * The safe limiter on the master: the one there is, or, when the one worked out on the side has
+   * got here, both, going from the first to the second over the block, and the second from then on.
+   */
+  #limit(block: number): void {
+    const shadow = this.#shadow;
+    if (!shadow || shadow.next !== block) {
+      this.#safe.process(this.#master, 0, BLOCK);
+      return;
+    }
+    const [masterLeft, masterRight] = this.#master;
+    const [coldLeft, coldRight] = this.#cold2;
+    coldLeft.set(masterLeft);
+    coldRight.set(masterRight);
+    this.#safe.process(this.#cold2, 0, BLOCK);
+    shadow.limiter.process(this.#master, 0, BLOCK);
+    for (let index = 0; index < BLOCK; index += 1) {
+      const share = (index + 1) / BLOCK;
+      const l = coldLeft[index] as number;
+      const r = coldRight[index] as number;
+      masterLeft[index] = l + ((masterLeft[index] as number) - l) * share;
+      masterRight[index] = r + ((masterRight[index] as number) - r) * share;
+    }
+    this.#safe = shadow.limiter;
+    this.#shadow = undefined;
+  }
+
+  /** The block from sample `block` into the master, up to the safe limiter. */
+  #preLimit(block: number): void {
     const [masterLeft, masterRight] = this.#master;
     masterLeft.fill(0);
     masterRight.fill(0);
@@ -539,6 +673,9 @@ export class MixEngine {
     }
     const master = this.#plan.master;
     if (!master) return;
+    // A sample that is no number goes no further than its own place: not into what the master's
+    // effects and limiter remember.
+    finiteAndSilent(this.#master, BLOCK);
     if (!dry) this.#masterChain?.process(this.#master, BLOCK, masterAt);
     const { volume } = master;
     const still = f32(master.gain);
@@ -548,13 +685,6 @@ export class MixEngine {
         masterLeft[index] = f32((masterLeft[index] as number) * gain);
         masterRight[index] = f32((masterRight[index] as number) * gain);
       }
-    }
-    if (this.#limiting && !dry) this.#safe.process(this.#master, 0, BLOCK);
-    for (let index = 0; index < BLOCK; index += 1) {
-      const l = masterLeft[index] as number;
-      const r = masterRight[index] as number;
-      masterLeft[index] = f32(l > 1 ? 1 : l < -1 ? -1 : l);
-      masterRight[index] = f32(r > 1 ? 1 : r < -1 ? -1 : r);
     }
   }
 
@@ -567,7 +697,7 @@ export class MixEngine {
     const panning = pan !== undefined;
     const sides = this.#sides;
     if (pan?.kind === "still") stereoPan(pan.value as number, sides);
-    const metering = this.metering;
+    const metering = this.metering && !this.#aside;
     let peak = 0;
     for (let index = 0; index < BLOCK; index += 1) {
       const seconds = (block + index) / MIX_RATE;
@@ -678,7 +808,7 @@ export class MixEngine {
     if (rate === undefined) {
       // The file ended before anything of it came: there is nothing to miss.
       if (store.ended) return true;
-      this.#onMissing(sound, from, to - from);
+      if (!this.#aside) this.#onMissing(sound, from, to - from);
       return false;
     }
     const mono = store.channels === 1;
@@ -702,7 +832,7 @@ export class MixEngine {
       if (!read) complete = false;
       start = upTo;
     }
-    if (!complete) this.#onMissing(sound, from, to - from);
+    if (!complete && !this.#aside) this.#onMissing(sound, from, to - from);
     return complete;
   }
 

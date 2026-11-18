@@ -45,7 +45,7 @@ export const PROBLEM_TEXTS: Readonly<Record<string, (params: Params) => string>>
   "unsupported-audio-effect": (p) =>
     p.where === "mix"
       ? "the buses of the mix (and sends and outputs to them) are not applied by this editor version yet"
-      : `${str(p.count)} sound effects on this ${str(p.where)} are not applied by this editor version yet`,
+      : `${str(p.count)} sound effects on this ${str(p.where)} are of a type this editor version does not know (or for pictures); the mix leaves them out`,
   "unsupported-audio-property": (p) =>
     `${str(p.property)} is not applied by this editor version yet; preview and export ignore it`,
   "unsupported-loop": () =>

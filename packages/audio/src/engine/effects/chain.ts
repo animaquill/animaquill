@@ -173,7 +173,9 @@ export class EffectChain {
     }
     this.#next = start + count;
     if (this.#links.length === 0) return;
-    const quiet = silent(channels, count);
+    // What is no number (a sound that code made wrong) would stay in what effects remember for
+    // good: it goes in as silence.
+    const quiet = finiteAndSilent(channels, count);
     if (this.#settled && quiet) return;
     let at = 0;
     while (at < count) {
@@ -217,9 +219,19 @@ export class EffectChain {
   }
 }
 
-function silent(channels: readonly Float64Array[], count: number): boolean {
+/**
+ * Makes every sample that is no finite number 0, and says whether all are 0 then.
+ */
+export function finiteAndSilent(channels: readonly Float64Array[], count: number): boolean {
+  let quiet = true;
   for (const samples of channels) {
-    for (let index = 0; index < count; index += 1) if (samples[index] !== 0) return false;
+    for (let index = 0; index < count; index += 1) {
+      const value = samples[index] as number;
+      if (value === 0) continue;
+      // NaN is not within, and neither are the infinities.
+      if (!(value > -Infinity && value < Infinity)) samples[index] = 0;
+      else quiet = false;
+    }
   }
-  return true;
+  return quiet;
 }

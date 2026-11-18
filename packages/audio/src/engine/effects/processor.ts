@@ -1,9 +1,4 @@
-import {
-  effectParamAt,
-  effectParamMoves,
-  effectParamRange,
-  type MixEffect,
-} from "@animaquill/core/mix-plan";
+import { effectParamAt, effectParamRange, type MixEffect } from "@animaquill/core/mix-plan";
 
 /**
  * One effect of sound as the mix engine runs it, on one or two channels in place, sample by sample
@@ -54,6 +49,24 @@ export const QUIET = 2 ** -80;
  * its range, which is what its memory has to be ready for.
  */
 export function valuesOf(effect: MixEffect, name: string): readonly number[] {
-  if (effectParamMoves(effect, name)) return effectParamRange(effect.type, name);
-  return [effectParamAt(effect, name, 0)];
+  const channel = effect.params[name];
+  if (channel?.kind !== "curve") return [effectParamAt(effect, name, 0)];
+  // Going on past the keys, or shaking, it can be anywhere in its range.
+  if (channel.before === "continue" || channel.after === "continue" || channel.noise.length > 0) {
+    return effectParamRange(effect.type, name);
+  }
+  // Otherwise between the least and the most the keys go to, which a curve between them can
+  // overshoot: looked at closely all along.
+  const { times } = channel;
+  const first = times[0] ?? 0;
+  const last = times[times.length - 1] ?? 0;
+  let low = Number.POSITIVE_INFINITY;
+  let high = Number.NEGATIVE_INFINITY;
+  const steps = 64 * Math.max(times.length - 1, 1);
+  for (let step = 0; step <= steps; step += 1) {
+    const value = effectParamAt(effect, name, first + ((last - first) * step) / steps);
+    if (value < low) low = value;
+    if (value > high) high = value;
+  }
+  return [low, high];
 }

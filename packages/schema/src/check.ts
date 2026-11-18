@@ -288,7 +288,10 @@ function checkEffectList(
     const found = findEffect(effect.type, media);
     types.set(effect.id, found.kind === "built-in" ? found.spec : undefined);
     if (found.kind === "missing" && effect.enabled !== false) {
-      const message = `${describeMissingEffect(found.why)}，预览里跳过它，导出会停在这里`;
+      const message =
+        media === "sound"
+          ? `${describeMissingEffect(found.why)}，混音时跳过它，导出里也没有它`
+          : `${describeMissingEffect(found.why)}，预览里跳过它，导出会停在这里`;
       problems.push(warning("effect-missing", file, `${range}.type`, message));
     }
   });

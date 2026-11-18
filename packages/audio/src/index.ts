@@ -135,7 +135,7 @@ interface Run {
   readonly rate: number;
   /**
    * Seconds before `seconds` that sounds are sent from, for what effects remember (see
-   * `MixEngine`): none backwards, where effects are left out.
+   * `MixEngine`): none backwards or faster, where effects are left out.
    */
   readonly preroll: number;
   /** What the device adds, and what keeps the pitch. It stays the same during a run. */
@@ -237,7 +237,7 @@ export class PlaybackAudio {
       seconds,
       at,
       rate,
-      preroll: rate > 0 ? prerollSeconds(plan) : 0,
+      preroll: rate > 0 && rate <= 1 ? prerollSeconds(plan) : 0,
       latency,
       ready: Promise.resolve(undefined),
       started: new Set(),

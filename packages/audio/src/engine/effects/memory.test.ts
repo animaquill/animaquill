@@ -114,3 +114,25 @@ describe("what each effect remembers", () => {
     );
   }
 });
+
+describe("the memory of a parameter with keys", () => {
+  it("goes by where its keys go, not by all its range", () => {
+    const keyedRelease: MixEffect = {
+      id: "c",
+      type: "compressor",
+      params: {
+        release: keyed([
+          [0, 50],
+          [2, 200],
+        ]),
+        threshold: { kind: "still", value: -20 },
+      },
+    };
+    const still: MixEffect = {
+      id: "c",
+      type: "compressor",
+      params: { release: { kind: "still", value: 200 }, threshold: { kind: "still", value: -20 } },
+    };
+    expect(new EffectChain([keyedRelease], 2).memory).toBe(new EffectChain([still], 2).memory);
+  });
+});
