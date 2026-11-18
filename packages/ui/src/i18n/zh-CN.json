@@ -762,6 +762,9 @@
     },
     "exports": {
       "title": "导出"
+    },
+    "mixer": {
+      "title": "混音器"
     }
   },
   "settings": {
@@ -1252,6 +1255,7 @@
     "lock": "锁定 {{track}}",
     "hide": "隐藏 {{track}}",
     "mute": "静音 {{track}}",
+    "solo": "独奏 {{track}}",
     "emptyHint": "把素材拖到这里，或者点上方的“纯色片段”",
     "dropNewTrack": "新建{{track}}",
     "dropAt": "松手放到{{track}}，{{start}}",
@@ -1421,6 +1425,7 @@
       "lock": "锁定后这条轨道的片段可以点选查看，不能修改。",
       "hide": "这条轨道不显示在画面里。",
       "mute": "这条轨道不发声。",
+      "solo": "只听独奏的轨道。",
       "zoomHandleX": "拖动两端手柄缩放时间，拖动中间滚动。",
       "zoomHandleY": "拖动两端手柄调整轨道高度，拖动中间滚动。",
       "frameRate": "点击修改。标尺按它计数，导出时每个画幅可以用自己的帧率。",
@@ -6059,5 +6064,18 @@
       "failed": "没连上，先打开了",
       "seconds": "（{{count}} 秒）"
     }
+  },
+  "mixer": {
+    "trackItself": "轨道",
+    "master": "主输出",
+    "pan": "{{name}} 声像",
+    "volume": "{{name}} 音量",
+    "volumeNumber": "{{name}} 音量数值",
+    "meter": "{{name}} 电平",
+    "clipLight": "{{name}} 削波灯",
+    "left": "{{name}} 左声道",
+    "right": "{{name}} 右声道",
+    "loudness": "短时响度",
+    "truePeak": "最大真峰值"
   }
 }

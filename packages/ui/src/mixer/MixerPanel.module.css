@@ -1,0 +1,377 @@
+.panel {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  background: var(--aq-bg-panel);
+}
+
+/* The strips of the tracks scroll sideways; the master stays on the right. */
+.strips {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.strip,
+.master {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-height: 0;
+  padding: 6px 4px 8px;
+  border-right: 1px solid var(--aq-border);
+}
+
+.strip {
+  width: calc(68px * var(--aq-size-scale));
+}
+
+.strip[data-selected] {
+  background: var(--aq-accent-soft);
+}
+
+.master {
+  width: calc(96px * var(--aq-size-scale));
+  border-right: 0;
+  border-left: 1px solid var(--aq-border);
+}
+
+.name,
+.masterName {
+  width: 100%;
+  height: calc(22px * var(--aq-size-scale));
+  padding: 0 4px;
+  overflow: hidden;
+  color: var(--aq-text);
+  font: inherit;
+  font-size: var(--aq-font-12);
+  line-height: calc(22px * var(--aq-size-scale));
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+}
+
+.name {
+  cursor: pointer;
+}
+
+.name:hover {
+  background: var(--aq-bg-hover);
+}
+
+.name[aria-pressed="true"] {
+  color: var(--aq-text-strong);
+}
+
+.nameInput {
+  width: 100%;
+  height: calc(22px * var(--aq-size-scale));
+  padding: 0 4px;
+  color: var(--aq-text-strong);
+  font: inherit;
+  font-size: var(--aq-font-12);
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-accent);
+  border-radius: 3px;
+  outline: none;
+}
+
+.knobArea {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+.knob {
+  width: 28px;
+  height: 28px;
+  cursor: ns-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.knob[aria-readonly] {
+  cursor: default;
+}
+
+.knob svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.knobBody {
+  fill: var(--aq-bg-input);
+  stroke: var(--aq-timeline-tick);
+  stroke-width: 1;
+}
+
+.knob:hover .knobBody,
+.knob:focus-visible .knobBody {
+  stroke: var(--aq-text-muted);
+}
+
+.knobPointer {
+  stroke: var(--aq-text);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.knob[data-animated] .knobPointer {
+  stroke: var(--aq-match);
+}
+
+.knobText {
+  min-width: 34px;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.knobText[data-animated] {
+  color: var(--aq-match);
+}
+
+/* The fader and the meter beside it fill what is left of the height. */
+.faderArea {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  justify-content: center;
+  min-height: 80px;
+}
+
+.fader {
+  position: relative;
+  width: 22px;
+  margin: 7px 0;
+  cursor: ns-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.fader[aria-readonly] {
+  cursor: default;
+}
+
+.faderGroove {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 4px;
+  background: var(--aq-bg-input);
+  border-radius: 2px;
+  transform: translateX(-50%);
+}
+
+.fader:hover .faderGroove,
+.fader:focus-visible .faderGroove {
+  outline: 1px solid var(--aq-timeline-tick);
+}
+
+.faderUnity {
+  position: absolute;
+  right: 2px;
+  left: 2px;
+  height: 1px;
+  background: var(--aq-text-muted);
+}
+
+.faderCap {
+  position: absolute;
+  left: 50%;
+  width: 20px;
+  height: 12px;
+  background: var(--aq-text);
+  border: 1px solid var(--aq-bg-panel);
+  border-radius: 2px;
+  transform: translate(-50%, 50%);
+}
+
+.fader[data-animated] .faderCap {
+  background: var(--aq-match);
+}
+
+.fader[aria-readonly] .faderCap {
+  background: var(--aq-text-muted);
+}
+
+.meterColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 8px;
+}
+
+.clipLight {
+  flex: none;
+  width: 100%;
+  height: 5px;
+  padding: 0;
+  background: var(--aq-meter-bed);
+  border: 0;
+  border-radius: 1px;
+}
+
+.clipLight[data-on] {
+  background: var(--aq-meter-high);
+  cursor: pointer;
+}
+
+/* Green, yellow and red from the bottom, as far as the level goes; the rest covered. */
+.meter {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  background: linear-gradient(
+    to top,
+    var(--aq-meter-low) 0 70%,
+    var(--aq-meter-mid) 70% 90%,
+    var(--aq-meter-high) 90% 100%
+  );
+  border-radius: 1px;
+}
+
+.meterCover {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 100%;
+  background: var(--aq-meter-bed);
+}
+
+.volumeBox {
+  flex: none;
+  width: 52px;
+  height: calc(20px * var(--aq-size-scale));
+  padding: 0 4px;
+  color: var(--aq-text);
+  font: inherit;
+  font-size: var(--aq-font-12);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  background: var(--aq-bg-input);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  outline: none;
+}
+
+.volumeBox:hover {
+  border-color: var(--aq-timeline-tick);
+}
+
+.volumeBox:focus {
+  border-color: var(--aq-accent);
+}
+
+.volumeBox:read-only {
+  color: var(--aq-text-muted);
+  background: transparent;
+}
+
+.switches {
+  display: flex;
+  flex: none;
+  gap: 4px;
+}
+
+.switch {
+  width: 24px;
+  height: calc(20px * var(--aq-size-scale));
+  padding: 0;
+  color: var(--aq-text-muted);
+  font: inherit;
+  font-weight: 600;
+  font-size: var(--aq-font-11);
+  background: var(--aq-bg-input);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.switch:hover {
+  color: var(--aq-text);
+}
+
+.mute[aria-pressed="true"] {
+  color: var(--aq-on-accent);
+  background: var(--aq-danger);
+}
+
+.solo[aria-pressed="true"] {
+  color: var(--aq-on-alert);
+  background: var(--aq-alert);
+}
+
+.masterBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 0;
+}
+
+.masterMeters {
+  display: flex;
+  flex: 1;
+  gap: 3px;
+  min-height: 80px;
+  padding-top: 7px;
+}
+
+.masterMeters .meterColumn {
+  width: 10px;
+}
+
+.readout {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+}
+
+.reading {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+  padding: 2px 0;
+  color: var(--aq-text);
+  font: inherit;
+  font-size: var(--aq-font-12);
+  background: none;
+  border: 0;
+  border-radius: 3px;
+}
+
+button.reading {
+  cursor: pointer;
+}
+
+button.reading:hover {
+  background: var(--aq-bg-hover);
+}
+
+.readingValue {
+  font-variant-numeric: tabular-nums;
+}
+
+.readingUnit {
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-10);
+}

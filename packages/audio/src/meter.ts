@@ -150,10 +150,11 @@ export const TRUE_PEAK_PHASES: readonly (readonly number[])[] = [
 const TAPS = 12;
 
 const toDb = (level: number) => (level > 0 ? 20 * Math.log10(level) : -Infinity);
-const loudnessOf = (power: number) => (power > 0 ? -0.691 + 10 * Math.log10(power) : -Infinity);
+export const loudnessOf = (power: number) =>
+  power > 0 ? -0.691 + 10 * Math.log10(power) : -Infinity;
 
 /** One channel as it goes through: its two filters' memory and the samples the true peak needs. */
-class Channel {
+export class MeterChannel {
   readonly #filters: readonly [Biquad, Biquad];
   readonly #state = new Float64Array(4);
   /** The samples the interpolation needs, see `step`. */
@@ -213,7 +214,7 @@ export interface MeterOptions {
  */
 export class SoundMeter {
   readonly #rate: number;
-  readonly #channels: Channel[];
+  readonly #channels: MeterChannel[];
   readonly #subLength: number;
   readonly #stepLength: number;
   readonly #buckets: Float32Array;
@@ -238,7 +239,7 @@ export class SoundMeter {
 
   constructor(options: MeterOptions) {
     this.#rate = options.rate;
-    this.#channels = Array.from({ length: options.channels }, () => new Channel(options.rate));
+    this.#channels = Array.from({ length: options.channels }, () => new MeterChannel(options.rate));
     this.#subLength = Math.round(options.rate * SUB_SECONDS);
     this.#stepLength = Math.max(1, Math.round(options.rate * STEP_SECONDS));
     const buckets = Math.max(1, options.buckets ?? 240);
@@ -254,7 +255,7 @@ export class SoundMeter {
       let peak = 0;
       let clipped = 0;
       for (let channel = 0; channel < this.#channels.length; channel += 1) {
-        const meter = this.#channels[channel] as Channel;
+        const meter = this.#channels[channel] as MeterChannel;
         const sample = channels[channel]?.[index] ?? 0;
         energy += meter.step(sample);
         const level = Math.abs(sample);

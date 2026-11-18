@@ -18,6 +18,7 @@ import type {
   StoragePersistence,
   WindowMemory,
 } from "@animaquill/host";
+import { MixLevels } from "../mixer/levels.ts";
 import type { TFunction } from "i18next";
 import {
   buildRenderPlan,
@@ -426,6 +427,8 @@ export class Workbench {
   readonly looks: FrameLooks;
   /** The sound AI hears: mixed as the export mixes it, and measured. */
   readonly listens: SoundListens;
+  /** What the meters of the mixer show, as the preview plays. */
+  readonly levels = new MixLevels();
   /** What AI tools on this computer do through the folder of the open project. */
   readonly tools: ToolActivity;
   /** What merges of changes on GitHub did to the open project, see `RepoChanges`. */

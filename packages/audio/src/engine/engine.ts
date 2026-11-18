@@ -76,6 +76,13 @@ export class MixEngine {
   /** How a pan splits the sides at a sample, see `monoPan` and `stereoPan`. */
   readonly #sides = new Float64Array(4);
   #input = [new Float64Array(1024), new Float64Array(1024)] as const;
+  /** The largest sample of each track after its fader and pan, while metering: see `takePeak`. */
+  readonly #peaks = new Map<string, number>();
+  /**
+   * Whether to keep the peaks of tracks, for the meters of the mixer. It changes no sample: only
+   * the preview turns it on.
+   */
+  metering = false;
   /** The last block that only part of was asked for: the next call mostly wants the rest of it. */
   #cached: { block: number; left: Float32Array; right: Float32Array } | undefined;
 
@@ -108,6 +115,16 @@ export class MixEngine {
   /** Whether a sound of the plan is heard at all: on a track that is, and louder than nothing. */
   hears(sound: MixSound): boolean {
     return this.#heard.has(sound);
+  }
+
+  /**
+   * The largest sample of a track, either side, after its fader and pan, since it was taken last;
+   * 0 when it was not heard. Only while `metering`.
+   */
+  takePeak(track: string): number {
+    const peak = this.#peaks.get(track) ?? 0;
+    if (peak !== 0) this.#peaks.set(track, 0);
+    return peak;
   }
 
   /** Whether any sound of the plan is heard. */
@@ -194,6 +211,8 @@ export class MixEngine {
     const panning = pan !== undefined;
     const sides = this.#sides;
     if (pan?.kind === "still") stereoPan(pan.value as number, sides);
+    const metering = this.metering;
+    let peak = 0;
     for (let index = 0; index < BLOCK; index += 1) {
       const seconds = (block + index) / MIX_RATE;
       const gain = volume ? decibelGain(volume, seconds) : still;
@@ -207,7 +226,12 @@ export class MixEngine {
       }
       masterLeft[index] = f32((masterLeft[index] ?? 0) + left);
       masterRight[index] = f32((masterRight[index] ?? 0) + right);
+      if (metering) {
+        const level = Math.max(Math.abs(left), Math.abs(right));
+        if (level > peak) peak = level;
+      }
     }
+    if (metering && peak > (this.#peaks.get(track.id) ?? 0)) this.#peaks.set(track.id, peak);
   }
 
   /**

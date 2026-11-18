@@ -19,6 +19,7 @@ import {
   Music,
   Rows3,
   SlidersHorizontal,
+  SlidersVertical,
   SquareTerminal,
   TriangleAlert,
 } from "lucide-react";
@@ -36,6 +37,7 @@ import { DiagnosticsPanel } from "../diagnostics/DiagnosticsPanel.tsx";
 import { ExportsPanel } from "../export/ExportsPanel.tsx";
 import { KeyframesPanel } from "../keyframes/KeyframesPanel.tsx";
 import { PropertiesPanel } from "../properties/PropertiesPanel.tsx";
+import { MixerPanel } from "../mixer/MixerPanel.tsx";
 import { AssetsPanel } from "./AssetsPanel.tsx";
 import { PreviewPanel } from "./PreviewPanel.tsx";
 import { EffectsPanel } from "./EffectsPanel.tsx";
@@ -73,6 +75,7 @@ function planned(
     | "effects"
     | "explorer"
     | "chat"
+    | "mixer"
   >,
   area: PanelArea,
   sizes: readonly PanelSize[],
@@ -181,6 +184,14 @@ export const builtinPanels: readonly PanelDefinition[] = [
     area: "right",
     sizes: TALL,
     component: PropertiesPanel,
+  },
+  {
+    type: "mixer",
+    title: (t) => t("panel.mixer.title"),
+    icon: SlidersVertical,
+    area: "right",
+    sizes: TALL,
+    component: MixerPanel,
   },
   {
     type: "chat",

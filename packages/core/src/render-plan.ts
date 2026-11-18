@@ -753,6 +753,20 @@ function joinFade(join: JoinInEffect, way: SoundFade["way"]) {
  */
 export type TriedValues = ReadonlyMap<string, ReadonlyMap<string, PropertyValue | undefined>>;
 
+/** Properties with what is tried on them: undefined takes one away. */
+function withTried(
+  properties: Properties,
+  trying: ReadonlyMap<string, PropertyValue | undefined> | undefined,
+): Properties {
+  if (!trying || trying.size === 0) return properties;
+  const changed: Record<string, PropertyValue> = { ...properties };
+  for (const [path, value] of trying) {
+    if (value === undefined) delete changed[path];
+    else changed[path] = value;
+  }
+  return changed;
+}
+
 /** A clip with sound as a mix has it, with its own properties apart from those of its track. */
 interface ClipSound {
   readonly layer: Omit<SoundLayer, "gain">;
@@ -799,16 +813,7 @@ function clipSounds(
     if (!track || clip.hidden) continue;
     const file = soundFileOf(state, clip);
     if (file === undefined) continue;
-    const trying = tried?.get(clip.id);
-    let properties = effectiveProperties(clip);
-    if (trying && trying.size > 0) {
-      const changed: Record<string, PropertyValue> = { ...properties };
-      for (const [path, value] of trying) {
-        if (value === undefined) delete changed[path];
-        else changed[path] = value;
-      }
-      properties = changed;
-    }
+    const properties = withTried(effectiveProperties(clip), tried?.get(clip.id));
     let start = clipStart(clip);
     let end = clipEnd(clip);
     const fades: SoundFade[] = [];
@@ -876,6 +881,8 @@ export function buildMixPlan(
   state: ProjectState,
   timelineId: string,
   tried?: TriedValues,
+  /** What people are trying on tracks, as a fader that is still in their hands, by track. */
+  triedTracks?: TriedValues,
 ): MixPlan {
   const timeline = entryOf(state.timelines, timelineId);
   if (!timeline) return { sounds: [], tracks: [] };
@@ -888,12 +895,15 @@ export function buildMixPlan(
       ...panIn(properties),
       track: track.id,
     })),
-    tracks: all.map((track) => ({
-      id: track.id,
-      ...volumeOf(track.properties),
-      ...panIn(track.properties),
-      muted: track.muted === true,
-      solo: track.solo === true,
-    })),
+    tracks: all.map((track) => {
+      const properties = withTried(track.properties ?? {}, triedTracks?.get(track.id));
+      return {
+        id: track.id,
+        ...volumeOf(properties),
+        ...panIn(properties),
+        muted: track.muted === true,
+        solo: track.solo === true,
+      };
+    }),
   };
 }

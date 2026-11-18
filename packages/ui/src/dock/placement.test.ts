@@ -176,6 +176,7 @@ describe("sizes of the panels", () => {
         "files",
         "history",
         "keyframes",
+        "mixer",
         "music",
         "notes",
         "performance",

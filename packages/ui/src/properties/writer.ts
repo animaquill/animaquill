@@ -30,6 +30,7 @@ import { Emitter } from "../workbench/emitter.ts";
 import type { ProjectSession } from "../workbench/session.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import type { PreviewedValues, TrialSession } from "./trial.ts";
+import { ownerOf, trackOfClip, withTrackClips } from "../mixer/track-clip.ts";
 
 export type { PreviewedValues } from "./trial.ts";
 
@@ -127,7 +128,11 @@ export class PropertyWriter {
     // A key for keyframes is about what is selected: another selection forgets the property.
     timeline.subscribe(() => {
       const last = this.#lastProperty;
-      if (last && !timeline.getSnapshot().selection.has(last.clip)) this.#lastProperty = undefined;
+      if (!last) return;
+      const { selection, track } = timeline.getSnapshot();
+      const ofTrack = trackOfClip(last.clip);
+      const selected = ofTrack === undefined ? selection.has(last.clip) : ofTrack === track;
+      if (!selected) this.#lastProperty = undefined;
     });
   }
 
@@ -172,6 +177,14 @@ export class PropertyWriter {
     this.#emitter.emit();
   };
 
+  /** A clip of the timeline, or the clip of a track of sound: see `withTrackClip`. */
+  #clipOf(id: string): ClipState | undefined {
+    const model = this.#timeline.model;
+    if (!model) return undefined;
+    if (trackOfClip(id) === undefined) return model.state.clips[id];
+    return withTrackClips(model).boxes.get(id)?.clip;
+  }
+
   /** What an edit starts from: the value people see. */
   #shown(clip: ClipState, path: string): PropertyValue | undefined {
     return entryOf(effectiveProperties(this.#trials.look?.apply(clip) ?? clip), path);
@@ -184,11 +197,10 @@ export class PropertyWriter {
   /** Shows what these edits would do, instead of what they showed so far. */
   preview(asked: readonly ClipPropertyEdit[]): void {
     const edits = this.recorded(asked);
-    const clips = this.#timeline.model?.state.clips;
     const previewed = new Map<string, Map<string, PropertyValue | undefined>>();
     for (const edit of edits) {
       const { path, owner } = edit;
-      const clip = clips?.[owner.clip];
+      const clip = this.#clipOf(owner.clip);
       if (!clip) continue;
       const values = previewed.get(clip.id) ?? new Map<string, PropertyValue | undefined>();
       previewed.set(clip.id, values);
@@ -216,7 +228,6 @@ export class PropertyWriter {
    * smooth, whatever changed around them. Only properties that have such keys cost anything.
    */
   #autoEdits(edits: readonly ClipPropertyEdit[]): readonly ClipPropertyEdit[] {
-    const clips = this.#timeline.model?.state.clips;
     const byProperty = new Map<string, ClipPropertyEdit[]>();
     for (const edit of edits) {
       const id = `${edit.owner.clip} ${edit.path}`;
@@ -227,7 +238,7 @@ export class PropertyWriter {
     const extra: ClipPropertyEdit[] = [];
     for (const own of byProperty.values()) {
       const [{ owner, path }] = own as [ClipPropertyEdit];
-      const clip = clips?.[owner.clip];
+      const clip = this.#clipOf(owner.clip);
       if (!clip) continue;
       const before = this.#shown(clip, path);
       if (!hasAutoTangents(before) && !own.some(bringsAutoKeys)) continue;
@@ -251,13 +262,12 @@ export class PropertyWriter {
    */
   recorded(edits: readonly ClipPropertyEdit[]): readonly ClipPropertyEdit[] {
     if (!this.#recording || !edits.some(({ op }) => op === "write")) return edits;
-    const clips = this.#timeline.model?.state.clips;
     // What a property has come to so far in these edits, as one can write it twice.
     const sofar = new Map<string, PropertyValue | undefined>();
     const recorded: ClipPropertyEdit[] = [];
     for (const edit of edits) {
       const { owner, path } = edit;
-      const clip = clips?.[owner.clip];
+      const clip = this.#clipOf(owner.clip);
       if (!clip) {
         recorded.push(edit);
         continue;
@@ -332,7 +342,17 @@ export class PropertyWriter {
     }
     const recorded = this.recorded(edits);
     const all = [...recorded, ...this.#autoEdits(recorded)];
-    const done = this.#trials.takesEdits ? this.#trials.write(all) : this.#writeNow(all);
+    // Trying out is for clips: a track is written at once.
+    const ofTracks = all.filter(({ owner }) => trackOfClip(owner.clip) !== undefined);
+    const ofClips = ofTracks.length === 0 ? all : all.filter((edit) => !ofTracks.includes(edit));
+    const write = (some: readonly ClipPropertyEdit[]) =>
+      this.#trials.takesEdits ? this.#trials.write(some) : this.#writeNow(some);
+    let done: boolean;
+    if (ofTracks.length === 0) done = write(all);
+    else {
+      done = this.#writeNow(ofTracks);
+      if (done && ofClips.length > 0) done = write(ofClips);
+    }
     this.cancel();
     return done;
   }
@@ -341,7 +361,8 @@ export class PropertyWriter {
     const store = this.#session.store;
     const timeline = this.#timeline.model?.id;
     if (!store || timeline === undefined || edits.length === 0) return false;
-    const result = store.execute({ type: "property.edit", params: { timeline, edits } });
+    const owned = edits.map((edit) => ({ ...edit, owner: ownerOf(edit.owner.clip) }));
+    const result = store.execute({ type: "property.edit", params: { timeline, edits: owned } });
     if (!result.ok) this.#messages.commandFailed(result.error);
     return result.ok;
   }

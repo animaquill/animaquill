@@ -3,6 +3,7 @@ import { ALL_FORMATS, AudioBufferSink, BlobSource, Input } from "mediabunny";
 
 import { readSamples, type SampleReader } from "./engine/decode.ts";
 import type { DecodedChunk } from "./engine/samples.ts";
+import type { Levels } from "./engine/levels.ts";
 import { MIX_RATE } from "./engine/resample.ts";
 import type { MixerNode } from "./mixer.ts";
 import { semitonesFor, type PitchKeeper } from "./pitch.ts";
@@ -10,6 +11,7 @@ import { semitonesFor, type PitchKeeper } from "./pitch.ts";
 export { MixEngine, BLOCK, type OnMissing, type SamplesOf } from "./engine/engine.ts";
 export { readSamples, type SampleReader } from "./engine/decode.ts";
 export { MixerCore, type MixerMessage, type MixerReport } from "./engine/mixer-core.ts";
+export { LEVELS_PER_SECOND, MasterLevels, type Levels } from "./engine/levels.ts";
 export { MIX_RATE } from "./engine/resample.ts";
 export { SampleStore, type DecodedChunk } from "./engine/samples.ts";
 export { createMixer, type MixerNode } from "./mixer.ts";
@@ -171,6 +173,7 @@ export class PlaybackAudio {
   #time = 0;
   #lastWall: number;
   #lastContext: number | undefined;
+  readonly #levelListeners = new Set<(levels: Levels | undefined) => void>();
 
   constructor(options: PlaybackAudioOptions) {
     this.#fileOf = options.fileOf;
@@ -237,10 +240,24 @@ export class PlaybackAudio {
     run.timer = setInterval(() => this.#startDue(run, context), POLL_MS);
   }
 
+  /**
+   * Hears what the meters show while playing, `LEVELS_PER_SECOND` times a second, and undefined
+   * once it stops. Returns how to stop hearing it.
+   */
+  listenLevels(listener: (levels: Levels | undefined) => void): () => void {
+    this.#levelListeners.add(listener);
+    return () => this.#levelListeners.delete(listener);
+  }
+
+  #tellLevels(levels: Levels | undefined): void {
+    for (const listener of this.#levelListeners) listener(levels);
+  }
+
   stop(): void {
     const run = this.#run;
     if (!run) return;
     this.#run = undefined;
+    this.#tellLevels(undefined);
     run.stopped = true;
     clearInterval(run.timer);
     this.#mixerNow?.send({ kind: "stop" });
@@ -283,6 +300,11 @@ export class PlaybackAudio {
         this.#mixer = (this.#makeMixer?.(context) ?? Promise.resolve(undefined)).then(
           (mixer) => {
             mixer?.listen((report) => {
+              if (report.kind === "levels") {
+                // What was on its way when it stopped is not what plays.
+                if (this.#run) this.#tellLevels(report);
+                return;
+              }
               if (report.kind !== "late" || report.ms < NOTICEABLE_LATE_MS) return;
               this.#note("audio.late", { ms: report.ms, seconds: report.seconds });
             });

@@ -61,12 +61,17 @@ test.describe("the layouts that come with the editor", () => {
     expect((await box(group(page, "keyframes"))).height).toBeGreaterThan(editBelow.height + 40);
   });
 
-  test("audio: the preview in the middle, the timeline below", async ({ page }) => {
+  test("audio: the preview in the middle, the mixer on the right, the timeline below", async ({
+    page,
+  }) => {
     await chooseLayout(page, "音频");
     await expect(content(page, "preview")).toBeVisible();
     await expect(content(page, "assets")).toBeVisible();
+    await expect(content(page, "mixer")).toBeVisible();
+    await expect(group(page, "mixer").locator('[data-tab="properties"]')).toBeAttached();
     await expect(group(page, "timeline").locator('[data-tab="problems"]')).toBeVisible();
-    await expect(tab(page, "keyframes")).toHaveCount(0);
+    // The keys of a selected track are there too.
+    await expect(group(page, "timeline").locator('[data-tab="keyframes"]')).toBeAttached();
   });
 
   test("AI: all the way down the right, as icons", async ({ page }) => {

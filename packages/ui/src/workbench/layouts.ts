@@ -69,10 +69,10 @@ export const layouts: readonly LayoutPreset[] = [
         row(
           [22, left("assets", "explorer", "fades", "effects")],
           [52, top("music", "recording", "preview")],
-          [26, right("properties", "history")],
+          [26, right("mixer", "properties", "history")],
         ),
       ],
-      [45, left("timeline", "problems")],
+      [45, left("timeline", "keyframes", "problems")],
     ),
   },
   {

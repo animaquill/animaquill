@@ -140,7 +140,8 @@ function belowIn(theme: Map<string, string>): string[] {
 
 /**
  * What is no word but has to be seen at once, as WCAG asks of parts of an interface (3:1): the
- * frame around what records automatic keys, on the panels it goes around and on the picture.
+ * frame around what records automatic keys, on the panels it goes around and on the picture, and
+ * the meters of the mixer.
  */
 const MARKS: readonly { mark: string; on: Surface }[] = [
   { mark: "recording", on: "bg-panel" },
@@ -150,6 +151,10 @@ const MARKS: readonly { mark: string; on: Surface }[] = [
   { mark: "on-recording", on: "recording" },
   // The dark line inside it, on the frame itself and on a picture as red as the frame.
   { mark: "recording-edge", on: "recording" },
+  // The meters of the mixer, green, yellow and red, and the clip light, on their bed.
+  { mark: "meter-low", on: "meter-bed" },
+  { mark: "meter-mid", on: "meter-bed" },
+  { mark: "meter-high", on: "meter-bed" },
 ];
 
 function unclearIn(theme: Map<string, string>): string[] {
@@ -175,7 +180,7 @@ describe("the themes", () => {
     });
 
   for (const [name, theme] of Object.entries(THEMES))
-    it(`make the frame of recording clear in the ${name} theme`, () => {
+    it(`make the frame of recording and the meters clear in the ${name} theme`, () => {
       expect(unclearIn(theme)).toEqual([]);
     });
 });

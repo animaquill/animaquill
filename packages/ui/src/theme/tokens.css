@@ -72,6 +72,11 @@
   --aq-on-recording: #ffffff;
   /* What worked, such as a test of a connection. */
   --aq-success: #4cc38a;
+  /* The meters of the mixer: green, yellow and red as the level goes up, on their dark bed. */
+  --aq-meter-bed: #0d0d0d;
+  --aq-meter-low: #3fbf6f;
+  --aq-meter-mid: #e2c541;
+  --aq-meter-high: #f05252;
   --aq-bg-input: #313131;
   --aq-shadow: 0 2px 8px #0000008c;
   /* Under a strip of panels that slides over the others. */
@@ -237,6 +242,10 @@
   --aq-recording-edge: #000000b3;
   --aq-on-recording: #ffffff;
   --aq-success: #186a40;
+  --aq-meter-bed: #d9d9d9;
+  --aq-meter-low: #1d7f45;
+  --aq-meter-mid: #866200;
+  --aq-meter-high: #c62828;
   --aq-bg-input: #ececec;
   --aq-shadow: 0 2px 8px #00000029;
   --aq-strip-shadow: rgb(0 0 0 / 14%);

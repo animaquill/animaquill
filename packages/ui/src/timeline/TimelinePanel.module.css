@@ -246,6 +246,15 @@
   color: var(--aq-warning);
 }
 
+.header[data-selected] {
+  background: var(--aq-accent-soft);
+}
+
+.soloButton {
+  font-weight: 600;
+  font-size: var(--aq-font-11);
+}
+
 .surface {
   display: grid;
   flex: 1;

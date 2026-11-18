@@ -4,6 +4,7 @@ import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession, useWorkbench } from "../app/context.ts";
 import { projectKeyOf } from "../workbench/session.ts";
+import { triedApart } from "../mixer/track-clip.ts";
 
 /** Plays the sound and keeps time by it, whichever panels are open. */
 export function PlaybackClock() {
@@ -43,6 +44,12 @@ export function PlaybackClock() {
 
   useEffect(() => () => audio.dispose(), [audio]);
 
+  // The meters of the mixer, whether it is open or not: what plays is what they show.
+  useEffect(
+    () => audio.listenLevels((levels) => workbench.levels.receive(levels, performance.now())),
+    [audio, workbench],
+  );
+
   useEffect(() => {
     diagnostics.mark(playing ? "play" : "pause", { frame: timeline.frame });
     if (!playing || !store) return;
@@ -60,8 +67,9 @@ export function PlaybackClock() {
       const { model, playbackStart } = timeline;
       if (!model || !playbackStart) return;
       // What people are trying out is what they want to hear.
+      const tried = triedApart(properties.getPreviewed());
       const next = planChanged
-        ? buildMixPlan(store.getState(), model.id, properties.getPreviewed())
+        ? buildMixPlan(store.getState(), model.id, tried.clips, tried.tracks)
         : plan;
       planChanged = false;
       if (next && plan && playbackStart === start && PlaybackAudio.onTheSpot(next, plan)) {

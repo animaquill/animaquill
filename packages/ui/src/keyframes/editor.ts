@@ -32,6 +32,7 @@ import {
 } from "@animaquill/core";
 import type { SettingsStore, WindowMemory } from "@animaquill/host";
 import {
+  CLIP_SOUND,
   ZERO,
   add,
   compare,
@@ -99,11 +100,16 @@ import { animationIn, hasKeyAt } from "./tables.ts";
 import { TimelineLanes } from "./timeline-lanes.ts";
 import { KeyframesView } from "./view.ts";
 import { VolumeLines } from "./volume-lines.ts";
+import { trackClipId, trackOfClip, withTrackClip } from "../mixer/track-clip.ts";
+import { nameOfTrack } from "../mixer/names.ts";
 
 const REMEMBER_DELAY_MS = 300;
 const SETTINGS_KEY = "keyframes";
 const SETTINGS_VERSION = 1;
 export const DEFAULT_LIST_WIDTH = 320;
+
+/** What a track offers to animate: its volume and pan, as a clip of sound has them. */
+const TRACK_DESCRIPTION: ClipDescription = { objects: [CLIP_SOUND] };
 const MIN_LIST_WIDTH = 220;
 const MAX_LIST_WIDTH = 640;
 /** The moment of a clip can be a little off as a float, and that should not hide it. */
@@ -309,6 +315,7 @@ export class KeyframeEditor {
   #seenPlaying = false;
   #seenModel: TimelineModel | undefined;
   #seenClips: ReadonlySet<string> | undefined;
+  #seenTrack: string | undefined;
   #relisting = false;
   #orphaned: ReadonlySet<string> | undefined;
   #inspected: Inspected = { state: undefined, frame: -1, changes: undefined, rows: new Map() };
@@ -374,8 +381,10 @@ export class KeyframeEditor {
     });
   }
 
+  /** The timeline, with the clip of a selected track of sound: see `withTrackClip`. */
   get model(): TimelineModel | undefined {
-    return this.#timeline.model;
+    const { model, track } = this.#timeline.getSnapshot();
+    return model && withTrackClip(model, track);
   }
 
   get frame(): number {
@@ -463,11 +472,16 @@ export class KeyframeEditor {
   };
 
   #followTimeline = (): void => {
-    const { model, selection, playing } = this.#timeline.getSnapshot();
+    const { model, selection, playing, track } = this.#timeline.getSnapshot();
     const changed =
-      model !== this.#seenModel || selection !== this.#seenClips || playing !== this.#seenPlaying;
+      model !== this.#seenModel ||
+      selection !== this.#seenClips ||
+      playing !== this.#seenPlaying ||
+      track !== this.#seenTrack;
     if (!changed) return;
-    const onlySelection = model === this.#seenModel && playing === this.#seenPlaying;
+    const onlySelection =
+      model === this.#seenModel && playing === this.#seenPlaying && track === this.#seenTrack;
+    this.#seenTrack = track;
     if (model !== this.#seenModel) {
       this.#looks.clear();
       this.#orphaned = undefined;
@@ -507,6 +521,8 @@ export class KeyframeEditor {
 
   /** What a clip offers, with what its scene declares and registered. */
   describe = (clip: ClipState): ClipDescription | undefined => {
+    // A track has what the mix does with it: its volume and pan.
+    if (trackOfClip(clip.id) !== undefined) return TRACK_DESCRIPTION;
     const { state } = this;
     return state ? this.#descriptions.describe(state, clip) : undefined;
   };
@@ -679,6 +695,7 @@ export class KeyframeEditor {
       case "track":
         return row ? nameOfTrack(t, row) : "";
       case "clip": {
+        if (trackOfClip(node.clip) !== undefined) return t("mixer.trackItself");
         const clip = this.model?.boxes.get(node.clip)?.clip;
         const kind = clip?.source.kind ?? "";
         return clip?.name ?? textOf(t, `timeline.kind.${kind}`, kind);
@@ -946,8 +963,12 @@ export class KeyframeEditor {
         ? {}
         : { matches: (node: TreeNode) => this.#searchNameOf(node).includes(wanted) }),
     };
+    const { track } = this.#timeline.getSnapshot();
     return model.rows.flatMap((row) => {
-      const boxes = range === "here" ? this.#clipsNear(model, row, seconds) : row.clips;
+      const near = range === "here" ? this.#clipsNear(model, row, seconds) : row.clips;
+      // A selected track first, with its own volume and pan.
+      const own = row.id === track ? model.boxes.get(trackClipId(row.id)) : undefined;
+      const boxes = own ? [own, ...near] : near;
       const clips = boxes.map(({ clip }) => this.shown(clip));
       const node =
         clips.length > 0 ? listedTrack(row.track, clips, filter, this.describe) : undefined;
@@ -992,7 +1013,10 @@ export class KeyframeEditor {
   select(selection: KeySelection): void {
     if (selection === this.#snapshot.selection) return;
     this.#setKeys(selection);
-    if (selection.size > 0) this.#timeline.selectClipsOfKeys(selection.clips());
+    if (selection.size === 0) return;
+    // The keys of a track keep the track selected.
+    const clips = [...selection.clips()].filter((clip) => trackOfClip(clip) === undefined);
+    if (clips.length > 0) this.#timeline.selectClipsOfKeys(clips);
   }
 
   #setKeys(selection: KeySelection): void {
@@ -1632,9 +1656,5 @@ export class KeyframeEditor {
     return model.boxes.has(id.split("/")[0] as string);
   }
 }
-
-/** What a track is called. */
-const nameOfTrack = (t: TFunction, { track, number, gone }: Row) =>
-  gone ? t("timeline.goneTrack") : (track.name ?? t(`timeline.track.${track.kind}`, { number }));
 
 const sameKey = (a: Key, b: Key | undefined) => JSON.stringify(a) === JSON.stringify(b);

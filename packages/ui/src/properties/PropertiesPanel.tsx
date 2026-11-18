@@ -1,5 +1,5 @@
 import { EFFECT_OBJECT_TYPES, SCENE_OBJECT_TYPES } from "@animaquill/core";
-import type { ObjectDescriptor, PropertySpec } from "@animaquill/schema";
+import { CLIP_SOUND, type ObjectDescriptor, type PropertySpec } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import { ChevronLeft, ChevronRight, Diamond, RotateCcw, SlidersHorizontal } from "lucide-react";
 import {
@@ -24,6 +24,8 @@ import styles from "./PropertiesPanel.module.css";
 import { placeOf, PropertyRows } from "./rows.ts";
 import { EffectsSection } from "./EffectsSection.tsx";
 import { TransitionProperties } from "./TransitionProperties.tsx";
+import { trackClipId, withTrackClip } from "../mixer/track-clip.ts";
+import { useTrackName } from "../mixer/names.ts";
 
 type ClipSelected = Extract<Selected, { kind: "clip" }>;
 
@@ -445,6 +447,34 @@ function ClipProperties({ selected, rows }: { selected: ClipSelected; rows: Prop
   );
 }
 
+/**
+ * A selected track of sound: its volume and pan, as the mixer has them, keyed on the timeline's
+ * time. They write to the track, see `withTrackClip`.
+ */
+function TrackProperties({ track, rows }: { track: string; rows: PropertyRows }) {
+  const { timeline } = useWorkbench();
+  const trackName = useTrackName();
+  const { model } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
+  const clip = trackClipId(track);
+  const { blocked, firstFrame } = usePlace(rows, clip);
+  const row = model?.rows.find((one) => one.id === track);
+  if (!row) return null;
+  return (
+    <>
+      <header className={styles.header}>
+        <span className={styles.title}>{trackName(row)}</span>
+        <span className={styles.headerEnd}>
+          <RecordButton />
+        </span>
+      </header>
+      {blocked && <BlockedHint blocked={blocked} firstFrame={firstFrame} />}
+      <div className={styles.rows} data-readonly={blocked !== undefined || undefined}>
+        <Section key={clip} rows={rows} clip={clip} object={CLIP_SOUND} name={undefined} eager />
+      </div>
+    </>
+  );
+}
+
 function Message({ text }: { text: string }) {
   return (
     <div className={styles.message}>
@@ -460,16 +490,27 @@ export function PropertiesPanel() {
   const { store } = useSession();
   // What changes which properties there are. Where the playhead is, rows look at for themselves.
   useProject(store);
-  const { model, selection, transition } = useSyncExternalStore(
+  const { model, selection, transition, track } = useSyncExternalStore(
     timeline.subscribe,
     timeline.getSnapshot,
   );
   const { comparing } = useSyncExternalStore(trials.subscribe, trials.getSnapshot);
   useSyncExternalStore(registrations.subscribe, registrations.getVersion);
-  const rows = useMemo(
-    () => new PropertyRows({ timeline, trials, state: () => store?.getState() }),
-    [timeline, trials, store],
-  );
+  const rows = useMemo(() => {
+    // With the clip of a selected track among the clips, see `withTrackClip`.
+    const shown = {
+      get model() {
+        const { model: now, track: selected } = timeline.getSnapshot();
+        return now && withTrackClip(now, selected);
+      },
+      get frame() {
+        return timeline.frame;
+      },
+      subscribe: timeline.subscribe,
+      subscribeView: timeline.subscribeView,
+    };
+    return new PropertyRows({ timeline: shown, trials, state: () => store?.getState() });
+  }, [timeline, trials, store]);
   const { describe } = keyframes;
   const selected: Selected = model
     ? inspectSelection(model, selection, { look: trials.look, comparing, describe })
@@ -486,7 +527,12 @@ export function PropertiesPanel() {
   return (
     // Focusable, so that the keyboard has somewhere to go after a field, without a frame around it.
     <div className={styles.panel} tabIndex={-1} data-scroll>
-      {selected.kind === "nothing" && <Message text={t("property.nothing")} />}
+      {selected.kind === "nothing" && track !== undefined && (
+        <TrackProperties track={track} rows={rows} />
+      )}
+      {selected.kind === "nothing" && track === undefined && (
+        <Message text={t("property.nothing")} />
+      )}
       {selected.kind === "no-properties" && <Message text={t("property.noProperties")} />}
       {selected.kind === "several" && (
         <Message text={t("property.several", { count: selected.count })} />

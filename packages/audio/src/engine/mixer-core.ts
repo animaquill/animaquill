@@ -1,5 +1,6 @@
 import type { MixPlan, MixSound } from "@animaquill/core";
 import { BLOCK, MixEngine } from "./engine.ts";
+import { LEVELS_PER_SECOND, MasterLevels, type Levels } from "./levels.ts";
 import { MIX_RATE } from "./resample.ts";
 import { SampleStore } from "./samples.ts";
 
@@ -47,7 +48,9 @@ export type MixerReport =
       readonly rate: number;
       readonly left: Float32Array;
       readonly right: Float32Array;
-    };
+    }
+  /** What the meters show, `LEVELS_PER_SECOND` times a second while playing. */
+  | ({ readonly kind: "levels" } & Levels);
 
 /** How much of a sound to keep behind where playing is, in samples of the timeline. */
 const KEEP_BEHIND = MIX_RATE / 2;
@@ -78,6 +81,11 @@ export class MixerCore {
   #playing: { frame: number; sample: number; rate: number } | undefined;
   #capture = false;
   #quanta = 0;
+  #tracks: readonly string[] = [];
+  #levels: MasterLevels;
+  /** Frames of the context between two reports of levels, and since the last one. */
+  readonly #levelEvery: number;
+  #sinceLevels = 0;
   #scratch = [new Float32Array(BLOCK + 2), new Float32Array(BLOCK + 2)] as const;
 
   constructor(post: (report: MixerReport, transfer?: Transferable[]) => void, contextRate: number) {
@@ -88,6 +96,9 @@ export class MixerCore {
       (sound) => this.#stores.get(sound.id),
       (sound, from, count) => this.#missing(sound, from, count),
     );
+    this.#engine.metering = true;
+    this.#levels = new MasterLevels(contextRate);
+    this.#levelEvery = Math.round(contextRate / LEVELS_PER_SECOND);
   }
 
   receive(message: MixerMessage): void {
@@ -100,6 +111,10 @@ export class MixerCore {
         this.#run = message.run;
         this.#setPlan(message.plan);
         this.#playing = { frame: message.frame, sample: message.sample, rate: message.rate };
+        // The loudness of what plays now, not of what played before.
+        this.#levels = new MasterLevels(this.#contextRate);
+        this.#sinceLevels = 0;
+        for (const track of this.#tracks) this.#engine.takePeak(track);
         return;
       case "stop":
         this.#stop();
@@ -146,6 +161,7 @@ export class MixerCore {
       right.fill(0, 0, silent);
     }
     this.#reportLate();
+    this.#measure(left, right);
     if (this.#capture) {
       const copies = { left: left.slice(), right: right.slice() };
       this.#post({ kind: "captured", sample: first, rate, ...copies }, [
@@ -181,6 +197,17 @@ export class MixerCore {
       left[index] = l0 + share * ((mixedLeft[whole + 1] ?? 0) - l0);
       right[index] = r0 + share * ((mixedRight[whole + 1] ?? 0) - r0);
     }
+  }
+
+  /** What the meters show: what is heard, and the tracks as the engine mixed them. */
+  #measure(left: Float32Array, right: Float32Array): void {
+    this.#levels.add(left, right);
+    this.#sinceLevels += left.length;
+    if (this.#sinceLevels < this.#levelEvery) return;
+    this.#sinceLevels -= this.#levelEvery;
+    const tracks = this.#tracks;
+    const peaks = tracks.map((track) => this.#engine.takePeak(track));
+    this.#post({ kind: "levels", tracks, peaks, ...this.#levels.take() });
   }
 
   #storeOf(id: string): SampleStore {
@@ -231,6 +258,7 @@ export class MixerCore {
   #setPlan(plan: MixPlan): void {
     this.#engine.setPlan(plan);
     this.#sounds = new Map(plan.sounds.map((sound) => [sound.id, sound]));
+    this.#tracks = plan.tracks.map(({ id }) => id);
   }
 
   /** Lets go of what was played, and of sounds that are no longer in the plan. */

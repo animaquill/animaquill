@@ -62,6 +62,7 @@ import { TRANSITION_DRAG_TYPE, transitionDrag } from "./transition-drag.ts";
 import { transitionName } from "./transition-names.ts";
 import { pointerOf, useStage } from "./stage.ts";
 import { ToolButton } from "./ToolButton.tsx";
+import { useTrackName } from "../mixer/names.ts";
 import { RippleToolIcon, RollToolIcon, SlideToolIcon, SlipToolIcon } from "./ToolIcons.tsx";
 import {
   MarkerBubble,
@@ -109,12 +110,6 @@ function useClipLabel() {
       ? name
       : t("sound.clip", { name, state: t(`sound.state.${sound.state}`) });
   };
-}
-
-function useTrackName() {
-  const { t } = useTranslation();
-  return ({ track, number, gone }: Row) =>
-    gone ? t("timeline.goneTrack") : (track.name ?? t(`timeline.track.${track.kind}`, { number }));
 }
 
 function Toolbar({ editor }: { editor: TimelineEditor }) {
@@ -362,6 +357,7 @@ function TrackHeader({
   const offUsage = sound ? "timeline.help.mute" : "timeline.help.hide";
   const OnIcon = sound ? Volume2 : Eye;
   const OffIcon = off ? (sound ? VolumeX : EyeOff) : OnIcon;
+  const { track: selectedTrack } = useSyncExternalStore(editor.subscribe, editor.getSnapshot);
 
   const laneOf = (event: PointerEvent<HTMLDivElement>) =>
     event.clientY - reorder.current!.listTop + editor.scrollY;
@@ -416,6 +412,8 @@ function TrackHeader({
     if (!state) return;
     clearTimeout(state.timer);
     if (state.active) editor.moveTrack(row.id, editor.trackDrop(row.id, laneOf(event)).index);
+    // A click on a track of sound is about the track: its volume and pan.
+    else if (sound) editor.selectTrack(row.id);
     reorder.current = undefined;
     onReorder(undefined);
   };
@@ -435,6 +433,7 @@ function TrackHeader({
     <div
       className={styles.header}
       style={{ height: row.height }}
+      data-selected={(sound && selectedTrack === row.id) || undefined}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -505,6 +504,19 @@ function TrackHeader({
               <OffIcon size={14} />
             </button>
           </Tip>
+          {track.kind === "audio" && (
+            <Tip name={t("timeline.solo", { track: name })} usage={t("timeline.help.solo")}>
+              <button
+                type="button"
+                className={`${styles.headerButton} ${styles.soloButton}`}
+                aria-pressed={track.solo === true}
+                aria-label={t("timeline.solo", { track: name })}
+                onClick={() => editor.updateTrack(row.id, { solo: track.solo !== true })}
+              >
+                S
+              </button>
+            </Tip>
+          )}
         </>
       )}
     </div>

@@ -465,6 +465,18 @@ export interface TimelineSnapshot {
   readonly editingMarker: string | undefined;
   /** Selected instead of clips: the empty time between two clips, see `GapChoice`. */
   readonly gap: GapChoice | undefined;
+  /**
+   * Selected instead of clips: a track of sound, by id, whose volume and pan the properties and the
+   * keyframes show then. Like clips it is no part of the project.
+   */
+  readonly track: string | undefined;
+}
+
+/** A track of sound that is on a timeline, or undefined. */
+function soundTrackIn(model: TimelineModel | undefined, track: string | undefined) {
+  if (track === undefined || !model) return undefined;
+  const row = model.rows.find((one) => one.id === track);
+  return row?.track.kind === "audio" && !row.gone ? track : undefined;
 }
 
 /** Where playing started, by the clock, and how fast it goes. */
@@ -627,6 +639,7 @@ export class TimelineEditor implements TouchTarget {
     marker: undefined,
     editingMarker: undefined,
     gap: undefined,
+    track: undefined,
   };
   /** What was copied, in this window. */
   #clipboard: readonly ClipState[] = [];
@@ -1119,6 +1132,7 @@ export class TimelineEditor implements TouchTarget {
       marker: undefined,
       editingMarker: undefined,
       gap: undefined,
+      track: undefined,
     };
     this.#clipboard = [];
     this.#clipboardJoins = [];
@@ -1162,6 +1176,7 @@ export class TimelineEditor implements TouchTarget {
       marker: markerThere(this.#snapshot.marker),
       editingMarker: markerThere(this.#snapshot.editingMarker),
       gap: model && this.#snapshot.gap ? stillAGap(model, this.#snapshot.gap) : undefined,
+      track: soundTrackIn(model, this.#snapshot.track),
     };
     if (model) this.#frame = Math.min(this.#frame, frameAt(model.duration, model.rate));
     if (model && this.#gesture?.isStale?.(model)) this.#cancelGesture();
@@ -1309,8 +1324,8 @@ export class TimelineEditor implements TouchTarget {
   #setSelection(wanted: ReadonlySet<string>): void {
     // A drag can hold on to a clip that is gone by now.
     const selection = new Set(this.#present(wanted, this.model));
-    const { transition, marker, gap } = this.#snapshot;
-    const alone = !transition && marker === undefined && !gap;
+    const { transition, marker, gap, track } = this.#snapshot;
+    const alone = !transition && marker === undefined && !gap && track === undefined;
     if (sameSet(selection, this.#snapshot.selection) && alone) return;
     this.#snapshot = {
       ...this.#snapshot,
@@ -1318,6 +1333,7 @@ export class TimelineEditor implements TouchTarget {
       transition: undefined,
       marker: undefined,
       gap: undefined,
+      track: undefined,
     };
     this.#emitter.emit();
     this.#viewEmitter.emit();
@@ -1338,6 +1354,7 @@ export class TimelineEditor implements TouchTarget {
       transition: { clip, edge },
       marker: undefined,
       gap: undefined,
+      track: undefined,
     };
     this.#emitter.emit();
     this.#viewEmitter.emit();
@@ -1354,6 +1371,7 @@ export class TimelineEditor implements TouchTarget {
       transition: { join },
       marker: undefined,
       gap: undefined,
+      track: undefined,
     };
     this.#emitter.emit();
     this.#viewEmitter.emit();
@@ -1398,6 +1416,28 @@ export class TimelineEditor implements TouchTarget {
   /** The clips of selected keys and what is linked to them, which keeps the keys selected. */
   selectClipsOfKeys(clips: Iterable<string>): void {
     this.#setSelection(this.#withLinked(new Set(clips)));
+  }
+
+  /**
+   * Selects a track of sound instead of clips: the properties and the keyframes show its volume and
+   * pan, and the mixer its strip. Nothing for a track of pictures or captions.
+   */
+  selectTrack(track: string): void {
+    if (soundTrackIn(this.model, track) === undefined) return;
+    const { selection, transition, marker, gap } = this.#snapshot;
+    const alone = selection.size === 0 && !transition && marker === undefined && !gap;
+    if (this.#snapshot.track === track && alone) return;
+    this.#snapshot = {
+      ...this.#snapshot,
+      selection: new Set(),
+      transition: undefined,
+      marker: undefined,
+      gap: undefined,
+      track,
+    };
+    this.#chosen.emit();
+    this.#emitter.emit();
+    this.#viewEmitter.emit();
   }
 
   /** To do something with all of it, which is nothing for a locked clip. */
@@ -1647,7 +1687,12 @@ export class TimelineEditor implements TouchTarget {
     this.#snapshot = {
       ...this.#snapshot,
       marker,
-      ...(there && { selection: new Set<string>(), transition: undefined, gap: undefined }),
+      ...(there && {
+        selection: new Set<string>(),
+        transition: undefined,
+        gap: undefined,
+        track: undefined,
+      }),
     };
     // What people do next is about the marker, not about keys.
     if (there) this.#chosen.emit();
@@ -1971,6 +2016,7 @@ export class TimelineEditor implements TouchTarget {
       transition: undefined,
       marker: undefined,
       gap,
+      track: undefined,
     };
     this.#chosen.emit();
     this.#emitter.emit();
