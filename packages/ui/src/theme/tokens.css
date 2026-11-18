@@ -77,6 +77,12 @@
   --aq-meter-low: #3fbf6f;
   --aq-meter-mid: #e2c541;
   --aq-meter-high: #f05252;
+  --aq-meter-tick: #ffffff38;
+  /* A track that is muted or soloed, the same in the mixer and on the timeline. */
+  --aq-muted: #c72e2e;
+  --aq-on-muted: #ffffff;
+  --aq-solo: #cca700;
+  --aq-on-solo: #181818;
   --aq-bg-input: #313131;
   --aq-shadow: 0 2px 8px #0000008c;
   /* Under a strip of panels that slides over the others. */
@@ -246,6 +252,11 @@
   --aq-meter-low: #1d7f45;
   --aq-meter-mid: #866200;
   --aq-meter-high: #c62828;
+  --aq-meter-tick: #0000003d;
+  --aq-muted: #b52a2a;
+  --aq-on-muted: #ffffff;
+  --aq-solo: #fbe7a6;
+  --aq-on-solo: #5c4300;
   --aq-bg-input: #ececec;
   --aq-shadow: 0 2px 8px #00000029;
   --aq-strip-shadow: rgb(0 0 0 / 14%);

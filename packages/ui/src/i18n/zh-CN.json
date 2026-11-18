@@ -6076,6 +6076,9 @@
     "left": "{{name}} 左声道",
     "right": "{{name}} 右声道",
     "loudness": "短时响度",
-    "truePeak": "最大真峰值"
+    "truePeak": "最大真峰值",
+    "loudnessTip": "短时响度（LUFS）",
+    "truePeakTip": "最大真峰值，点一下归零",
+    "clipTip": "削波，点一下熄灭"
   }
 }

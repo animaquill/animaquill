@@ -496,7 +496,7 @@ function TrackHeader({
           <Tip name={t(offLabel, { track: name })} usage={t(offUsage)}>
             <button
               type="button"
-              className={styles.headerButton}
+              className={`${styles.headerButton} ${sound ? styles.muteButton : ""}`}
               aria-pressed={off}
               aria-label={t(offLabel, { track: name })}
               onClick={() => editor.updateTrack(row.id, toggle)}

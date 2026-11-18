@@ -34,6 +34,11 @@ import {
 import { trackClipId, withTrackClips } from "./track-clip.ts";
 
 const [VOLUME, PAN] = CLIP_SOUND.properties as [PropertySpec, PropertySpec];
+/**
+ * The marks along faders and meters, in dB: full scale, where green and yellow end, and the
+ * bottom. Faint and without numbers, so that they take no room.
+ */
+const TICKS = [0, -6, -18, Number.NEGATIVE_INFINITY] as const;
 /** How far an arrow key moves a fader, in dB; with Shift a tenth of that. */
 const KEY_DECIBELS = 1;
 /** How far an arrow key turns a knob; with Shift a tenth of that. */
@@ -109,6 +114,7 @@ function Meter({ id, label, painter }: { id: string; label: string; painter: Met
         type="button"
         className={styles.clipLight}
         aria-label={t("mixer.clipLight", { name: label })}
+        title={t("mixer.clipTip")}
         onClick={() => levels.resetClip(id)}
       />
       <div
@@ -118,6 +124,13 @@ function Meter({ id, label, painter }: { id: string; label: string; painter: Met
         aria-label={t("mixer.meter", { name: label })}
       >
         <div ref={cover} className={styles.meterCover} />
+        {TICKS.map((dbfs) => (
+          <div
+            key={dbfs}
+            className={styles.tick}
+            style={{ bottom: `${meterHeight(dbfs) * 100}%` }}
+          />
+        ))}
       </div>
     </div>
   );
@@ -215,7 +228,13 @@ function Fader(props: FaderProps) {
       }}
     >
       <div className={styles.faderGroove} />
-      <div className={styles.faderUnity} style={{ bottom: `${faderOfVolume(0) * 100}%` }} />
+      {TICKS.map((mark) => (
+        <div
+          key={mark}
+          className={mark === 0 ? styles.faderUnity : styles.faderTick}
+          style={{ bottom: `${faderOfVolume(mark) * 100}%` }}
+        />
+      ))}
       <div className={styles.faderCap} style={{ bottom: `${height * 100}%` }} />
     </div>
   );
@@ -550,7 +569,12 @@ function MasterReadout({ painter }: { painter: MeterPainter }) {
   );
   return (
     <div className={styles.readout}>
-      <div className={styles.reading} aria-label={t("mixer.loudness")} role="group">
+      <div
+        className={styles.reading}
+        aria-label={t("mixer.loudness")}
+        title={t("mixer.loudnessTip")}
+        role="group"
+      >
         <span ref={loudness} className={styles.readingValue} data-testid="mixer-loudness" />
         <span className={styles.readingUnit}>LUFS</span>
       </div>
@@ -558,7 +582,7 @@ function MasterReadout({ painter }: { painter: MeterPainter }) {
         type="button"
         className={styles.reading}
         aria-label={t("mixer.truePeak")}
-        title={t("mixer.truePeak")}
+        title={t("mixer.truePeakTip")}
         onClick={() => levels.resetTruePeak()}
       >
         <span ref={peak} className={styles.readingValue} data-testid="mixer-true-peak" />

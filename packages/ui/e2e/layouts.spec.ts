@@ -67,8 +67,10 @@ test.describe("the layouts that come with the editor", () => {
     await chooseLayout(page, "音频");
     await expect(content(page, "preview")).toBeVisible();
     await expect(content(page, "assets")).toBeVisible();
+    // The mixer in a column of its own: the properties of a track beside its fader.
     await expect(content(page, "mixer")).toBeVisible();
-    await expect(group(page, "mixer").locator('[data-tab="properties"]')).toBeAttached();
+    await expect(content(page, "properties")).toBeVisible();
+    await expect(group(page, "mixer").locator('[data-tab="properties"]')).toHaveCount(0);
     await expect(group(page, "timeline").locator('[data-tab="problems"]')).toBeVisible();
     // The keys of a selected track are there too.
     await expect(group(page, "timeline").locator('[data-tab="keyframes"]')).toBeAttached();

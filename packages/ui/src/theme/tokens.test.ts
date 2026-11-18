@@ -108,6 +108,8 @@ const PAIRS: readonly { text: string; on: Surface; large?: true }[] = [
   { text: "on-accent", on: "danger" },
   { text: "on-trial", on: "trial" },
   { text: "on-alert", on: "alert" },
+  { text: "on-muted", on: "muted" },
+  { text: "on-solo", on: "solo" },
   { text: "found-text", on: "star" },
   { text: "chip-text", on: ["accent-soft", "bg-input"] },
   { text: "chip-text", on: ["accent-soft", "bg-panel"] },

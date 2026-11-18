@@ -250,9 +250,21 @@
   background: var(--aq-accent-soft);
 }
 
+/* Muted and soloed as the mixer has them: one colour each, filled. */
+.muteButton[aria-pressed="true"] {
+  color: var(--aq-on-muted);
+  background: var(--aq-muted);
+}
+
 .soloButton {
   font-weight: 600;
   font-size: var(--aq-font-11);
+  line-height: 1;
+}
+
+.soloButton[aria-pressed="true"] {
+  color: var(--aq-on-solo);
+  background: var(--aq-solo);
 }
 
 .surface {

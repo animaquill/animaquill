@@ -204,6 +204,8 @@ test.describe("the mixer", () => {
     const properties = content(page, "properties");
     await expect(properties.getByRole("slider", { name: "音量" })).toBeVisible();
     await expect(properties.getByRole("slider", { name: "声像" })).toBeVisible();
+    // The fader stays in sight beside them.
+    await expect(fader(page)).toBeVisible();
     await tab(page, "keyframes").click();
     await expect(content(page, "keyframes").getByText("轨道", { exact: true })).toBeVisible();
     // The pan knob writes what the properties show.

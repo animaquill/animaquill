@@ -188,6 +188,14 @@
   background: var(--aq-text-muted);
 }
 
+.faderTick {
+  position: absolute;
+  right: 5px;
+  left: 5px;
+  height: 1px;
+  background: var(--aq-timeline-tick);
+}
+
 .faderCap {
   position: absolute;
   left: 50%;
@@ -252,6 +260,15 @@
   background: var(--aq-meter-bed);
 }
 
+/* Faint marks across a meter at 0, −6, −18 dBFS and the bottom, over the bar and its cover. */
+.tick {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 1px;
+  background: var(--aq-meter-tick);
+}
+
 .volumeBox {
   flex: none;
   width: 52px;
@@ -306,13 +323,13 @@
 }
 
 .mute[aria-pressed="true"] {
-  color: var(--aq-on-accent);
-  background: var(--aq-danger);
+  color: var(--aq-on-muted);
+  background: var(--aq-muted);
 }
 
 .solo[aria-pressed="true"] {
-  color: var(--aq-on-alert);
-  background: var(--aq-alert);
+  color: var(--aq-on-solo);
+  background: var(--aq-solo);
 }
 
 .masterBody {
