@@ -1,5 +1,5 @@
-import { PlaybackAudio, createPitchKeeper } from "@animaquill/audio";
-import { buildAudioPlan, type AudioPlan } from "@animaquill/core";
+import { PlaybackAudio, createMixer, createPitchKeeper } from "@animaquill/audio";
+import { buildMixPlan, type MixPlan } from "@animaquill/core";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession, useWorkbench } from "../app/context.ts";
@@ -27,6 +27,11 @@ export function PlaybackClock() {
         warned.add(file);
       },
       onNote: (kind, data) => diagnostics.note(kind, data),
+      // The mix runs in the audio thread, from the editor's own address as the next one.
+      mixer: async (context) => {
+        const { default: url } = await import("@animaquill/audio/mixer-worklet?worker&url");
+        return createMixer(context, url);
+      },
       // Its own file, because the editor runs no scripts that it did not serve itself.
       keepPitch: async (context) => {
         const { default: url } = await import("@animaquill/audio/stretch-worklet?worker&url");
@@ -40,7 +45,7 @@ export function PlaybackClock() {
   useEffect(() => {
     diagnostics.mark(playing ? "play" : "pause", { frame: timeline.frame });
     if (!playing || !store) return;
-    let plan: AudioPlan | undefined;
+    let plan: MixPlan | undefined;
     let start = timeline.playbackStart;
     let planChanged = true;
     const replan = () => {
@@ -58,10 +63,10 @@ export function PlaybackClock() {
     const followSound = (now: number) => {
       const { model, playbackStart } = timeline;
       if (!model || !playbackStart) return;
-      const next = planChanged ? buildAudioPlan(store.getState(), model.id, volumeOf) : plan;
+      const next = planChanged ? buildMixPlan(store.getState(), model.id, volumeOf) : plan;
       planChanged = false;
-      if (next && plan && playbackStart === start && PlaybackAudio.sameButGains(next, plan)) {
-        if (next !== plan) audio.changeGains(next);
+      if (next && plan && playbackStart === start && PlaybackAudio.onTheSpot(next, plan)) {
+        if (next !== plan) audio.change(next);
       } else if (next) {
         const { frame, since, rate } = playbackStart;
         const seconds = frame / model.rate.fps + ((now - since) / 1000) * rate;

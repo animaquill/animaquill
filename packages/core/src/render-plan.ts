@@ -45,6 +45,7 @@ import {
 import type { ProjectState, TimelineState } from "./model.ts";
 import { isSceneOwned } from "./registration.ts";
 import { sceneSourceOf, type SceneSource } from "./scene-plan.ts";
+import type { MixPlan } from "./mix-plan.ts";
 import type { SoundFade } from "./sound-fades.ts";
 import { madeSoundOf } from "./sound-plan.ts";
 import { stageOf, type Size } from "./view.ts";
@@ -756,45 +757,33 @@ function joinFade(join: JoinInEffect, way: SoundFade["way"]) {
   return { fade, from, to };
 }
 
-/**
- * Solo wins: as soon as one track has it, only those tracks sound. `volumeOf` is for what people are
- * trying out, which they have to hear: it gives the volume of a clip when that is not the saved one.
- * `only` is one track by itself, muted or not, as people pick it to look at.
- */
-export function buildAudioPlan(
+/** A clip with sound as a mix has it, with the decibels of its clip and of its track apart. */
+interface ClipSound {
+  readonly layer: Omit<SoundLayer, "gain">;
+  readonly track: AudioTrackState;
+  readonly decibels: number;
+}
+
+/** The sounds of the clips on these tracks, with their transitions and joins. */
+function clipSounds(
   state: ProjectState,
-  timelineId: string,
+  timeline: TimelineState,
+  tracks: ReadonlyMap<string, AudioTrackState>,
   volumeOf?: (clip: string) => number | undefined,
-  only?: string,
-): AudioPlan {
-  const timeline = entryOf(state.timelines, timelineId);
-  if (!timeline) return { sounds: [] };
-  const tracks = orderedTracks(timeline).filter(
-    (track): track is AudioTrackState => track.kind === "audio",
-  );
-  const soloing = tracks.some((track) => track.solo);
-  const audible = new Map(
-    tracks
-      .filter((track) =>
-        only === undefined ? (soloing ? track.solo : !track.muted) : track.id === only,
-      )
-      .map((track) => [track.id, track]),
-  );
+): ClipSound[] {
   // Joins win over the transitions at their edges, and have their clips sound past the cut.
   const joined = new Map<string, JoinInEffect>();
   for (const join of joinsInEffect(timeline)) {
-    if (!audible.has(join.track)) continue;
+    if (!tracks.has(join.track)) continue;
     joined.set(`${join.from.id} exit`, join).set(`${join.to.id} enter`, join);
   }
-  const sounds: SoundLayer[] = [];
+  const sounds: ClipSound[] = [];
   for (const clip of Object.values(timeline.clips)) {
-    const track = audible.get(clip.track);
+    const track = tracks.get(clip.track);
     if (!track || clip.hidden) continue;
     const file = soundFileOf(state, clip);
     if (file === undefined) continue;
-    const decibels =
-      numberOf(track.properties, "audio.volume", 0) +
-      (volumeOf?.(clip.id) ?? numberOf(effectiveProperties(clip), "audio.volume", 0));
+    const decibels = volumeOf?.(clip.id) ?? numberOf(effectiveProperties(clip), "audio.volume", 0);
     let start = clipStart(clip);
     let end = clipEnd(clip);
     const fades: SoundFade[] = [];
@@ -817,16 +806,87 @@ export function buildAudioPlan(
       if (fade) fades.push(fade);
     }
     sounds.push({
-      id: clip.id,
-      file,
-      start: toSeconds(start),
-      end: toSeconds(end),
-      // Its own clock, which reads less before the clip.
-      offset: toSeconds(subtract(clipOffset(clip), subtract(clipStart(clip), start))),
-      gain: gainOf(decibels),
-      ...(fades.length > 0 && { fades }),
-      ...(clip.source.kind === "sound" && { made: true as const }),
+      track,
+      decibels,
+      layer: {
+        id: clip.id,
+        file,
+        start: toSeconds(start),
+        end: toSeconds(end),
+        // Its own clock, which reads less before the clip.
+        offset: toSeconds(subtract(clipOffset(clip), subtract(clipStart(clip), start))),
+        ...(fades.length > 0 && { fades }),
+        ...(clip.source.kind === "sound" && { made: true as const }),
+      },
     });
   }
+  return sounds;
+}
+
+const audioTracksOf = (timeline: TimelineState) =>
+  orderedTracks(timeline).filter((track): track is AudioTrackState => track.kind === "audio");
+
+/**
+ * Solo wins: as soon as one track has it, only those tracks sound. `volumeOf` is for what people are
+ * trying out, which they have to hear: it gives the volume of a clip when that is not the saved one.
+ * `only` is one track by itself, muted or not, as people pick it to look at.
+ */
+export function buildAudioPlan(
+  state: ProjectState,
+  timelineId: string,
+  volumeOf?: (clip: string) => number | undefined,
+  only?: string,
+): AudioPlan {
+  const timeline = entryOf(state.timelines, timelineId);
+  if (!timeline) return { sounds: [] };
+  const tracks = audioTracksOf(timeline);
+  const soloing = tracks.some((track) => track.solo);
+  const audible = new Map(
+    tracks
+      .filter((track) =>
+        only === undefined ? (soloing ? track.solo : !track.muted) : track.id === only,
+      )
+      .map((track) => [track.id, track]),
+  );
+  const sounds = clipSounds(state, timeline, audible, volumeOf).map(
+    ({ layer, track, decibels }): SoundLayer => ({
+      ...layer,
+      gain: gainOf(numberOf(track.properties, "audio.volume", 0) + decibels),
+    }),
+  );
   return { sounds };
+}
+
+/**
+ * What the mix engine plays: as `buildAudioPlan`, but with every track of sound, muted or not, and
+ * the gain of a clip apart from that of its track, as the mix applies them one after the other.
+ */
+export function buildMixPlan(
+  state: ProjectState,
+  timelineId: string,
+  volumeOf?: (clip: string) => number | undefined,
+): MixPlan {
+  const timeline = entryOf(state.timelines, timelineId);
+  if (!timeline) return { sounds: [], tracks: [] };
+  const all = audioTracksOf(timeline);
+  const sounds = clipSounds(
+    state,
+    timeline,
+    new Map(all.map((track) => [track.id, track])),
+    volumeOf,
+  );
+  return {
+    sounds: sounds.map(({ layer, track, decibels }) => ({
+      ...layer,
+      // The same order of fields as a `SoundLayer` of `buildAudioPlan`, gain before fades.
+      gain: gainOf(decibels),
+      track: track.id,
+    })),
+    tracks: all.map((track) => ({
+      id: track.id,
+      gain: gainOf(numberOf(track.properties, "audio.volume", 0)),
+      muted: track.muted === true,
+      solo: track.solo === true,
+    })),
+  };
 }

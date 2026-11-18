@@ -150,6 +150,12 @@ if (root)
         aqSave: () => workbench.save(),
         // For measuring the mix on its own, without an editor around it.
         aqAudio: () => import("@animaquill/audio"),
+        // The worklet of the mixer as the editor loads it, and the mix from before the engine, for
+        // the browser test that compares them (`e2e/mix-parity.spec.ts`).
+        aqMixerModule: async () =>
+          (await import("@animaquill/audio/mixer-worklet?worker&url")).default,
+        aqOldMixer: () => import("./old-mixer.ts"),
+        aqMixLab: () => import("../../audio/src/engine/test-support.ts"),
         // For keeping a project folder in step in the browser tests, without the editor around it.
         aqFolders: async () => ({ host, ...(await import("./folder-lab.ts")) }),
         // How the proxies of the open project are, by the hash of each video, for the browser tests.

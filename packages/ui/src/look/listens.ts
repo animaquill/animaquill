@@ -7,7 +7,7 @@ import {
   type Measured,
   type MeterOptions,
 } from "@animaquill/audio";
-import { buildAudioPlan, type AudioPlan, type ProjectState } from "@animaquill/core";
+import { buildMixPlan, type MixPlan, type ProjectState } from "@animaquill/core";
 import type { Heard, ListenAnswer, ListenFailure, ListenRequest } from "@animaquill/tools";
 import type { PieceMixer } from "../export/sound.ts";
 import { SoundNotMade } from "../export/made-sounds.ts";
@@ -30,7 +30,7 @@ export interface MeterPort {
 export interface SoundListensOptions {
   /** A mixer of a plan as the export makes one: with the files and the sounds made by code. */
   readonly mixer: (
-    plan: AudioPlan,
+    plan: MixPlan,
     state: ProjectState,
     timeline: string,
     signal: AbortSignal,
@@ -119,11 +119,11 @@ export class SoundListens {
 
   /** Mixes and measures what a call asks, until it is done or the task stops. */
   async listen(request: ListenRequest, signal: AbortSignal): Promise<ListenAnswer> {
-    const full = buildAudioPlan(request.state, request.timeline);
-    const plan: AudioPlan =
+    const full = buildMixPlan(request.state, request.timeline);
+    const plan: MixPlan =
       request.only === undefined
         ? full
-        : { sounds: full.sounds.filter(({ id }) => id === request.only) };
+        : { ...full, sounds: full.sounds.filter(({ id }) => id === request.only) };
     const seconds = request.to - request.from;
     const meter = (this.#options.meter ?? workerMeter)({
       rate: MIX_SAMPLE_RATE,

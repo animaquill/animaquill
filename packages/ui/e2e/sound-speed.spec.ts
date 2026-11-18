@@ -50,8 +50,20 @@ test("mixing a long MP3 piece by piece only looks for the place once", async ({
       aqAudio: () => Promise<typeof import("../../audio/src/index.ts")>;
     };
     const audio = await aqAudio();
-    const sound = { id: "music", file: "music", start: 0, end: 3600, offset: 0, gain: 1 };
-    const mixer = new audio.SoundMixer({ sounds: [sound] }, { fileOf: async () => file });
+    const sound = {
+      id: "music",
+      file: "music",
+      track: "t",
+      start: 0,
+      end: 3600,
+      offset: 0,
+      gain: 1,
+    };
+    const track = { id: "t", gain: 1, muted: false, solo: false };
+    const mixer = new audio.SoundMixer(
+      { sounds: [sound], tracks: [track] },
+      { fileOf: async () => file },
+    );
     const out: { at: number; read: number; ms: number }[] = [];
     // One piece after the other, as an export mixes them: only the first finds its place.
     for (const at of [3560, 3570, 3580, 3590]) {

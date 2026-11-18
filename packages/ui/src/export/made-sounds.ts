@@ -1,4 +1,4 @@
-import { readSound, SoundFailed, type SoundSource } from "@animaquill/audio";
+import { SoundFailed, type SoundSource } from "@animaquill/audio";
 import { madeSoundsOf, type ProjectState, type SoundLayer } from "@animaquill/core";
 import type { MediaStore } from "@animaquill/host";
 import type { MadeSounds, SoundFailure } from "../media/sounds.ts";
@@ -51,6 +51,6 @@ export function madeSoundSource(options: {
     if (outcome.state === "failed") throw new SoundNotMade(layer, outcome.reason);
     const wav = await media.get(layer.file).catch(() => undefined);
     if (!wav) throw new SoundFailed(layer, "missing-file");
-    return (from, to) => readSound(wav, from, to);
+    return wav;
   };
 }

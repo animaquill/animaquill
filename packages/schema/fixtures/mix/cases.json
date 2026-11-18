@@ -1,0 +1,207 @@
+{
+ "about": "Plans of the mix engine with files made of signals (Signal in packages/audio/src/engine/test-support.ts), and the SHA-256 of their mix from the start, left then right, as 32-bit floats, little-endian. The same implementation gives the same hash; another one (another browser, Node) has to come within -90 dBFS of every sample. A changed hash is a changed sound: on purpose only, with a new name for what changed (audio-mixing.md 2.4 of AnimaQuill Cloud).",
+ "cases": [
+  {
+   "name": "a sine at 48 kHz through transitions and gains",
+   "seconds": 1,
+   "files": {
+    "f": {
+     "rate": 48000,
+     "channels": 2,
+     "seconds": 1.5,
+     "signal": "sine",
+     "frequency": 440
+    }
+   },
+   "plan": {
+    "tracks": [
+     {
+      "id": "t",
+      "gain": 0.8,
+      "muted": false,
+      "solo": false
+     }
+    ],
+    "sounds": [
+     {
+      "id": "a",
+      "file": "f",
+      "track": "t",
+      "start": 0.1,
+      "end": 0.9,
+      "offset": 0.2,
+      "gain": 0.7,
+      "fades": [
+       {
+        "use": "enter",
+        "way": "in",
+        "shape": "power",
+        "start": 0.1,
+        "end": 0.3,
+        "duration": 0.2
+       },
+       {
+        "use": "exit",
+        "way": "out",
+        "shape": "gain",
+        "start": 0.6,
+        "end": 0.9,
+        "duration": 0.30000000000000004
+       }
+      ]
+     }
+    ]
+   },
+   "sha256": "a1ced969ae756b4539d3cc1c9e735a55d9eae2b0c8d26c6cfeb27d36d29b31e5"
+  },
+  {
+   "name": "noise at 44.1 kHz in one channel, resampled",
+   "seconds": 1,
+   "files": {
+    "f": {
+     "rate": 44100,
+     "channels": 1,
+     "seconds": 1.5,
+     "signal": "noise",
+     "seed": 7
+    }
+   },
+   "plan": {
+    "tracks": [
+     {
+      "id": "t",
+      "gain": 1,
+      "muted": false,
+      "solo": false
+     }
+    ],
+    "sounds": [
+     {
+      "id": "a",
+      "file": "f",
+      "track": "t",
+      "start": 0,
+      "end": 1,
+      "offset": 0.123,
+      "gain": 0.5
+     }
+    ]
+   },
+   "sha256": "3609ba095ed10e115210161a49820337c50652bf94751488531c6390b7af7f19"
+  },
+  {
+   "name": "impulses at 96 kHz in 5.1, down-mixed and resampled",
+   "seconds": 1,
+   "files": {
+    "f": {
+     "rate": 96000,
+     "channels": 6,
+     "seconds": 1.2,
+     "signal": "impulse",
+     "every": 4801
+    }
+   },
+   "plan": {
+    "tracks": [
+     {
+      "id": "t",
+      "gain": 1,
+      "muted": false,
+      "solo": false
+     }
+    ],
+    "sounds": [
+     {
+      "id": "a",
+      "file": "f",
+      "track": "t",
+      "start": 0.05,
+      "end": 1,
+      "offset": 0,
+      "gain": 1
+     }
+    ]
+   },
+   "sha256": "b24b69004f735197d3270c366aade3477337c28078cbc2bd528c206ee5098460"
+  },
+  {
+   "name": "three tracks over each other, two soloed, at three rates",
+   "seconds": 1,
+   "files": {
+    "s": {
+     "rate": 48000,
+     "channels": 2,
+     "seconds": 1,
+     "signal": "sine",
+     "frequency": 220
+    },
+    "n": {
+     "rate": 44100,
+     "channels": 2,
+     "seconds": 1,
+     "signal": "noise",
+     "seed": 3
+    },
+    "l": {
+     "rate": 22050,
+     "channels": 2,
+     "seconds": 1,
+     "signal": "sine",
+     "frequency": 1000
+    }
+   },
+   "plan": {
+    "tracks": [
+     {
+      "id": "a",
+      "gain": 0.5,
+      "muted": false,
+      "solo": true
+     },
+     {
+      "id": "b",
+      "gain": 1,
+      "muted": false,
+      "solo": false
+     },
+     {
+      "id": "c",
+      "gain": 1,
+      "muted": true,
+      "solo": true
+     }
+    ],
+    "sounds": [
+     {
+      "id": "s",
+      "file": "s",
+      "track": "a",
+      "start": 0,
+      "end": 1,
+      "offset": 0,
+      "gain": 0.9
+     },
+     {
+      "id": "n",
+      "file": "n",
+      "track": "b",
+      "start": 0,
+      "end": 1,
+      "offset": 0,
+      "gain": 1
+     },
+     {
+      "id": "l",
+      "file": "l",
+      "track": "c",
+      "start": 0.25,
+      "end": 0.75,
+      "offset": 0.1,
+      "gain": 0.6
+     }
+    ]
+   },
+   "sha256": "2c0d718d0f9a76e8918347ee3640b9df38be5cbddf0372baaf37ac075a8245dd"
+  }
+ ]
+}

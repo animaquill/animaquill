@@ -1,219 +1,185 @@
-import type { AudioPlan, SoundLayer } from "@animaquill/core";
 import { describe, expect, it } from "vitest";
-import type { SoundChunk } from "./index.ts";
-import { MIX_SAMPLE_RATE, placementsIn, SoundFailed, SoundMixer, type MixContext } from "./mix.ts";
+import { MixEngine } from "./engine/engine.ts";
+import type { DecodedChunk } from "./engine/samples.ts";
+import { chunksOf, planOf, sound, storeOf, track } from "./engine/test-support.ts";
+import { MIX_SAMPLE_RATE, SoundFailed, SoundMixer } from "./mix.ts";
+import { portMixer, serveMixer, type MixPort } from "./mix-port.ts";
 
-const sound = (changes: Partial<SoundLayer> = {}): SoundLayer => ({
-  id: "s",
-  file: "tone",
-  start: 1,
-  end: 3,
-  offset: 0.5,
-  gain: 0.5,
-  ...changes,
-});
+const RATE = MIX_SAMPLE_RATE;
+/** Thirty seconds of a file, in chunks of a tenth of a second. */
+const FILE = chunksOf({ frames: 30 * RATE, size: RATE / 10 });
 
-interface Started {
-  readonly buffer: unknown;
-  readonly when: number;
-  readonly offset: number;
-  readonly duration: number;
-  readonly gain: number;
-}
-
-/** A context that remembers what was asked of it, and renders nothing. */
-function fakeContext() {
-  const started: Started[] = [];
-  const made: { channels: number; length: number; rate: number }[] = [];
-  const create = (channels: number, length: number, rate: number): MixContext => {
-    made.push({ channels, length, rate });
-    return {
-      destination: {} as AudioDestinationNode,
-      createBuffer: () => {
-        throw new Error("Nothing here has transitions");
-      },
-      createGain() {
-        const gain = { gain: { value: 1 }, connect() {} };
-        current = gain;
-        return gain as unknown as GainNode;
-      },
-      createBufferSource() {
-        const node = {
-          buffer: undefined as unknown,
-          connect() {},
-          start(when: number, offset: number, duration: number) {
-            started.push({ buffer: node.buffer, when, offset, duration, gain: current.gain.value });
-          },
-        };
-        return node as unknown as AudioBufferSourceNode;
-      },
-      startRendering: async () => ({ length }) as AudioBuffer,
-    };
-  };
-  let current = { gain: { value: 1 } };
-  return { create, started, made };
-}
-
-/** A file read in chunks of one second, from where it was asked. */
-function chunked(asked: { from: number; to: number }[] = []) {
-  return async function* read(_: Blob, from: number, to: number): AsyncGenerator<SoundChunk> {
+/** Reads the chunks of a file that have something from `from` up to `to`, in its seconds. */
+function reader(
+  chunks: readonly DecodedChunk[] = FILE,
+  asked: { from: number; to: number }[] = [],
+) {
+  return async function* read(_: Blob, from: number, to: number): AsyncGenerator<DecodedChunk> {
     asked.push({ from, to });
-    for (let second = Math.floor(from); second < to; second += 1) {
-      yield { buffer: { second } as unknown as AudioBuffer, timestamp: second, duration: 1 };
+    for (const chunk of chunks) {
+      const start = chunk.start / chunk.rate;
+      const end = start + (chunk.channels[0]?.length ?? 0) / chunk.rate;
+      if (end > from && start < to) yield chunk;
     }
   };
 }
 
-const plan = (...sounds: SoundLayer[]): AudioPlan => ({ sounds });
-const file = async () => new Blob(["tone"]);
+const file = async () => new Blob(["sound"]);
 
-describe("what a piece of the timeline has to hear", () => {
-  it("is the part of each sound in it", () => {
-    expect(placementsIn(plan(sound()), 0, 10)).toEqual([{ sound: sound(), from: 1, to: 3 }]);
-    expect(placementsIn(plan(sound()), 2, 10)[0]).toMatchObject({ from: 2, to: 3 });
-    expect(placementsIn(plan(sound()), 0, 1.5)[0]).toMatchObject({ from: 1, to: 1.5 });
+/** What the engine gives for the whole of a plan, with all of its file at once. */
+function wanted(plan: Parameters<typeof planOf>[0], from: number, frames: number) {
+  const store = storeOf(FILE);
+  const engine = new MixEngine(planOf(plan), () => store);
+  const left = new Float32Array(frames);
+  const right = new Float32Array(frames);
+  engine.render(from, frames, left, right);
+  return { left, right };
+}
+
+describe("the mix of an export", () => {
+  it("is what the engine gives, piece by piece", async () => {
+    const sounds = [sound({ start: 1, end: 23, offset: 0.5, gain: 0.5 })];
+    const mixer = new SoundMixer(planOf(sounds), { fileOf: file, read: reader() });
+    const whole = wanted(sounds, 0, 25 * RATE);
+    for (const from of [0, 10, 20]) {
+      const frames = Math.min(10, 25 - from) * RATE;
+      const piece = await mixer.mix(from, frames);
+      expect(piece.length).toBe(frames);
+      expect(piece.numberOfChannels).toBe(2);
+      expect(piece.getChannelData(0)).toEqual(
+        whole.left.subarray(from * RATE, from * RATE + frames),
+      );
+      expect(piece.getChannelData(1)).toEqual(
+        whole.right.subarray(from * RATE, from * RATE + frames),
+      );
+    }
   });
 
-  it("is nothing for sounds before or after it, or that cannot be heard", () => {
-    expect(placementsIn(plan(sound()), 3, 10)).toEqual([]);
-    expect(placementsIn(plan(sound()), 0, 1)).toEqual([]);
-    expect(placementsIn(plan(sound({ gain: 0 })), 0, 10)).toEqual([]);
-  });
-});
-
-describe("a mix", () => {
-  it("has the length it was asked for, at the rate of the mix", async () => {
-    const context = fakeContext();
-    const mixer = new SoundMixer(plan(), { fileOf: file, createContext: context.create });
-    const mixed = await mixer.mix(0, 480_000);
-    expect(mixed.length).toBe(480_000);
-    expect(context.made).toEqual([{ channels: 2, length: 480_000, rate: MIX_SAMPLE_RATE }]);
-  });
-
-  it("reads each sound from its offset, and puts it at its place with its volume", async () => {
-    const context = fakeContext();
+  it("reads a sound once over all the pieces it is in, front to back, from its offset", async () => {
     const asked: { from: number; to: number }[] = [];
-    const mixer = new SoundMixer(plan(sound()), {
+    const mixer = new SoundMixer(planOf([sound({ start: 1, end: 28, offset: 0.5 })]), {
       fileOf: file,
-      read: chunked(asked),
-      createContext: context.create,
+      read: reader(FILE, asked),
     });
-    await mixer.mix(0, 10 * MIX_SAMPLE_RATE);
-    // Seconds 1 to 3 of the timeline are seconds 0.5 to 2.5 of the file.
-    expect(asked).toEqual([{ from: 0.5, to: 2.5 }]);
-    expect(context.started).toEqual([
-      { buffer: { second: 0 }, when: 1, offset: 0.5, duration: 0.5, gain: 0.5 },
-      { buffer: { second: 1 }, when: 1.5, offset: 0, duration: 1, gain: 0.5 },
-      { buffer: { second: 2 }, when: 2.5, offset: 0, duration: 0.5, gain: 0.5 },
-    ]);
-  });
-
-  it("puts a piece that starts later at the start of its own samples", async () => {
-    const context = fakeContext();
-    const mixer = new SoundMixer(plan(sound({ start: 8, end: 14, offset: 0 })), {
-      fileOf: file,
-      read: chunked(),
-      createContext: context.create,
-    });
-    await mixer.mix(10, 10 * MIX_SAMPLE_RATE);
-    // Second 10 of the timeline is the first sample of this piece, and second 2 of the file.
-    expect(context.started[0]).toMatchObject({ when: 0, offset: 0, duration: 1 });
-    expect(context.started.map(({ buffer }) => buffer)).toEqual([
-      { second: 2 },
-      { second: 3 },
-      { second: 4 },
-      { second: 5 },
-    ]);
-  });
-
-  it("reads a sound once over all the pieces it is in, front to back", async () => {
-    const context = fakeContext();
-    const asked: { from: number; to: number }[] = [];
-    const long = sound({ start: 0, end: 30, offset: 0 });
-    const mixer = new SoundMixer(plan(long), {
-      fileOf: file,
-      read: chunked(asked),
-      createContext: context.create,
-    });
-    for (const from of [0, 10, 20]) await mixer.mix(from, 10 * MIX_SAMPLE_RATE);
-    expect(asked).toEqual([{ from: 0, to: 30 }]);
-    expect(context.started.map(({ buffer }) => (buffer as { second: number }).second)).toEqual(
-      Array.from({ length: 30 }, (_, second) => second),
-    );
-  });
-
-  it("puts a chunk that goes over the end of a piece into both", async () => {
-    const context = fakeContext();
-    // Chunks of a second that start half a second into the timeline.
-    const mixer = new SoundMixer(plan(sound({ start: 0.5, end: 20, offset: 0 })), {
-      fileOf: file,
-      read: chunked(),
-      createContext: context.create,
-    });
-    await mixer.mix(0, 10 * MIX_SAMPLE_RATE);
-    await mixer.mix(10, 10 * MIX_SAMPLE_RATE);
-    const across = context.started.filter(
-      ({ buffer }) => (buffer as { second: number }).second === 9,
-    );
-    expect(across).toEqual([
-      expect.objectContaining({ when: 9.5, offset: 0, duration: 0.5 }),
-      expect.objectContaining({ when: 0, offset: 0.5, duration: 0.5 }),
-    ]);
+    for (const from of [0, 10, 20]) await mixer.mix(from, 10 * RATE);
+    // A little around what it plays, for resampling.
+    expect(asked).toEqual([{ from: 0.49, to: 27.51 }]);
   });
 
   it("reads again from where it is asked when that is further back", async () => {
     const asked: { from: number; to: number }[] = [];
-    const mixer = new SoundMixer(plan(sound({ start: 0, end: 30, offset: 0 })), {
+    const mixer = new SoundMixer(planOf([sound({ end: 30 })]), {
       fileOf: file,
-      read: chunked(asked),
-      createContext: fakeContext().create,
+      read: reader(FILE, asked),
     });
-    await mixer.mix(10, 10 * MIX_SAMPLE_RATE);
-    await mixer.mix(0, 10 * MIX_SAMPLE_RATE);
-    expect(asked).toEqual([
-      { from: 10, to: 30 },
-      { from: 0, to: 30 },
-    ]);
+    await mixer.mix(10, 10 * RATE);
+    await mixer.mix(0, 10 * RATE);
+    expect(asked.map(({ from }) => from)).toEqual([9.99, 0]);
+  });
+
+  it("does not read what nobody hears", async () => {
+    const asked: { from: number; to: number }[] = [];
+    const plan = planOf(
+      [sound({ end: 30 }), sound({ id: "m", track: "u", end: 30 })],
+      [track({ gain: 0 }), track({ id: "u", muted: true })],
+    );
+    const mixer = new SoundMixer(plan, { fileOf: file, read: reader(FILE, asked) });
+    expect(mixer.silent).toBe(true);
+    const piece = await mixer.mix(0, RATE);
+    expect(piece.getChannelData(0).every((value) => value === 0)).toBe(true);
+    expect(asked).toEqual([]);
   });
 
   it("stops when the file of a sound is missing, and says which", async () => {
-    const mixer = new SoundMixer(plan(sound()), {
-      fileOf: async () => undefined,
-      createContext: fakeContext().create,
-    });
-    const error = await mixer.mix(0, 480_000).catch((reason: unknown) => reason);
+    const mixer = new SoundMixer(planOf([sound()]), { fileOf: async () => undefined });
+    const error = await mixer.mix(0, RATE).catch((reason: unknown) => reason);
     expect(error).toBeInstanceOf(SoundFailed);
     expect(error).toMatchObject({ reason: "missing-file", sound: sound() });
   });
 
   it("stops when a sound cannot be decoded", async () => {
-    const mixer = new SoundMixer(plan(sound()), {
+    const mixer = new SoundMixer(planOf([sound()]), {
       fileOf: file,
       // oxlint-disable-next-line require-yield -- it fails before it yields
       read: async function* broken() {
         throw new Error("not a sound");
       },
-      createContext: fakeContext().create,
     });
-    await expect(mixer.mix(0, 480_000)).rejects.toMatchObject({ reason: "cannot-decode" });
+    await expect(mixer.mix(0, RATE)).rejects.toMatchObject({ reason: "cannot-decode" });
   });
 
   it("takes sounds from elsewhere when something knows them, such as sounds made by code", async () => {
-    const context = fakeContext();
-    const made = sound({ file: "made-by-code" });
-    const mixer = new SoundMixer(plan(made), {
+    const made = sound({ file: "made-by-code", made: true });
+    const files: string[] = [];
+    const mixer = new SoundMixer(planOf([made]), {
       fileOf: async () => undefined,
-      source: async (layer) =>
-        layer === made ? (from, to) => chunked()(new Blob(), from, to) : undefined,
-      createContext: context.create,
+      source: async (layer) => (layer === made ? new Blob(["made"]) : undefined),
+      read: async function* (blob, from, to) {
+        files.push(await blob.text());
+        yield* reader()(blob, from, to);
+      },
     });
-    await mixer.mix(0, 480_000);
-    expect(context.started).toHaveLength(3);
+    const piece = await mixer.mix(0, RATE);
+    expect(files).toEqual(["made"]);
+    expect(piece.getChannelData(0)).toEqual(wanted([made], 0, RATE).left);
+  });
+});
+
+/** Two ends of a channel, as a worker and its page have. */
+function ports(): [MixPort, MixPort] {
+  const { port1, port2 } = new MessageChannel();
+  port1.start();
+  port2.start();
+  return [port1 as unknown as MixPort, port2 as unknown as MixPort];
+}
+
+describe("a mixer in a worker", () => {
+  it("mixes what the mixer here would", async () => {
+    const [page, worker] = ports();
+    serveMixer(worker, reader());
+    const sounds = [sound({ start: 1, end: 12, offset: 0.5 })];
+    const mixer = portMixer(page, planOf(sounds), { fileOf: file }, () => {});
+    expect(mixer.silent).toBe(false);
+    const first = await mixer.mix(0, 10 * RATE);
+    const second = await mixer.mix(10, 2 * RATE);
+    const whole = wanted(sounds, 0, 12 * RATE);
+    expect(first.getChannelData(0)).toEqual(whole.left.subarray(0, 10 * RATE));
+    expect(second.getChannelData(1)).toEqual(whole.right.subarray(10 * RATE));
+    mixer.close();
   });
 
-  it("knows when there is nothing to hear", () => {
-    expect(new SoundMixer(plan(), { fileOf: file }).silent).toBe(true);
-    expect(new SoundMixer(plan(sound({ gain: 0 })), { fileOf: file }).silent).toBe(true);
-    expect(new SoundMixer(plan(sound()), { fileOf: file }).silent).toBe(false);
+  it("fails with the error of the page when finding a file failed there", async () => {
+    const [page, worker] = ports();
+    serveMixer(worker, reader());
+    class NotMade extends Error {}
+    const failure = new NotMade("not made");
+    const mixer = portMixer(
+      page,
+      planOf([sound()]),
+      { fileOf: file, source: () => Promise.reject(failure) },
+      () => {},
+    );
+    await expect(mixer.mix(0, RATE)).rejects.toBe(failure);
+    mixer.close();
+  });
+
+  it("says which sound is missing", async () => {
+    const [page, worker] = ports();
+    serveMixer(worker, reader());
+    const mixer = portMixer(page, planOf([sound()]), { fileOf: async () => undefined }, () => {});
+    const error = await mixer.mix(0, RATE).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(SoundFailed);
+    expect(error).toMatchObject({ reason: "missing-file", sound: { id: "s" } });
+    mixer.close();
+  });
+
+  it("fails what it was asked once the worker stopped", async () => {
+    const [page] = ports();
+    const mixer = portMixer(page, planOf([sound()]), { fileOf: file }, () => {});
+    const asked = mixer.mix(0, RATE);
+    mixer.fail(new Error("gone"));
+    await expect(asked).rejects.toThrow("gone");
+    await expect(mixer.mix(0, RATE)).rejects.toThrow("gone");
+    mixer.close();
   });
 });

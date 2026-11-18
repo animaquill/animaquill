@@ -11,7 +11,9 @@
     "./registration": "./src/registration.ts",
     "./handles": "./src/handles.ts",
     "./disk-folder": "./src/disk-folder.ts",
-    "./failure-samples": "./src/failure-samples.ts"
+    "./failure-samples": "./src/failure-samples.ts",
+    "./mix-plan": "./src/mix-plan.ts",
+    "./sound-fades": "./src/sound-fades.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.node.json"

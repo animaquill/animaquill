@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { createProject, type PropertyValue } from "@animaquill/schema";
 import { sample } from "./curve.ts";
-import { orderedTracks, type ClipState, type ProjectState } from "./model.ts";
+import { orderedTracks, type ClipState, type ProjectState, type TrackState } from "./model.ts";
 import {
   buildAudioPlan,
+  buildMixPlan,
   buildRenderPlan,
   channelOf,
   effectiveProperties,
   samePlan,
 } from "./render-plan.ts";
+import { audibleTracks } from "./mix-plan.ts";
 import { ProjectStore } from "./store.ts";
 import { clockOf, opacityAt } from "./view.ts";
 
@@ -548,5 +550,67 @@ describe("the audio plan", () => {
   it("is empty for a timeline that is gone", () => {
     const { store } = withSound();
     expect(buildAudioPlan(store.getState(), "nothing").sounds).toEqual([]);
+    expect(buildMixPlan(store.getState(), "nothing")).toEqual({ sounds: [], tracks: [] });
+  });
+});
+
+describe("the plan of the mix engine", () => {
+  /** Two tracks of sound, the first with a volume of its own, as only a file can have it so far. */
+  function withTracks() {
+    const context = setup();
+    const { run, addClip } = context;
+    run("track.add", { timeline: "main", id: "one", kind: "audio" });
+    run("track.add", { timeline: "main", id: "two", kind: "audio" });
+    const source = { kind: "audio", media: { asset: "a" } };
+    addClip("first", "one", { source, offset: "1/2", properties: { "audio.volume": -3 } });
+    addClip("second", "two", { source, properties: { "audio.volume": -20 } });
+    const louder = (state: ProjectState): ProjectState => {
+      const main = state.timelines.main;
+      if (!main) throw new Error("no timeline");
+      const one = { ...main.tracks.one, properties: { "audio.volume": -6 } } as TrackState;
+      const tracks = { ...main.tracks, one };
+      return { ...state, timelines: { ...state.timelines, main: { ...main, tracks } } };
+    };
+    return { ...context, louder };
+  }
+
+  it("is the audio plan, with the gains of clip and track apart", () => {
+    const { store, louder } = withTracks();
+    const state = louder(store.getState());
+    const audio = buildAudioPlan(state, "main").sounds;
+    const mix = buildMixPlan(state, "main");
+    // After the track of sound that a new project has.
+    expect(mix.tracks.slice(-2)).toEqual([
+      { id: "one", gain: 10 ** (-6 / 20), muted: false, solo: false },
+      { id: "two", gain: 1, muted: false, solo: false },
+    ]);
+    expect(mix.sounds.map(({ gain: _gain, track: _track, ...rest }) => rest)).toEqual(
+      audio.map(({ gain: _gain, ...rest }) => rest),
+    );
+    expect(mix.sounds.map(({ track }) => track)).toEqual(["one", "two"]);
+    for (const [index, sound] of mix.sounds.entries()) {
+      const track = mix.tracks.find(({ id }) => id === sound.track);
+      expect(sound.gain * (track?.gain ?? 0)).toBeCloseTo(audio[index]?.gain ?? 0, 12);
+    }
+    expect(mix.sounds[0]?.gain).toBeCloseTo(10 ** (-3 / 20), 12);
+  });
+
+  it("keeps muted tracks and their sounds, which the engine leaves out", () => {
+    const { run, store } = withTracks();
+    run("track.update", { timeline: "main", track: "one", changes: { muted: true } });
+    const mix = buildMixPlan(store.getState(), "main");
+    expect(mix.sounds.map(({ id }) => id)).toEqual(["first", "second"]);
+    expect(audibleTracks(mix.tracks).has("one")).toBe(false);
+    expect(audibleTracks(mix.tracks).has("two")).toBe(true);
+    run("track.update", { timeline: "main", track: "one", changes: { solo: true } });
+    expect([...audibleTracks(buildMixPlan(store.getState(), "main").tracks)]).toEqual(["one"]);
+  });
+
+  it("has what people try out", () => {
+    const { store } = withTracks();
+    const mix = buildMixPlan(store.getState(), "main", (clip) =>
+      clip === "second" ? 0 : undefined,
+    );
+    expect(mix.sounds[1]?.gain).toBe(1);
   });
 });

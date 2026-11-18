@@ -157,47 +157,63 @@ function countRuns(page: Page) {
   return () => runs;
 }
 
-/** Keeps what gets played, to be able to say what it sounded like. */
+/**
+ * Keeps what gets played, to be able to say what it sounded like: the samples the page hands to the
+ * mixer in the audio thread (`MixerMessage` of `@animaquill/audio`), and the gains it plays them at.
+ */
 const hearEverything = (page: Page) =>
   page.addInitScript(() => {
     if (window !== window.top) return;
-    const { start } = AudioBufferSourceNode.prototype;
-    const ears = window as unknown as { heard: { peak: number; channels: number; rate: number }[] };
+    const { postMessage } = MessagePort.prototype;
+    const ears = window as unknown as {
+      heard: { peak: number; channels: number; rate: number }[];
+      gains: number[][];
+    };
     ears.heard = [];
-    AudioBufferSourceNode.prototype.start = function hear(...args) {
-      const { buffer } = this;
-      let peak = 0;
-      for (const sample of buffer?.getChannelData(0) ?? []) peak = Math.max(peak, Math.abs(sample));
-      ears.heard.push({
-        peak,
-        channels: buffer?.numberOfChannels ?? 0,
-        rate: buffer?.sampleRate ?? 0,
-      });
-      start.apply(this, args);
+    ears.gains = [];
+    MessagePort.prototype.postMessage = function hear(this: MessagePort, ...args: unknown[]) {
+      const [message] = args as [
+        {
+          kind?: string;
+          rate?: number;
+          channels?: Float32Array[];
+          plan?: {
+            sounds: { gain: number; track: string }[];
+            tracks: { id: string; gain: number }[];
+          };
+        },
+      ];
+      if (message?.kind === "chunk") {
+        let peak = 0;
+        for (const sample of message.channels?.[0] ?? []) peak = Math.max(peak, Math.abs(sample));
+        ears.heard.push({
+          peak,
+          channels: message.channels?.length ?? 0,
+          rate: message.rate ?? 0,
+        });
+      }
+      if (message?.kind === "play" && message.plan) {
+        const { sounds, tracks } = message.plan;
+        ears.gains.push(
+          sounds.map(
+            ({ gain, track }) => gain * (tracks.find(({ id }) => id === track)?.gain ?? 1),
+          ),
+        );
+      }
+      return (postMessage as (...all: unknown[]) => void).apply(this, args);
     };
   });
 
-/** Keeps what the gains of the sound were when something starts playing. */
+/** What the gains of the sound were when it started playing. */
 async function gainsPlayed(page: Page, start: () => Promise<void>): Promise<readonly number[]> {
+  const played = () =>
+    page.evaluate(() => (window as unknown as { gains: number[][] }).gains.at(-1) ?? []);
   await page.evaluate(() => {
-    const ears = window as unknown as { gains: GainNode[] };
-    ears.gains = [];
-    const { createGain } = AudioContext.prototype;
-    AudioContext.prototype.createGain = function keep() {
-      const node = createGain.call(this);
-      ears.gains.push(node);
-      return node;
-    };
+    (window as unknown as { gains: number[][] }).gains = [];
   });
   await start();
-  await expect
-    .poll(() => page.evaluate(() => (window as unknown as { gains: GainNode[] }).gains.length))
-    .toBeGreaterThan(0);
-  return page.evaluate(() =>
-    (window as unknown as { gains: GainNode[] }).gains.map(
-      ({ gain }) => Math.round(gain.value * 1e6) / 1e6,
-    ),
-  );
+  await expect.poll(async () => (await played()).length).toBeGreaterThan(0);
+  return (await played()).map((gain) => Math.round(gain * 1e6) / 1e6);
 }
 
 const heard = (page: Page) =>

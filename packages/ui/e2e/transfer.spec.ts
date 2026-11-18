@@ -380,12 +380,13 @@ test.describe("a project that travels", () => {
   });
 
   test("comes back whole after being exported, removed and imported", async ({ page }) => {
+    // Counts the samples the page hands to the mixer in the audio thread.
     await page.addInitScript(() => {
-      const { start } = AudioBufferSourceNode.prototype;
+      const { postMessage } = MessagePort.prototype;
       window.sounds = 0;
-      AudioBufferSourceNode.prototype.start = function count(...args) {
-        window.sounds += 1;
-        start.apply(this, args);
+      MessagePort.prototype.postMessage = function count(this: MessagePort, ...args: unknown[]) {
+        if ((args[0] as { kind?: string } | undefined)?.kind === "chunk") window.sounds += 1;
+        return (postMessage as (...all: unknown[]) => void).apply(this, args);
       };
     });
     await page.reload();

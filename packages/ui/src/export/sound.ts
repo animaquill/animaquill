@@ -1,4 +1,9 @@
-import { MIX_CHANNELS, MIX_PIECE_SECONDS, MIX_SAMPLE_RATE } from "@animaquill/audio";
+import {
+  MIX_CHANNELS,
+  MIX_PIECE_SECONDS,
+  MIX_SAMPLE_RATE,
+  type MixedPiece,
+} from "@animaquill/audio";
 import type { EncodedFrame, SoundCodecName } from "@animaquill/media";
 
 /** Enough for music, as streaming services have it for stereo. */
@@ -51,7 +56,7 @@ export async function chooseSoundEncoding(
 
 /** What a mixer gives: a piece of the timeline as samples. */
 export interface PieceMixer {
-  mix(from: number, frames: number): Promise<AudioBuffer>;
+  mix(from: number, frames: number): Promise<MixedPiece>;
   /** Lets go of the files it reads. */
   close?(): void;
 }
@@ -123,7 +128,7 @@ export class SoundTrackEncoder {
     if (this.#failed !== undefined) throw this.#failed;
   }
 
-  #encode(piece: AudioBuffer, at: number): void {
+  #encode(piece: MixedPiece, at: number): void {
     const frames = piece.length;
     const data = new Float32Array(frames * MIX_CHANNELS);
     for (let channel = 0; channel < MIX_CHANNELS; channel += 1) {

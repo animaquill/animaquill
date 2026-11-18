@@ -103,10 +103,10 @@ import { OverlayEditor } from "../overlay/editor.ts";
 import { SceneHandles } from "../overlay/scene-handles.ts";
 import { CoverMaker, CoverUploads, canvasEncoder, type CoverShot } from "../export/cover.ts";
 import { ExportCompositor, exportCompositorOptions } from "../export/compositor.ts";
-import { SoundMixer } from "@animaquill/audio";
 import { FrameLooks } from "../look/looks.ts";
 import { SoundListens } from "../look/listens.ts";
 import { madeSoundSource } from "../export/made-sounds.ts";
+import { workerMixer } from "../export/worker-mixer.ts";
 import { StillExport } from "../export/still.ts";
 import { VideoExport } from "../export/video.ts";
 import { MediaLibrary } from "../media/library.ts";
@@ -2825,7 +2825,7 @@ export class Workbench {
           sounds: this.sounds,
           signal,
         });
-        return new SoundMixer(plan, { fileOf: (hash) => media.get(hash), source });
+        return workerMixer(plan, { fileOf: (hash) => media.get(hash), source });
       },
     });
   }

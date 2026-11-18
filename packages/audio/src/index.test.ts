@@ -1,112 +1,111 @@
-import type { AudioPlan, SoundLayer } from "@animaquill/core";
-import { describe, expect, it, vi } from "vitest";
-import {
-  PlaybackAudio,
-  backwardsOf,
-  joined,
-  type PitchKeeper,
-  type PlaybackAudioOptions,
-  type SoundChunk,
-} from "./index.ts";
+import type { MixPlan, MixSound } from "@animaquill/core";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MixerCore, type MixerMessage, type MixerReport } from "./engine/mixer-core.ts";
+import { MIX_RATE } from "./engine/resample.ts";
+import type { DecodedChunk } from "./engine/samples.ts";
+import { chunksOf, inFile, planOf, sound, track } from "./engine/test-support.ts";
+import { PlaybackAudio, type PitchKeeper, type PlaybackAudioOptions } from "./index.ts";
+import type { MixerNode } from "./mixer.ts";
 
-interface Started {
-  readonly when: number;
-  readonly offset: number;
-  readonly duration: number;
-  readonly stop: ReturnType<typeof vi.fn>;
-  /** How fast it plays. */
-  readonly rate: number;
-  readonly buffer: unknown;
-}
-
-/** Enough of an AudioBuffer for what playing backwards does to one. */
-function fakeBuffer(channels: number, length: number, sampleRate: number) {
-  const data = Array.from({ length: channels }, () => new Float32Array(length));
-  return {
-    numberOfChannels: channels,
-    length,
-    sampleRate,
-    duration: length / sampleRate,
-    getChannelData: (channel: number) => data[channel] as Float32Array,
-  };
-}
+const QUANTUM = 128;
+const sampleOf = (seconds: number) => Math.round(seconds * MIX_RATE);
+const f32 = Math.fround;
+/** Four seconds of a file, in chunks of a tenth of a second. */
+const FILE = chunksOf({ frames: 4 * MIX_RATE, size: MIX_RATE / 10 });
 
 function fakeContext(latency = 0) {
-  const started: Started[] = [];
-  const gains: number[] = [];
-  const context = {
-    state: "running",
+  return {
+    state: "running" as AudioContextState,
     currentTime: 10,
+    sampleRate: MIX_RATE,
     outputLatency: latency,
     baseLatency: 0,
     destination: { name: "speakers" },
     resume: async () => {},
-    createBuffer: fakeBuffer,
     close: async () => {},
-    createGain() {
-      const gain = {
-        gain: { value: 1 },
-        to: undefined as unknown,
-        connect(to: unknown) {
-          gain.to = to;
-        },
-        disconnect() {},
-      };
-      queueMicrotask(() => gains.push(gain.gain.value));
-      return gain;
-    },
-    createBufferSource() {
-      const stop = vi.fn();
-      const node = {
-        buffer: undefined as unknown,
-        playbackRate: { value: 1 },
-        connect() {},
-        addEventListener() {},
-        stop,
-        start(when: number, offset: number, duration: number) {
-          const { buffer } = node;
-          started.push({ when, offset, duration, stop, rate: node.playbackRate.value, buffer });
-        },
-      };
-      return node;
-    },
   };
-  return { context, started, gains };
 }
 
-const chunks = (...times: number[]) =>
-  times.map((timestamp) => ({ buffer: {}, timestamp, duration: 1 }) as unknown as SoundChunk);
-
-const sound = (changes: Partial<SoundLayer> = {}): SoundLayer => ({
-  id: "s",
-  file: "f",
-  start: 0,
-  end: 3,
-  offset: 0,
-  gain: 1,
-  ...changes,
-});
-
-const planOf = (...sounds: SoundLayer[]): AudioPlan => ({ sounds });
+/**
+ * The mixer of the audio thread, run right here: `quanta` plays some, as the audio thread would,
+ * and `heard` has what the engine gave, by sample of the timeline.
+ */
+function fakeMixer(context: ReturnType<typeof fakeContext>) {
+  const handlers: ((report: MixerReport) => void)[] = [];
+  const sent: MixerMessage[] = [];
+  const heard = new Map<number, [number, number]>();
+  const core = new MixerCore((report) => {
+    if (report.kind === "captured") {
+      for (let index = 0; index < report.left.length; index += 1) {
+        const at = report.sample + index * report.rate;
+        heard.set(at, [report.left[index] ?? 0, report.right[index] ?? 0]);
+      }
+    }
+    for (const handler of handlers) handler(report);
+  }, MIX_RATE);
+  core.receive({ kind: "capture", on: true });
+  const output = {
+    to: undefined as unknown,
+    connect(to: unknown) {
+      output.to = to;
+    },
+    disconnect() {
+      output.to = undefined;
+    },
+  };
+  const node: MixerNode = {
+    output: output as unknown as AudioNode,
+    send(message) {
+      sent.push(message);
+      core.receive(message);
+    },
+    listen: (handler) => handlers.push(handler),
+  };
+  const left = new Float32Array(QUANTUM);
+  const right = new Float32Array(QUANTUM);
+  /** Plays for `seconds` of the context, a quantum at a time, and lets its clock go on. */
+  let frame = Math.round(context.currentTime * MIX_RATE);
+  let until = frame;
+  const quanta = (seconds: number) => {
+    until += seconds * MIX_RATE;
+    while (frame + QUANTUM <= until + 1e-6) {
+      core.process(frame, left, right);
+      frame += QUANTUM;
+    }
+    context.currentTime = until / MIX_RATE;
+  };
+  return { node, output, sent, heard, quanta };
+}
 
 function setup(
   options: {
     latency?: number;
-    list?: readonly SoundChunk[];
+    chunks?: readonly DecodedChunk[];
     file?: boolean;
     /** Says whether the file is here by now. */
     arrived?: () => boolean;
+    /** Holds reading back until it resolves. */
+    gate?: Promise<void>;
     keepPitch?: PlaybackAudioOptions["keepPitch"];
+    mixer?: "fails";
   } = {},
 ) {
-  const fake = fakeContext(options.latency);
+  const context = fakeContext(options.latency);
+  const mixer = fakeMixer(context);
   let wall = 0;
   const read = vi.fn(async function* (_file: Blob, from: number, to: number) {
-    for (const chunk of options.list ?? chunks(0, 1, 2)) {
-      if (chunk.timestamp + chunk.duration > from && chunk.timestamp < to) yield chunk;
+    await options.gate;
+    for (const chunk of options.chunks ?? FILE) {
+      const start = chunk.start / chunk.rate;
+      const end = start + (chunk.channels[0]?.length ?? 0) / chunk.rate;
+      if (end > from && start < to) {
+        // Each its own copy: what goes to the mixer is handed over.
+        yield { ...chunk, channels: chunk.channels.map((channel) => channel.slice()) };
+      }
     }
   });
   const onProblem = vi.fn();
+  const notes: [string, Readonly<Record<string, string | number>>][] = [];
   const audio = new PlaybackAudio({
     fileOf: async () => {
       if (options.arrived) return options.arrived() ? new Blob() : undefined;
@@ -114,18 +113,42 @@ function setup(
     },
     onProblem,
     read,
-    createContext: () => fake.context as unknown as AudioContext,
+    createContext: () => context as unknown as AudioContext,
     wallClock: () => wall,
+    onNote: (kind, data) => notes.push([kind, data]),
+    mixer: async () => {
+      if (options.mixer === "fails") throw new Error("no worklets");
+      return mixer.node;
+    },
     ...(options.keepPitch && { keepPitch: options.keepPitch }),
   });
+  /** A while of playing: the timers go off, and the mixer plays. */
+  const pass = async (ms: number) => {
+    for (let done = 0; done < ms; done += 10) {
+      wall += 10;
+      await vi.advanceTimersByTimeAsync(10);
+      mixer.quanta(0.01);
+    }
+  };
   const walk = (ms: number) => {
     wall += ms;
   };
-  const settled = () => vi.waitFor(() => expect(read).toHaveBeenCalled());
-  return { ...fake, audio, read, onProblem, walk, settled };
+  return { context, ...mixer, audio, read, onProblem, notes, pass, walk };
 }
 
-const close = (value: number) => expect.closeTo(value, 5);
+/** What the engine gives at a sample of the timeline for a sound with all of its file. */
+const want = (played: MixSound, sample: number, gain = played.gain) =>
+  f32(
+    f32(inFile(Math.round((sample / MIX_RATE - played.start + played.offset) * MIX_RATE))) * gain,
+  );
+
+beforeEach(() => {
+  vi.useFakeTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe("the clock", () => {
   it("goes by the wall until there is sound", () => {
@@ -137,7 +160,7 @@ describe("the clock", () => {
 
   it("goes by the sound once it runs, however the wall behaves", () => {
     const { audio, context, walk } = setup();
-    audio.play(planOf(), 0, audio.now());
+    audio.play(planOf([]), 0, audio.now());
     const start = audio.now();
     context.currentTime += 0.5;
     walk(9000);
@@ -146,7 +169,7 @@ describe("the clock", () => {
 
   it("carries on by the wall when sound gets suspended, without a jump", () => {
     const { audio, context, walk } = setup();
-    audio.play(planOf(), 0, audio.now());
+    audio.play(planOf([]), 0, audio.now());
     const start = audio.now();
     context.state = "suspended";
     walk(100);
@@ -169,241 +192,215 @@ describe("the clock", () => {
       createContext: fail,
       wallClock: () => wall,
     });
-    audio.play(planOf(sound()), 0, audio.now());
+    audio.play(planOf([sound()]), 0, audio.now());
     const start = audio.now();
     wall += 40;
     expect(audio.now() - start).toBe(40);
   });
+
+  it("keeps going when the mixer cannot start, and says so", async () => {
+    const { audio, notes, pass } = setup({ mixer: "fails" });
+    audio.play(planOf([sound()]), 0, audio.now());
+    const start = audio.now();
+    await pass(100);
+    // The clock of the context, which goes by quanta.
+    expect(audio.now() - start).toBeCloseTo(100, -1);
+    expect(notes.map(([kind]) => kind)).toContain("audio.no-mixer");
+    audio.stop();
+  });
 });
 
 describe("playing", () => {
-  it("lines chunks up one after the other", async () => {
-    const { audio, started, settled } = setup();
-    audio.play(planOf(sound()), 0, audio.now());
-    await settled();
-    await vi.waitFor(() => expect(started).toHaveLength(3));
-    expect(started.map(({ when }) => when)).toEqual([close(10), close(11), close(12)]);
+  it("plays the file at its place, from its offset, with the gains of clip and track", async () => {
+    const { audio, heard, pass, sent } = setup();
+    const played = sound({ start: 0.5, end: 1.5, offset: 0.25, gain: 0.5 });
+    audio.play(planOf([played], [track({ gain: 0.5 })]), 0, audio.now());
+    await pass(1800);
+    expect(sent[0]).toMatchObject({ kind: "play", frame: 480_000, sample: 0, rate: 1 });
+    for (const at of [0, 23_999, 72_000, 80_000]) expect(heard.get(at)).toEqual([0, 0]);
+    for (const at of [24_000, 40_000, 71_999]) {
+      expect(heard.get(at)?.[0]).toBe(f32(want(played, at) * 0.5));
+    }
     audio.stop();
   });
 
-  it("starts in the file where the clip starts, and ends where the clip ends", async () => {
-    const { audio, started, read, settled } = setup();
-    audio.play(planOf(sound({ start: 5, end: 6.5, offset: 1 })), 5, audio.now());
-    await settled();
-    await vi.waitFor(() => expect(started).toHaveLength(2));
-    expect(read.mock.calls[0]?.slice(1)).toEqual([1, 2.5]);
-    expect(started[1]).toMatchObject({ when: close(11), offset: close(0), duration: close(0.5) });
+  it("reads the file from the place where the clip starts, up to where it ends", async () => {
+    const { audio, read, pass } = setup();
+    audio.play(planOf([sound({ start: 5, end: 6.5, offset: 1 })]), 5, audio.now());
+    await pass(50);
+    // A little around it, for resampling.
+    expect(read.mock.calls[0]?.slice(1)).toEqual([0.99, 2.51]);
     audio.stop();
   });
 
   it("starts in the middle of a clip that is already going", async () => {
-    const { audio, started, settled } = setup();
-    audio.play(planOf(sound()), 1.25, audio.now());
-    await settled();
-    await vi.waitFor(() => expect(started).toHaveLength(2));
-    expect(started[0]).toMatchObject({ when: close(10), offset: close(0.25) });
+    const { audio, heard, pass, sent } = setup();
+    const played = sound({ end: 3 });
+    audio.play(planOf([played]), 1.25, audio.now());
+    await pass(300);
+    expect(sent[0]).toMatchObject({ kind: "play", sample: 60_000 });
+    expect(heard.get(60_000)?.[0]).toBe(want(played, 60_000));
+    expect(heard.has(59_999)).toBe(false);
     audio.stop();
   });
 
-  it("leaves out what has passed when decoding is late, and stays in step", async () => {
-    const { audio, context, started, settled } = setup({ list: chunks(0) });
-    audio.play(planOf(sound()), 0, audio.now());
-    context.currentTime += 0.3;
-    await settled();
-    await vi.waitFor(() => expect(started).toHaveLength(1));
-    expect(started[0]).toMatchObject({ when: close(10.3), offset: close(0.3) });
+  it("leaves out what has passed when decoding is late, says so, and stays in step", async () => {
+    let open = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const { audio, heard, pass, notes } = setup({ gate });
+    const played = sound({ end: 3 });
+    audio.play(planOf([played]), 0, audio.now());
+    await pass(300);
+    open();
+    await pass(200);
+    expect(heard.get(10_000)).toEqual([0, 0]);
+    expect(heard.get(20_000)?.[0]).toBe(want(played, 20_000));
+    const late = notes.find(([kind]) => kind === "audio.late");
+    expect(late?.[1]).toMatchObject({ seconds: 0 });
+    expect(Number(late?.[1].ms)).toBeGreaterThan(250);
     audio.stop();
   });
 
-  it("sends sound earlier by what the device takes", async () => {
-    const { audio, started, settled } = setup({ latency: 0.1 });
-    audio.play(planOf(sound({ start: 0.5 })), 0, audio.now());
-    await settled();
-    await vi.waitFor(() => expect(started.length).toBeGreaterThan(0));
-    expect(started[0]?.when).toBeCloseTo(10.4);
+  it("plays sound earlier by what the device takes", async () => {
+    const { audio, pass, sent } = setup({ latency: 0.1 });
+    audio.play(planOf([sound()]), 0, audio.now());
+    await pass(20);
+    expect(sent[0]).toMatchObject({ kind: "play", frame: (10 - 0.1) * MIX_RATE, sample: 0 });
     audio.stop();
   });
 
-  it("does not touch a sound that is still far away", async () => {
-    const { audio, read } = setup();
-    audio.play(planOf(sound({ start: 30, end: 31 })), 0, audio.now());
-    await new Promise((resolve) => setTimeout(resolve, 20));
+  it("does not read a sound that is still far away, or that lies before the playhead", async () => {
+    const { audio, read, pass } = setup();
+    audio.play(planOf([sound({ start: 30, end: 31 }), sound({ id: "b", end: 2 })]), 5, audio.now());
+    await pass(100);
     expect(read).not.toHaveBeenCalled();
-    audio.stop();
-  });
-
-  it("does not play what lies before the playhead", async () => {
-    const { audio, read } = setup();
-    audio.play(planOf(sound({ end: 2 })), 5, audio.now());
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(read).not.toHaveBeenCalled();
-    audio.stop();
-  });
-
-  it("uses the volume of the plan", async () => {
-    const { audio, gains, settled } = setup();
-    audio.play(planOf(sound({ gain: 0.5 })), 0, audio.now());
-    await settled();
-    await vi.waitFor(() => expect(gains).toEqual([0.5]));
     audio.stop();
   });
 
   it("goes quiet at once when stopped", async () => {
-    const { audio, started, settled } = setup();
-    audio.play(planOf(sound()), 0, audio.now());
-    await settled();
-    await vi.waitFor(() => expect(started).toHaveLength(3));
+    const { audio, heard, pass, quanta } = setup();
+    audio.play(planOf([sound({ end: 3 })]), 0, audio.now());
+    await pass(200);
     audio.stop();
-    for (const { stop } of started) expect(stop).toHaveBeenCalled();
+    heard.clear();
+    quanta(0.1);
+    expect([...heard.values()].every(([left]) => left === 0)).toBe(true);
   });
 
   it("says so when a file is gone, and the clock goes on", async () => {
-    const { audio, onProblem, walk } = setup({ file: false });
-    audio.play(planOf(sound()), 0, audio.now());
-    await vi.waitFor(() => expect(onProblem).toHaveBeenCalledWith("f"));
+    const { audio, onProblem, walk, pass } = setup({ file: false });
+    audio.play(planOf([sound()]), 0, audio.now());
+    await pass(20);
+    expect(onProblem).toHaveBeenCalledWith("f");
     const start = audio.now();
     walk(10);
     expect(audio.now()).toBeGreaterThanOrEqual(start);
     audio.stop();
   });
-});
 
-describe("a sound that code is still making", () => {
-  const made = (changes: Partial<SoundLayer> = {}) => sound({ made: true, end: 10, ...changes });
-
-  /** A while of playing, with the timer of the sound going off. */
-  async function pass(walk: (ms: number) => void, context: { currentTime: number }, ms: number) {
-    walk(ms);
-    context.currentTime += ms / 1000;
-    await vi.advanceTimersByTimeAsync(ms);
-  }
-
-  it("is no problem, and the clock goes on without it", async () => {
-    vi.useFakeTimers();
-    try {
-      const { audio, onProblem, read, walk, context } = setup({ file: false });
-      audio.play(planOf(made()), 0, audio.now());
-      const start = audio.now();
-      await pass(walk, context, 300);
-      expect(audio.now() - start).toBeCloseTo(300);
-      expect(onProblem).not.toHaveBeenCalled();
-      expect(read).not.toHaveBeenCalled();
-      audio.stop();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("comes in when it is there, at the place the timeline has got to", async () => {
-    vi.useFakeTimers();
-    try {
-      let here = false;
-      const { audio, read, walk, context, started } = setup({
-        arrived: () => here,
-        list: chunks(0, 1, 2, 3, 4, 5, 6, 7, 8, 9),
-      });
-      audio.play(planOf(made()), 0, audio.now());
-      await pass(walk, context, 2000);
-      expect(read).not.toHaveBeenCalled();
-      here = true;
-      await pass(walk, context, 600);
-      expect(read).toHaveBeenCalledTimes(1);
-      expect(read.mock.calls[0]?.[1]).toBeGreaterThan(2);
-      expect(started.length).toBeGreaterThan(0);
-      audio.stop();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("does not bother the store for every turn of the timer", async () => {
-    vi.useFakeTimers();
-    try {
-      const looks = vi.fn(() => false);
-      const { audio, walk, context } = setup({ arrived: looks });
-      audio.play(planOf(made()), 0, audio.now());
-      await pass(walk, context, 1000);
-      expect(looks.mock.calls.length).toBeLessThanOrEqual(4);
-      audio.stop();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("is left alone once its clip went by", async () => {
-    vi.useFakeTimers();
-    try {
-      const looks = vi.fn(() => false);
-      const { audio, walk, context } = setup({ arrived: looks });
-      audio.play(planOf(made({ end: 1 })), 0, audio.now());
-      await pass(walk, context, 1500);
-      const before = looks.mock.calls.length;
-      await pass(walk, context, 2000);
-      expect(looks.mock.calls.length).toBe(before);
-      audio.stop();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("stays a problem for a file that nobody makes", async () => {
-    const { audio, onProblem } = setup({ file: false });
-    audio.play(planOf(sound()), 0, audio.now());
-    await vi.waitFor(() => expect(onProblem).toHaveBeenCalledWith("f"));
+  it("says nothing of a file gone on a track that is not heard", async () => {
+    const { audio, onProblem, pass } = setup({ file: false });
+    audio.play(planOf([sound()], [track({ muted: true })]), 0, audio.now());
+    await pass(20);
+    expect(onProblem).not.toHaveBeenCalled();
     audio.stop();
   });
 });
 
-describe("changing how loud something is", () => {
-  it("is no reason to start over", () => {
-    expect(
-      PlaybackAudio.sameButGains(planOf(sound({ gain: 1 })), planOf(sound({ gain: 0.5 }))),
-    ).toBe(true);
-    expect(PlaybackAudio.sameButGains(planOf(sound()), planOf(sound({ end: 4 })))).toBe(false);
-    expect(PlaybackAudio.sameButGains(planOf(sound()), planOf(sound(), sound({ id: "t" })))).toBe(
-      false,
-    );
+describe("a sound that code is still making", () => {
+  const made = (changes: Partial<MixSound> = {}) => sound({ made: true, end: 10, ...changes });
+  const long = chunksOf({ frames: 10 * MIX_RATE, size: MIX_RATE / 10 });
+
+  it("is no problem, and the clock goes on without it", async () => {
+    const { audio, onProblem, read, pass, notes } = setup({ file: false });
+    audio.play(planOf([made()]), 0, audio.now());
+    const start = audio.now();
+    await pass(300);
+    expect(audio.now() - start).toBeCloseTo(300, -1);
+    expect(onProblem).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+    expect(notes.filter(([kind]) => kind === "audio.late")).toEqual([]);
+    audio.stop();
   });
 
-  it("changes what is playing, on the spot", async () => {
-    const { audio, settled, context, read } = setup();
-    const nodes: { gain: { value: number } }[] = [];
-    const make = context.createGain.bind(context);
-    context.createGain = () => {
-      const node = make();
-      nodes.push(node);
-      return node;
-    };
-    audio.play(planOf(sound()), 0, audio.now());
-    await settled();
-    audio.changeGains(planOf(sound({ gain: 0.25 })));
-    expect(nodes[0]?.gain.value).toBe(0.25);
+  it("comes in when it is there, at the place the timeline has got to", async () => {
+    let here = false;
+    const { audio, read, heard, pass } = setup({ arrived: () => here, chunks: long });
+    const played = made();
+    audio.play(planOf([played]), 0, audio.now());
+    await pass(2000);
+    expect(read).not.toHaveBeenCalled();
+    here = true;
+    await pass(700);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read.mock.calls[0]?.[1]).toBeGreaterThan(2);
+    expect(heard.get(sampleOf(2.6))?.[0]).toBe(want(played, sampleOf(2.6)));
+    audio.stop();
+  });
+
+  it("does not bother the store for every turn of the timer", async () => {
+    const looks = vi.fn(() => false);
+    const { audio, pass } = setup({ arrived: looks });
+    audio.play(planOf([made()]), 0, audio.now());
+    await pass(1000);
+    expect(looks.mock.calls.length).toBeLessThanOrEqual(4);
+    audio.stop();
+  });
+
+  it("is left alone once its clip went by", async () => {
+    const looks = vi.fn(() => false);
+    const { audio, pass } = setup({ arrived: looks });
+    audio.play(planOf([made({ end: 1 })]), 0, audio.now());
+    await pass(1500);
+    const before = looks.mock.calls.length;
+    await pass(2000);
+    expect(looks.mock.calls.length).toBe(before);
+    audio.stop();
+  });
+});
+
+describe("changing the mix while it plays", () => {
+  it("is no reason to start over when only gains, muting and soloing change", () => {
+    const base = planOf([sound()], [track()]);
+    const onTheSpot = (plan: MixPlan) => PlaybackAudio.onTheSpot(base, plan);
+    expect(onTheSpot(planOf([sound({ gain: 0.5 })], [track({ gain: 0.1 })]))).toBe(true);
+    expect(onTheSpot(planOf([sound()], [track({ muted: true })]))).toBe(true);
+    expect(onTheSpot(planOf([sound()], [track({ solo: true })]))).toBe(true);
+    expect(onTheSpot(planOf([sound({ end: 4 })]))).toBe(false);
+    expect(onTheSpot(planOf([sound(), sound({ id: "t" })]))).toBe(false);
+    expect(onTheSpot(planOf([sound()], [track(), track({ id: "u" })]))).toBe(false);
+  });
+
+  it("is heard from the next quantum on, without reading anything again", async () => {
+    const { audio, read, heard, pass } = setup();
+    const played = sound({ end: 3 });
+    audio.play(planOf([played]), 0, audio.now());
+    await pass(200);
+    audio.change(planOf([sound({ end: 3, gain: 0.25 })]));
+    await pass(200);
+    const at = 0.3 * MIX_RATE;
+    expect(heard.get(at)?.[0]).toBe(want(played, at, 0.25));
+    audio.change(planOf([sound({ end: 3, gain: 0.25 })], [track({ muted: true })]));
+    await pass(100);
+    expect(heard.get(sampleOf(0.45))).toEqual([0, 0]);
+    audio.change(planOf([played]));
+    await pass(100);
+    // Unmuted, it is right there.
+    expect(heard.get(sampleOf(0.55))?.[0]).toBe(want(played, sampleOf(0.55)));
     expect(read).toHaveBeenCalledTimes(1);
     audio.stop();
   });
 
-  it("holds for what starts later too", async () => {
-    const { audio, gains, walk, context } = setup();
-    audio.play(planOf(sound({ start: 0.5 })), 0, audio.now());
-    audio.changeGains(planOf(sound({ start: 0.5, gain: 0.25 })));
-    context.currentTime += 0.1;
-    walk(100);
-    await vi.waitFor(() => expect(gains).toEqual([0.25]));
+  it("reads the sounds of muted tracks too, so that unmuting them is heard at once", async () => {
+    const { audio, read, pass } = setup();
+    audio.play(planOf([sound()], [track({ muted: true })]), 0, audio.now());
+    await pass(50);
+    expect(read).toHaveBeenCalledTimes(1);
     audio.stop();
   });
 });
-
-/** Chunks of a second with four samples each, which say where they are: 0, 1, 2, 3, then 4, 5… */
-const counted = (...times: number[]) =>
-  times.map((timestamp) => {
-    const buffer = fakeBuffer(1, 4, 4);
-    buffer.getChannelData(0).set([0, 1, 2, 3].map((index) => timestamp * 4 + index));
-    return { buffer, timestamp, duration: 1 } as unknown as SoundChunk;
-  });
-
-const samplesOf = (buffer: unknown) => [
-  ...(buffer as ReturnType<typeof fakeBuffer>).getChannelData(0),
-];
 
 function keeper(latency = 0) {
   const shifts: (number | undefined)[] = [];
@@ -417,139 +414,85 @@ function keeper(latency = 0) {
 }
 
 describe("playing faster and slower", () => {
-  it("lines chunks up at twice the speed, each played twice as fast", async () => {
-    const { keepPitch } = keeper();
-    const { audio, started, settled } = setup({ keepPitch });
-    audio.play(planOf(sound()), 0, audio.now(), 2);
-    await settled();
-    await vi.waitFor(() => expect(started).toHaveLength(3));
-    expect(started.map(({ when }) => when)).toEqual([close(10), close(10.5), close(11)]);
-    expect(started.map(({ rate }) => rate)).toEqual([2, 2, 2]);
+  it("plays the timeline at twice the speed, through what keeps the pitch an octave down", async () => {
+    const pitch = keeper();
+    const { audio, heard, pass, output, sent } = setup({ keepPitch: pitch.keepPitch });
+    const played = sound({ end: 4 });
+    audio.play(planOf([played]), 0, audio.now(), 2);
+    await pass(400);
+    expect(pitch.shifts).toEqual([-12]);
+    expect(output.to).toBe(pitch.input);
+    expect(sent[0]).toMatchObject({ kind: "play", rate: 2 });
+    // Every other sample of the timeline, as it is.
+    expect(heard.get(20_000)?.[0]).toBe(want(played, 20_000));
+    expect(heard.get(20_002)?.[0]).toBe(want(played, 20_002));
+    expect(heard.has(20_001)).toBe(false);
     audio.stop();
-  });
-
-  it("goes through what keeps the pitch, shifted down an octave at twice the speed", async () => {
-    const { keepPitch, shifts, input } = keeper();
-    const { audio, context, settled } = setup({ keepPitch });
-    const gains: { to: unknown }[] = [];
-    const make = context.createGain.bind(context);
-    context.createGain = () => {
-      const gain = make();
-      gains.push(gain);
-      return gain;
-    };
-    audio.play(planOf(sound()), 0, audio.now(), 2);
-    await settled();
-    await vi.waitFor(() => expect(gains).toHaveLength(1));
-    expect(gains[0]?.to).toBe(input);
-    expect(shifts).toEqual([-12]);
-    audio.stop();
-    await vi.waitFor(() => expect(shifts).toEqual([-12, undefined]));
-    // At normal speed sound goes straight to the speakers.
-    audio.play(planOf(sound()), 0, audio.now());
-    await vi.waitFor(() => expect(gains).toHaveLength(2));
-    expect(gains[1]?.to).toBe(context.destination);
-    expect(keepPitch).toHaveBeenCalledTimes(1);
-    audio.stop();
+    expect(pitch.shifts).toEqual([-12]);
+    await pass(10);
+    expect(pitch.shifts).toEqual([-12, undefined]);
   });
 
   it("shifts slow sound up: two octaves at a quarter of the speed", async () => {
-    const { keepPitch, shifts } = keeper();
-    const { audio, started, settled } = setup({ keepPitch });
-    audio.play(planOf(sound()), 0, audio.now(), 0.25);
-    await settled();
-    await vi.waitFor(() => expect(started.length).toBeGreaterThan(0));
-    expect(shifts).toEqual([24]);
-    expect(started[0]).toMatchObject({ when: close(10), rate: 0.25 });
+    const pitch = keeper();
+    const { audio, pass } = setup({ keepPitch: pitch.keepPitch });
+    audio.play(planOf([sound()]), 0, audio.now(), 0.25);
+    await pass(20);
+    expect(pitch.shifts).toEqual([24]);
     audio.stop();
   });
 
   it("starts earlier by what keeping the pitch holds back", async () => {
-    const { keepPitch } = keeper(0.05);
-    const { audio, started, settled } = setup({ keepPitch });
-    audio.play(planOf(sound({ start: 0.5 })), 0, audio.now(), 2);
-    await settled();
-    await vi.waitFor(() => expect(started.length).toBeGreaterThan(0));
-    expect(started[0]?.when).toBeCloseTo(10.2);
+    const pitch = keeper(0.05);
+    const { audio, pass, sent } = setup({ keepPitch: pitch.keepPitch, latency: 0.1 });
+    audio.play(planOf([sound()]), 0, audio.now(), 2);
+    await pass(20);
+    expect(sent[0]).toMatchObject({ kind: "play", frame: Math.round((10 - 0.15) * MIX_RATE) });
     audio.stop();
   });
 
   it("still plays, at another pitch, when the pitch cannot be kept", async () => {
-    const keepPitch = vi.fn(async (): Promise<PitchKeeper> => {
-      throw new Error("no worklets here");
+    const { audio, pass, output, context, sent } = setup({
+      keepPitch: () => Promise.reject(new Error("no worklets")),
     });
-    const { audio, started, settled } = setup({ keepPitch });
-    audio.play(planOf(sound()), 0, audio.now(), 4);
-    await settled();
-    await vi.waitFor(() => expect(started).toHaveLength(3));
-    expect(started[0]).toMatchObject({ when: close(10), rate: 4 });
+    audio.play(planOf([sound()]), 0, audio.now(), 2);
+    await pass(20);
+    expect(output.to).toBe(context.destination);
+    expect(sent[0]).toMatchObject({ kind: "play", rate: 2 });
+    audio.stop();
+  });
+
+  it("plays at one speed straight to the speakers", async () => {
+    const pitch = keeper();
+    const { audio, pass, output, context } = setup({ keepPitch: pitch.keepPitch });
+    audio.play(planOf([sound()]), 0, audio.now(), 2);
+    await pass(20);
+    audio.play(planOf([sound()]), 0, audio.now(), 1);
+    await pass(20);
+    expect(output.to).toBe(context.destination);
     audio.stop();
   });
 });
 
 describe("playing backwards", () => {
-  it("plays each second from its end, turned around, one after the other", async () => {
-    const { keepPitch, shifts } = keeper();
-    const { audio, started, read, settled } = setup({ keepPitch, list: counted(0, 1, 2) });
-    audio.play(planOf(sound()), 3, audio.now(), -1);
-    await settled();
-    await vi.waitFor(() => expect(started).toHaveLength(3));
-    expect(read.mock.calls.map((call) => call.slice(1))).toEqual([
-      [2, 3],
-      [1, 2],
-      [0, 1],
-    ]);
-    expect(started.map(({ when }) => when)).toEqual([close(10), close(11), close(12)]);
-    expect(started.map(({ rate }) => rate)).toEqual([1, 1, 1]);
-    expect(samplesOf(started[0]?.buffer)).toEqual([11, 10, 9, 8]);
-    expect(samplesOf(started[2]?.buffer)).toEqual([3, 2, 1, 0]);
-    // Backwards at normal speed the pitch is what it is.
-    expect(shifts).toEqual([]);
+  it("reads a second at a time from the end on, and plays the timeline back", async () => {
+    const pitch = keeper();
+    const { audio, read, heard, pass, output, context } = setup({
+      keepPitch: pitch.keepPitch,
+    });
+    const played = sound({ end: 4 });
+    audio.play(planOf([played]), 2.5, audio.now(), -1);
+    await pass(800);
+    expect(read.mock.calls[0]?.slice(1)).toEqual([expect.closeTo(1.51), 2.51]);
+    expect(read.mock.calls[1]?.slice(1)).toEqual([expect.closeTo(0.51), expect.closeTo(1.51)]);
+    // At one speed, straight to the speakers.
+    expect(pitch.shifts).toEqual([]);
+    expect(output.to).toBe(context.destination);
+    for (const at of [2.4, 2, 1.9]) {
+      expect(heard.get(sampleOf(at))?.[0]).toBe(want(played, sampleOf(at)));
+    }
+    // Nothing after where it started.
+    expect(heard.get(sampleOf(2.6))).toBeUndefined();
     audio.stop();
-  });
-
-  it("starts in the middle of a clip, and plays no part twice", async () => {
-    const { audio, started, settled } = setup({ list: counted(0, 1, 2) });
-    audio.play(planOf(sound()), 2.5, audio.now(), -1);
-    await settled();
-    await vi.waitFor(() => expect(started).toHaveLength(3));
-    expect(started[0]).toMatchObject({ when: close(10), offset: close(0.5), duration: close(1) });
-    expect(started[1]).toMatchObject({ when: close(11), offset: close(0.5), duration: close(1) });
-    expect(started[2]).toMatchObject({ when: close(12), offset: close(0.5), duration: close(0.5) });
-    audio.stop();
-  });
-
-  it("goes twice as fast, shifted down to its own pitch", async () => {
-    const { keepPitch, shifts } = keeper();
-    const { audio, started, settled } = setup({ keepPitch, list: counted(0, 1, 2) });
-    audio.play(planOf(sound()), 3, audio.now(), -2);
-    await settled();
-    await vi.waitFor(() => expect(started.length).toBeGreaterThan(0));
-    expect(started[0]).toMatchObject({ when: close(10), rate: 2, offset: close(0) });
-    expect(shifts).toEqual([-12]);
-    audio.stop();
-  });
-
-  it("leaves alone what lies after where it starts", async () => {
-    const { audio, read } = setup();
-    audio.play(planOf(sound({ start: 5, end: 6 })), 4, audio.now(), -1);
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(read).not.toHaveBeenCalled();
-    audio.stop();
-  });
-});
-
-describe("pieces of sound", () => {
-  const make = fakeBuffer as unknown as (c: number, l: number, r: number) => AudioBuffer;
-
-  it("join into one, in their places", () => {
-    const piece = joined(counted(1, 2), make);
-    expect(piece?.timestamp).toBe(1);
-    expect(samplesOf(piece?.buffer)).toEqual([4, 5, 6, 7, 8, 9, 10, 11]);
-  });
-
-  it("turn around", () => {
-    const [chunk] = counted(0);
-    expect(samplesOf(backwardsOf(chunk?.buffer as AudioBuffer, make))).toEqual([3, 2, 1, 0]);
   });
 });

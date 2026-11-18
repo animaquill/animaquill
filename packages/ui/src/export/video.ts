@@ -1,11 +1,12 @@
 import { SoundFailed, SoundMixer, type SoundSource } from "@animaquill/audio";
 import {
   buildAudioPlan,
+  buildMixPlan,
   buildRenderPlan,
   showsAt,
   timelineLength,
   transitionsNotDone,
-  type AudioPlan,
+  type MixPlan,
   type ProjectState,
   type ProjectStore,
   type RenderPlan,
@@ -81,6 +82,7 @@ import {
   type SavedQueue,
   type SavedStatus,
 } from "./queue.ts";
+import { workerMixer } from "./worker-mixer.ts";
 import { describeFailure, notDoneFailure, type ExportFailure } from "./words.ts";
 
 /** An export that nobody went on with for this long is not going to be. */
@@ -146,7 +148,7 @@ export interface VideoExportOptions extends ExportSite {
   readonly soundEncoder?: MakeAudioEncoder;
   /** Where sounds made by code come from. */
   readonly sounds: Pick<MadeSounds, "whenMade">;
-  readonly mixer?: (plan: AudioPlan, source: SoundSource) => PieceMixer;
+  readonly mixer?: (plan: MixPlan, source: SoundSource) => PieceMixer;
   /** How much room the browser has for what an export keeps. */
   readonly storage?: () => Promise<StorageEstimate | undefined>;
   /** Where the compositor goes, when not into a window of its own made here. */
@@ -1455,13 +1457,14 @@ export class VideoExport {
     const ranges = this.#ranges();
     const first = formats[0];
     const firstEncoding = first && encodings.get(`${first.id}/${quality}`);
-    const audioPlan = buildAudioPlan(asked, model.id);
     const soundSupport = this.#options.soundSupport ?? browserSoundSupport;
     const sounds = {
       mp4: await chooseSoundEncoding("mp4", soundSupport),
       webm: await chooseSoundEncoding("webm", soundSupport),
     };
-    const audible = !new SoundMixer(audioPlan, { fileOf: async () => undefined }).silent;
+    const audible = !new SoundMixer(buildMixPlan(asked, model.id), {
+      fileOf: async () => undefined,
+    }).silent;
     const firstSound = firstEncoding && sounds[containerOf(firstEncoding.codec)];
     // Where unfinished exports of this project go, so that a new one does not suggest the same.
     const project = projectKeyOf(store);
@@ -1819,7 +1822,7 @@ export class VideoExport {
         if (!replacing) wrong ??= what;
       };
       if (saved.sound) {
-        const audioPlan = buildAudioPlan(state, timelineId);
+        const mixPlan = buildMixPlan(state, timelineId);
         const media = this.#options.projects.media(project);
         const source = madeSoundSource({
           state,
@@ -1831,8 +1834,8 @@ export class VideoExport {
           making: (busy) => this.#flag(run, "makingSound", busy),
         });
         const mixer =
-          this.#options.mixer?.(audioPlan, source) ??
-          new SoundMixer(audioPlan, { fileOf: (hash) => media.get(hash), source });
+          this.#options.mixer?.(mixPlan, source) ??
+          workerMixer(mixPlan, { fileOf: (hash) => media.get(hash), source });
         soundTrack = new SoundTrackEncoder(
           mixer,
           range,

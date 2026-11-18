@@ -162,8 +162,10 @@ export {
   type TrackNode,
   type TreeNode,
 } from "./property-tree.ts";
+export { audibleTracks, type MixPlan, type MixSound, type MixTrack } from "./mix-plan.ts";
 export {
   buildAudioPlan,
+  buildMixPlan,
   buildRenderPlan,
   formatOf,
   channelOf,
