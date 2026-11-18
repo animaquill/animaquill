@@ -662,11 +662,10 @@
   outline: 1px solid var(--aq-timeline-tick);
 }
 
-.sliderMiddle {
+.sliderMark {
   position: absolute;
   top: 25%;
   bottom: 25%;
-  left: 50%;
   width: 1px;
   background: var(--aq-text-muted);
 }

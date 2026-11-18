@@ -1606,7 +1606,7 @@ test.describe("the row of sound", () => {
     await dismissNotices(page);
     await animate(page);
     await showAll(page);
-    await expect(soundHeader(page)).toHaveText("声音");
+    await expect(soundHeader(page)).toHaveText("波形");
     // The waveform is worked out from the file first.
     await expect.poll(() => waveformPixels(page), { timeout: 20_000 }).toBeGreaterThan(100);
     await panel(page).screenshot({ path: shots("dark") });
@@ -1626,7 +1626,7 @@ test.describe("the row of sound", () => {
     await page.emulateMedia({ colorScheme: "light" });
     await page.screenshot({ path: shots("menu-light") });
     await menu.getByRole("menuitemradio", { name: "音频 1" }).click();
-    await expect(soundHeader(page)).toHaveText("声音 · 音频 1");
+    await expect(soundHeader(page)).toHaveText("波形 · 音频 1");
     await mute.click();
     await expect.poll(() => waveformPixels(page)).toBeGreaterThan(100);
     await panel(page).screenshot({ path: shots("light") });
@@ -1634,11 +1634,11 @@ test.describe("the row of sound", () => {
 
     // Folded, it is only a row, and the rows of keys move up.
     const before = await soundHeader(page).boundingBox();
-    await panel(page).getByRole("button", { name: "收起 声音 · 音频 1", exact: true }).click();
+    await panel(page).getByRole("button", { name: "收起 波形 · 音频 1", exact: true }).click();
     const after = await soundHeader(page).boundingBox();
     expect(after && before && after.height < before.height).toBe(true);
     await panel(page).screenshot({ path: shots("folded") });
-    await panel(page).getByRole("button", { name: "展开 声音 · 音频 1", exact: true }).click();
-    await expect(soundHeader(page)).toHaveText("声音 · 音频 1");
+    await panel(page).getByRole("button", { name: "展开 波形 · 音频 1", exact: true }).click();
+    await expect(soundHeader(page)).toHaveText("波形 · 音频 1");
   });
 });

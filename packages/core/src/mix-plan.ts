@@ -1,3 +1,4 @@
+import { BUILT_IN_PROPERTIES } from "@animaquill/schema/properties";
 import { numberAt, type Channel } from "./curve.ts";
 import type { SoundLayer } from "./render-plan.ts";
 
@@ -58,9 +59,18 @@ export function audibleTracks(tracks: readonly MixTrack[]): ReadonlySet<string> 
 /** A volume at or below this is silence: the bottom of every volume control, "−∞". */
 export const SILENT_DECIBELS = -96;
 
-/** The gain of a volume in decibels, as the project format has it: none at all from −96 dB down. */
+/** The loudest a volume goes, as the format has it: louder, as keys that go on can get, is that. */
+const LOUDEST = BUILT_IN_PROPERTIES["audio.volume"]?.max ?? 0;
+const PAN = BUILT_IN_PROPERTIES["audio.pan"];
+const LEFTMOST = PAN?.min ?? 0;
+const RIGHTMOST = PAN?.max ?? 0;
+
+/**
+ * The gain of a volume in decibels, as the project format has it: none at all from −96 dB down (and
+ * for what is no number), and no more than at the loudest a volume can be.
+ */
 export const gainOfDecibels = (decibels: number): number =>
-  decibels <= SILENT_DECIBELS ? 0 : 10 ** (decibels / 20);
+  decibels > SILENT_DECIBELS ? 10 ** (Math.min(decibels, LOUDEST) / 20) : 0;
 
 /** Where a moment on the timeline is on the clock of the clip of a sound. */
 export const clockOfSound = (sound: Pick<SoundLayer, "start" | "offset">, seconds: number) =>
@@ -86,8 +96,9 @@ export function trackGainAt(track: MixTrack, seconds: number): number {
 export const canSound = ({ gain, volume }: { gain: number; volume?: Channel }): boolean =>
   volume !== undefined || gain > 0;
 
-/** A pan as a number from −1 to 1, whatever is written. */
-export const panOf = (value: number): number => (value > 1 ? 1 : value < -1 ? -1 : value || 0);
+/** A pan within what the format takes (−1 to 1), whatever is written or keys go on to. */
+export const panOf = (value: number): number =>
+  value > RIGHTMOST ? RIGHTMOST : value < LEFTMOST ? LEFTMOST : value || 0;
 
 /**
  * How one channel goes to two at a pan `p`: equal power, with both sides at 0 dB in the middle, so

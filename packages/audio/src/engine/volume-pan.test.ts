@@ -192,3 +192,35 @@ describe("the pan", () => {
     }
   });
 });
+
+describe("what keys go on to past what the format takes", () => {
+  it("is no louder than +24 dB and no further than all the way to a side", () => {
+    // 0 dB at 0 s rising to 24 dB at 10 ms, going on at 2400 dB a second (review of M2, R1).
+    const volume = curve({
+      keys: [
+        { time: "0", value: 0 },
+        { time: "0.01", value: 24 },
+      ],
+      after: "continue",
+    });
+    const pan = curve({
+      keys: [
+        { time: "0", value: 0 },
+        { time: "0.01", value: -1 },
+      ],
+      after: "continue",
+    });
+    const { left, right } = mixed(planOf([sound({ volume, pan })]), { f: second() }, 0, MIX_RATE);
+    const loudest = f32(gainOfDecibels(24));
+    for (const at of [480, 4800, 47_999]) {
+      expect(Number.isFinite(left[at] as number)).toBe(true);
+      // All the way left: the right adds into the left, and the right is silent.
+      expect(left[at]).toBe(
+        f32(f32(f32(f32(inFile(at, 0)) * loudest)) + f32(f32(f32(inFile(at, 1)) * loudest) * 1)),
+      );
+      expect(Math.abs(right[at] as number)).toBeLessThan(1e-6);
+    }
+    expect(gainOfDecibels(Number.POSITIVE_INFINITY)).toBe(gainOfDecibels(24));
+    expect(gainOfDecibels(Number.NaN)).toBe(0);
+  });
+});

@@ -38,7 +38,7 @@ function tone(seconds: number, hz = 1000): Buffer {
 }
 
 /** A project with one clip of sound on the track for sound, from 0 to 6 s. */
-function soundFolder(properties: Record<string, unknown> = {}): string {
+function soundFolder(properties: Record<string, unknown> = {}, picture = false): string {
   const files: Map<string, string | Buffer> = writeProject(createProject({ name: "音量线" }));
   const path = "timelines/main/timeline.json";
   const timeline = JSON.parse(files.get(path) as string) as {
@@ -47,7 +47,21 @@ function soundFolder(properties: Record<string, unknown> = {}): string {
   };
   timeline.sections = timeline.sections.map((section) => ({ ...section, duration: "8" }));
   const audio = timeline.tracks.find(({ kind }) => kind === "audio");
-  if (!audio) throw new Error("no track of sound");
+  const video = timeline.tracks.find(({ kind }) => kind === "video");
+  if (!audio || !video) throw new Error("no tracks");
+  // A picture linked to the sound, as a video and its sound are.
+  if (picture) {
+    video.clips = [
+      {
+        id: "picture",
+        name: "画面",
+        start: "0",
+        duration: "6",
+        source: { kind: "color", color: "#3355aa" },
+        link: "l",
+      },
+    ];
+  }
   audio.clips = [
     {
       id: "tone",
@@ -56,6 +70,7 @@ function soundFolder(properties: Record<string, unknown> = {}): string {
       duration: "6",
       source: { kind: "audio", media: { asset: "tone" } },
       properties,
+      ...(picture && { link: "l" }),
     },
   ];
   files.set(path, JSON.stringify(timeline));
@@ -74,8 +89,8 @@ function soundFolder(properties: Record<string, unknown> = {}): string {
   return root;
 }
 
-async function open(page: Page, properties: Record<string, unknown> = {}) {
-  await chooseFolder(page, soundFolder(properties));
+async function open(page: Page, properties: Record<string, unknown> = {}, picture = false) {
+  await chooseFolder(page, soundFolder(properties, picture));
   await expect(tab(page, "preview")).toBeVisible({ timeout: 30_000 });
   await tab(page, "timeline").click();
 }
@@ -162,4 +177,72 @@ test("Ctrl and a click on the line puts a key there, which Delete takes away", a
   await page.keyboard.press("Control+z");
   await page.mouse.move(x, y);
   await expect.poll(() => stageCursor(page)).toBe("move");
+});
+
+test("a drag of the volume or the pan in the properties is one step to undo", async ({ page }) => {
+  await open(page);
+  const box = await clipBox(page);
+  await page.mouse.click(box.x + box.width / 2, box.y + box.height - 6);
+  await tab(page, "properties").click();
+  const properties = content(page, "properties");
+  /** Drags a slider through several places to its left end, and lets go. */
+  const dragLeft = async (name: string) => {
+    const slider = properties.getByRole("slider", { name });
+    const place = await slider.boundingBox();
+    if (!place) throw new Error(`no slider ${name}`);
+    const y = place.y + place.height / 2;
+    await page.mouse.move(place.x + place.width / 2, y);
+    await page.mouse.down();
+    for (const share of [0.4, 0.3, 0.2, 0.1, 0]) {
+      await page.mouse.move(place.x + place.width * share, y, { steps: 2 });
+    }
+    await page.mouse.up();
+    return slider;
+  };
+  const pan = await dragLeft("声像");
+  await expect(pan).toHaveAttribute("aria-valuetext", "L 100");
+  const volume = await dragLeft("音量");
+  await expect(volume).toHaveAttribute("aria-valuetext", "−∞ dB");
+  await tab(page, "timeline").click();
+  await page.keyboard.press("Control+z");
+  await tab(page, "properties").click();
+  await expect(volume).toHaveAttribute("aria-valuetext", "0.0 dB");
+  await expect(pan).toHaveAttribute("aria-valuetext", "L 100");
+  await tab(page, "timeline").click();
+  await page.keyboard.press("Control+z");
+  await tab(page, "properties").click();
+  await expect(pan).toHaveAttribute("aria-valuetext", "C");
+
+  // A double click goes back to the middle, as one step too.
+  await dragLeft("声像");
+  await expect(pan).toHaveAttribute("aria-valuetext", "L 100");
+  const place = await pan.boundingBox();
+  if (!place) throw new Error("no slider");
+  await page.mouse.dblclick(place.x + place.width * 0.2, place.y + place.height / 2);
+  await expect(pan).toHaveAttribute("aria-valuetext", "C");
+  await tab(page, "timeline").click();
+  await page.keyboard.press("Control+z");
+  await tab(page, "properties").click();
+  await expect(pan).toHaveAttribute("aria-valuetext", "L 100");
+});
+
+test("a picture and its sound, selected together, show the volume of the sound under the picture", async ({
+  page,
+}) => {
+  await open(page, { "audio.volume": -6 }, true);
+  const picture = await content(page, "timeline")
+    .getByRole("option", { name: /画面/ })
+    .boundingBox();
+  if (!picture) throw new Error("no picture");
+  await page.mouse.click(picture.x + picture.width / 2, picture.y + picture.height / 2);
+  await tab(page, "properties").click();
+  const properties = content(page, "properties");
+  // The picture's own rows, and the sound under them.
+  await expect(properties.getByRole("spinbutton", { name: "不透明度" })).toBeVisible();
+  const sound = properties.getByRole("region", { name: "声音" });
+  await expect(sound.getByRole("spinbutton", { name: "音量" })).toHaveAttribute(
+    "aria-valuetext",
+    "−6.0 dB",
+  );
+  await expect(sound.getByRole("slider", { name: "声像" })).toHaveAttribute("aria-valuetext", "C");
 });

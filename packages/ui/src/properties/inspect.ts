@@ -317,6 +317,11 @@ export type Selected =
       readonly kind: "clip";
       readonly box: ClipBox;
       readonly objects: readonly ObjectDescriptor[];
+      /**
+       * The sound linked to a picture that is selected with it, as a video and its sound are: its
+       * volume and pan show under the picture, as in Premiere's effect controls.
+       */
+      readonly sound?: { readonly box: ClipBox; readonly objects: readonly ObjectDescriptor[] };
     };
 
 /**
@@ -334,14 +339,27 @@ export function inspectSelection(
     const box = model.boxes.get(id);
     return box && objectsOfClip(box.clip, trial.describe).length > 0 ? [box] : [];
   });
-  // A picture and its sound, linked, are about the picture: its sound has a line of its own on the
-  // timeline, and is a clip of its own with Alt.
+  // A picture and its sound, linked, are about the picture, with the sound under it.
   const shown = pictureOfLinked(boxes);
   const [box] = shown;
   if (!box) return { kind: "no-properties" };
   if (shown.length > 1) return { kind: "several", count: shown.length };
   const clip = trial.look?.apply(box.clip) ?? box.clip;
-  return { kind: "clip", box, objects: objectsOfClip(clip, trial.describe) };
+  const sounds = shown === boxes ? [] : boxes.filter((one) => one !== box);
+  const [linked] = sounds;
+  const sound =
+    linked && sounds.length === 1
+      ? {
+          box: linked,
+          objects: objectsOfClip(trial.look?.apply(linked.clip) ?? linked.clip, trial.describe),
+        }
+      : undefined;
+  return {
+    kind: "clip",
+    box,
+    objects: objectsOfClip(clip, trial.describe),
+    ...(sound && { sound }),
+  };
 }
 
 const SOUNDING = new Set(["audio", "sound"]);

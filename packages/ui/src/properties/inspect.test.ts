@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import { buildModel, type TimelineModel } from "../timeline/model.ts";
 import {
   inspect,
+  inspectSelection,
   keyEdit,
   writeEdit,
   type Inspection,
@@ -61,7 +62,7 @@ function setup(fps = "30") {
     if (!found) throw new Error(`no row: ${path}`);
     return found;
   };
-  return { store, run, add, look, clipView, row, track, audio };
+  return { store, run, add, look, clipView, row, track, audio, model };
 }
 
 const keys = (...times: readonly string[]): PropertyValue => ({
@@ -99,7 +100,7 @@ describe("what the tab is about", () => {
   });
 
   it("the sound of a video does not get in the way of its picture", () => {
-    const { add, look, audio, store } = setup();
+    const { add, look, audio, store, model } = setup();
     store.execute({
       type: "asset.add",
       params: {
@@ -111,6 +112,14 @@ describe("what the tab is about", () => {
     add("picture", { source: { kind: "video", media }, link: "l" });
     add("sound", { source: { kind: "audio", media }, link: "l" }, audio);
     expect(look(["sound", "picture"], 0)).toMatchObject({ kind: "clip", box: { id: "picture" } });
+    // With the volume and the pan of its sound under it, as Premiere's effect controls have them.
+    const selected = inspectSelection(model(), new Set(["sound", "picture"]));
+    const sound = selected.kind === "clip" ? selected.sound : undefined;
+    expect(sound?.box.id).toBe("sound");
+    expect(sound?.objects.flatMap(({ properties }) => properties.map(({ path }) => path))).toEqual([
+      "audio.volume",
+      "audio.pan",
+    ]);
   });
 
   it("does one clip at a time", () => {

@@ -259,7 +259,7 @@ describe("the volume line on a clip of sound", () => {
   });
 
   it("takes both keys along when the line between them is dragged", async () => {
-    const { onLine, drag, keysOf, timeline } = await setup({
+    const { onLine, drag, keysOf, timeline, store } = await setup({
       "audio.volume": keyed(["0.5", 0], ["2", -6], ["4", -12]),
     });
     // 4 s on the timeline is 3.5 s on the clock: between the keys at 2 and 4.
@@ -270,6 +270,9 @@ describe("the volume line on a clip of sound", () => {
     expect(first).toBe(0);
     expect(second).toBeLessThan(-6);
     expect((third as number) - (second as number)).toBeCloseTo(-6, 6);
+    // The drag went through several places: one step back is where it started.
+    expect(store.undo().ok).toBe(true);
+    expect(keysOf().map(({ value }) => value)).toEqual([0, -6, -12]);
   });
 
   it("moves a key up and down, and Delete takes a selected one away", async () => {

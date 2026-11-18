@@ -2133,8 +2133,8 @@
     "open": "展开 {{name}}",
     "close": "收起 {{name}}",
     "sound": {
-      "title": "声音",
-      "track": "声音 · {{name}}",
+      "title": "波形",
+      "track": "波形 · {{name}}",
       "all": "全部声音"
     },
     "tall": "加高 {{name}} 这一行",

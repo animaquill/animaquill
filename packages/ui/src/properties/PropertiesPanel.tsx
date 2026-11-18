@@ -427,6 +427,19 @@ function ClipProperties({ selected, rows }: { selected: ClipSelected; rows: Prop
           readOnly={blocked === "locked" || blocked === "comparing"}
           rows={effectRows}
         />
+        {selected.sound?.objects
+          .filter((object) => object.type === "clip.sound")
+          .map((object) => (
+            // The sound linked to the picture: its own clip, with its own playhead and keys.
+            <Section
+              key={`${selected.sound?.box.id} ${object.id}`}
+              rows={rows}
+              clip={(selected.sound as { box: ClipBox }).box.id}
+              object={object}
+              name={t("keyframes.objects.sound")}
+              eager
+            />
+          ))}
       </div>
     </>
   );
