@@ -1907,6 +1907,8 @@
       "longtask": "长任务",
       "audio.late": "声音迟到",
       "audio.play": "声音开始",
+      "audio.no-mixer": "放不出声音",
+      "audio.no-pitch": "倍速时保不住音调",
       "play": "播放",
       "pause": "暂停",
       "error": "报错",
