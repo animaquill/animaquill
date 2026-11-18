@@ -1,4 +1,4 @@
-import { AudioWaveform, Film, Plus, Upload } from "lucide-react";
+import { AudioWaveform, CodeXml, Film, Upload } from "lucide-react";
 import { useEffect, useMemo, useState, useSyncExternalStore, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
 import type { MenuItem } from "../app/Menu.tsx";
@@ -219,7 +219,8 @@ export function AssetsPanel() {
           aria-label={t("assets.newScene")}
           title={t("assets.newScene")}
         >
-          <Plus size={14} />
+          {/* As scenes and sounds look in the lists: told apart also without their names. */}
+          <CodeXml size={14} />
           <span className={styles.label}>{t("assets.newScene")}</span>
         </button>
         <button
@@ -228,7 +229,7 @@ export function AssetsPanel() {
           aria-label={t("assets.newSound")}
           title={t("assets.newSound")}
         >
-          <Plus size={14} />
+          <AudioWaveform size={14} />
           <span className={styles.label}>{t("assets.newSound")}</span>
         </button>
         {importing > 0 && !copying && (

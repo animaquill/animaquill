@@ -72,6 +72,11 @@ test.describe("the layouts that come with the editor", () => {
     await expect(content(page, "properties")).toBeVisible();
     await expect(group(page, "mixer").locator('[data-tab="properties"]')).toHaveCount(0);
     await expect(group(page, "timeline").locator('[data-tab="problems"]')).toBeVisible();
+    // The assets are narrow there, and their buttons only icons: each new thing has its own.
+    const toolbar = content(page, "assets");
+    const icon = (name: string) =>
+      toolbar.getByRole("button", { name, exact: true }).locator("svg").getAttribute("class");
+    expect(await icon("新建场景")).not.toBe(await icon("新建声音"));
     // The keys of a selected track are there too.
     await expect(group(page, "timeline").locator('[data-tab="keyframes"]')).toBeAttached();
   });
