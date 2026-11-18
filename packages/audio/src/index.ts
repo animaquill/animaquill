@@ -90,6 +90,11 @@ export interface PlaybackAudioOptions {
   /** Resolves to undefined when the file is not here. */
   readonly fileOf: (file: string) => Promise<Blob | undefined>;
   readonly onProblem: (file: string) => void;
+  /**
+   * The mixer could not start in this context, see `mixer`: nothing will be heard, which people
+   * should know. Once for each context.
+   */
+  readonly onNoMixer?: () => void;
   readonly read?: SampleReader;
   readonly createContext?: () => AudioContext;
   readonly wallClock?: () => number;
@@ -150,6 +155,7 @@ let runs = 0;
 export class PlaybackAudio {
   readonly #fileOf: (file: string) => Promise<Blob | undefined>;
   readonly #onProblem: (file: string) => void;
+  readonly #onNoMixer: () => void;
   readonly #read: SampleReader;
   readonly #createContext: () => AudioContext;
   readonly #wallClock: () => number;
@@ -169,6 +175,7 @@ export class PlaybackAudio {
   constructor(options: PlaybackAudioOptions) {
     this.#fileOf = options.fileOf;
     this.#onProblem = options.onProblem;
+    this.#onNoMixer = options.onNoMixer ?? (() => {});
     this.#read = options.read ?? readSamples;
     this.#createContext = options.createContext ?? mixContext;
     this.#wallClock = options.wallClock ?? (() => performance.now());
@@ -284,6 +291,7 @@ export class PlaybackAudio {
           (error: unknown) => {
             console.warn("No sound", error);
             this.#note("audio.no-mixer", { error: String(error) });
+            this.#onNoMixer();
             return undefined;
           },
         );
@@ -411,9 +419,9 @@ export class PlaybackAudio {
       );
       if (!(await this.#untilDue(run, context, when))) return;
     }
-    if (read !== undefined && !run.stopped) {
-      mixer.send({ kind: "end", run: run.id, id: sound.id, frame: read });
-    }
+    // Also when nothing came, such as when the clip starts past the end of its file: then all of
+    // it is silent, and nothing is late.
+    if (!run.stopped) mixer.send({ kind: "end", run: run.id, id: sound.id, frame: read ?? 0 });
   }
 
   /** Backwards, a piece at a time from the end on, each read forwards as files can be. */
@@ -430,6 +438,7 @@ export class PlaybackAudio {
     const length = BACKWARDS_SECONDS * Math.max(Math.abs(run.rate), 1);
     const bottom = Math.max(toFile(sound.start) - MARGIN_SECONDS, 0);
     let top = toFile(Math.min(sound.end, since)) + MARGIN_SECONDS;
+    let any = false;
     while (top > bottom) {
       const from = Math.max(top - length, bottom);
       let read: number | undefined;
@@ -437,12 +446,15 @@ export class PlaybackAudio {
         if (run.stopped) return;
         this.#send(mixer, run, sound, chunk, read ?? Math.round(from * chunk.rate));
         read = chunk.start + (chunk.channels[0]?.length ?? 0);
+        any = true;
       }
       if (!(await this.#whileRunning(run, context))) return;
       const when = this.#contextTime(run, context, toTimeline(from));
       if (!(await this.#untilDue(run, context, when))) return;
       top = from;
     }
+    // Nothing of the file is where it plays: silent, and nothing late.
+    if (!any && !run.stopped) mixer.send({ kind: "end", run: run.id, id: sound.id, frame: 0 });
   }
 
   /** Hands a chunk over to the mixer, and with it all of the file from `since` up to its end. */

@@ -331,8 +331,22 @@ test("the preview plays what the export mixes, sample by sample", async ({ page 
     let silent = 0;
     const left = exported.getChannelData(0);
     const right = exported.getChannelData(1);
+    // Where a sound was late, said so in `audio.late`, the others played without it.
+    const late = notes.flatMap((note) => {
+      if (!note.startsWith("audio.late ")) return [];
+      const { ms, seconds } = JSON.parse(note.slice("audio.late ".length)) as {
+        ms: number;
+        seconds: number;
+      };
+      return [{ from: seconds * 48_000 - 128, to: (seconds + ms / 1000) * 48_000 + 256 }];
+    });
+    let lateSamples = 0;
     for (const [sample, [l, r]] of heard) {
       if (sample >= SECONDS * 48_000) continue;
+      if (late.some(({ from, to }) => sample >= from && sample < to)) {
+        lateSamples += 1;
+        continue;
+      }
       // Before the samples came in, the preview was silent: that is the late part, said so.
       if (l === 0 && r === 0) {
         silent += 1;
@@ -341,13 +355,13 @@ test("the preview plays what the export mixes, sample by sample", async ({ page 
       compared += 1;
       if (l !== left[sample] || r !== right[sample]) differ += 1;
     }
-    return { compared, differ, silent, state: context.state, notes };
+    return { compared, differ, silent, lateSamples, state: context.state, notes };
   });
   console.log("preview against export:", JSON.stringify(result));
   expect(result.compared).toBeGreaterThan(48_000);
   expect(result.differ).toBe(0);
   // Only the start can be late, while the first samples are on their way.
-  expect(result.silent).toBeLessThan(0.3 * 48_000);
+  expect(result.silent + result.lateSamples).toBeLessThan(0.3 * 48_000);
 });
 
 test("the preview has sound at other speeds, backwards, on a device at another rate, and takes a new volume at once", async ({

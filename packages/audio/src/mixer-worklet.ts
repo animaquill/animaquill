@@ -3,6 +3,7 @@
  * quantum at a time, see `MixerCore`. A module of the audio thread, loaded from the editor's own
  * address, because the editor runs no scripts from elsewhere.
  */
+import { warmUp } from "./engine/engine.ts";
 import { MixerCore, type MixerMessage } from "./engine/mixer-core.ts";
 
 /** What an audio worklet has, which the DOM types leave out. */
@@ -38,4 +39,6 @@ class Mixer extends AudioWorkletProcessor {
   }
 }
 
+// Once, while the module loads, before anything plays: the first quanta would take twice as long.
+warmUp();
 registerProcessor("aq-mixer", Mixer);

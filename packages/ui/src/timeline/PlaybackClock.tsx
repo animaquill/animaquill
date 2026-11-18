@@ -27,6 +27,7 @@ export function PlaybackClock() {
         warned.add(file);
       },
       onNote: (kind, data) => diagnostics.note(kind, data),
+      onNoMixer: () => notifications.push(t("notice.previewNoSound")),
       // The mix runs in the audio thread, from the editor's own address as the next one.
       mixer: async (context) => {
         const { default: url } = await import("@animaquill/audio/mixer-worklet?worker&url");

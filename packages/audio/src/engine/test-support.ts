@@ -119,6 +119,12 @@ export interface MixCase {
   readonly files: Readonly<Record<string, Signal>>;
   readonly plan: MixPlan;
   readonly sha256: string;
+  /** Every `every`th sample of each channel, from the first: what another platform is held to. */
+  readonly samples: {
+    readonly every: number;
+    readonly left: readonly number[];
+    readonly right: readonly number[];
+  };
 }
 
 /** The mix of a case, from its start, a quantum at a time as the preview has it. */

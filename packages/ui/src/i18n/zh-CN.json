@@ -450,6 +450,7 @@
     "mediaTooLarge": "“{{name}}”超过 2 GB，现在还导入不了。",
     "mediaSaveFailed": "“{{name}}”保存失败，可能是浏览器的存储空间不够。",
     "previewCannotDecode": "有素材在这个浏览器里解不了或者找不到，预览里显示不出来。",
+    "previewNoSound": "这个浏览器放不出预览的声音，导出不受影响。",
     "trialOverwrote": "保存好了。其中 {{count}} 处别人也改过，用的是你的值。",
     "trialDiscarded": "放弃了 {{count}} 处试改。撤销可以找回。",
     "trialSetAside": "{{count}} 处试改现在用不上，比如片段不在了，先放着。片段回来后接着用，放弃全部试改时一起清掉。",

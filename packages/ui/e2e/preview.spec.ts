@@ -391,6 +391,22 @@ test("plays sound, and stops when paused", async ({ page }) => {
   expect(await sounds()).toBe(stopped);
 });
 
+test("says so when this browser cannot play sound at all", async ({ page, problems }) => {
+  // The mixer of the audio thread does not load, as in a browser without audio worklets.
+  await page.route(/mixer-worklet/, (route) => route.abort());
+  await page.reload();
+  await importAndPlace(page, { name: "配音.wav", mimeType: "audio/wav", buffer: wav(10) });
+  await button(page, "播放").click();
+  await expect(page.getByText("这个浏览器放不出预览的声音")).toBeVisible();
+  await button(page, "暂停").click();
+  await button(page, "播放").click();
+  await page.waitForTimeout(300);
+  await expect(page.getByText("这个浏览器放不出预览的声音")).toHaveCount(1);
+  // The worklet that did not load, on purpose.
+  const left = problems.filter((problem) => !/Failed to load resource/.test(problem));
+  problems.splice(0, problems.length, ...left);
+});
+
 test("a video shows its frames on the clip and in the list, also after a reload", async ({
   page,
 }) => {

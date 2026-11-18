@@ -105,6 +105,7 @@ function setup(
     }
   });
   const onProblem = vi.fn();
+  const onNoMixer = vi.fn();
   const notes: [string, Readonly<Record<string, string | number>>][] = [];
   const audio = new PlaybackAudio({
     fileOf: async () => {
@@ -112,6 +113,7 @@ function setup(
       return options.file === false ? undefined : new Blob();
     },
     onProblem,
+    onNoMixer,
     read,
     createContext: () => context as unknown as AudioContext,
     wallClock: () => wall,
@@ -133,7 +135,7 @@ function setup(
   const walk = (ms: number) => {
     wall += ms;
   };
-  return { context, ...mixer, audio, read, onProblem, notes, pass, walk };
+  return { context, ...mixer, audio, read, onProblem, onNoMixer, notes, pass, walk };
 }
 
 /** What the engine gives at a sample of the timeline for a sound with all of its file. */
@@ -199,13 +201,18 @@ describe("the clock", () => {
   });
 
   it("keeps going when the mixer cannot start, and says so", async () => {
-    const { audio, notes, pass } = setup({ mixer: "fails" });
+    const { audio, notes, pass, onNoMixer } = setup({ mixer: "fails" });
     audio.play(planOf([sound()]), 0, audio.now());
     const start = audio.now();
     await pass(100);
     // The clock of the context, which goes by quanta.
     expect(audio.now() - start).toBeCloseTo(100, -1);
     expect(notes.map(([kind]) => kind)).toContain("audio.no-mixer");
+    // People hear nothing, so they are told, once.
+    expect(onNoMixer).toHaveBeenCalledTimes(1);
+    audio.play(planOf([sound()]), 0, audio.now());
+    await pass(50);
+    expect(onNoMixer).toHaveBeenCalledTimes(1);
     audio.stop();
   });
 });
@@ -261,6 +268,15 @@ describe("playing", () => {
     expect(late?.[1]).toMatchObject({ seconds: 0 });
     expect(Number(late?.[1].ms)).toBeGreaterThan(250);
     audio.stop();
+  });
+
+  it("says nothing is late for a clip that starts past the end of its file", async () => {
+    const { audio, pass, notes } = setup();
+    audio.play(planOf([sound({ end: 3, offset: 10 })]), 0, audio.now());
+    await pass(300);
+    // What was late is said once it is there again, or when playing stops.
+    audio.stop();
+    expect(notes.filter(([kind]) => kind === "audio.late")).toEqual([]);
   });
 
   it("plays sound earlier by what the device takes", async () => {

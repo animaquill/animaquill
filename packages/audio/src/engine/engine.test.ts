@@ -2,7 +2,7 @@ import { fadesGainAt, type MixPlan, type SoundFade } from "@animaquill/core";
 import { describe, expect, it } from "vitest";
 import { BLOCK, MixEngine } from "./engine.ts";
 import { MIX_RATE } from "./resample.ts";
-import type { SampleStore } from "./samples.ts";
+import { SampleStore } from "./samples.ts";
 import { chunksOf, inFile, planOf, sound, storeOf, track } from "./test-support.ts";
 
 /** Mixes samples `from` up to `from + frames` of a plan, with a store for each file. */
@@ -134,6 +134,21 @@ describe("the mix engine", () => {
     store.endAt(Number.POSITIVE_INFINITY);
     engine.render(8 * BLOCK, BLOCK, left, right);
     expect(missing).toEqual([["s", 8 * BLOCK, BLOCK]]);
+    expect(left.every((value) => value === 0)).toBe(true);
+  });
+
+  it("is silent without a word for a sound whose file ended before anything of it came", () => {
+    const store = new SampleStore();
+    store.endAt(0);
+    const missing: unknown[] = [];
+    const engine = new MixEngine(
+      planOf([sound()]),
+      () => store,
+      (...args) => missing.push(args),
+    );
+    const left = new Float32Array(BLOCK);
+    engine.render(0, BLOCK, left, new Float32Array(BLOCK));
+    expect(missing).toEqual([]);
     expect(left.every((value) => value === 0)).toBe(true);
   });
 

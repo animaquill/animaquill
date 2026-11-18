@@ -94,6 +94,11 @@ export class SampleStore {
     return this.#channels;
   }
 
+  /** Whether where the file ends is known. */
+  get ended(): boolean {
+    return this.#end !== Number.POSITIVE_INFINITY;
+  }
+
   /** Frames in the store, to keep an eye on memory. */
   get frames(): number {
     return this.#chunks.reduce((sum, chunk) => sum + (chunk.channels[0]?.length ?? 0), 0);

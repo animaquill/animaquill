@@ -43,7 +43,8 @@ function perQuantum(tracks: number, rate: number, fading = false): number {
 }
 
 describe("the engine in the audio thread", () => {
-  it("mixes many tracks well within a quantum", () => {
+  // Ten seconds of each of five mixes, a quantum at a time.
+  it("mixes many tracks well within a quantum", { timeout: 60_000 }, () => {
     const rows = {
       "20 tracks at 48 kHz": perQuantum(20, 48_000),
       "20 tracks at 48 kHz, all fading": perQuantum(20, 48_000, true),

@@ -1,7 +1,7 @@
 import { audibleTracks, type MixPlan, type MixSound } from "@animaquill/core/mix-plan";
 import { fadesDuring, fadesGainAt } from "@animaquill/core/sound-fades";
 import { MIX_RATE, WHOLE, kernelFor, resample } from "./resample.ts";
-import type { SampleStore } from "./samples.ts";
+import { SampleStore } from "./samples.ts";
 
 /**
  * Samples that the engine works out at a time. Blocks start at whole multiples of it on the
@@ -179,6 +179,8 @@ export class MixEngine {
     const rate = store.rate;
     const count = to - from;
     if (rate === undefined) {
+      // The file ended before anything of it came: there is nothing to miss.
+      if (store.ended) return true;
       this.#onMissing(sound, from, count);
       return false;
     }
@@ -257,4 +259,51 @@ export class MixEngine {
     );
     return true;
   }
+}
+
+/**
+ * Has the engine work out a little of every kind of sound once, so that the first quanta of real
+ * playing do not wait for the JavaScript engine to compile it: rates to resample from, one channel
+ * and six, transitions. Takes some tens of milliseconds; the audio thread does it once, when it is
+ * made, before anything plays.
+ */
+export function warmUp(): void {
+  const fades = [
+    { use: "enter", way: "in", shape: "power", start: 0, end: 1, duration: 1 },
+    { use: "exit", way: "out", shape: "gain", start: 0, end: 1, duration: 1 },
+  ] as const;
+  const kinds = [
+    { rate: MIX_RATE, channels: 2, offset: 0 },
+    { rate: MIX_RATE, channels: 1, offset: 0.3 / MIX_RATE },
+    { rate: 44_100, channels: 2, offset: 0 },
+    { rate: 22_050, channels: 1, offset: 0 },
+    { rate: 96_000, channels: 6, offset: 0 },
+  ];
+  const stores = kinds.map(({ rate, channels }) => {
+    const store = new SampleStore();
+    store.add({
+      start: 0,
+      rate,
+      channels: Array.from({ length: channels }, () => new Float32Array(rate / 2)),
+    });
+    store.endAt(rate / 2);
+    return store;
+  });
+  const sounds = kinds.map(({ offset }, index) => ({
+    id: String(index),
+    file: String(index),
+    track: "warm",
+    start: 0,
+    end: 0.5,
+    offset,
+    gain: 0.5,
+    fades: index % 2 === 0 ? fades : [],
+  }));
+  const engine = new MixEngine(
+    { sounds, tracks: [{ id: "warm", gain: 0.5, muted: false, solo: false }] },
+    (sound) => stores[Number(sound.id)],
+  );
+  const left = new Float32Array(BLOCK);
+  const right = new Float32Array(BLOCK);
+  for (let at = 0; at < MIX_RATE / 4; at += BLOCK) engine.render(at, BLOCK, left, right);
 }
