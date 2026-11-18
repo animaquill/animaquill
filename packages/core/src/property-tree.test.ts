@@ -185,7 +185,7 @@ describe("the tree of a clip", () => {
   });
 
   it("a clip with nothing to animate has nothing below it", () => {
-    expect(clipNodeOf(clip({}, { kind: "audio", media: { asset: "a" } })).children).toEqual([]);
+    expect(clipNodeOf(clip({}, { kind: "music", music: "m" })).children).toEqual([]);
   });
 
   it("objects go as deep as their parents, with groups inside of them", () => {
@@ -568,8 +568,10 @@ describe("the tree of a timeline", () => {
 
   it("has tracks with their clips in time order, and leaves out what has nothing to show", () => {
     const tree = propertyTree(timeline(), filter("all"));
+    // A clip of sound has its volume and pan.
     expect(tree.map(({ children }) => children.map(({ clip: id }) => id))).toEqual([
       ["early", "late"],
+      ["sound"],
     ]);
   });
 
@@ -578,7 +580,7 @@ describe("the tree of a timeline", () => {
       propertyTree(timeline(), filter("here", at)).flatMap(({ children }) =>
         children.map(({ clip: id }) => id),
       );
-    expect(clipsAt("1")).toEqual(["early"]);
+    expect(clipsAt("1")).toEqual(["early", "sound"]);
     expect(clipsAt("3")).toEqual([]);
     expect(clipsAt("5")).toEqual(["late"]);
   });

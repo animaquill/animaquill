@@ -257,6 +257,18 @@ export const FAILURES = {
     longest: z.string().optional(),
   }),
   "not-animatable": z.strictObject({ path: z.string() }),
+  /**
+   * A property that this kind of owner does not have, such as `transform.x` on a track: what it is
+   * on (`target`, by `track` and its `kind`), and the paths it takes there (`takes`, none on a track
+   * that is not of sound).
+   */
+  "wrong-target": z.strictObject({
+    path: z.string(),
+    target: z.enum(["track"]),
+    track: z.string(),
+    kind: z.string(),
+    takes: z.array(z.string()).readonly(),
+  }),
   "join-taken": z.strictObject({ join: z.string() }),
   /** Clips or versions use it (`clips`), or code does (`code`, in `file`). */
   "asset-in-use": z.strictObject({

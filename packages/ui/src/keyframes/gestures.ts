@@ -5,7 +5,7 @@ import {
   keyWithComponent,
   secondsOf,
   withComponent,
-  type PropertyEdit,
+  type ClipPropertyEdit,
 } from "@animaquill/core";
 import {
   ZERO,
@@ -118,10 +118,10 @@ export interface KeyGestureHost {
   select(selection: KeySelection): void;
   show(preview: KeyPreview | undefined): void;
   /** Shows what these would do in the picture. */
-  preview(edits: readonly PropertyEdit[]): void;
+  preview(edits: readonly ClipPropertyEdit[]): void;
   cancelPreview(): void;
   /** Writes them as one step, with what is selected afterwards. */
-  commit(edits: readonly PropertyEdit[], selection: KeySelection): boolean;
+  commit(edits: readonly ClipPropertyEdit[], selection: KeySelection): boolean;
   /** Keeps rows from shrinking under the mouse while it drags in them, and lets go of that. */
   holdRanges(rows: readonly ValueRow[]): void;
   releaseRanges(): void;
@@ -181,9 +181,9 @@ export function liftEdits(
   lifted: readonly LiftedChannel[],
   lift: ReadonlyMap<string, number>,
   keysOf: (clip: string, path: string) => readonly Key[] | undefined,
-): readonly PropertyEdit[] | undefined {
+): readonly ClipPropertyEdit[] | undefined {
   const moving = compare(by, ZERO) === 0 ? [] : moveEdits(channels, by);
-  const valued: PropertyEdit[] = [];
+  const valued: ClipPropertyEdit[] = [];
   for (const { clip, path, component, spec, times } of lifted) {
     const up = lift.get(liftKey(clip, path, component)) ?? 0;
     if (up === 0) continue;
@@ -207,7 +207,7 @@ export function liftEdits(
 export function moveEdits(
   channels: readonly MovingChannel[],
   by: Rational,
-): readonly PropertyEdit[] {
+): readonly ClipPropertyEdit[] {
   return channels.map(({ clip, path, times }) => ({
     owner: { clip },
     path,
@@ -343,7 +343,7 @@ export class KeyMoveGesture implements Gesture {
   }
 
   /** What the drag comes to from the keys as they are now, or nothing after it stopped for that. */
-  #edits(by: Rational, lift: ReadonlyMap<string, number>): readonly PropertyEdit[] | undefined {
+  #edits(by: Rational, lift: ReadonlyMap<string, number>): readonly ClipPropertyEdit[] | undefined {
     const keysOf = (clip: string, path: string) => this.#host.keysOf(clip, path);
     const edits = liftEdits(this.#channels, by, this.#lifted, lift, keysOf);
     if (edits) return edits;
@@ -602,7 +602,7 @@ export class HandleGesture implements Gesture {
     this.#host.gone();
   }
 
-  #edits(changed: ChangedKeys): readonly PropertyEdit[] {
+  #edits(changed: ChangedKeys): readonly ClipPropertyEdit[] {
     const { clip, path } = this.#grab;
     return [{ owner: { clip }, path, op: "putKeys", keys: [...changed.values()] }];
   }

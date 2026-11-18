@@ -13,7 +13,7 @@ import {
   type ClipDescription,
   type ClipState,
   type ProjectState,
-  type PropertyEdit,
+  type ClipPropertyEdit,
 } from "@animaquill/core";
 import {
   add,
@@ -80,7 +80,7 @@ export function writeEdit(
   row: PropertyRow,
   time: string,
   value: Value,
-): PropertyEdit {
+): ClipPropertyEdit {
   const target = { owner: { clip }, path: row.path };
   return row.spec.animatable === false
     ? { ...target, op: "set", value }
@@ -88,7 +88,11 @@ export function writeEdit(
 }
 
 /** What the diamond does: takes the key of this frame away, or writes one with what is showing. */
-export function keyEdit(clip: string, row: PropertyRow, time: string): PropertyEdit | undefined {
+export function keyEdit(
+  clip: string,
+  row: PropertyRow,
+  time: string,
+): ClipPropertyEdit | undefined {
   const target = { owner: { clip }, path: row.path };
   if (row.keyTime !== undefined) return { ...target, op: "removeKey", time: row.keyTime };
   return row.value === undefined ? undefined : { ...target, op: "setKey", time, value: row.value };
@@ -330,11 +334,31 @@ export function inspectSelection(
     const box = model.boxes.get(id);
     return box && objectsOfClip(box.clip, trial.describe).length > 0 ? [box] : [];
   });
-  const [box] = boxes;
+  // A picture and its sound, linked, are about the picture: its sound has a line of its own on the
+  // timeline, and is a clip of its own with Alt.
+  const shown = pictureOfLinked(boxes);
+  const [box] = shown;
   if (!box) return { kind: "no-properties" };
-  if (boxes.length > 1) return { kind: "several", count: boxes.length };
+  if (shown.length > 1) return { kind: "several", count: shown.length };
   const clip = trial.look?.apply(box.clip) ?? box.clip;
   return { kind: "clip", box, objects: objectsOfClip(clip, trial.describe) };
+}
+
+const SOUNDING = new Set(["audio", "sound"]);
+
+/** Whether clips are one linked group and this is its only one with a picture. */
+function isLinkedPicture(boxes: readonly ClipBox[], box: ClipBox): boolean {
+  const { link } = box.clip;
+  if (link === undefined || boxes.some(({ clip }) => clip.link !== link)) return false;
+  const pictures = boxes.filter(({ clip }) => !SOUNDING.has(clip.source.kind));
+  return pictures.length === 1 && pictures[0] === box;
+}
+
+/** The picture of a linked group with one, and otherwise the clips as they are. */
+function pictureOfLinked(boxes: readonly ClipBox[]): readonly ClipBox[] {
+  if (boxes.length < 2) return boxes;
+  const picture = boxes.find(({ clip }) => !SOUNDING.has(clip.source.kind));
+  return picture && isLinkedPicture(boxes, picture) ? [picture] : boxes;
 }
 
 /** Where the playhead is for a clip: whether it can change there, and how to get to it. */

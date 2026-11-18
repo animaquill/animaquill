@@ -1,4 +1,10 @@
-import { OPERATIONS, PropertyEdit, PropertyRename, type Operation } from "@animaquill/core";
+import {
+  OPERATIONS,
+  PropertyEdit,
+  PropertyOwner,
+  PropertyRename,
+  type Operation,
+} from "@animaquill/core";
 import {
   Animation,
   ClipSource,
@@ -54,6 +60,7 @@ const SHARED: readonly (readonly [z.ZodType, string])[] = [
   [ClipSource, "ClipSource"],
   [Transition, "Transition"],
   [PropertyValue, "PropertyValue"],
+  [PropertyOwner, "PropertyOwner"],
   [PropertyEdit, "PropertyEdit"],
   [PropertyRename, "PropertyRename"],
   [SceneManifest, "SceneManifest"],

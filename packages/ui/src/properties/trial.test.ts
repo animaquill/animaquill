@@ -1,4 +1,4 @@
-import { aiTask, orderedTracks, type PropertyEdit } from "@animaquill/core";
+import { aiTask, orderedTracks, type ClipPropertyEdit } from "@animaquill/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TimelineEditor } from "../timeline/editor.ts";
 import {
@@ -77,7 +77,7 @@ async function open(place: Browser, id: string) {
 }
 
 const owner = { clip: "c" };
-const write = (value: number, path = "transform.x"): PropertyEdit => ({
+const write = (value: number, path = "transform.x"): ClipPropertyEdit => ({
   owner,
   path,
   op: "write",

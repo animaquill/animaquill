@@ -1,5 +1,13 @@
 import { PEAKS_PER_SECOND } from "@animaquill/audio";
-import { buildAudioPlan, fadesGainAt, type ProjectState, type SoundLayer } from "@animaquill/core";
+import {
+  buildAudioPlan,
+  fadesGainAt,
+  gainAt,
+  trackGainAt,
+  type MixPlan,
+  type MixSound,
+  type ProjectState,
+} from "@animaquill/core";
 import type { Row, TimelineModel } from "../timeline/model.ts";
 
 /** How tall the row of sound is, open and folded, before the size of words. */
@@ -12,7 +20,8 @@ export interface SoundPicture {
   readonly tracks: readonly Row[];
   /** The one track it shows by itself, or none for all that is heard. */
   readonly track: string | undefined;
-  readonly sounds: readonly SoundLayer[];
+  /** What is heard of it, as the mix has it: its sounds, on their tracks. */
+  readonly heard: MixPlan;
 }
 
 /** What the row of sound remembers for a window. Neither is there when it is as it starts. */
@@ -46,7 +55,7 @@ export function soundPictureOf(
   );
   if (tracks.length === 0) return undefined;
   const track = tracks.some((row) => row.track.id === picked) ? picked : undefined;
-  return { tracks, track, sounds: buildAudioPlan(state, model.id, undefined, track).sounds };
+  return { tracks, track, heard: buildAudioPlan(state, model.id, track) };
 }
 
 /**
@@ -111,12 +120,12 @@ export interface SoundView {
 
 /**
  * How loud everything together is at each pixel, from 0 to 1, into `levels`. Sounds that play at
- * once add up as their power does, which is how unrelated sounds add up, each at its volume and
- * with its transitions. A waveform that is not there yet counts as silence.
+ * once add up as their power does, which is how unrelated sounds add up, each at the volume of its
+ * clip and of its track, with its transitions. A waveform that is not there yet counts as silence.
  */
 export function soundLevels(
-  sounds: readonly SoundLayer[],
-  peaksOf: (sound: SoundLayer) => Uint8Array | undefined,
+  { sounds, tracks }: MixPlan,
+  peaksOf: (sound: MixSound) => Uint8Array | undefined,
   view: SoundView,
   levels: Float32Array,
 ): void {
@@ -133,7 +142,8 @@ export function soundLevels(
   const depth = Math.max(Math.floor(Math.log2(perPixel * perSecond)), 0);
   const block = 2 ** depth;
   for (const sound of sounds) {
-    if (sound.end <= from || sound.start >= to || sound.gain <= 0) continue;
+    const track = tracks.find(({ id }) => id === sound.track);
+    if (!track || sound.end <= from || sound.start >= to) continue;
     const peaks = peaksOf(sound);
     if (!peaks || peaks.length === 0) continue;
     const pyramid = pyramidOf(peaks);
@@ -141,7 +151,7 @@ export function soundLevels(
     const size = depth < pyramid.length ? block : 2 ** (pyramid.length - 1);
     const first = Math.max(Math.floor(view.xAt(sound.start)), 0);
     const last = Math.min(Math.ceil(view.xAt(sound.end)), width);
-    const { fades, gain, end: soundEnd } = sound;
+    const { fades, end: soundEnd } = sound;
     const soundStart = sound.start;
     const shift = sound.offset - soundStart;
     for (let x = first; x < last; x += 1) {
@@ -159,7 +169,9 @@ export function soundLevels(
         if (value > loudest) loudest = value;
       }
       if (loudest === 0) continue;
-      const scale = fades ? gain * fadesGainAt(fades, (before + after) / 2) : gain;
+      const middle = (before + after) / 2;
+      const gain = gainAt(sound, middle) * trackGainAt(track, middle);
+      const scale = fades ? gain * fadesGainAt(fades, middle) : gain;
       const heard = (loudest / 255) * scale;
       levels[x] = (levels[x] as number) + heard * heard;
     }

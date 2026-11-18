@@ -115,6 +115,15 @@ export type RoomBelow = ReadonlyMap<string, number>;
 
 export const NO_ROOM_BELOW: RoomBelow = new Map();
 
+/** How far a clip is drawn from the top and the bottom of its row. */
+export const ROW_INSET = 2;
+
+/** Where a clip of a row is on screen, up and down, for a row that starts at `rowTop` there. */
+export const clipAreaOf = (rowTop: number, row: Pick<Row, "height">) => ({
+  top: rowTop + ROW_INSET,
+  height: row.height - ROW_INSET * 2 - 1,
+});
+
 /** A clip as the timeline draws it. Times are floats: fine for drawing, not for saving. */
 export interface ClipBox {
   readonly id: string;

@@ -4,7 +4,7 @@ import {
   sceneSourceOf,
   type ClipDescription,
   type ClipState,
-  type PropertyEdit,
+  type ClipPropertyEdit,
   type Registration,
   type CommandFailure,
 } from "@animaquill/core";
@@ -135,10 +135,10 @@ async function setup({
     run("clip.add", { timeline: "main", track: video, ...clip });
     timeline.selectOnly(id);
   };
-  const edit = (...edits: PropertyEdit[]) => run("property.edit", { timeline: "main", edits });
+  const edit = (...edits: ClipPropertyEdit[]) => run("property.edit", { timeline: "main", edits });
   const set = (clip: string, values: Readonly<Record<string, number>>) =>
     edit(
-      ...Object.entries(values).map(([path, value]): PropertyEdit => ({
+      ...Object.entries(values).map(([path, value]): ClipPropertyEdit => ({
         owner: { clip },
         path,
         op: "set",

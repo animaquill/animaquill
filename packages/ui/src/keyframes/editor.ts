@@ -25,7 +25,7 @@ import {
   type ObjectNode,
   type ProjectState,
   type ProjectStore,
-  type PropertyEdit,
+  type ClipPropertyEdit,
   type PropertyNode,
   type TrackNode,
   type TreeNode,
@@ -98,6 +98,7 @@ import type { SoundMemory } from "./sound-row.ts";
 import { animationIn, hasKeyAt } from "./tables.ts";
 import { TimelineLanes } from "./timeline-lanes.ts";
 import { KeyframesView } from "./view.ts";
+import { VolumeLines } from "./volume-lines.ts";
 
 const REMEMBER_DELAY_MS = 300;
 const SETTINGS_KEY = "keyframes";
@@ -123,8 +124,8 @@ export interface KeyframeMessages {
   gone(): void;
 }
 
-/** Which clips a place shows keys of. Without one, it is all of them. */
-export type ShownClips = (clip: string) => boolean;
+/** Which keys a place shows, by clip and property. Without one, it is all of them. */
+export type ShownClips = (clip: string, path: string) => boolean;
 
 const ALL_CLIPS: ShownClips = () => true;
 
@@ -254,7 +255,7 @@ export interface ObjectKeys {
   readonly all: boolean;
   /** How many properties it is about. */
   readonly count: number;
-  readonly edits: readonly PropertyEdit[];
+  readonly edits: readonly ClipPropertyEdit[];
 }
 
 /**
@@ -278,6 +279,8 @@ export class KeyframeEditor {
   readonly panel: KeyframesView;
   /** The room under the tracks of the timeline. */
   readonly inTimeline: TimelineLanes;
+  /** The volume lines on clips of sound, whose keys are these keys. */
+  readonly volumeLines: VolumeLines;
   #snapshot: KeyframeSnapshot = {
     range: "here",
     query: "",
@@ -343,6 +346,8 @@ export class KeyframeEditor {
     this.panel = new KeyframesView(this, timeline);
     this.inTimeline = new TimelineLanes(this, timeline);
     timeline.setExtras(this.inTimeline);
+    this.volumeLines = new VolumeLines(this, timeline);
+    timeline.setOnClips(this.volumeLines);
     // One clipboard: what was copied last is what goes in.
     timeline.subscribeCopies(() => this.forgetClipboard());
     // Keys select their clips. People selecting clips are about clips, and that lets go of keys.
@@ -687,6 +692,7 @@ export class KeyframeEditor {
         if (type === SCENE_OBJECT_TYPES.params) return t("keyframes.objects.params");
         if (type === SCENE_OBJECT_TYPES.elements) return t("keyframes.objects.elements");
         if (type === EFFECT_OBJECT_TYPES.effects) return t("keyframes.objects.effects");
+        if (type === "clip.sound") return t("keyframes.objects.sound");
         if (type?.startsWith(EFFECT_OBJECT_TYPES.prefix)) {
           return effectName(t, type.slice(EFFECT_OBJECT_TYPES.prefix.length));
         }
@@ -1010,7 +1016,7 @@ export class KeyframeEditor {
     this.redraw();
   }
 
-  previewEdits(edits: readonly PropertyEdit[]): void {
+  previewEdits(edits: readonly ClipPropertyEdit[]): void {
     this.#writer.preview(edits);
   }
 
@@ -1019,7 +1025,7 @@ export class KeyframeEditor {
   }
 
   /** What is selected follows the keys, also while the change goes around. */
-  commitMove(edits: readonly PropertyEdit[], selection: KeySelection): boolean {
+  commitMove(edits: readonly ClipPropertyEdit[], selection: KeySelection): boolean {
     const before = this.#snapshot.selection;
     this.#show({ selection });
     const done = this.#writer.commit(edits);
@@ -1031,7 +1037,7 @@ export class KeyframeEditor {
   movingChannels(shown: ShownClips = ALL_CLIPS): readonly MovingChannel[] {
     const channels: MovingChannel[] = [];
     for (const { clip, path, times } of this.selection.channels()) {
-      if (shown(clip) && this.canMove(clip)) channels.push({ clip, path, times: [...times] });
+      if (shown(clip, path) && this.canMove(clip)) channels.push({ clip, path, times: [...times] });
     }
     return channels;
   }
@@ -1047,7 +1053,7 @@ export class KeyframeEditor {
   #changeable(shown: ShownClips): readonly MovingChannel[] {
     const channels = this.movingChannels(shown);
     if (channels.length > 0 || this.selection.size === 0) return channels;
-    const there = this.selection.onClips(shown);
+    const there = this.selection.keeping(({ clip, path }) => shown(clip, path));
     if (there.size === 0) this.#messages.notShown();
     else if (this.comparing) this.#messages.comparing();
     else this.#messages.locked();
@@ -1094,7 +1100,7 @@ export class KeyframeEditor {
   /** Takes the selected keys away, in one step, or says why that cannot be. */
   deleteSelected(shown: ShownClips = ALL_CLIPS): void {
     const edits = this.#changeable(shown).flatMap(({ clip, path, times }) =>
-      times.map((time): PropertyEdit => ({ owner: { clip }, path, op: "removeKey", time })),
+      times.map((time): ClipPropertyEdit => ({ owner: { clip }, path, op: "removeKey", time })),
     );
     if (edits.length > 0) this.#writer.commit(edits);
   }
@@ -1227,7 +1233,7 @@ export class KeyframeEditor {
     easeFor: (key: Key, next: Key | undefined) => KeyEase,
     mode: "preview" | "commit",
   ): void {
-    const edits: PropertyEdit[] = [];
+    const edits: ClipPropertyEdit[] = [];
     for (const { clip, path, keys, index } of this.#easedKeys()) {
       const key = keys[index] as Key;
       const next = keys[index + 1];
@@ -1245,8 +1251,8 @@ export class KeyframeEditor {
    * at either end of it are not worked out any more: they say that their handles are broken now.
    */
   setEase(ease: KeyEase): void {
-    const edits = this.#gradualChannels().flatMap(({ clip, path, times }): PropertyEdit[] => {
-      const interp: PropertyEdit = {
+    const edits = this.#gradualChannels().flatMap(({ clip, path, times }): ClipPropertyEdit[] => {
+      const interp: ClipPropertyEdit = {
         owner: { clip },
         path,
         op: "setInterp",
@@ -1310,7 +1316,7 @@ export class KeyframeEditor {
     if (!box || !spec || !this.canMove(clip) || this.shakingOf(clip, path)) return;
     const value = this.shownValue(box.clip, path);
     const owner = { clip };
-    const edits: PropertyEdit[] = [];
+    const edits: ClipPropertyEdit[] = [];
     if (!animationIn(value)) {
       const start = value ?? spec.default;
       if (start === undefined) return;
@@ -1403,7 +1409,7 @@ export class KeyframeEditor {
   ): void {
     const now = this.shakingOf(clip, path);
     if (!now || !this.canMove(clip)) return;
-    const edit: PropertyEdit = {
+    const edit: ClipPropertyEdit = {
       owner: { clip },
       path,
       op: "setNoise",
@@ -1460,7 +1466,7 @@ export class KeyframeEditor {
    * up their handles in the part `component`, which is the row people asked in.
    */
   setTangent(mode: TangentMode, component?: number): void {
-    const edits = this.#gradualChannels().flatMap(({ clip, path, times }): PropertyEdit[] => {
+    const edits = this.#gradualChannels().flatMap(({ clip, path, times }): ClipPropertyEdit[] => {
       const selected = this.#selectedIndices(clip, path, times);
       if (!selected) return [];
       const changed = withTangent(selected.keys, selected.indices, mode, component);
@@ -1475,7 +1481,7 @@ export class KeyframeEditor {
 
   /** Taking a copy leaves a key as it is, so a locked one can be part of it. */
   copySelected(shown: ShownClips = ALL_CLIPS): void {
-    const keys = this.selection.onClips(shown);
+    const keys = this.selection.keeping(({ clip, path }) => shown(clip, path));
     if (keys.size === 0) {
       if (this.selection.size > 0) this.#messages.notShown();
       return;

@@ -263,7 +263,9 @@ test("the engine mixes existing projects as the browser did before it", async ({
   }
 });
 
-test("the preview plays what the export mixes, sample by sample", async ({ page }) => {
+test("the preview plays what the export mixes, sample by sample, also with keys of volume and pan", async ({
+  page,
+}) => {
   test.setTimeout(60_000);
   await open(page);
   // Sound starts once people did something on the page.
@@ -282,8 +284,31 @@ test("the preview plays what the export mixes, sample by sample", async ({ page 
       return audio.wavOf(new Blob([samples]), 2, frames, rate);
     };
     const files: Record<string, Blob> = { a: await file(48_000), b: await file(44_100) };
+    /** Keys as the plan has them (`compileChannel` of core): linear from each to the next. */
+    const keys = (...pairs: (readonly [number, number])[]) => ({
+      kind: "curve" as const,
+      type: "number" as const,
+      times: Float64Array.from(pairs, ([time]) => time),
+      values: Float64Array.from(pairs, ([, value]) => value),
+      shapes: new Uint8Array(pairs.length - 1),
+      params: new Float64Array(0),
+      before: "hold" as const,
+      after: "hold" as const,
+      noise: new Float64Array(0),
+      segment: 0,
+    });
+    // Volume and pan with keys (M2), on a sound and on its track, worked out at every sample.
     const plan = {
-      tracks: [{ id: "t", gain: 0.8, muted: false, solo: false }],
+      tracks: [
+        {
+          id: "t",
+          gain: 1,
+          volume: keys([0.5, 0], [2, -12]),
+          pan: { kind: "still" as const, value: 0.3 },
+          muted: false,
+          solo: false,
+        },
+      ],
       sounds: [
         {
           id: "a",
@@ -297,7 +322,17 @@ test("the preview plays what the export mixes, sample by sample", async ({ page 
             { use: "exit", way: "out", shape: "power", start: 1.5, end: 2.5, duration: 1 },
           ] as const,
         },
-        { id: "b", file: "b", track: "t", start: 0.5, end: 3, offset: 0.25, gain: 0.7 },
+        {
+          id: "b",
+          file: "b",
+          track: "t",
+          start: 0.5,
+          end: 3,
+          offset: 0.25,
+          gain: 1,
+          volume: keys([0.5, -3], [1.5, -20], [2.5, 0]),
+          pan: keys([0.25, -1], [2.75, 1]),
+        },
       ],
     };
     const fileOf = async (name: string) => files[name];

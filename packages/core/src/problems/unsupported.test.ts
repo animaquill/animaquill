@@ -186,9 +186,8 @@ describe("what this editor does not do yet", () => {
   it("says which properties of sound and speed would change what is heard or seen", () => {
     const heard = (properties: object) =>
       said({ tracks: [video([]), audio([tone("t", { properties })])], assets: TONE });
-    expect(heard({ "audio.pan": 0.3 })).toEqual([
-      'unsupported-audio-property t {"property":"audio.pan"} sound',
-    ]);
+    // The pan is mixed now.
+    expect(heard({ "audio.pan": 0.3 })).toEqual([]);
     expect(heard({ "audio.pitch": keys(0, 2) })).toEqual([
       'unsupported-audio-property t {"property":"audio.pitch"} sound',
     ]);
@@ -216,23 +215,21 @@ describe("what this editor does not do yet", () => {
     // Neither a picture that does not move nor a clip that makes no sound has any of that.
     const still = color("red", { properties: { "time.speed": 2, "audio.pan": 1 } });
     expect(said({ tracks: [video([still])] })).toEqual([]);
-    expect(said({ tracks: [video([]), audio([], { properties: { "audio.pan": -1 } })] })).toEqual([
-      'unsupported-audio-property a {"property":"audio.pan"} sound',
-    ]);
+    expect(said({ tracks: [video([]), audio([], { properties: { "audio.pan": -1 } })] })).toEqual(
+      [],
+    );
   });
 
-  it("says where the volume has keys, of which only the first counts", () => {
+  it("says nothing of keys on the volume, which the mix follows", () => {
     const heard = (volume: unknown) =>
       said({
         tracks: [video([]), audio([tone("t", { properties: { "audio.volume": volume } })])],
         assets: TONE,
       });
-    expect(heard(keys(-12, -30))).toEqual(["unsupported-volume-keys t {} sound"]);
-    expect(heard(keys(-6, -6))).toEqual([]);
-    expect(heard(-6)).toEqual([]);
+    expect(heard(keys(-12, -30))).toEqual([]);
     expect(
       said({ tracks: [video([]), audio([], { properties: { "audio.volume": keys(0, -6) } })] }),
-    ).toEqual(["unsupported-volume-keys a {} sound"]);
+    ).toEqual([]);
   });
 
   it("says where a loop would repeat something", () => {
@@ -286,7 +283,7 @@ describe("what makes an export otherwise than the project", () => {
   const state = stateOf({
     tracks: [
       video([color("early", { draft: true }), color("late", { start: "20", draft: true })]),
-      audio([tone("pan", { properties: { "audio.pan": 1 } })]),
+      audio([tone("pan", { properties: { "audio.pitch": 1 } })]),
     ],
     assets: TONE,
     formats,

@@ -38,7 +38,7 @@ import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
 import { Tip } from "../app/Tip.tsx";
 import { useWorkbench } from "../app/context.ts";
 import { KeyList } from "../keyframes/KeyList.tsx";
-import { useKeyPopups } from "../keyframes/KeyPopups.tsx";
+import { InterpBubble, useKeyPopups } from "../keyframes/KeyPopups.tsx";
 import { LaneRows } from "../keyframes/LaneRows.tsx";
 import { LanePainter, paintMarquee, paintSnapLine } from "../keyframes/paint.ts";
 import {
@@ -813,6 +813,8 @@ function Surface({
   const labels = useRef(labelOf);
   const lanes = keyframes.inTimeline;
   const popups = useKeyPopups(lanes);
+  /** How the key of a volume line goes on, which a right click on it asks about. */
+  const [volumeKey, setVolumeKey] = useState<{ x: number; y: number; bubble: boolean }>();
 
   useLayoutEffect(() => {
     labels.current = labelOf;
@@ -961,6 +963,12 @@ function Surface({
 
   const openMenu = (pointer: Pointer, box: DOMRect) => {
     if (popups.open(pointer, box)) return;
+    const body = editor.bodyAt(pointer);
+    const onKey = body && editor.onClips?.menu?.(pointer, body);
+    if (onKey) {
+      setVolumeKey({ x: onKey.x + box.left, y: onKey.y + box.top, bubble: false });
+      return;
+    }
     const hit = editor.hitAt(pointer);
     const x = pointer.x + box.left;
     const y = pointer.y + box.top;
@@ -1210,6 +1218,38 @@ function Surface({
         }}
       />
       {popups.element}
+      {volumeKey && !volumeKey.bubble && (
+        <PopupMenu
+          label={t("keyframes.keys")}
+          x={volumeKey.x}
+          y={volumeKey.y}
+          groups={[
+            [
+              {
+                id: "interp",
+                label: t("keyframes.interpMore"),
+                disabled: !keyframes.canEase,
+                run: () => setVolumeKey({ ...volumeKey, bubble: true }),
+              },
+            ],
+            [
+              {
+                id: "delete",
+                label: t("keyframes.action.delete"),
+                run: () => keyframes.deleteSelected(),
+              },
+            ],
+          ]}
+          onClose={() => setVolumeKey((open) => (open?.bubble ? open : undefined))}
+        />
+      )}
+      {volumeKey?.bubble && (
+        <InterpBubble
+          keyframes={keyframes}
+          anchor={new DOMRect(volumeKey.x - 4, volumeKey.y - 4, 8, 8)}
+          onClose={() => setVolumeKey(undefined)}
+        />
+      )}
       <MarkerBubble editor={editor} stage={stage} />
     </div>
   );

@@ -27,7 +27,14 @@ export interface ControlProps {
   readonly format?: (value: unknown) => string;
 }
 
-function NumberControl({ row, label, readOnly, onPreview, onCommit, onCancel }: ControlProps) {
+export function NumberControl({
+  row,
+  label,
+  readOnly,
+  onPreview,
+  onCommit,
+  onCancel,
+}: ControlProps) {
   const { t } = useTranslation();
   return (
     <NumberField

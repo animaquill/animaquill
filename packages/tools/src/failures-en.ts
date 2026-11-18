@@ -221,6 +221,10 @@ export const FAILURE_TEXTS: Texts = {
           ? `The join is too long: at most ${longest} seconds here.`
           : "There is no room for a join at this cut.",
   "not-animatable": ({ path }) => `${path} cannot have keys.`,
+  "wrong-target": ({ path, track, kind, takes }) =>
+    takes.length > 0
+      ? `Track ${track} has no ${path}: a track takes ${takes.join(" and ")}.`
+      : `Track ${track} has no ${path}: it is a ${kind} track, and only tracks of sound have properties (audio.volume and audio.pan).`,
   "join-taken": ({ join }) => `This cut has a join already: ${join}. join.update changes it.`,
   "asset-in-use": ({ asset, by, file }) =>
     by === "code"

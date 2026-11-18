@@ -79,7 +79,7 @@ describe("what the tab is about", () => {
     expect(look(["c"], 0)).toMatchObject({ kind: "clip", box: { id: "c" } });
   });
 
-  it("has nothing to show for a clip without a picture", () => {
+  it("shows the volume and the pan of a clip of sound", () => {
     const { add, look, audio, store } = setup();
     store.execute({
       type: "asset.add",
@@ -89,7 +89,13 @@ describe("what the tab is about", () => {
       },
     });
     add("sound", { source: { kind: "audio", media: { asset: "a" } } }, audio);
-    expect(look(["sound"], 0).kind).toBe("no-properties");
+    const shown = look(["sound"], 0);
+    expect(shown.kind).toBe("clip");
+    const objects = shown.kind === "clip" ? shown.objects : [];
+    expect(objects.flatMap(({ object }) => object.properties.map(({ path }) => path))).toEqual([
+      "audio.volume",
+      "audio.pan",
+    ]);
   });
 
   it("the sound of a video does not get in the way of its picture", () => {

@@ -1,4 +1,4 @@
-import { type PropertyEdit, type CommandFailure } from "@animaquill/core";
+import { type ClipPropertyEdit, type CommandFailure } from "@animaquill/core";
 import { describe, expect, it, vi } from "vitest";
 import { orderedTracks } from "@animaquill/core";
 import { TimelineEditor } from "../timeline/editor.ts";
@@ -65,7 +65,7 @@ async function setup({ trying = false } = {}) {
 }
 
 const owner = { clip: "c" };
-const write = (value: number, time = "1", path = "transform.x"): PropertyEdit => ({
+const write = (value: number, time = "1", path = "transform.x"): ClipPropertyEdit => ({
   owner,
   path,
   op: "write",
@@ -422,7 +422,7 @@ describe("automatic handles", () => {
 
   it("leave everything else as it is", async () => {
     const { writer, value } = await setup();
-    const key = (time: string, number: number): PropertyEdit => ({
+    const key = (time: string, number: number): ClipPropertyEdit => ({
       owner,
       path: "transform.x",
       op: "setKey",
@@ -548,13 +548,27 @@ describe("automatic keys", () => {
     const { writer, value } = await setup();
     writer.setRecording(true);
     writer.commit([
-      write(-6, "2", "audio.volume"),
       write(2, "2", "time.speed"),
+      write(3, "2", "audio.pitch"),
       { owner, path: "fit", op: "set", value: "cover" },
     ]);
-    expect(value("audio.volume")).toBe(-6);
     expect(value("time.speed")).toBe(2);
+    expect(value("audio.pitch")).toBe(3);
     expect(value("fit")).toBe("cover");
+  });
+
+  it("write keys of the volume and the pan of sound, which the mix follows", async () => {
+    const { writer, value } = await setup();
+    writer.setRecording(true);
+    writer.commit([write(-6, "2", "audio.volume"), write(-0.5, "2", "audio.pan")]);
+    expect(keysOf(value("audio.volume"))).toEqual([
+      ["0", 0],
+      ["2", -6],
+    ]);
+    expect(keysOf(value("audio.pan"))).toEqual([
+      ["0", 0],
+      ["2", -0.5],
+    ]);
   });
 
   it("write a value that does not change as it is", async () => {

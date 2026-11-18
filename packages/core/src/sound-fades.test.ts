@@ -79,7 +79,9 @@ describe("the audio plan of transitions of sound", () => {
     );
     const { store, problems } = ProjectStore.open(files);
     if (!store) throw new Error(JSON.stringify(problems));
-    return buildAudioPlan(store.getState(), "main");
+    // The track of each sound is the same one here.
+    const { sounds } = buildAudioPlan(store.getState(), "main");
+    return { sounds: sounds.map(({ track: _track, ...layer }) => layer) };
   };
 
   it("has the transitions at the edges of a clip, as fades of its gain", () => {

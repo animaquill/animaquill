@@ -1,4 +1,4 @@
-import type { SoundLayer } from "@animaquill/core";
+import type { MixSound } from "@animaquill/core";
 import { describe, expect, it } from "vitest";
 import { paintSoundLevels, soundLevels } from "./sound-row.ts";
 
@@ -23,7 +23,7 @@ describe("the row of sound on a long timeline", () => {
     let seed = 3;
     const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
     const files = new Map<string, Uint8Array>();
-    const sounds: SoundLayer[] = [];
+    const sounds: MixSound[] = [];
     for (let track = 0; track < TRACKS; track += 1) {
       for (let start = 0; start < HOUR; start += CLIP) {
         const id = `${track}-${start}`;
@@ -31,10 +31,10 @@ describe("the row of sound on a long timeline", () => {
           id,
           Uint8Array.from({ length: CLIP * 100 }, () => Math.floor(random() * 256)),
         );
-        sounds.push({ id, file: id, start, end: start + CLIP, offset: 0, gain: 0.5 });
+        sounds.push({ id, file: id, start, end: start + CLIP, offset: 0, gain: 0.5, track: "t" });
       }
     }
-    const peaksOf = (sound: SoundLayer) => files.get(sound.id);
+    const peaksOf = (sound: MixSound) => files.get(sound.id);
     const levels = new Float32Array(WIDTH);
     const frame = (pixelsPerSecond: number, scrollX: number) => {
       const view = {
@@ -43,7 +43,12 @@ describe("the row of sound on a long timeline", () => {
         xAt: (seconds: number) => seconds * pixelsPerSecond - scrollX,
       };
       const begun = performance.now();
-      soundLevels(sounds, peaksOf, view, levels);
+      soundLevels(
+        { sounds, tracks: [{ id: "t", gain: 1, muted: false, solo: false }] },
+        peaksOf,
+        view,
+        levels,
+      );
       paintSoundLevels(context, levels, WIDTH, { top: 24, height: 48 }, "#3f9a7a");
       return performance.now() - begun;
     };

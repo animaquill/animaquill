@@ -841,8 +841,8 @@ function tones(parts: readonly { readonly hz: number; readonly seconds: number }
   return Buffer.concat([header, data]);
 }
 
-/** The sound of a file, decoded in the page, as samples of its first channel from time zero. */
-async function soundOf(page: Page, file: Buffer) {
+/** The sound of a file, decoded in the page, as samples of a channel (the first) from time zero. */
+async function soundOf(page: Page, file: Buffer, channel = 0) {
   const input = new Input({ source: new BufferSource(file), formats: ALL_FORMATS });
   const track = await input.getPrimaryAudioTrack();
   if (!track) return undefined;
@@ -863,13 +863,14 @@ async function soundOf(page: Page, file: Buffer) {
       config: { codec, sampleRate, numberOfChannels },
       description: head,
       packets: all,
+      plane,
     }) => {
       const bytes = (base64: string) => Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
       const pieces: { timestamp: number; samples: Float32Array }[] = [];
       const decoder = new AudioDecoder({
         output: (data) => {
           const samples = new Float32Array(data.numberOfFrames);
-          data.copyTo(samples, { planeIndex: 0, format: "f32-planar" });
+          data.copyTo(samples, { planeIndex: plane, format: "f32-planar" });
           pieces.push({ timestamp: data.timestamp, samples });
           data.close();
         },
@@ -911,6 +912,7 @@ async function soundOf(page: Page, file: Buffer) {
       },
       description,
       packets,
+      plane: channel,
     },
   );
   const raw = Buffer.from(decoded.samples, "base64");
@@ -1026,6 +1028,99 @@ test.describe("the sound of a video", () => {
   });
 });
 
+test.describe("the volume and the pan of a clip in the sound of a video", () => {
+  test("follow its keys, in decibels at every sample, and its pan, which undo takes back", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    // From 0 dB at 1 s to −20 dB at 2 s on the clock of the clip, which is the timeline here.
+    const keyed = {
+      id: "tone",
+      start: "0",
+      duration: "4",
+      source: { kind: "audio", media: { asset: "tone" } },
+      properties: {
+        "audio.volume": {
+          keys: [
+            { time: "1", value: 0 },
+            { time: "2", value: -20 },
+          ],
+        },
+      },
+    };
+    await open(
+      page,
+      projectFolder(
+        4,
+        [movingSquare(4)],
+        { "assets/tone.wav": tones([{ hz: 1000, seconds: 4 }]) },
+        { tone: { name: "测试音", kind: "audio", path: "assets/tone.wav", storage: "git" } },
+        [{ clips: [keyed] }],
+      ),
+    );
+    // Of the tone as it is in the file: 0.5 as a sine. Twenty periods around each moment.
+    const full = 0.5 / Math.SQRT2;
+    const levels = async () => {
+      const file = (await savedFile(page)) as Buffer;
+      const [left, right] = await Promise.all([soundOf(page, file, 0), soundOf(page, file, 1)]);
+      if (!left || !right) throw new Error("No sound");
+      const at = (sound: typeof left, seconds: number) =>
+        decibels(measure(sound.samples, sound.rate, seconds - 0.01, seconds + 0.01).rms / full);
+      return {
+        left: [0.5, 1.5, 2.5].map((seconds) => at(left, seconds)),
+        right: [0.5, 1.5, 2.5].map((seconds) => at(right, seconds)),
+      };
+    };
+    await startExport(page);
+    await exported(page);
+    const middle = await levels();
+    console.log(`volume keys, left and right at 0.5, 1.5, 2.5 s: ${JSON.stringify(middle)}`);
+    // Halfway in decibels: −10 dB, where halfway in gain would be −5.2 dB.
+    for (const side of [middle.left, middle.right]) {
+      expect(Math.abs((side[0] as number) - 0)).toBeLessThan(0.1);
+      expect(Math.abs((side[1] as number) + 10)).toBeLessThan(0.1);
+      expect(Math.abs((side[2] as number) + 20)).toBeLessThan(0.1);
+    }
+
+    // All the way left, from the properties tab: the right is silent, the left 3 dB up.
+    const timelineBox = await content(page, "timeline").getByRole("option").nth(1).boundingBox();
+    if (!timelineBox) throw new Error("No clip");
+    await page.mouse.click(timelineBox.x + timelineBox.width / 2, timelineBox.y + 6);
+    await tab(page, "properties").click();
+    const pan = content(page, "properties").getByRole("slider", { name: "声像" });
+    await expect(pan).toHaveAttribute("aria-valuetext", "C");
+    const box = await pan.boundingBox();
+    if (!box) throw new Error("No slider");
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x - 40, box.y + box.height / 2, { steps: 4 });
+    await page.mouse.up();
+    await expect(pan).toHaveAttribute("aria-valuetext", "L 100");
+    // The file of the first export goes, so that what is read next is the second.
+    await page.evaluate(async () => {
+      const root = await navigator.storage.getDirectory();
+      await root.removeEntry("chosen-video");
+    });
+    // The pan is tried out first, which the export saves, as people choose there.
+    await chooseFrom(page, "导出视频…");
+    await dialog(page).getByRole("button", { name: "保存后导出" }).click();
+    await expect(dialog(page)).toContainText("导出视频");
+    await dialog(page).getByRole("button", { name: "导出", exact: true }).click();
+    // The second notice of an export: the file is the new one.
+    await expect(page.getByRole("status").getByText("已导出“")).toHaveCount(2, { timeout: 60_000 });
+    const left = await levels();
+    console.log(`all the way left, left and right at 0.5, 1.5, 2.5 s: ${JSON.stringify(left)}`);
+    const up = decibels(Math.SQRT2);
+    expect(Math.abs((left.left[1] as number) - (up - 10))).toBeLessThan(0.1);
+    for (const level of left.right) expect(level).toBeLessThan(-60);
+
+    // One step back, and it is in the middle again.
+    await tab(page, "timeline").click();
+    await page.keyboard.press("Control+z");
+    await expect(pan).toHaveAttribute("aria-valuetext", "C");
+  });
+});
+
 test.describe("the sound of a video with transitions", () => {
   test("goes in, out and across as their gain curves say, with the sound past the cuts", async ({
     page,
@@ -1108,13 +1203,13 @@ test.describe("the sound of a video with transitions", () => {
 
 test.describe("a video of what this editor does not do yet", () => {
   test("stops first and says where, and goes on only when people say so", async ({ page }) => {
-    const panned = {
+    const pitched = {
       id: "tone",
-      name: "偏左的音",
+      name: "升调的音",
       start: "0",
       duration: "2",
       source: { kind: "audio", media: { asset: "tone" } },
-      properties: { "audio.pan": -0.5 },
+      properties: { "audio.pitch": 2 },
     };
     await open(
       page,
@@ -1123,7 +1218,7 @@ test.describe("a video of what this editor does not do yet", () => {
         [movingSquare(2)],
         { "assets/tone.wav": tones([{ hz: 440, seconds: 2 }]) },
         { tone: { name: "测试音", kind: "audio", path: "assets/tone.wav", storage: "git" } },
-        [{ clips: [panned] }],
+        [{ clips: [pitched] }],
       ),
     );
     // The list of problems has it, as what makes the video otherwise than the project.
@@ -1131,16 +1226,16 @@ test.describe("a video of what this editor does not do yet", () => {
     // The innermost line: the group of the problems without a file holds it too.
     const listed = content(page, "problems")
       .getByRole("listitem")
-      .filter({ hasText: "声像" })
+      .filter({ hasText: "移调" })
       .last();
-    await expect(listed).toContainText("声像（audio.pan）这一版还不生效");
+    await expect(listed).toContainText("移调（audio.pitch）这一版还不生效");
     await expect(listed).toContainText("成片会不同");
-    await expect(listed).toContainText("偏左的音");
+    await expect(listed).toContainText("升调的音");
 
     await startExport(page);
     const asked = dialog(page);
     await expect(asked).toContainText("导出的视频会和项目不一样");
-    await expect(asked).toContainText("偏左的音：声像（audio.pan）这一版还不生效");
+    await expect(asked).toContainText("升调的音：移调（audio.pitch）这一版还不生效");
     // Enter does not export what people did not mean to.
     await expect(asked.getByRole("button", { name: "取消" })).toBeFocused();
     await asked.getByRole("button", { name: "取消" }).click();
@@ -1150,7 +1245,7 @@ test.describe("a video of what this editor does not do yet", () => {
 
     await startExport(page);
     // A line goes to where it is, and the dialog stays.
-    await asked.getByRole("button", { name: /偏左的音/ }).click();
+    await asked.getByRole("button", { name: /升调的音/ }).click();
     await expect(asked).toContainText("导出的视频会和项目不一样");
     await asked.getByRole("button", { name: "仍然导出" }).click();
     await exported(page);
@@ -1158,7 +1253,7 @@ test.describe("a video of what this editor does not do yet", () => {
     expect((await factsOf(file)).frames).toBe(60);
     const selected = content(page, "timeline").getByRole("option", { selected: true });
     await expect(selected).toHaveCount(1);
-    await expect(selected).toHaveAttribute("aria-label", /^偏左的音，/);
+    await expect(selected).toHaveAttribute("aria-label", /^升调的音，/);
   });
 
   test("goes as before where the project has nothing of that", async ({ page }) => {

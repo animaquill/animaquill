@@ -18,6 +18,7 @@ import {
 } from "./effect-ranges.ts";
 import type { KeyframeEditor, ShownClips } from "./editor.ts";
 import { lanesOfClip, laneAt, type Lane, type LaneRules } from "./lanes.ts";
+import { VOLUME_PATH } from "../timeline/volume-line.ts";
 
 const SNAP_REACH = 8;
 
@@ -232,8 +233,14 @@ export class TimelineLanes extends KeyArea implements RowExtras, LaneKeys {
 
   /* What the keys of the timeline mean for keys. */
 
-  /** Only keys of clips that are open here show here. */
-  readonly shownClips: ShownClips = (clip) => this.#open.has(clip);
+  /** Keys of clips that are open here show here, and the keys of volume lines on clips of sound. */
+  readonly shownClips: ShownClips = (clip, path) =>
+    this.#open.has(clip) || (path === VOLUME_PATH && this.#hasVolumeLine(clip));
+
+  #hasVolumeLine(clip: string): boolean {
+    const box = this.#timeline.model?.boxes.get(clip);
+    return box !== undefined && this.keyframes.volumeLines.has(box);
+  }
 
   get hasSelection(): boolean {
     return this.keyframes.selection.size > 0;

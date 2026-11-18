@@ -8,7 +8,7 @@ import {
   entryOf,
   secondsOf,
   type ClipState,
-  type PropertyEdit,
+  type ClipPropertyEdit,
 } from "@animaquill/core";
 import {
   add,
@@ -642,7 +642,7 @@ export abstract class KeyArea {
       keysIn: (marquee) => this.#keysIn(marquee),
       select: (selection) => keyframes.select(selection),
       show: (preview: KeyPreview | undefined) => keyframes.showPreview(preview, this),
-      preview: (edits: readonly PropertyEdit[]) => keyframes.previewEdits(edits),
+      preview: (edits: readonly ClipPropertyEdit[]) => keyframes.previewEdits(edits),
       cancelPreview: () => keyframes.cancelEdits(),
       commit: (edits, selection) => keyframes.commitMove(edits, selection),
       holdRanges: (rows) => keyframes.holdRanges(rows),

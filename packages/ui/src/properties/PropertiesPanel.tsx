@@ -16,6 +16,7 @@ import { PopupMenu } from "../app/Menu.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import type { ClipBox } from "../timeline/model.ts";
 import { CONTROLS, PlainValue, RowButton } from "./controls.tsx";
+import { PanControl, VolumeControl } from "./SoundControls.tsx";
 import { RecordButton } from "../keyframes/RecordButton.tsx";
 import { inspectSelection, keyEdit, writeEdit, type Blocked, type Selected } from "./inspect.ts";
 import { groupOf, nameOf, textOf } from "./names.ts";
@@ -83,7 +84,13 @@ const Row = memo(function Row({ rows, clip, spec, startsGroup }: RowProps) {
   const { group } = spec;
   const label = group === undefined ? name : `${groupOf(t, group)} ${name}`;
   const readOnly = blocked !== undefined;
-  const Control = CONTROLS[spec.type] ?? PlainValue;
+  // The volume and the pan of sound have controls of their own; the rest go by the type of value.
+  const Control =
+    spec.path === "audio.volume"
+      ? VolumeControl
+      : spec.path === "audio.pan"
+        ? PanControl
+        : (CONTROLS[spec.type] ?? PlainValue);
   /** What the playhead says when something happens, which is where the edit goes. */
   const now = () => rows.inspect(clip, spec) ?? inspected;
 
@@ -337,7 +344,8 @@ function SoundStatus({ clip }: { clip: ClipBox["clip"] }) {
 
 /** What an object of a clip is called by itself, unless it is the clip itself. */
 function ownName(t: TFunction, { type, name, id }: ObjectDescriptor): string | undefined {
-  if (type === "clip.visual" || type === "clip.sound") return undefined;
+  if (type === "clip.visual") return undefined;
+  if (type === "clip.sound") return t("keyframes.objects.sound");
   if (type === SCENE_OBJECT_TYPES.params) return t("keyframes.objects.params");
   if (type === SCENE_OBJECT_TYPES.elements) return t("keyframes.objects.elements");
   return name ?? id;

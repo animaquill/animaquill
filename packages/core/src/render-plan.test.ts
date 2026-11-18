@@ -10,7 +10,16 @@ import {
   effectiveProperties,
   samePlan,
 } from "./render-plan.ts";
-import { audibleTracks } from "./mix-plan.ts";
+import {
+  SILENT_DECIBELS,
+  audibleTracks,
+  clockOfSound,
+  gainAt,
+  gainOfDecibels,
+  trackGainAt,
+  type MixSound,
+  type MixTrack,
+} from "./mix-plan.ts";
 import { ProjectStore } from "./store.ts";
 import { clockOf, opacityAt } from "./view.ts";
 
@@ -574,25 +583,24 @@ describe("the plan of the mix engine", () => {
     return { ...context, louder };
   }
 
-  it("is the audio plan, with the gains of clip and track apart", () => {
-    const { store, louder } = withTracks();
+  it("has the gains of clip and track apart, and the audio plan is what of it is heard", () => {
+    const { store, louder, run } = withTracks();
     const state = louder(store.getState());
-    const audio = buildAudioPlan(state, "main").sounds;
     const mix = buildMixPlan(state, "main");
     // After the track of sound that a new project has.
     expect(mix.tracks.slice(-2)).toEqual([
       { id: "one", gain: 10 ** (-6 / 20), muted: false, solo: false },
       { id: "two", gain: 1, muted: false, solo: false },
     ]);
-    expect(mix.sounds.map(({ gain: _gain, track: _track, ...rest }) => rest)).toEqual(
-      audio.map(({ gain: _gain, ...rest }) => rest),
-    );
     expect(mix.sounds.map(({ track }) => track)).toEqual(["one", "two"]);
-    for (const [index, sound] of mix.sounds.entries()) {
-      const track = mix.tracks.find(({ id }) => id === sound.track);
-      expect(sound.gain * (track?.gain ?? 0)).toBeCloseTo(audio[index]?.gain ?? 0, 12);
-    }
     expect(mix.sounds[0]?.gain).toBeCloseTo(10 ** (-3 / 20), 12);
+    expect(buildAudioPlan(state, "main")).toEqual(mix);
+    run("track.update", { timeline: "main", track: "one", changes: { muted: true } });
+    const heard = buildAudioPlan(store.getState(), "main");
+    expect(heard.sounds.map(({ id }) => id)).toEqual(["second"]);
+    expect(buildAudioPlan(store.getState(), "main", "one").sounds.map(({ id }) => id)).toEqual([
+      "first",
+    ]);
   });
 
   it("keeps muted tracks and their sounds, which the engine leaves out", () => {
@@ -608,9 +616,92 @@ describe("the plan of the mix engine", () => {
 
   it("has what people try out", () => {
     const { store } = withTracks();
-    const mix = buildMixPlan(store.getState(), "main", (clip) =>
-      clip === "second" ? 0 : undefined,
+    const mix = buildMixPlan(
+      store.getState(),
+      "main",
+      new Map([["second", new Map([["audio.volume", 0]])]]),
     );
     expect(mix.sounds[1]?.gain).toBe(1);
+  });
+});
+
+describe("the volume and the pan in the mix", () => {
+  const keys = (...pairs: readonly (readonly [string, number])[]) => ({
+    keys: pairs.map(([time, value]) => ({ time, value })),
+  });
+
+  /** A clip of sound at 2 s on the timeline whose file starts at 0.5 s, on a track of its own. */
+  function withClip(properties: Record<string, PropertyValue>, track?: Record<string, unknown>) {
+    const context = setup();
+    const { run, addClip } = context;
+    run("track.add", { timeline: "main", id: "one", kind: "audio" });
+    const source = { kind: "audio", media: { asset: "a" } };
+    addClip("c", "one", { source, start: "2", offset: "1/2", properties });
+    if (track) {
+      const edits = Object.entries(track).map(([path, value]) => ({
+        owner: { track: "one" },
+        path,
+        op: "set",
+        value,
+      }));
+      run("property.edit", { timeline: "main", edits });
+    }
+    const plan = () => buildMixPlan(context.store.getState(), "main");
+    const sound = () => plan().sounds[0] as MixSound;
+    const track1 = () => plan().tracks.find(({ id }) => id === "one") as MixTrack;
+    return { ...context, plan, sound, track: track1 };
+  }
+
+  it("goes evenly in decibels between keys, on the clock of the clip", () => {
+    // Keys at 1 and 2 on the clock of the clip, which is at 0.5 when the clip starts at 2 s.
+    const { sound } = withClip({ "audio.volume": keys(["1", 0], ["2", -20]) });
+    const one = sound();
+    expect(one.volume?.kind).toBe("curve");
+    expect(gainAt(one, 2.5)).toBe(1);
+    expect(gainAt(one, 3.5)).toBeCloseTo(0.1, 12);
+    // Halfway in decibels, not halfway in gain (which would be 0.55, −5.2 dB).
+    expect(gainAt(one, 3)).toBeCloseTo(10 ** (-10 / 20), 12);
+    expect(clockOfSound(one, 3)).toBe(1.5);
+  });
+
+  it("is silent from −96 dB down, and has no lower limit for what is written", () => {
+    expect(gainOfDecibels(-96)).toBe(0);
+    expect(gainOfDecibels(-200)).toBe(0);
+    expect(gainOfDecibels(-95.9)).toBeGreaterThan(0);
+    expect(gainOfDecibels(SILENT_DECIBELS)).toBe(0);
+    const { sound } = withClip({ "audio.volume": -120 });
+    expect(sound().gain).toBe(0);
+    expect(sound().volume).toBeUndefined();
+    const keyed = withClip({ "audio.volume": keys(["0", -96], ["2", 0]) }).sound();
+    // Its clock reads 0 at 1.5 s on the timeline.
+    expect(gainAt(keyed, 1.5)).toBe(0);
+    expect(gainAt(keyed, 3.5)).toBeGreaterThan(0);
+  });
+
+  it("has the keys of a track on the timeline's time", () => {
+    const { track } = withClip({}, { "audio.volume": keys(["1", 0], ["2", -20]) });
+    const one = track();
+    expect(trackGainAt(one, 1)).toBe(1);
+    expect(trackGainAt(one, 1.5)).toBeCloseTo(10 ** (-10 / 20), 12);
+    expect(trackGainAt(one, 2)).toBeCloseTo(0.1, 12);
+  });
+
+  it("has a pan only where it is not the middle, still or with keys", () => {
+    expect(withClip({ "audio.pan": 0 }).sound().pan).toBeUndefined();
+    expect(withClip({}).sound().pan).toBeUndefined();
+    expect(withClip({ "audio.pan": -1 }).sound().pan).toEqual({ kind: "still", value: -1 });
+    const keyed = withClip({ "audio.pan": keys(["0", -1], ["1", 1]) }).sound().pan;
+    expect(keyed && keyed.kind === "curve" && sample(keyed, 0.5)).toBe(0);
+    const { track } = withClip({}, { "audio.pan": 0.5 });
+    expect(track().pan).toEqual({ kind: "still", value: 0.5 });
+  });
+
+  it("takes keys that people try out", () => {
+    const { store } = withClip({ "audio.volume": -6 });
+    const tried = new Map([["c", new Map([["audio.volume", keys(["0", 0], ["1", -20])]])]]);
+    const tryingNothing = new Map([["c", new Map([["audio.volume", undefined]])]]);
+    const sound = buildMixPlan(store.getState(), "main", tried).sounds[0] as MixSound;
+    expect(sound.volume?.kind).toBe("curve");
+    expect(buildMixPlan(store.getState(), "main", tryingNothing).sounds[0]?.gain).toBe(1);
   });
 });

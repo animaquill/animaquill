@@ -48,8 +48,6 @@ export const PROBLEM_TEXTS: Readonly<Record<string, (params: Params) => string>>
       : `${str(p.count)} sound effects on this ${str(p.where)} are not applied by this editor version yet`,
   "unsupported-audio-property": (p) =>
     `${str(p.property)} is not applied by this editor version yet; preview and export ignore it`,
-  "unsupported-volume-keys": () =>
-    "keyframes of the volume are not applied by this editor version yet: the first one holds",
   "unsupported-loop": () =>
     "loop is not applied by this editor version yet: the media does not start again",
   "version-unlisted": (p) =>

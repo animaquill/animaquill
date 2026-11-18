@@ -686,8 +686,96 @@ describe("the property.edit command", () => {
 
   it("refuses an owner it does not know the shape of", () => {
     const { edit, failure } = setup();
-    const owner = { track: "t" };
-    expect(failure(edit({ owner, path: "opacity", op: "clear" })).code).toBe("invalid-params");
+    for (const owner of [{ bus: "t" }, { clip: "c", track: "t" }, {}]) {
+      expect(failure(edit({ owner, path: "opacity", op: "clear" })).code).toBe("invalid-params");
+    }
+  });
+
+  describe("on a track", () => {
+    const sound = () => {
+      const context = setup();
+      const audio = orderedTracks(context.main()).find(({ kind }) => kind === "audio")?.id;
+      if (!audio) throw new Error("no track of sound");
+      const properties = () => {
+        const track = context.main().tracks[audio];
+        return track?.kind === "audio" ? track.properties : undefined;
+      };
+      return { ...context, audio, properties };
+    };
+
+    it("writes the volume and the pan of a track of sound, with keys on the timeline's time", () => {
+      const { edit, audio, properties, store } = sound();
+      const owner = { track: audio };
+      const result = edit(
+        { owner, path: "audio.volume", op: "setKey", time: "1", value: 0 },
+        { owner, path: "audio.volume", op: "setKey", time: "2", value: -20 },
+        { owner, path: "audio.pan", op: "set", value: -0.5 },
+      );
+      expect(result.ok).toBe(true);
+      expect(properties()).toEqual({
+        "audio.volume": {
+          keys: [
+            { time: "1", value: 0 },
+            { time: "2", value: -20 },
+          ],
+        },
+        "audio.pan": -0.5,
+      });
+      expect(store.undo().ok).toBe(true);
+      expect(properties()).toBeUndefined();
+    });
+
+    it("says what keys gave way, by the track", () => {
+      const { edit, audio } = sound();
+      const owner = { track: audio };
+      const keys = [
+        { time: "0", value: 0 },
+        { time: "1", value: -6 },
+      ];
+      edit({ owner, path: "audio.volume", op: "set", value: { keys } });
+      const result = edit({
+        owner,
+        path: "audio.volume",
+        op: "retimeKeys",
+        times: ["0"],
+        from: ["0", "1"],
+        to: ["1", "2"],
+      });
+      expect(result.ok && result.results[0]).toEqual({
+        removed: [{ track: audio, path: "audio.volume", times: ["1"] }],
+      });
+    });
+
+    it("refuses what a track does not have, and a track of pictures", () => {
+      const { edit, audio, track, failure, properties } = sound();
+      const wrong = failure(
+        edit({ owner: { track: audio }, path: "opacity", op: "set", value: 1 }),
+      );
+      expect(wrong).toMatchObject({
+        code: "wrong-target",
+        params: {
+          path: "opacity",
+          target: "track",
+          track: audio,
+          kind: "audio",
+          takes: ["audio.volume", "audio.pan"],
+        },
+      });
+      const picture = failure(
+        edit({ owner: { track }, path: "audio.volume", op: "set", value: -6 }),
+      );
+      expect(picture.code).toBe("wrong-target");
+      expect(picture.params).toMatchObject({ kind: "video", takes: [] });
+      expect(properties()).toBeUndefined();
+    });
+
+    it("refuses a track that is not there, and a value out of range", () => {
+      const { edit, audio, failure } = sound();
+      const missing = edit({ owner: { track: "nope" }, path: "audio.pan", op: "set", value: 0 });
+      expect(failure(missing).code).toBe("not-found");
+      const far = edit({ owner: { track: audio }, path: "audio.pan", op: "set", value: 2 });
+      expect(failure(far).code).toBe("invalid-value");
+    });
   });
 
   it("does not take what every object inherits for a value", () => {

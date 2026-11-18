@@ -100,6 +100,16 @@ const CODES: { readonly [C in FailureCode]: CommandFailure & { readonly code: C 
     params: { why: "longest", longest: "0.4" },
   },
   "not-animatable": { code: "not-animatable", params: { path: "blend" } },
+  "wrong-target": {
+    code: "wrong-target",
+    params: {
+      path: "transform.x",
+      target: "track",
+      track: "track_voice",
+      kind: "audio",
+      takes: ["audio.volume", "audio.pan"],
+    },
+  },
   "join-taken": { code: "join-taken", params: { join: "j1" } },
   "asset-in-use": {
     code: "asset-in-use",

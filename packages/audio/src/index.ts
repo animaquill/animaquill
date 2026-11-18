@@ -137,7 +137,7 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 /** The sounds of a plan as playing has them, apart from what the mixer changes on the spot. */
 const placesOf = ({ sounds, tracks }: MixPlan) =>
   JSON.stringify({
-    sounds: sounds.map((sound) => ({ ...sound, gain: 0 })),
+    sounds: sounds.map(({ gain: _gain, volume: _volume, pan: _pan, ...place }) => place),
     tracks: tracks.map(({ id }) => id),
   });
 
@@ -249,7 +249,8 @@ export class PlaybackAudio {
 
   /**
    * Whether a plan differs from another only in what the mixer changes on the spot, see `change`:
-   * how loud things are, and which tracks are muted or soloed.
+   * how loud things are and where they sit (volume and pan, with their keys), and which tracks are
+   * muted or soloed.
    */
   static onTheSpot(a: MixPlan, b: MixPlan): boolean {
     return a === b || placesOf(a) === placesOf(b);

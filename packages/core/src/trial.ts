@@ -30,7 +30,7 @@ function hasOwner(clip: ClipState, path: string): boolean {
   return of === undefined || typeof entryOf(clip.effects, of.effect)?.type === "string";
 }
 import { deepEqual } from "./patch.ts";
-import { PropertyEdit, applyEdit, editContextOf } from "./property-edit.ts";
+import { PropertyEdit, applyEdit, editContextOf, isClipEdit } from "./property-edit.ts";
 import { convertedValue, type Conversion } from "./rename.ts";
 import { effectiveProperties } from "./render-plan.ts";
 import { USER, type CommandFailure, type ProjectStore } from "./store.ts";
@@ -583,6 +583,8 @@ export class Trial {
     const clips = this.#clips;
     const values = new Map<string, Map<string, PropertyValue | undefined>>();
     for (const edit of edits) {
+      // Trying out is for clips, which have their own place for it: a track is written at once.
+      if (!isClipEdit(edit)) throw new Error("Only properties of clips are tried out");
       const { path, owner } = edit;
       const clip =
         entryOf(clips, owner.clip) ?? fail("not-found", { kind: "clip", id: owner.clip });

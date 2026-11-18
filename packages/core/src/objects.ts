@@ -43,7 +43,7 @@ const WITH_A_PICTURE = new Set(["video", "image", "color"]);
  */
 export function objectsOf(clip: ClipState): readonly ObjectDescriptor[] {
   if (clip.source.kind === "scene") return withEffects(clip, [SCENE_VISUAL]);
-  if (clip.source.kind === "sound") return [CLIP_SOUND];
+  if (clip.source.kind === "sound" || clip.source.kind === "audio") return [CLIP_SOUND];
   return WITH_A_PICTURE.has(clip.source.kind) ? withEffects(clip, [CLIP_VISUAL]) : [];
 }
 

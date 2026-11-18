@@ -196,13 +196,15 @@ export const SCENE_VISUAL: ObjectDescriptor = {
 };
 
 /**
- * What a clip made by code sounds like. Only the volume does anything yet, and it has one value for
- * a whole clip: keys on sound come later.
+ * What a clip of sound sounds like, a file or made by code: its volume and where it sits between
+ * left and right, both with keys. Only what the mix really does belongs here.
  */
 export const CLIP_SOUND: ObjectDescriptor = {
   id: "sound",
   type: "clip.sound",
-  properties: [{ ...(BUILT_IN_PROPERTIES["audio.volume"] as PropertySpec), animatable: false }],
+  properties: ["audio.volume", "audio.pan"].map(
+    (path) => BUILT_IN_PROPERTIES[path] as PropertySpec,
+  ),
 };
 
 /**

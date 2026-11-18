@@ -1,4 +1,15 @@
-import { audibleTracks, type MixPlan, type MixSound } from "@animaquill/core/mix-plan";
+import { compileChannel, numberAt, type Channel } from "@animaquill/core/curve";
+import {
+  audibleTracks,
+  canSound,
+  clockOfSound,
+  gainOfDecibels,
+  monoPan,
+  stereoPan,
+  type MixPlan,
+  type MixSound,
+  type MixTrack,
+} from "@animaquill/core/mix-plan";
 import { fadesDuring, fadesGainAt } from "@animaquill/core/sound-fades";
 import { MIX_RATE, WHOLE, kernelFor, resample } from "./resample.ts";
 import { SampleStore } from "./samples.ts";
@@ -23,7 +34,7 @@ interface Voice {
 }
 
 interface Lane {
-  readonly gain: number;
+  readonly track: MixTrack;
   readonly voices: readonly Voice[];
 }
 
@@ -33,13 +44,21 @@ interface Lane {
  */
 const f32 = Math.fround;
 
+/**
+ * The gain of a volume with keys at a reading of its clock: worked out in decibels, then a gain, in
+ * 32 bits as every gain of the mix.
+ */
+const decibelGain = (volume: Channel, clock: number) =>
+  f32(gainOfDecibels(numberAt(volume, clock, 0)));
+
 /** The first sample at or after a moment on the timeline. */
 const sampleAt = (seconds: number) => Math.ceil(seconds * MIX_RATE - WHOLE);
 
 /**
  * The mix: every sound at its place, from its offset, at the rate of the mix (see `resample.ts`),
- * down-mixed to two channels, with its transitions and the gain of its clip; the sounds of a track
- * added up, with the gain of the track; the tracks added up. Each step in 32-bit floats. Muted and soloed tracks follow from the
+ * down-mixed to two channels, with its transitions, the volume of its clip and its pan; the sounds
+ * of a track added up, with the volume of the track and its pan; the tracks added up. Each step in
+ * 32-bit floats. Volume and pan with keys are worked out for every sample (see `mix-plan.ts`). Muted and soloed tracks follow from the
  * plan. Plain TypeScript, without Web Audio, so that the preview (in the audio thread), the export
  * and what AI hears (in a worker) all run this same code and get the same samples.
  *
@@ -54,6 +73,8 @@ export class MixEngine {
   readonly #master = [new Float64Array(BLOCK), new Float64Array(BLOCK)] as const;
   readonly #lane = [new Float64Array(BLOCK), new Float64Array(BLOCK)] as const;
   readonly #sound = [new Float64Array(BLOCK), new Float64Array(BLOCK)] as const;
+  /** How a pan splits the sides at a sample, see `monoPan` and `stereoPan`. */
+  readonly #sides = new Float64Array(4);
   #input = [new Float64Array(1024), new Float64Array(1024)] as const;
   /** The last block that only part of was asked for: the next call mostly wants the rest of it. */
   #cached: { block: number; left: Float32Array; right: Float32Array } | undefined;
@@ -69,16 +90,16 @@ export class MixEngine {
     const audible = audibleTracks(plan.tracks);
     const heard = new Set<MixSound>();
     this.#lanes = plan.tracks.flatMap((track): Lane[] => {
-      if (!audible.has(track.id) || !(track.gain > 0)) return [];
+      if (!audible.has(track.id) || !canSound(track)) return [];
       const voices = plan.sounds.flatMap((sound): Voice[] => {
-        if (sound.track !== track.id || !(sound.gain > 0)) return [];
+        if (sound.track !== track.id || !canSound(sound)) return [];
         const first = sampleAt(sound.start);
         const end = sampleAt(sound.end);
         if (end <= first) return [];
         heard.add(sound);
         return [{ sound, first, end }];
       });
-      return voices.length > 0 ? [{ gain: track.gain, voices }] : [];
+      return voices.length > 0 ? [{ track, voices }] : [];
     });
     this.#heard = heard;
     this.#cached = undefined;
@@ -159,13 +180,34 @@ export class MixEngine {
         if (!this.#voice(voice, block, from, to)) complete = false;
       }
       if (!used) continue;
-      const gain = f32(lane.gain);
-      for (let index = 0; index < BLOCK; index += 1) {
-        masterLeft[index] = f32((masterLeft[index] ?? 0) + f32((laneLeft[index] ?? 0) * gain));
-        masterRight[index] = f32((masterRight[index] ?? 0) + f32((laneRight[index] ?? 0) * gain));
-      }
+      this.#mixLane(lane.track, block);
     }
     return complete;
+  }
+
+  /** Adds a lane to the master, after the volume of its track and then its pan. */
+  #mixLane(track: MixTrack, block: number): void {
+    const [masterLeft, masterRight] = this.#master;
+    const [laneLeft, laneRight] = this.#lane;
+    const { volume, pan } = track;
+    const still = f32(track.gain);
+    const panning = pan !== undefined;
+    const sides = this.#sides;
+    if (pan?.kind === "still") stereoPan(pan.value as number, sides);
+    for (let index = 0; index < BLOCK; index += 1) {
+      const seconds = (block + index) / MIX_RATE;
+      const gain = volume ? decibelGain(volume, seconds) : still;
+      let left = f32((laneLeft[index] ?? 0) * gain);
+      let right = f32((laneRight[index] ?? 0) * gain);
+      if (panning) {
+        if (pan.kind === "curve") stereoPan(numberAt(pan, seconds, 0), sides);
+        const l = left;
+        left = f32(f32(l * (sides[0] as number)) + f32(right * (sides[1] as number)));
+        right = f32(f32(l * (sides[2] as number)) + f32(right * (sides[3] as number)));
+      }
+      masterLeft[index] = f32((masterLeft[index] ?? 0) + left);
+      masterRight[index] = f32((masterRight[index] ?? 0) + right);
+    }
   }
 
   /**
@@ -201,22 +243,41 @@ export class MixEngine {
       return false;
     }
     const [laneLeft, laneRight] = this.#lane;
-    const { fades } = sound;
-    const gain = f32(sound.gain);
+    const { fades, volume, pan } = sound;
+    const still = f32(sound.gain);
     const fading = fadesDuring(fades, from / MIX_RATE, to / MIX_RATE);
+    const panning = pan !== undefined;
+    const sides = this.#sides;
+    if (pan?.kind === "still") (mono ? monoPan : stereoPan)(pan.value as number, sides);
     for (let index = offset; index < offset + count; index += 1) {
-      // The transitions first, then the gain of the clip, each in 32 bits as the browser had them.
-      const fade = fading ? f32(fadesGainAt(fades, (block + index) / MIX_RATE)) : 1;
+      const seconds = (block + index) / MIX_RATE;
+      // The transitions first, then the volume of the clip, each in 32 bits as the browser had them,
+      // then the pan.
+      const fade = fading ? f32(fadesGainAt(fades, seconds)) : 1;
+      const gain = volume ? decibelGain(volume, clockOfSound(sound, seconds)) : still;
       let left = f32(soundLeft[index] ?? 0);
       if (fading) left = f32(left * fade);
       left = f32(left * gain);
-      laneLeft[index] = f32((laneLeft[index] ?? 0) + left);
       let right = left;
       if (!mono) {
         right = f32(soundRight[index] ?? 0);
         if (fading) right = f32(right * fade);
         right = f32(right * gain);
       }
+      if (panning) {
+        if (pan.kind === "curve") {
+          (mono ? monoPan : stereoPan)(numberAt(pan, clockOfSound(sound, seconds), 0), sides);
+        }
+        if (mono) {
+          right = f32(left * (sides[1] as number));
+          left = f32(left * (sides[0] as number));
+        } else {
+          const l = left;
+          left = f32(f32(l * (sides[0] as number)) + f32(right * (sides[1] as number)));
+          right = f32(f32(l * (sides[2] as number)) + f32(right * (sides[3] as number)));
+        }
+      }
+      laneLeft[index] = f32((laneLeft[index] ?? 0) + left);
       laneRight[index] = f32((laneRight[index] ?? 0) + right);
     }
     return true;
@@ -264,7 +325,7 @@ export class MixEngine {
 /**
  * Has the engine work out a little of every kind of sound once, so that the first quanta of real
  * playing do not wait for the JavaScript engine to compile it: rates to resample from, one channel
- * and six, transitions. Takes some tens of milliseconds; the audio thread does it once, when it is
+ * and six, transitions, keys of volume and pan. Takes some tens of milliseconds; the audio thread does it once, when it is
  * made, before anything plays.
  */
 export function warmUp(): void {
@@ -289,6 +350,16 @@ export function warmUp(): void {
     store.endAt(rate / 2);
     return store;
   });
+  // Keys of the volume and of the pan, on the first two: one channel and two.
+  const keyed = compileChannel(
+    {
+      keys: [
+        { time: "0", value: -6 },
+        { time: "0.25", value: 0 },
+      ],
+    },
+    "number",
+  ) as Channel;
   const sounds = kinds.map(({ offset }, index) => ({
     id: String(index),
     file: String(index),
@@ -298,9 +369,13 @@ export function warmUp(): void {
     offset,
     gain: 0.5,
     fades: index % 2 === 0 ? fades : [],
+    ...(index < 2 && { volume: keyed, pan: keyed }),
   }));
   const engine = new MixEngine(
-    { sounds, tracks: [{ id: "warm", gain: 0.5, muted: false, solo: false }] },
+    {
+      sounds,
+      tracks: [{ id: "warm", gain: 0.5, volume: keyed, pan: keyed, muted: false, solo: false }],
+    },
     (sound) => stores[Number(sound.id)],
   );
   const left = new Float32Array(BLOCK);

@@ -78,6 +78,7 @@ import { sceneTemplate } from "./scene-template.ts";
 import { joinTroubleKey } from "./transition-names.ts";
 import { soundTemplate } from "./sound-template.ts";
 import type { TouchStart, TouchTarget } from "./touch.ts";
+import type { Theme } from "./stage-painter.ts";
 import {
   EndGesture,
   JoinGesture,
@@ -368,6 +369,42 @@ export interface RowExtras {
   toggle(box: ClipBox): void;
 }
 
+/** A press or the pointer on the body of a clip: not on an edge, a handle or a transition. */
+export type ClipBodyHit = Extract<Hit, { kind: "clip" }>;
+
+/**
+ * What draws on clips and takes the mouse there before the clip does, such as the volume line on
+ * clips of sound. Only the body of a clip with the select tool comes to it: the edges, the handles
+ * of transitions and the button at the bottom stay what they are.
+ */
+export interface ClipExtras {
+  /** Starts what a press there means. Undefined means that it is not about this. */
+  press(pointer: Pointer, hit: ClipBodyHit): Gesture | undefined;
+  /** The cursor there, or undefined; told with nothing when the pointer is elsewhere. */
+  hover(pointer: Pointer, hit: ClipBodyHit | undefined): string | undefined;
+  /**
+   * A right click there on something with a bubble of its own, such as how a key goes on: it is
+   * selected, and this is where the bubble points to. Undefined when it is not about this.
+   */
+  menu?(pointer: Pointer, hit: ClipBodyHit): { readonly x: number; readonly y: number } | undefined;
+  /** Draws on a clip, over its waveform, in the box it has on screen. */
+  paint(
+    context: CanvasRenderingContext2D,
+    box: ClipBox,
+    look: { readonly start: number; readonly end: number },
+    area: {
+      readonly left: number;
+      readonly top: number;
+      readonly height: number;
+      readonly width: number;
+    },
+    on: string,
+    theme: Theme,
+  ): void;
+  /** How loud a clip is at a moment of the timeline, for its waveform; undefined for as it is. */
+  gainOf(box: ClipBox): ((seconds: number) => number) | undefined;
+}
+
 /**
  * A transition, which is what people select instead of clips: at an edge of a clip, or a join on
  * the cut between two.
@@ -622,6 +659,7 @@ export class TimelineEditor implements TouchTarget {
   #height = 0;
   #rememberTimer: ReturnType<typeof setTimeout> | undefined;
   #extras: RowExtras | undefined;
+  #onClips: ClipExtras | undefined;
   #marked: ReadonlySet<string> = new Set();
   #repoMarked: ReadonlySet<string> = new Set();
   #roomBelow = NO_ROOM_BELOW;
@@ -777,6 +815,27 @@ export class TimelineEditor implements TouchTarget {
 
   setExtras(extras: RowExtras): void {
     this.#extras = extras;
+  }
+
+  /** What draws on clips and takes the mouse there, see `ClipExtras`. */
+  get onClips(): ClipExtras | undefined {
+    return this.#onClips;
+  }
+
+  setOnClips(extras: ClipExtras): void {
+    this.#onClips = extras;
+  }
+
+  /** The body of a clip under the pointer, as `ClipExtras` gets it, with the select tool. */
+  bodyAt(pointer: Pointer): ClipBodyHit | undefined {
+    const hit = this.hitAt(pointer);
+    return hit.kind === "clip" && !hit.row.track.locked ? this.#bodyOf(hit) : undefined;
+  }
+
+  #bodyOf(hit: Hit): ClipBodyHit | undefined {
+    if (hit.kind !== "clip" || this.#snapshot.tool !== "select") return undefined;
+    if (hit.edge || hit.handle || hit.transition || hit.expander) return undefined;
+    return hit;
   }
 
   /** Makes room under tracks. Nothing happens to clips: this is only about where rows are. */
@@ -3503,6 +3562,7 @@ export class TimelineEditor implements TouchTarget {
       return below;
     }
     const hit = this.hitAt(pointer);
+    const onClip = this.#onClips?.hover(pointer, this.#bodyOf(hit));
     const before = this.#hovered;
     this.#hovered = hit;
     const razorAt =
@@ -3527,7 +3587,7 @@ export class TimelineEditor implements TouchTarget {
       this.#razorAt = razorAt;
       this.#viewEmitter.emit();
     }
-    return this.#cursorFor(hit);
+    return onClip ?? this.#cursorFor(hit);
   }
 
   /**
@@ -3553,6 +3613,7 @@ export class TimelineEditor implements TouchTarget {
   }
 
   leave(): void {
+    this.#onClips?.hover({ x: 0, y: 0, shift: false, alt: false, mod: false }, undefined);
     this.#hovered = { kind: "empty" };
     this.#razorAt = undefined;
     this.#viewEmitter.emit();
@@ -3757,6 +3818,12 @@ export class TimelineEditor implements TouchTarget {
       return;
     }
     if (this.#pressWithTool(hit, pointer)) return;
+    const body = row.track.locked ? undefined : this.#bodyOf(hit);
+    const onClip = body && this.#onClips?.press(pointer, body);
+    if (onClip) {
+      this.#gesture = onClip;
+      return;
+    }
     if (handle) {
       this.#gesture = new TransitionGesture(this.#host, box, handle, pointer);
       return;

@@ -571,6 +571,7 @@
       "no-room": "这个剪切点两边没有地方放衔接转场"
     },
     "not-animatable": "{{path}} 不能打关键帧",
+    "wrong-target": "轨道上只能改音量和声像，{{path}} 不行",
     "join-taken": "这个剪切点已经有衔接转场了：{{join}}，要换成别的就改它",
     "asset-in-use": {
       "code": "代码在用这个素材，要先改掉：{{file}}",
@@ -1196,7 +1197,8 @@
         "bottom": "下"
       },
       "audio": {
-        "volume": "音量"
+        "volume": "音量",
+        "pan": "声像"
       },
       "element": {
         "x": "X",
@@ -2062,7 +2064,6 @@
         "mix": "混音（总线和主输出）这一版还不生效，所有出声的轨道直接混在一起"
       },
       "unsupported-audio-property": "{{property}}这一版还不生效，预览和导出里都是没有它的样子",
-      "unsupported-volume-keys": "音量的关键帧这一版还不生效，整段只用第一个关键帧的音量",
       "unsupported-loop": "循环这一版还不生效：素材放完以后不会从头再放",
       "unsupported-draft": "这是样片，本来不该进成片，这一版的编辑器还照常显示和导出它",
       "unsupported-override": "版本“{{version}}”的差异这一版还不应用，预览和导出用的都是母版",
@@ -2116,7 +2117,8 @@
     "objects": {
       "params": "参数",
       "elements": "元素",
-      "effects": "效果"
+      "effects": "效果",
+      "sound": "声音"
     },
     "connect": {
       "action": "连接到…",

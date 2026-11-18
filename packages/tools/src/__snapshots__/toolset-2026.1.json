@@ -2197,7 +2197,7 @@
           "type": "string"
          },
          "edits": {
-          "description": "Each {\"owner\":{\"clip\":id},\"path\",…,\"op\"}: \"set\" a value or keyframes, \"clear\", \"write\" at a time, or \"setKey\", \"removeKey\", \"moveKey\", \"putKeys\", \"setInterp\", \"setExtend\", \"setNoise\", \"retimeKeys\".",
+          "description": "Each {\"owner\":{\"clip\":id} or {\"track\":id},\"path\",…,\"op\"}: \"set\" a value or keyframes, \"clear\", \"write\" at a time, or \"setKey\", \"removeKey\", \"moveKey\", \"putKeys\", \"setInterp\", \"setExtend\", \"setNoise\", \"retimeKeys\".",
           "minItems": 1,
           "type": "array",
           "items": {
@@ -2759,15 +2759,7 @@
          "type": "object",
          "properties": {
           "owner": {
-           "type": "object",
-           "properties": {
-            "clip": {
-             "type": "string"
-            }
-           },
-           "required": [
-            "clip"
-           ]
+           "$ref": "#/properties/operations/$defs/PropertyOwner"
           },
           "path": {
            "$ref": "#/properties/operations/$defs/PropertyPath"
@@ -2794,15 +2786,7 @@
          "type": "object",
          "properties": {
           "owner": {
-           "type": "object",
-           "properties": {
-            "clip": {
-             "type": "string"
-            }
-           },
-           "required": [
-            "clip"
-           ]
+           "$ref": "#/properties/operations/$defs/PropertyOwner"
           },
           "path": {
            "$ref": "#/properties/operations/$defs/PropertyPath"
@@ -2829,15 +2813,7 @@
          "type": "object",
          "properties": {
           "owner": {
-           "type": "object",
-           "properties": {
-            "clip": {
-             "type": "string"
-            }
-           },
-           "required": [
-            "clip"
-           ]
+           "$ref": "#/properties/operations/$defs/PropertyOwner"
           },
           "path": {
            "$ref": "#/properties/operations/$defs/PropertyPath"
@@ -2860,15 +2836,7 @@
          "type": "object",
          "properties": {
           "owner": {
-           "type": "object",
-           "properties": {
-            "clip": {
-             "type": "string"
-            }
-           },
-           "required": [
-            "clip"
-           ]
+           "$ref": "#/properties/operations/$defs/PropertyOwner"
           },
           "path": {
            "$ref": "#/properties/operations/$defs/PropertyPath"
@@ -2907,15 +2875,7 @@
          "type": "object",
          "properties": {
           "owner": {
-           "type": "object",
-           "properties": {
-            "clip": {
-             "type": "string"
-            }
-           },
-           "required": [
-            "clip"
-           ]
+           "$ref": "#/properties/operations/$defs/PropertyOwner"
           },
           "path": {
            "$ref": "#/properties/operations/$defs/PropertyPath"
@@ -3052,15 +3012,7 @@
          "type": "object",
          "properties": {
           "owner": {
-           "type": "object",
-           "properties": {
-            "clip": {
-             "type": "string"
-            }
-           },
-           "required": [
-            "clip"
-           ]
+           "$ref": "#/properties/operations/$defs/PropertyOwner"
           },
           "path": {
            "$ref": "#/properties/operations/$defs/PropertyPath"
@@ -3087,15 +3039,7 @@
          "type": "object",
          "properties": {
           "owner": {
-           "type": "object",
-           "properties": {
-            "clip": {
-             "type": "string"
-            }
-           },
-           "required": [
-            "clip"
-           ]
+           "$ref": "#/properties/operations/$defs/PropertyOwner"
           },
           "path": {
            "$ref": "#/properties/operations/$defs/PropertyPath"
@@ -3132,15 +3076,7 @@
          "type": "object",
          "properties": {
           "owner": {
-           "type": "object",
-           "properties": {
-            "clip": {
-             "type": "string"
-            }
-           },
-           "required": [
-            "clip"
-           ]
+           "$ref": "#/properties/operations/$defs/PropertyOwner"
           },
           "path": {
            "$ref": "#/properties/operations/$defs/PropertyPath"
@@ -3185,15 +3121,7 @@
          "type": "object",
          "properties": {
           "owner": {
-           "type": "object",
-           "properties": {
-            "clip": {
-             "type": "string"
-            }
-           },
-           "required": [
-            "clip"
-           ]
+           "$ref": "#/properties/operations/$defs/PropertyOwner"
           },
           "path": {
            "$ref": "#/properties/operations/$defs/PropertyPath"
@@ -3255,15 +3183,7 @@
          "type": "object",
          "properties": {
           "owner": {
-           "type": "object",
-           "properties": {
-            "clip": {
-             "type": "string"
-            }
-           },
-           "required": [
-            "clip"
-           ]
+           "$ref": "#/properties/operations/$defs/PropertyOwner"
           },
           "path": {
            "$ref": "#/properties/operations/$defs/PropertyPath"
@@ -3286,15 +3206,7 @@
          "type": "object",
          "properties": {
           "owner": {
-           "type": "object",
-           "properties": {
-            "clip": {
-             "type": "string"
-            }
-           },
-           "required": [
-            "clip"
-           ]
+           "$ref": "#/properties/operations/$defs/PropertyOwner"
           },
           "path": {
            "$ref": "#/properties/operations/$defs/PropertyPath"
@@ -3311,6 +3223,33 @@
         }
        ],
        "description": "One edit of a property of a clip."
+      },
+      "PropertyOwner": {
+       "anyOf": [
+        {
+         "type": "object",
+         "properties": {
+          "clip": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "clip"
+         ]
+        },
+        {
+         "type": "object",
+         "properties": {
+          "track": {
+           "type": "string"
+          }
+         },
+         "required": [
+          "track"
+         ]
+        }
+       ],
+       "description": "Whose property: {\"clip\":\"<clip id>\"}, or {\"track\":\"<track id>\"} for the volume and pan of a track of sound."
       },
       "PropertyPath": {
        "type": "string",

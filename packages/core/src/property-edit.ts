@@ -22,6 +22,7 @@ import {
   toSeconds,
   type Animation,
   type Rational,
+  ZERO,
   type ValueType,
 } from "@animaquill/schema";
 import { z } from "zod";
@@ -47,8 +48,17 @@ import {
 } from "./model.ts";
 import { retimeKeys, type ClockFrames, type Retimed } from "./retime.ts";
 
-/** Whose property it is. Tracks and effects get their own shape of this later. */
-const Target = { owner: z.strictObject({ clip: Id }), path: PropertyPath };
+/**
+ * Whose property it is: a clip, or a track of sound, which takes only `TRACK_PATHS` (its volume and
+ * its pan). Keys of a track are on the timeline's time, from its start, as it has no clock.
+ */
+export const PropertyOwner = z.union([z.strictObject({ clip: Id }), z.strictObject({ track: Id })]);
+export type PropertyOwner = z.output<typeof PropertyOwner>;
+
+/** What a track takes through `property.edit`: what the mix does with it. */
+export const TRACK_PATHS: readonly string[] = ["audio.volume", "audio.pan"];
+
+const Target = { owner: PropertyOwner, path: PropertyPath };
 
 /**
  * How a key gets to the next one. A bezier says how it leaves, and how it arrives at the next. A
@@ -137,6 +147,14 @@ export const PropertyEdit = z.discriminatedUnion("op", [
 ]);
 
 export type PropertyEdit = z.output<typeof PropertyEdit>;
+
+type Owned<E, O> = E extends unknown ? Omit<E, "owner"> & { readonly owner: O } : never;
+
+/** An edit of a property of a clip, which is what the editor's controls and trials make. */
+export type ClipPropertyEdit = Owned<PropertyEdit, { readonly clip: string }>;
+
+/** Whether an edit is about a clip, rather than a track. */
+export const isClipEdit = (edit: PropertyEdit): edit is ClipPropertyEdit => "clip" in edit.owner;
 
 type WithoutTarget<T> = T extends unknown ? Omit<T, "owner" | "path"> : never;
 
@@ -424,6 +442,29 @@ export function editContextOf(
     path,
     firstFrame: clip.offset ?? "0",
     seed: seedOf(clip.id, path),
+    ...(spec && { type: spec.type, fallback: spec.default }),
+    ...(frames && { frames }),
+  };
+}
+
+/**
+ * What an edit of a property of a track needs to know: its keys are on the timeline's time, from
+ * its start, so its first frame is 0 and its frames are those of the project from there.
+ */
+export function trackEditContextOf(
+  state: ProjectState | undefined,
+  track: string,
+  path: string,
+): EditContext {
+  const spec = Object.hasOwn(BUILT_IN_PROPERTIES, path) ? BUILT_IN_PROPERTIES[path] : undefined;
+  const frames: ClockFrames | undefined = state && {
+    rate: parseTime(projectFrameRate(state.manifest)),
+    shift: ZERO,
+  };
+  return {
+    path,
+    firstFrame: "0",
+    seed: seedOf(track, path),
     ...(spec && { type: spec.type, fallback: spec.default }),
     ...(frames && { frames }),
   };

@@ -20,6 +20,7 @@ import {
 import { MARKER_COLORS, markerColorOf, type MarkerBox } from "./markers.ts";
 import {
   EDGES,
+  ROW_INSET,
   edgeWorks,
   edgesOf,
   forEachBetween,
@@ -35,7 +36,6 @@ import { RULER_LABEL_Y, paintRuler, rulerLabels } from "./ruler.ts";
 import type { Preview } from "./gestures.ts";
 import { StagePainter, type Theme } from "./stage-painter.ts";
 
-const ROW_INSET = 2;
 const CLIP_RADIUS = 3;
 const LABEL_MIN_WIDTH = 28;
 const LABEL_PADDING = 6;
@@ -548,6 +548,10 @@ export class TimelinePainter extends StagePainter {
       this.#paintLabel(box, left, top, width, height, fill, entering);
     }
     this.#paintTransitions(box, look, edges, { left, right, top, height, width });
+    if (box.clip.source.kind === "audio" || box.clip.source.kind === "sound") {
+      const on = readableOn(fill);
+      editor.onClips?.paint(context, box, look, { left, top, height, width }, on, this.theme);
+    }
     this.#paintEffectsBand(box, look, { left, right, top, height, width }, expander);
     if (expander !== undefined) this.#paintExpander(box, expander, top + height, fill);
     this.#paintFlash(box, { left, top, height, width });
@@ -920,14 +924,17 @@ export class TimelinePainter extends StagePainter {
     context.beginPath();
     const first = Math.max(Math.floor(area.left), 0);
     const last = Math.min(Math.ceil(area.right), editor.width);
+    // As loud as the volume of the clip makes it: a lower line, a smaller waveform.
+    const gainAt = editor.onClips?.gainOf(box);
     for (let x = first; x < last; x += 1) {
       const from = Math.max(slotAt(x), 0);
       const to = Math.min(Math.max(slotAt(x + 1), from + 1), peaks.length);
       const step = Math.max(Math.floor((to - from) / MAX_SLOTS_PER_BAR), 1);
       let level = 0;
       for (let slot = from; slot < to; slot += step) level = Math.max(level, peaks[slot] ?? 0);
+      if (gainAt) level *= gainAt(editor.timeAt(x + 0.5) - moved);
       if (level === 0) continue;
-      const half = Math.max((level / 255) * (area.height / 2), 0.5);
+      const half = Math.min(Math.max((level / 255) * (area.height / 2), 0.5), area.height / 2);
       context.rect(x, middle - half, 1, half * 2);
     }
     context.fill();

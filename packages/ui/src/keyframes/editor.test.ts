@@ -6,7 +6,7 @@ import {
   secondsOf,
   type ClipState,
   type ObjectNode,
-  type PropertyEdit,
+  type ClipPropertyEdit,
   type PropertyNode,
   type CommandFailure,
 } from "@animaquill/core";
@@ -139,13 +139,13 @@ async function setup({
     });
     if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
-  const edit = (...edits: PropertyEdit[]) => {
+  const edit = (...edits: ClipPropertyEdit[]) => {
     const result = store.execute({ type: "property.edit", params: { timeline: "main", edits } });
     if (!result.ok) throw new Error(`${result.error.code}: ${JSON.stringify(result.error.params)}`);
   };
   const keys = (clip: string, path: string, ...moments: (number | string)[]) => {
     edit(
-      ...moments.map((time, index): PropertyEdit => ({
+      ...moments.map((time, index): ClipPropertyEdit => ({
         owner: { clip },
         path,
         op: "setKey",
@@ -2341,9 +2341,23 @@ describe("keys on the timeline", () => {
         source: { kind: "audio", media: { asset: "a" } },
       },
     });
+    store.execute({
+      type: "clip.add",
+      params: {
+        timeline: "main",
+        track: audio,
+        id: "m",
+        start: "2",
+        duration: "1",
+        source: { kind: "music", music: "m" },
+      },
+    });
+    // A clip of sound has its volume and its pan; music has nothing yet.
     const sound = timeline.model?.boxes.get("s");
-    if (!sound) throw new Error("no clip");
-    expect(keyframes.inTimeline.canOpen(sound)).toBe(false);
+    const music = timeline.model?.boxes.get("m");
+    if (!sound || !music) throw new Error("no clip");
+    expect(keyframes.inTimeline.canOpen(sound)).toBe(true);
+    expect(keyframes.inTimeline.canOpen(music)).toBe(false);
     expect(video).toBeDefined();
   });
 
@@ -3154,7 +3168,7 @@ describe("the diamond of an object", () => {
     );
   });
 
-  it("leaves out sound and speed, whose keys do nothing yet", async () => {
+  it("leaves out the pitch of sound and speed, whose keys do nothing yet", async () => {
     const { keyframes, keyed } = await onObject();
     const property = (spec: PropertySpec): PropertyNode => ({
       kind: "property",
@@ -3163,7 +3177,7 @@ describe("the diamond of an object", () => {
       spec,
       rows: [],
     });
-    const specs = ["opacity", "audio.pan", "audio.volume", "time.speed"].map(
+    const specs = ["opacity", "audio.pan", "audio.volume", "audio.pitch", "time.speed"].map(
       (path) => BUILT_IN_PROPERTIES[path] as PropertySpec,
     );
     const object: ObjectNode = {
@@ -3174,7 +3188,7 @@ describe("the diamond of an object", () => {
       children: specs.map(property),
     };
     keyframes.toggleObjectKeys("c", object);
-    expect(keyed()).toEqual(["opacity 1"]);
+    expect(keyed()).toEqual(["audio.pan 1", "audio.volume 1", "opacity 1"]);
   });
 
   it("Alt+Shift+K does it for the object of the property people worked with last", async () => {
@@ -3450,7 +3464,7 @@ describe("the row of sound", () => {
         source: { kind: "audio", media: { asset } },
       });
     };
-    const heard = () => context.panel.sound?.sounds.map(({ id }) => id).toSorted();
+    const heard = () => context.panel.sound?.heard.sounds.map(({ id }) => id).toSorted();
     const track = (id: string, changes: object) =>
       run("track.update", { timeline: "main", track: id, changes });
     return { ...context, run, sound, heard, track };

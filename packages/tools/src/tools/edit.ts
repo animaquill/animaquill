@@ -579,7 +579,8 @@ export const edit: ToolDefinition<EditArgs> = {
     const removed = result.results.flatMap((value, index) => {
       const gone = (value as { readonly removed?: readonly RemovedKeys[] } | undefined)?.removed;
       return (gone ?? []).map(
-        ({ clip, path, times }) => `${clip} ${path} at ${times.join(", ")} (operations[${index}])`,
+        ({ clip, track, path, times }) =>
+          `${clip ?? `track ${track}`} ${path} at ${times.join(", ")} (operations[${index}])`,
       );
     });
     const most = call.limits.changed;
@@ -616,7 +617,9 @@ export const edit: ToolDefinition<EditArgs> = {
 
 /** Keys of a property that `retimeKeys` took away where others landed, as `property.edit` gives them. */
 interface RemovedKeys {
-  readonly clip: string;
+  /** Whose keys, a clip or a track. */
+  readonly clip?: string;
+  readonly track?: string;
   readonly path: string;
   readonly times: readonly string[];
 }

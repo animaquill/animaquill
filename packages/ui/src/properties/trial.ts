@@ -1,7 +1,7 @@
 import {
   Trial,
   type ProjectStore,
-  type PropertyEdit,
+  type ClipPropertyEdit,
   type TrialChanges,
   type TrialNotice,
   type CommandFailure,
@@ -152,7 +152,7 @@ export class TrialSession {
     return keeper !== undefined && count + setAside > 0 && (keeper.failed || keeper.isBusy);
   }
 
-  write(edits: readonly PropertyEdit[]): boolean {
+  write(edits: readonly ClipPropertyEdit[]): boolean {
     const result = this.#trial?.write(edits);
     if (result && !result.ok) this.#messages.commandFailed(result.error);
     if (result?.ok) this.#show({ comparing: false });

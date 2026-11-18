@@ -45,7 +45,7 @@ import {
 import type { ProjectState, TimelineState } from "./model.ts";
 import { isSceneOwned } from "./registration.ts";
 import { sceneSourceOf, type SceneSource } from "./scene-plan.ts";
-import type { MixPlan } from "./mix-plan.ts";
+import { audibleTracks, gainOfDecibels, panOf, type MixPlan, type MixSound } from "./mix-plan.ts";
 import type { SoundFade } from "./sound-fades.ts";
 import { madeSoundOf } from "./sound-plan.ts";
 import { stageOf, type Size } from "./view.ts";
@@ -229,14 +229,6 @@ const STILL_CAMERA: Channels = {};
  */
 export const effectiveProperties = (clip: ClipState, _version?: Version): Properties =>
   clip.properties ?? NO_PROPERTIES;
-
-/** A property as a plain number. Keys on sound come later, until then the first value. */
-function numberOf(properties: ClipState["properties"], path: string, fallback: number): number {
-  const value = properties?.[path];
-  if (value === undefined) return fallback;
-  const plain = isAnimation(value) ? value.keys[0]?.value : value;
-  return typeof plain === "number" ? plain : fallback;
-}
 
 const compiled = new WeakMap<
   Animation,
@@ -695,8 +687,6 @@ export function samePlan(a: RenderPlan, b: RenderPlan): boolean {
   );
 }
 
-const gainOf = (decibels: number) => 10 ** (decibels / 20);
-
 /** The file of a clip with sound, as far as there is one. */
 function soundFileOf(state: ProjectState, clip: ClipState): string | undefined {
   const { source } = clip;
@@ -757,11 +747,37 @@ function joinFade(join: JoinInEffect, way: SoundFade["way"]) {
   return { fade, from, to };
 }
 
-/** A clip with sound as a mix has it, with the decibels of its clip and of its track apart. */
+/**
+ * What people are trying out, by clip and property path, which they have to hear: a path that is
+ * there with no value is a property they took away.
+ */
+export type TriedValues = ReadonlyMap<string, ReadonlyMap<string, PropertyValue | undefined>>;
+
+/** A clip with sound as a mix has it, with its own properties apart from those of its track. */
 interface ClipSound {
   readonly layer: Omit<SoundLayer, "gain">;
   readonly track: AudioTrackState;
-  readonly decibels: number;
+  readonly properties: Properties;
+}
+
+/** How a property of sound is mixed: still, as a number, or a curve, see `mix-plan.ts`. */
+function soundChannelOf(value: PropertyValue | undefined): Channel | undefined {
+  return value === undefined ? undefined : channelOf(value, "number");
+}
+
+/** The volume of a clip or a track as the mix takes it: a gain, or keys in decibels. */
+function volumeOf(properties: Properties | undefined): Pick<MixSound, "gain" | "volume"> {
+  const channel = soundChannelOf(entryOf(properties, "audio.volume"));
+  if (channel?.kind === "curve") return { gain: 1, volume: channel };
+  const decibels = channel?.kind === "still" ? (channel.value as number) : 0;
+  return { gain: gainOfDecibels(decibels) };
+}
+
+/** The pan of a clip or a track as the mix takes it, and nothing for the middle. */
+function panIn(properties: Properties | undefined): Pick<MixSound, "pan"> {
+  const channel = soundChannelOf(entryOf(properties, "audio.pan"));
+  if (!channel || (channel.kind === "still" && panOf(channel.value as number) === 0)) return {};
+  return { pan: channel };
 }
 
 /** The sounds of the clips on these tracks, with their transitions and joins. */
@@ -769,7 +785,7 @@ function clipSounds(
   state: ProjectState,
   timeline: TimelineState,
   tracks: ReadonlyMap<string, AudioTrackState>,
-  volumeOf?: (clip: string) => number | undefined,
+  tried?: TriedValues,
 ): ClipSound[] {
   // Joins win over the transitions at their edges, and have their clips sound past the cut.
   const joined = new Map<string, JoinInEffect>();
@@ -783,7 +799,16 @@ function clipSounds(
     if (!track || clip.hidden) continue;
     const file = soundFileOf(state, clip);
     if (file === undefined) continue;
-    const decibels = volumeOf?.(clip.id) ?? numberOf(effectiveProperties(clip), "audio.volume", 0);
+    const trying = tried?.get(clip.id);
+    let properties = effectiveProperties(clip);
+    if (trying && trying.size > 0) {
+      const changed: Record<string, PropertyValue> = { ...properties };
+      for (const [path, value] of trying) {
+        if (value === undefined) delete changed[path];
+        else changed[path] = value;
+      }
+      properties = changed;
+    }
     let start = clipStart(clip);
     let end = clipEnd(clip);
     const fades: SoundFade[] = [];
@@ -807,7 +832,7 @@ function clipSounds(
     }
     sounds.push({
       track,
-      decibels,
+      properties,
       layer: {
         id: clip.id,
         file,
@@ -827,64 +852,46 @@ const audioTracksOf = (timeline: TimelineState) =>
   orderedTracks(timeline).filter((track): track is AudioTrackState => track.kind === "audio");
 
 /**
- * Solo wins: as soon as one track has it, only those tracks sound. `volumeOf` is for what people are
- * trying out, which they have to hear: it gives the volume of a clip when that is not the saved one.
- * `only` is one track by itself, muted or not, as people pick it to look at.
+ * What a timeline sounds like as people hear it: the sounds of `buildMixPlan` on the tracks that are
+ * heard (solo wins: as soon as one track has it, only those). `only` is one
+ * track by itself, muted or not, as people pick it to look at.
  */
-export function buildAudioPlan(
-  state: ProjectState,
-  timelineId: string,
-  volumeOf?: (clip: string) => number | undefined,
-  only?: string,
-): AudioPlan {
-  const timeline = entryOf(state.timelines, timelineId);
-  if (!timeline) return { sounds: [] };
-  const tracks = audioTracksOf(timeline);
-  const soloing = tracks.some((track) => track.solo);
-  const audible = new Map(
-    tracks
-      .filter((track) =>
-        only === undefined ? (soloing ? track.solo : !track.muted) : track.id === only,
-      )
-      .map((track) => [track.id, track]),
+export function buildAudioPlan(state: ProjectState, timelineId: string, only?: string): MixPlan {
+  const plan = buildMixPlan(state, timelineId);
+  const heard =
+    only === undefined ? audibleTracks(plan.tracks) : new Set(plan.tracks.map(({ id }) => id));
+  const tracks = plan.tracks.filter(
+    (track) => heard.has(track.id) && (only === undefined || track.id === only),
   );
-  const sounds = clipSounds(state, timeline, audible, volumeOf).map(
-    ({ layer, track, decibels }): SoundLayer => ({
-      ...layer,
-      gain: gainOf(numberOf(track.properties, "audio.volume", 0) + decibels),
-    }),
-  );
-  return { sounds };
+  const kept = new Set(tracks.map(({ id }) => id));
+  return { sounds: plan.sounds.filter((sound) => kept.has(sound.track)), tracks };
 }
 
 /**
- * What the mix engine plays: as `buildAudioPlan`, but with every track of sound, muted or not, and
- * the gain of a clip apart from that of its track, as the mix applies them one after the other.
+ * What the mix engine plays: every track of sound, muted or not, with the volume and pan of a clip
+ * apart from those of its track, as the mix applies them one after the other (see `mix-plan.ts`).
+ * `tried` is what people are trying out, which they have to hear.
  */
 export function buildMixPlan(
   state: ProjectState,
   timelineId: string,
-  volumeOf?: (clip: string) => number | undefined,
+  tried?: TriedValues,
 ): MixPlan {
   const timeline = entryOf(state.timelines, timelineId);
   if (!timeline) return { sounds: [], tracks: [] };
   const all = audioTracksOf(timeline);
-  const sounds = clipSounds(
-    state,
-    timeline,
-    new Map(all.map((track) => [track.id, track])),
-    volumeOf,
-  );
+  const sounds = clipSounds(state, timeline, new Map(all.map((track) => [track.id, track])), tried);
   return {
-    sounds: sounds.map(({ layer, track, decibels }) => ({
+    sounds: sounds.map(({ layer, track, properties }) => ({
       ...layer,
-      // The same order of fields as a `SoundLayer` of `buildAudioPlan`, gain before fades.
-      gain: gainOf(decibels),
+      ...volumeOf(properties),
+      ...panIn(properties),
       track: track.id,
     })),
     tracks: all.map((track) => ({
       id: track.id,
-      gain: gainOf(numberOf(track.properties, "audio.volume", 0)),
+      ...volumeOf(track.properties),
+      ...panIn(track.properties),
       muted: track.muted === true,
       solo: track.solo === true,
     })),

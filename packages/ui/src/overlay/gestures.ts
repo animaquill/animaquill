@@ -13,7 +13,7 @@ import {
   type Matrix,
   type Placement,
   type Point,
-  type PropertyEdit,
+  type ClipPropertyEdit,
 } from "@animaquill/core";
 import {
   compare,
@@ -48,7 +48,7 @@ export interface Gesture {
    * What the drag comes to with the pointer here: edits for `PropertyWriter`. Nothing once what it
    * changes went away, for an undo or in another window.
    */
-  edits(pointer: OverlayPointer): readonly PropertyEdit[] | undefined;
+  edits(pointer: OverlayPointer): readonly ClipPropertyEdit[] | undefined;
 }
 
 /** A property as it is right now. */
@@ -56,12 +56,12 @@ export interface Live {
   /** What it holds, keys and all, with what is being tried on top. */
   readonly stored: PropertyValue | undefined;
   /** Writes a value where the properties tab would: on the key of this frame, if it has keys. */
-  readonly write: (value: number) => PropertyEdit;
+  readonly write: (value: number) => ClipPropertyEdit;
   /**
    * What writes come to once they are written, which automatic keys change (`PropertyWriter`): for
    * what goes by what a write does to the curve, as the anchor does. As they are without it.
    */
-  readonly recorded?: (edits: readonly PropertyEdit[]) => readonly PropertyEdit[];
+  readonly recorded?: (edits: readonly ClipPropertyEdit[]) => readonly ClipPropertyEdit[];
 }
 
 /** A property that a drag writes. */
@@ -101,7 +101,7 @@ export function declarativeGesture(
         { from, to, turned, shift: pointer.shift },
         (bind) => binds.get(bind)?.start,
       );
-      const edits: PropertyEdit[] = [];
+      const edits: ClipPropertyEdit[] = [];
       for (const [bind, value] of values) {
         const bound = binds.get(bind);
         const live = bound?.now();
@@ -142,7 +142,7 @@ export interface AnchorPlace {
 export const ANCHOR_SNAP = 8;
 
 /** What writes do to a value, or nothing when they cannot. */
-function written(stored: PropertyValue | undefined, edits: readonly PropertyEdit[]) {
+function written(stored: PropertyValue | undefined, edits: readonly ClipPropertyEdit[]) {
   try {
     let value = stored;
     for (const edit of edits) value = applyEdit(value, edit);
@@ -197,7 +197,7 @@ export function anchorGesture(
       // What the position needs goes by where the anchor really went, which is round where the
       // pointer went a round way: the few digits of a share that get written are not. Whether it
       // becomes keys goes by what gets written.
-      const exactly = (edits: readonly PropertyEdit[], value: number) =>
+      const exactly = (edits: readonly ClipPropertyEdit[], value: number) =>
         edits.map((edit, index) =>
           index === edits.length - 1 && (edit.op === "write" || edit.op === "setKey")
             ? { ...edit, value }
@@ -210,7 +210,7 @@ export function anchorGesture(
         bound: Bound,
         before: Live,
         after: { value: PropertyValue | undefined },
-        edits: readonly PropertyEdit[],
+        edits: readonly ClipPropertyEdit[],
         perShare: number,
       ) => {
         // The last one is at the playhead, where the anchor moved.
@@ -276,7 +276,7 @@ export function pathKeyGesture(
     edits(pointer) {
       const to = transformPoint(toWorld, pointer);
       const [dx, dy] = straightened(to.x - from.x, to.y - from.y, pointer.shift);
-      const edits: PropertyEdit[] = [];
+      const edits: ClipPropertyEdit[] = [];
       for (const [bound, by, had, start] of [
         [binds.x, dx, key.hasX, key.x],
         [binds.y, dy, key.hasY, key.y],
@@ -361,7 +361,7 @@ export function stretchGesture(
       // The share of the box that stays where it is: the side across, or with Alt the middle.
       const stays = pointer.alt ? 0.5 : far === 1 ? 0 : 1;
       const by = (stays - anchor) * (start - size);
-      const edits: PropertyEdit[] = [];
+      const edits: ClipPropertyEdit[] = [];
       const write = (bound: Bound, value: number) => {
         const live = bound.now();
         if (!live) return false;

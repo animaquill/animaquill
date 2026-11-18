@@ -1,4 +1,4 @@
-import { USER, type PropertyEdit } from "@animaquill/core";
+import { USER, type ClipPropertyEdit } from "@animaquill/core";
 import { describe, expect, it, vi } from "vitest";
 import { TrialSession } from "../properties/trial.ts";
 import { PropertyWriter } from "../properties/writer.ts";
@@ -171,7 +171,12 @@ describe("5000 clips with 50000 keys", { timeout: 60_000 }, () => {
       time: String(index / 10),
       value: index,
     }));
-    const edit: PropertyEdit = { owner, path: "transform.rotation", op: "set", value: { keys } };
+    const edit: ClipPropertyEdit = {
+      owner,
+      path: "transform.rotation",
+      op: "set",
+      value: { keys },
+    };
     store.execute({ type: "property.edit", params: { timeline: "main", edits: [edit] } });
     keyframes.select(
       KeySelection.of(keys.map(({ time }) => ({ clip: "c0", path: "transform.rotation", time }))),
@@ -196,7 +201,12 @@ describe("5000 clips with 50000 keys", { timeout: 60_000 }, () => {
       time: String(index / 1000),
       value: index,
     }));
-    const edit: PropertyEdit = { owner, path: "transform.rotation", op: "set", value: { keys } };
+    const edit: ClipPropertyEdit = {
+      owner,
+      path: "transform.rotation",
+      op: "set",
+      value: { keys },
+    };
     store.execute({ type: "property.edit", params: { timeline: "main", edits: [edit] } });
     const moves = [{ from: "0", to: "0.0005" }];
     writer.commit([{ owner, path: "transform.rotation", op: "moveKey", moves }]);
@@ -245,7 +255,12 @@ describe("5000 clips with 50000 keys", { timeout: 60_000 }, () => {
       time: String(index / 10 + 10),
       value: index,
     }));
-    const edit: PropertyEdit = { owner, path: "transform.rotation", op: "set", value: { keys } };
+    const edit: ClipPropertyEdit = {
+      owner,
+      path: "transform.rotation",
+      op: "set",
+      value: { keys },
+    };
     store.execute({ type: "property.edit", params: { timeline: "main", edits: [edit] } });
     const moves = [{ from: "10", to: "10.05" }];
     timed(

@@ -2,7 +2,7 @@ import { createProject } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import { orderedTracks, sourceLength, type ClipState } from "./model.ts";
 import { objectsOf } from "./objects.ts";
-import { buildAudioPlan } from "./render-plan.ts";
+import { buildAudioPlan, buildMixPlan } from "./render-plan.ts";
 import { madeSoundOf, madeSoundsOf, SOUND_SAMPLE_RATE } from "./sound-plan.ts";
 import { ProjectStore, type CommandCall } from "./store.ts";
 
@@ -262,7 +262,16 @@ describe("the audio plan", () => {
     addSound();
     addClip("c", { start: "1", offset: "0.5", duration: "1" });
     expect(buildAudioPlan(store.getState(), "main").sounds).toEqual([
-      { id: "c", file: made().file, start: 1, end: 2, offset: 0.5, gain: 1, made: true },
+      {
+        id: "c",
+        file: made().file,
+        start: 1,
+        end: 2,
+        offset: 0.5,
+        made: true,
+        gain: 1,
+        track: "sounds",
+      },
     ]);
   });
 
@@ -277,8 +286,8 @@ describe("the audio plan", () => {
     const { store, addSound, addClip } = open();
     addSound();
     addClip("c", { properties: { "param.duration": 2, "audio.volume": -20 } });
-    const plan = buildAudioPlan(store.getState(), "main", () => 0);
-    expect(plan.sounds[0]?.gain).toBe(1);
+    const tried = new Map([["c", new Map([["audio.volume", 0]])]]);
+    expect(buildMixPlan(store.getState(), "main", tried).sounds[0]?.gain).toBe(1);
   });
 
   it("leaves out a muted track, a hidden clip, and a sound that is not there", () => {
@@ -293,13 +302,13 @@ describe("the audio plan", () => {
 });
 
 describe("what a clip with a sound offers", () => {
-  it("is its volume, which has one value for the whole clip", () => {
+  it("is its volume and its pan, which can have keys", () => {
     const { addSound, addClip, clip } = open();
     addSound();
     addClip();
     const [object] = objectsOf(clip());
-    expect(object?.properties.map(({ path }) => path)).toEqual(["audio.volume"]);
-    expect(object?.properties[0]?.animatable).toBe(false);
+    expect(object?.properties.map(({ path }) => path)).toEqual(["audio.volume", "audio.pan"]);
+    expect(object?.properties.every(({ animatable }) => animatable !== false)).toBe(true);
   });
 });
 

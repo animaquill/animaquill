@@ -118,11 +118,16 @@ export {
   KeyEase,
   NoiseEdit,
   PropertyEdit,
+  PropertyOwner,
+  TRACK_PATHS,
   applyEdit,
   editContextOf,
   firstKeyFrom,
+  isClipEdit,
   seedOf,
+  trackEditContextOf,
   withoutEase,
+  type ClipPropertyEdit,
   type EditContext,
   type ValueEdit,
 } from "./property-edit.ts";
@@ -162,10 +167,25 @@ export {
   type TrackNode,
   type TreeNode,
 } from "./property-tree.ts";
-export { audibleTracks, type MixPlan, type MixSound, type MixTrack } from "./mix-plan.ts";
+export {
+  SILENT_DECIBELS,
+  audibleTracks,
+  canSound,
+  clockOfSound,
+  gainAt,
+  gainOfDecibels,
+  monoPan,
+  panOf,
+  stereoPan,
+  trackGainAt,
+  type MixPlan,
+  type MixSound,
+  type MixTrack,
+} from "./mix-plan.ts";
 export {
   buildAudioPlan,
   buildMixPlan,
+  type TriedValues,
   buildRenderPlan,
   formatOf,
   channelOf,

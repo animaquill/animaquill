@@ -31,7 +31,6 @@ export const UNSUPPORTED_CODES = [
   "unsupported-caption-display",
   "unsupported-audio-effect",
   "unsupported-audio-property",
-  "unsupported-volume-keys",
   "unsupported-loop",
   "unsupported-draft",
   "unsupported-override",
@@ -41,7 +40,6 @@ export type UnsupportedCode = (typeof UNSUPPORTED_CODES)[number];
 
 /** Properties of sound that are not applied, with what they come to when nothing applies them. */
 const AUDIO_PROPERTIES: Readonly<Record<string, number | boolean>> = {
-  "audio.pan": 0,
   "audio.pitch": 0,
   "audio.preservePitch": false,
 };
@@ -56,14 +54,6 @@ function differs(value: PropertyValue | undefined, fallback: number | boolean): 
   if (value === undefined) return false;
   if (isAnimation(value)) return value.keys.some((key) => key.value !== fallback);
   return value !== fallback;
-}
-
-/** Whether a value has keys that are not all the same, which is what “only the first” loses. */
-function varies(value: PropertyValue | undefined): boolean {
-  if (value === undefined || !isAnimation(value)) return false;
-  const [first, ...rest] = value.keys;
-  const plain = JSON.stringify(first?.value);
-  return rest.some((key) => JSON.stringify(key.value) !== plain);
 }
 
 /** A file of a library, wherever a value has one. */
@@ -244,9 +234,6 @@ export function unsupportedProblems(state: ProjectState): readonly ProjectProble
             path,
           );
         }
-        if (varies(properties["audio.volume"])) {
-          report("unsupported-volume-keys", subject, {}, part, "audio.volume");
-        }
       }
       if (loopMatters(state, clip)) report("unsupported-loop", subject, {}, part);
       if (clip.draft === true) report("unsupported-draft", subject, {}, part);
@@ -285,9 +272,6 @@ export function unsupportedProblems(state: ProjectState): readonly ProjectProble
           matters ? part : undefined,
           path,
         );
-      }
-      if (varies(properties["audio.volume"])) {
-        report("unsupported-volume-keys", trackOf(track), {}, part, "audio.volume");
       }
     }
 

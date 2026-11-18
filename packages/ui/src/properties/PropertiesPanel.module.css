@@ -618,3 +618,92 @@
 .effectMissing {
   margin: 0 0 4px 22px;
 }
+
+/* The volume and the pan of sound: a slider, and the number or the side next to it. */
+.soundControl {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.soundNumber {
+  flex: none;
+  width: 64px;
+}
+
+.slider {
+  position: relative;
+  flex: 1;
+  min-width: 24px;
+  height: calc(22px * var(--aq-size-scale));
+  cursor: pointer;
+  touch-action: none;
+  outline: none;
+}
+
+.slider[aria-readonly] {
+  cursor: default;
+}
+
+.sliderTrack {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  left: 0;
+  height: 4px;
+  background: var(--aq-bg-input);
+  border-radius: 2px;
+  transform: translateY(-50%);
+}
+
+.slider:hover .sliderTrack,
+.slider:focus-visible .sliderTrack {
+  outline: 1px solid var(--aq-timeline-tick);
+}
+
+.sliderMiddle {
+  position: absolute;
+  top: 25%;
+  bottom: 25%;
+  left: 50%;
+  width: 1px;
+  background: var(--aq-text-muted);
+}
+
+.sliderKnob {
+  position: absolute;
+  top: 50%;
+  width: 8px;
+  height: 12px;
+  background: var(--aq-text);
+  border-radius: 2px;
+  transform: translate(-50%, -50%);
+}
+
+.slider[data-animated] .sliderKnob {
+  background: var(--aq-match);
+}
+
+.slider[data-tried] .sliderKnob {
+  background: var(--aq-trial);
+}
+
+.rows[data-readonly] .sliderKnob {
+  background: var(--aq-text-muted);
+}
+
+.panText {
+  flex: none;
+  width: 34px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.panText[data-animated] {
+  color: var(--aq-match);
+}
+
+.panText[data-tried] {
+  color: var(--aq-trial);
+}

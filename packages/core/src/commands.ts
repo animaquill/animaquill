@@ -130,7 +130,16 @@ import {
 } from "./project-edits.ts";
 import { deepEqual } from "./patch.ts";
 import { StorageChange, setStorage } from "./places.ts";
-import { PropertyEdit, applyEdit, editContextOf, retimedValue } from "./property-edit.ts";
+import {
+  PropertyEdit,
+  TRACK_PATHS,
+  applyEdit,
+  editContextOf,
+  retimedValue,
+  trackEditContextOf,
+  type EditContext,
+  type PropertyOwner,
+} from "./property-edit.ts";
 import { PropertyRename, convertedValue, movesOf } from "./rename.ts";
 import { isInUse } from "./references.ts";
 import { SourceReplace, removeUses, replaceSource } from "./resource-edits.ts";
@@ -328,11 +337,10 @@ const rippled = ({ moved, joinsRemoved, sectionsRemoved }: Rippled) => ({
 });
 
 /** Keys that gave way to keys that `retimeKeys` put where they were, by property. */
-const RemovedKeys = z.strictObject({
-  clip: Id,
-  path: z.string(),
-  times: z.array(z.string()).readonly(),
-});
+const RemovedKeys = z.union([
+  z.strictObject({ clip: Id, path: z.string(), times: z.array(z.string()).readonly() }),
+  z.strictObject({ track: Id, path: z.string(), times: z.array(z.string()).readonly() }),
+]);
 type RemovedKeys = z.output<typeof RemovedKeys>;
 const EditedProperties = z.strictObject({ removed: z.array(RemovedKeys).readonly() }).optional();
 
@@ -593,39 +601,100 @@ function editProperties(
   edits: readonly PropertyEdit[],
 ): readonly RemovedKeys[] {
   const target = timelineOf(draft, timeline);
-  const changes = new Map<string, Map<string, PropertyValue | undefined>>();
+  const changes = new Map<string, OwnedChanges>();
   const removed: RemovedKeys[] = [];
   for (const edit of edits) {
-    const { path, owner } = edit;
-    const clip = clipOf(target, owner.clip);
-    const values = changes.get(clip.id) ?? new Map<string, PropertyValue | undefined>();
-    changes.set(clip.id, values);
-    const before = values.has(path) ? values.get(path) : entryOf(clip.properties, path);
-    const context = editContextOf(draft.state, clip, path);
+    const { path } = edit;
+    const owned = ownedOf(draft, target, timeline, edit, changes);
+    const { values } = owned;
+    const before = values.has(path) ? values.get(path) : entryOf(owned.properties, path);
+    const context = owned.context(path);
     if (edit.op === "retimeKeys") {
       const retimed = retimedValue(before, edit, context);
       values.set(path, retimed.value);
-      if (retimed.removed.length > 0) removed.push({ clip: clip.id, path, times: retimed.removed });
+      if (retimed.removed.length > 0)
+        removed.push({ ...owned.owner, path, times: retimed.removed });
     } else {
       values.set(path, applyEdit(before, edit, context));
     }
   }
-  for (const [id, values] of changes) {
-    const clip = entryOf(target.clips, id) as ClipState;
-    for (const [path, value] of values) {
-      const saved = entryOf(clip.properties, path);
+  for (const owned of changes.values()) {
+    for (const [path, value] of owned.values) {
+      const saved = entryOf(owned.properties, path);
       if (deepEqual(saved, value)) continue;
-      const where = [...clipPath(timeline, id), "properties", path];
+      const where = [...owned.where, "properties", path];
       if (value === undefined) {
         draft.delete(where);
       } else {
         checkWrite(path, saved, value);
-        checkEffectWrite(clip, path, value);
+        owned.check(path, value);
         draft.set(where, value);
       }
     }
   }
   return removed;
+}
+
+/** What the edits of a step come to for the properties of one clip or track. */
+interface OwnedChanges {
+  readonly owner: PropertyOwner;
+  readonly where: readonly string[];
+  readonly properties: Readonly<Record<string, PropertyValue>> | undefined;
+  readonly values: Map<string, PropertyValue | undefined>;
+  context(path: string): EditContext;
+  check(path: string, value: PropertyValue): void;
+}
+
+/** The clip or track an edit is about, with what the step did to it so far. */
+function ownedOf(
+  draft: Draft,
+  target: TimelineState,
+  timeline: string,
+  edit: PropertyEdit,
+  changes: Map<string, OwnedChanges>,
+): OwnedChanges {
+  const { owner, path } = edit;
+  if ("clip" in owner) {
+    const clip = clipOf(target, owner.clip);
+    const id = `clip ${clip.id}`;
+    const known = changes.get(id);
+    if (known) return known;
+    const made: OwnedChanges = {
+      owner: { clip: clip.id },
+      where: clipPath(timeline, clip.id),
+      properties: clip.properties,
+      values: new Map(),
+      context: (at) => editContextOf(draft.state, clip, at),
+      check: (at, value) => checkEffectWrite(clip, at, value),
+    };
+    changes.set(id, made);
+    return made;
+  }
+  const track = trackOf(target, owner.track);
+  // Only what the mix does with a track: a picture has no volume, a track no transform.
+  const sound = track.kind === "audio" ? track : undefined;
+  if (!sound || !TRACK_PATHS.includes(path)) {
+    return fail("wrong-target", {
+      path,
+      target: "track",
+      track: track.id,
+      kind: track.kind,
+      takes: sound ? TRACK_PATHS : [],
+    });
+  }
+  const id = `track ${track.id}`;
+  const known = changes.get(id);
+  if (known) return known;
+  const made: OwnedChanges = {
+    owner: { track: track.id },
+    where: trackPath(timeline, track.id),
+    properties: sound.properties,
+    values: new Map(),
+    context: (at) => trackEditContextOf(draft.state, track.id, at),
+    check: () => {},
+  };
+  changes.set(id, made);
+  return made;
 }
 
 type ClipOverrides = NonNullable<TimelineState["overrides"][string]["clips"]>[string];
@@ -769,6 +838,8 @@ const ClearableMarkerField = z.enum(["name", "note", "color", "duration"]);
 
 /** What writing properties can run into, whichever operation does it. */
 const PROPERTY_FAILURES: readonly FailureCode[] = ["not-found", "invalid-value", "not-animatable"];
+/** What `property.edit` can fail with, which can also be about a track. */
+const PROPERTY_EDIT_FAILURES: readonly FailureCode[] = [...PROPERTY_FAILURES, "wrong-target"];
 
 /** The clip that `clip.add` puts on a track, as its own fields: the format's, with an id to choose. */
 const AddedClip = ClipInput.shape;
@@ -2030,7 +2101,7 @@ export const OPERATIONS = [
       const removed = editProperties(draft, timeline, edits);
       return removed.length > 0 ? { removed } : undefined;
     },
-    { group: "property", result: EditedProperties, failures: PROPERTY_FAILURES },
+    { group: "property", result: EditedProperties, failures: PROPERTY_EDIT_FAILURES },
   ),
 
   /**

@@ -1,4 +1,5 @@
 import type { PropertySpec } from "@animaquill/schema";
+import { formatPan, formatVolume, parsePan, parseVolume } from "./sound-scale.ts";
 
 /** How many digits people get to see. What is saved keeps what they typed. */
 const SHOWN_DIGITS = 2;
@@ -11,6 +12,7 @@ const STEPS: Readonly<Record<string, number>> = {
   ratio: 0.01,
   count: 0.25,
   hz: 0.05,
+  db: 0.1,
 };
 const DEFAULT_STEP = 0.01;
 
@@ -28,10 +30,15 @@ const limited = (value: number, low: number | undefined, high: number | undefine
 const whole = (spec: PropertySpec, value: number) =>
   spec.unit === "count" ? Math.round(value) : value;
 
+/** Where a sound sits reads as left and right, from the middle. */
+const isPan = ({ path }: PropertySpec) => path === "audio.pan";
+
 /** A share reads better as a percentage, and it is what people expect of opacity. */
 const isShare = ({ unit }: PropertySpec) => unit === "ratio";
 
 export function formatNumber(value: number, spec: PropertySpec): string {
+  if (spec.unit === "db") return formatVolume(value);
+  if (isPan(spec)) return formatPan(value);
   if (isShare(spec)) return `${fixed(value * 100, SHOWN_DIGITS)}%`;
   if (spec.unit === "deg") return `${fixed(value, SHOWN_DIGITS)}°`;
   if (spec.unit === "s") return `${fixed(value, SHOWN_DIGITS)}s`;
@@ -62,6 +69,9 @@ const UNIT_SUFFIXES: Readonly<Record<string, RegExp>> = {
 
 /** What people typed, or undefined when it is not a number. Too much becomes the limit. */
 export function parseNumber(text: string, spec: PropertySpec): number | undefined {
+  const sound = spec.unit === "db" ? parseVolume(text) : isPan(spec) ? parsePan(text) : Number.NaN;
+  if (sound === undefined) return undefined;
+  if (!Number.isNaN(sound)) return limited(fixed(sound, KEPT_DIGITS), spec.min, spec.max);
   const plain = text
     .normalize("NFKC")
     .replaceAll("−", "-")

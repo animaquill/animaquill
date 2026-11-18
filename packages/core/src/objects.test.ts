@@ -53,11 +53,15 @@ describe("what a clip offers", () => {
     );
   });
 
-  it("a sound made by code has its volume", () => {
-    expect(objectsOf(clip({ kind: "sound" }))).toEqual([CLIP_SOUND]);
+  it.each(["sound", "audio"])("a %s has its volume and its pan, both with keys", (kind) => {
+    expect(objectsOf(clip({ kind }))).toEqual([CLIP_SOUND]);
+    expect(CLIP_SOUND.properties.map(({ path, animatable }) => [path, animatable])).toEqual([
+      ["audio.volume", undefined],
+      ["audio.pan", undefined],
+    ]);
   });
 
-  it.each(["audio", "music", "timeline", "caption", "plugin.lottie"])(
+  it.each(["music", "timeline", "caption", "plugin.lottie"])(
     "a %s has nothing to place yet",
     (kind) => {
       expect(objectsOf(clip({ kind }))).toEqual([]);

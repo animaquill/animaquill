@@ -34,7 +34,7 @@ import {
   type Point,
   type ProjectState,
   type ProjectStore,
-  type PropertyEdit,
+  type ClipPropertyEdit,
   type Registration,
   type RenderLayer,
   type Size,
@@ -228,7 +228,7 @@ interface Drag {
   moved: boolean;
   /** What it changes went away, and it stopped. */
   stopped: boolean;
-  edits: readonly PropertyEdit[];
+  edits: readonly ClipPropertyEdit[];
 }
 
 /**

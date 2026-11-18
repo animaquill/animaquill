@@ -54,17 +54,15 @@ export function PlaybackClock() {
     };
     const stopWatching = store.subscribe(replan);
     const stopTrying = properties.subscribe(replan);
-    /** What people are trying out is what they want to hear. */
-    const volumeOf = (clip: string) => {
-      const value = properties.getPreviewed().get(clip)?.get("audio.volume");
-      return typeof value === "number" ? value : undefined;
-    };
 
     /** Sound starts over when the playhead jumped, or when what it should play changed. */
     const followSound = (now: number) => {
       const { model, playbackStart } = timeline;
       if (!model || !playbackStart) return;
-      const next = planChanged ? buildMixPlan(store.getState(), model.id, volumeOf) : plan;
+      // What people are trying out is what they want to hear.
+      const next = planChanged
+        ? buildMixPlan(store.getState(), model.id, properties.getPreviewed())
+        : plan;
       planChanged = false;
       if (next && plan && playbackStart === start && PlaybackAudio.onTheSpot(next, plan)) {
         if (next !== plan) audio.change(next);

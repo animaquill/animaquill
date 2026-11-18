@@ -11,7 +11,7 @@ import {
   withAutoTangents,
   type ClipDescription,
   type ClipState,
-  type PropertyEdit,
+  type ClipPropertyEdit,
   type CommandFailure,
 } from "@animaquill/core";
 import {
@@ -42,11 +42,13 @@ export interface PropertyWriterMessages {
 const NOTHING: PreviewedValues = new Map();
 
 /**
- * Whether keys on a property do something in this version. Sound and the speed of a clip take only
- * one value yet (see the problems of the project), so recording writes them as values.
+ * Whether keys on a property do something in this version. The pitch of sound and the speed of a
+ * clip take only one value yet (see the problems of the project), so recording writes them as
+ * values; the volume and the pan of sound take keys.
  */
 export const keysTakeEffect = (path: string): boolean =>
-  !path.startsWith("audio.") && path !== "time.speed";
+  (!path.startsWith("audio.") || path === "audio.volume" || path === "audio.pan") &&
+  path !== "time.speed";
 
 /** Where a property is described, among the objects of a clip. */
 function specIn(objects: readonly ObjectDescriptor[], path: string): PropertySpec | undefined {
@@ -58,7 +60,7 @@ function specIn(objects: readonly ObjectDescriptor[], path: string): PropertySpe
 }
 
 /** Whether an edit can bring in keys whose handles the editor works out. */
-const bringsAutoKeys = (edit: PropertyEdit) =>
+const bringsAutoKeys = (edit: ClipPropertyEdit) =>
   (edit.op === "putKeys" && edit.keys.some((key) => key.tangent === "auto")) ||
   (edit.op === "set" && hasAutoTangents(edit.value));
 
@@ -180,7 +182,7 @@ export class PropertyWriter {
   }
 
   /** Shows what these edits would do, instead of what they showed so far. */
-  preview(asked: readonly PropertyEdit[]): void {
+  preview(asked: readonly ClipPropertyEdit[]): void {
     const edits = this.recorded(asked);
     const clips = this.#timeline.model?.state.clips;
     const previewed = new Map<string, Map<string, PropertyValue | undefined>>();
@@ -213,18 +215,18 @@ export class PropertyWriter {
    * What works out the handles of automatic keys again after some edits: the editor keeps them
    * smooth, whatever changed around them. Only properties that have such keys cost anything.
    */
-  #autoEdits(edits: readonly PropertyEdit[]): readonly PropertyEdit[] {
+  #autoEdits(edits: readonly ClipPropertyEdit[]): readonly ClipPropertyEdit[] {
     const clips = this.#timeline.model?.state.clips;
-    const byProperty = new Map<string, PropertyEdit[]>();
+    const byProperty = new Map<string, ClipPropertyEdit[]>();
     for (const edit of edits) {
       const id = `${edit.owner.clip} ${edit.path}`;
       const own = byProperty.get(id);
       if (own) own.push(edit);
       else byProperty.set(id, [edit]);
     }
-    const extra: PropertyEdit[] = [];
+    const extra: ClipPropertyEdit[] = [];
     for (const own of byProperty.values()) {
-      const [{ owner, path }] = own as [PropertyEdit];
+      const [{ owner, path }] = own as [ClipPropertyEdit];
       const clip = clips?.[owner.clip];
       if (!clip) continue;
       const before = this.#shown(clip, path);
@@ -247,12 +249,12 @@ export class PropertyWriter {
    * the playhead, and one at the first frame of the clip with what was there, unless that is where the
    * playhead is. Everything else, and everything while not recording, stays exactly as asked.
    */
-  recorded(edits: readonly PropertyEdit[]): readonly PropertyEdit[] {
+  recorded(edits: readonly ClipPropertyEdit[]): readonly ClipPropertyEdit[] {
     if (!this.#recording || !edits.some(({ op }) => op === "write")) return edits;
     const clips = this.#timeline.model?.state.clips;
     // What a property has come to so far in these edits, as one can write it twice.
     const sofar = new Map<string, PropertyValue | undefined>();
-    const recorded: PropertyEdit[] = [];
+    const recorded: ClipPropertyEdit[] = [];
     for (const edit of edits) {
       const { owner, path } = edit;
       const clip = clips?.[owner.clip];
@@ -283,14 +285,14 @@ export class PropertyWriter {
   /** The keys a value written to a property without keys comes to while recording. */
   #firstKeys(
     clip: ClipState,
-    edit: Extract<PropertyEdit, { op: "write" }>,
+    edit: Extract<ClipPropertyEdit, { op: "write" }>,
     before: PropertyValue | undefined,
-  ): readonly PropertyEdit[] {
+  ): readonly ClipPropertyEdit[] {
     const { owner, path, time, value } = edit;
     const was = before ?? this.#valueWithout(clip, path);
     // Nothing changes, as when a box that follows its media gets the size it has: no animation.
     if (was !== undefined && JSON.stringify(was) === JSON.stringify(value)) return [edit];
-    const atPlayhead: PropertyEdit = { owner, path, op: "setKey", time, value };
+    const atPlayhead: ClipPropertyEdit = { owner, path, op: "setKey", time, value };
     const first = clip.offset ?? "0";
     // The first frame of a clip that does not start on a frame comes a little after its start.
     const rate = this.#timeline.model?.rate.fps;
@@ -320,7 +322,7 @@ export class PropertyWriter {
    * Makes edits one step. The preview ends after that, so that what was shown is replaced by the
    * same thing and the old value does not flash up in between.
    */
-  commit(edits: readonly PropertyEdit[]): boolean {
+  commit(edits: readonly ClipPropertyEdit[]): boolean {
     // What people see then is what is saved, which an edit would go on top of. Controls know that,
     // and this is for whatever comes along that does not.
     if (this.#trials.getSnapshot().comparing) {
@@ -335,7 +337,7 @@ export class PropertyWriter {
     return done;
   }
 
-  #writeNow(edits: readonly PropertyEdit[]): boolean {
+  #writeNow(edits: readonly ClipPropertyEdit[]): boolean {
     const store = this.#session.store;
     const timeline = this.#timeline.model?.id;
     if (!store || timeline === undefined || edits.length === 0) return false;

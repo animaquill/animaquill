@@ -4,7 +4,7 @@ import {
   retimedTime,
   type ClipState,
   type ClockFrames,
-  type PropertyEdit,
+  type ClipPropertyEdit,
 } from "@animaquill/core";
 import {
   ZERO,
@@ -109,8 +109,8 @@ export function retimeEdits(
   from: readonly [Rational, Rational],
   to: readonly [Rational, Rational],
   frames: boolean,
-): readonly PropertyEdit[] {
-  return channels.flatMap(({ clip, path, times }): PropertyEdit[] => {
+): readonly ClipPropertyEdit[] {
+  return channels.flatMap(({ clip, path, times }): ClipPropertyEdit[] => {
     const state = clipOf(clip);
     if (!state) return [];
     const shift = shiftOf(state);
@@ -336,7 +336,7 @@ export class RetimeGesture implements Gesture {
     return to;
   }
 
-  #edits(to: Rational, frames: boolean): readonly PropertyEdit[] {
+  #edits(to: Rational, frames: boolean): readonly ClipPropertyEdit[] {
     const from = [this.#anchor, this.#edge] as const;
     return retimeEdits(this.#channels, this.#clipOf, from, [this.#anchor, to], frames);
   }

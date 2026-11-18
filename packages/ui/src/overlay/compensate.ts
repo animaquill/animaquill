@@ -1,4 +1,4 @@
-import { applyEdit, secondsOf, withAutoTangents, type PropertyEdit } from "@animaquill/core";
+import { applyEdit, secondsOf, withAutoTangents, type ClipPropertyEdit } from "@animaquill/core";
 import {
   compare,
   isAnimation,
@@ -47,7 +47,7 @@ export interface PositionSide {
   readonly spec: PropertySpec;
   readonly stored: PropertyValue | undefined;
   /** Writes a value where the properties tab would, for a position without keys. */
-  readonly write: (value: number) => PropertyEdit;
+  readonly write: (value: number) => ClipPropertyEdit;
 }
 
 export interface AnchorMove {
@@ -225,7 +225,10 @@ function onEveryFrame(
  * What one direction of the position needs, so that the picture stays where it is on every frame
  * when the anchor moves: see the top of this file. Only keys that change are written.
  */
-export function compensation(position: PositionSide, move: AnchorMove): readonly PropertyEdit[] {
+export function compensation(
+  position: PositionSide,
+  move: AnchorMove,
+): readonly ClipPropertyEdit[] {
   const { clip, path, spec, stored } = position;
   const target = { owner: { clip }, path };
   const keyed = [move.x, move.y].filter(

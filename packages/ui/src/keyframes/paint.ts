@@ -823,7 +823,7 @@ export class KeyframesPainter extends StagePainter {
     if (!view.soundFolded) {
       const pixels = Math.ceil(width);
       if (this.#levels.length < pixels) this.#levels = new Float32Array(pixels);
-      soundLevels(sound.sounds, (layer) => view.peaksOf(layer.id), view, this.#levels);
+      soundLevels(sound.heard, (layer) => view.peaksOf(layer.id), view, this.#levels);
       paintSoundLevels(this.context, this.#levels, pixels, { top, height }, theme.sound);
     }
     if (end < width) {
