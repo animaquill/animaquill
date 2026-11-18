@@ -1,5 +1,10 @@
-import { EFFECT_OBJECT_TYPES, SCENE_OBJECT_TYPES } from "@animaquill/core";
-import { CLIP_SOUND, type ObjectDescriptor, type PropertySpec } from "@animaquill/schema";
+import { EFFECT_OBJECT_TYPES, SCENE_OBJECT_TYPES, objectsOf } from "@animaquill/core";
+import {
+  CLIP_SOUND,
+  MASTER_SOUND,
+  type ObjectDescriptor,
+  type PropertySpec,
+} from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import { ChevronLeft, ChevronRight, Diamond, RotateCcw, SlidersHorizontal } from "lucide-react";
 import {
@@ -24,7 +29,7 @@ import styles from "./PropertiesPanel.module.css";
 import { placeOf, PropertyRows } from "./rows.ts";
 import { EffectsSection } from "./EffectsSection.tsx";
 import { TransitionProperties } from "./TransitionProperties.tsx";
-import { trackClipId, withTrackClip } from "../mixer/track-clip.ts";
+import { MASTER_CLIP, trackClipId, withTrackClip } from "../mixer/track-clip.ts";
 import { useTrackName } from "../mixer/names.ts";
 
 type ClipSelected = Extract<Selected, { kind: "clip" }>;
@@ -381,25 +386,8 @@ function ClipProperties({ selected, rows }: { selected: ClipSelected; rows: Prop
   const byId = new Map(objects.map((object) => [object.id, object]));
   const { kind } = box.clip.source;
   const kindName = textOf(t, `timeline.kind.${kind}`, kind);
-  const isEffect = (object: ObjectDescriptor) =>
-    object.type === EFFECT_OBJECT_TYPES.effects ||
-    object.type?.startsWith(EFFECT_OBJECT_TYPES.prefix) === true;
   const shown = objects.filter((object) => object.properties.length > 0 && !isEffect(object));
-  const effectRows = new Map(
-    objects
-      .filter((object) => isEffect(object) && object.properties.length > 0)
-      .map((object) => [
-        object.id,
-        <Section
-          key={`${box.id} ${object.id}`}
-          rows={rows}
-          clip={box.id}
-          object={object}
-          name={undefined}
-          eager
-        />,
-      ]),
-  );
+  const effectRows = effectRowsOf(rows, box.id, objects);
   return (
     <>
       <header className={styles.header}>
@@ -428,6 +416,7 @@ function ClipProperties({ selected, rows }: { selected: ClipSelected; rows: Prop
           objects={objects}
           readOnly={blocked === "locked" || blocked === "comparing"}
           rows={effectRows}
+          propertyRows={rows}
         />
         {selected.sound?.objects
           .filter((object) => object.type === "clip.sound")
@@ -447,29 +436,73 @@ function ClipProperties({ selected, rows }: { selected: ClipSelected; rows: Prop
   );
 }
 
+/** Whether an object holds effects, or is one: those show in the list of effects. */
+const isEffect = (object: ObjectDescriptor) =>
+  object.type === EFFECT_OBJECT_TYPES.effects ||
+  object.type?.startsWith(EFFECT_OBJECT_TYPES.prefix) === true;
+
+/** The rows of what each effect of a clip takes, by its object, for the list of its effects. */
+function effectRowsOf(rows: PropertyRows, clip: string, objects: readonly ObjectDescriptor[]) {
+  return new Map(
+    objects
+      .filter((object) => isEffect(object) && object.properties.length > 0)
+      .map((object) => [
+        object.id,
+        <Section
+          key={`${clip} ${object.id}`}
+          rows={rows}
+          clip={clip}
+          object={object}
+          name={undefined}
+          eager
+        />,
+      ]),
+  );
+}
+
 /**
- * A selected track of sound: its volume and pan, as the mixer has them, keyed on the timeline's
- * time. They write to the track, see `withTrackClip`.
+ * A selected track of sound, or the master: its volume (and the pan of a track, the safe limiter of
+ * the master), as the mixer has them, keyed on the timeline's time, and its effects. They write to
+ * the track or the master, see `withTrackClip`.
  */
-function TrackProperties({ track, rows }: { track: string; rows: PropertyRows }) {
+function StandInProperties({ track, rows }: { track: string; rows: PropertyRows }) {
   const { timeline } = useWorkbench();
+  const { t } = useTranslation();
   const trackName = useTrackName();
   const { model } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
-  const clip = trackClipId(track);
+  const master = track === MASTER_CLIP;
+  const clip = master ? MASTER_CLIP : trackClipId(track);
   const { blocked, firstFrame } = usePlace(rows, clip);
-  const row = model?.rows.find((one) => one.id === track);
-  if (!row) return null;
+  const shown = model && withTrackClip(model, track);
+  const box = shown?.boxes.get(clip);
+  const row = master ? undefined : model?.rows.find((one) => one.id === track);
+  if (!box || (!master && !row)) return null;
+  const objects = objectsOf(box.clip);
   return (
     <>
       <header className={styles.header}>
-        <span className={styles.title}>{trackName(row)}</span>
+        <span className={styles.title}>{row ? trackName(row) : t("mixer.master")}</span>
         <span className={styles.headerEnd}>
           <RecordButton />
         </span>
       </header>
       {blocked && <BlockedHint blocked={blocked} firstFrame={firstFrame} />}
       <div className={styles.rows} data-readonly={blocked !== undefined || undefined}>
-        <Section key={clip} rows={rows} clip={clip} object={CLIP_SOUND} name={undefined} eager />
+        <Section
+          key={clip}
+          rows={rows}
+          clip={clip}
+          object={master ? MASTER_SOUND : CLIP_SOUND}
+          name={undefined}
+          eager
+        />
+        <EffectsSection
+          clip={box.clip}
+          objects={objects}
+          readOnly={blocked === "locked" || blocked === "comparing"}
+          rows={effectRowsOf(rows, clip, objects)}
+          propertyRows={rows}
+        />
       </div>
     </>
   );
@@ -528,7 +561,7 @@ export function PropertiesPanel() {
     // Focusable, so that the keyboard has somewhere to go after a field, without a frame around it.
     <div className={styles.panel} tabIndex={-1} data-scroll>
       {selected.kind === "nothing" && track !== undefined && (
-        <TrackProperties track={track} rows={rows} />
+        <StandInProperties track={track} rows={rows} />
       )}
       {selected.kind === "nothing" && track === undefined && (
         <Message text={t("property.nothing")} />

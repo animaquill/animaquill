@@ -54,6 +54,20 @@ export type MixerReport =
 
 /** How much of a sound to keep behind where playing is, in samples of the timeline. */
 const KEEP_BEHIND = MIX_RATE / 2;
+/**
+ * Milliseconds of a quantum (2.67 ms) it spends at most working out what effects remember before
+ * playing (see `MixEngine.ready`), so that the audio thread is never stuck: about as many blocks as
+ * the engine gets done in that time, two at a time.
+ */
+const PREROLL_MS = 1;
+const PREROLL_STEP = 2;
+const clock: () => number =
+  typeof performance === "object" ? () => performance.now() : () => Date.now();
+/**
+ * Quanta it waits at most for the samples that come before where playing starts, so that effects
+ * remember what they would: about half a second. Then it goes on without what is not there.
+ */
+const MOST_WAIT = 190;
 /** How often to let go of what was played, in quanta. */
 const TIDY_EVERY = 32;
 
@@ -87,6 +101,8 @@ export class MixerCore {
   readonly #levelEvery: number;
   #sinceLevels = 0;
   #scratch = [new Float32Array(BLOCK + 2), new Float32Array(BLOCK + 2)] as const;
+  /** Since when it has been getting ready to play, in samples of the timeline, and for how many quanta. */
+  #warming: { readonly from: number; quanta: number } | undefined;
 
   constructor(post: (report: MixerReport, transfer?: Transferable[]) => void, contextRate: number) {
     this.#post = post;
@@ -111,6 +127,9 @@ export class MixerCore {
         this.#run = message.run;
         this.#setPlan(message.plan);
         this.#playing = { frame: message.frame, sample: message.sample, rate: message.rate };
+        // Backwards, effects cannot remember what comes after: they are left out.
+        this.#engine.dry = message.rate < 0;
+        this.#warming = undefined;
         // The loudness of what plays now, not of what played before.
         this.#levels = new MasterLevels(this.#contextRate);
         this.#sinceLevels = 0;
@@ -151,7 +170,10 @@ export class MixerCore {
     }
     const rate = playing.rate * (MIX_RATE / this.#contextRate);
     const first = playing.sample + (frame - playing.frame) * rate;
-    if (rate === 1) this.#engine.render(first, frames, left, right);
+    if (rate > 0 && !this.#ready(Math.floor(first))) {
+      left.fill(0);
+      right.fill(0);
+    } else if (rate === 1) this.#engine.render(first, frames, left, right);
     else this.#stretch(first, rate, left, right);
     // What lies before where it started is not played, as with a player.
     const before = rate > 0 ? playing.sample - first : first - playing.sample;
@@ -199,6 +221,33 @@ export class MixerCore {
     }
   }
 
+  /**
+   * Whether the engine can give out sample `first` now: when it starts over there, it first works
+   * out what effects remember, a little in each quantum, waiting for the samples of sounds that come
+   * before. Until then this quantum is silent, which counts as late.
+   */
+  #ready(first: number): boolean {
+    const warming = this.#warming;
+    const wait = (warming?.quanta ?? 0) < MOST_WAIT;
+    const started = clock();
+    let ready = this.#engine.ready(first, PREROLL_STEP, wait);
+    while (!ready && !this.#engine.waiting && clock() - started < PREROLL_MS) {
+      ready = this.#engine.ready(first, PREROLL_STEP, wait);
+    }
+    if (ready) {
+      if (warming) {
+        this.#warming = undefined;
+        const ms = Math.round(((first - warming.from) / MIX_RATE) * 1000);
+        if (ms > 0)
+          this.#post({ kind: "late", id: "~preroll", ms, seconds: warming.from / MIX_RATE });
+      }
+      return true;
+    }
+    if (warming) warming.quanta += 1;
+    else this.#warming = { from: first, quanta: 1 };
+    return false;
+  }
+
   /** What the meters show: what is heard, and the tracks as the engine mixed them. */
   #measure(left: Float32Array, right: Float32Array): void {
     this.#levels.add(left, right);
@@ -207,7 +256,8 @@ export class MixerCore {
     this.#sinceLevels -= this.#levelEvery;
     const tracks = this.#tracks;
     const peaks = tracks.map((track) => this.#engine.takePeak(track));
-    this.#post({ kind: "levels", tracks, peaks, ...this.#levels.take() });
+    const reductions = [...this.#engine.takeReductions()];
+    this.#post({ kind: "levels", tracks, peaks, ...this.#levels.take(), reductions });
   }
 
   #storeOf(id: string): SampleStore {
@@ -251,6 +301,7 @@ export class MixerCore {
   #stop(): void {
     for (const [id, late] of this.#late) this.#flush(id, late);
     this.#playing = undefined;
+    this.#warming = undefined;
     this.#stores.clear();
     this.#run = -1;
   }

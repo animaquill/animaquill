@@ -19,6 +19,8 @@ export class MixLevels {
   readonly #clipped = new Set<string>();
   #truePeak = Number.NEGATIVE_INFINITY;
   #shortTerm: number | undefined;
+  /** What compressors and limiters take off, in dB, by `<clip>/<effect>`. */
+  #reductions = new Map<string, number>();
   #last: number | undefined;
   #playing = false;
   #version = 0;
@@ -34,6 +36,7 @@ export class MixLevels {
       if (!this.#playing && this.#shown.size === 0 && this.#shortTerm === undefined) return;
       this.#playing = false;
       this.#shown.clear();
+      this.#reductions = new Map();
       this.#shortTerm = undefined;
       this.#last = undefined;
       this.#changed();
@@ -58,7 +61,16 @@ export class MixLevels {
     const truePeak = dbfsOf(levels.truePeak);
     if (truePeak > this.#truePeak) this.#truePeak = truePeak;
     this.#shortTerm = levels.shortTerm;
+    this.#reductions = new Map(levels.reductions ?? []);
     this.#changed();
+  }
+
+  /**
+   * What a compressor or a limiter takes off now, in dB, by the clip it is on (or the clip that
+   * stands for its track or the master) and its id; 0 when it is not playing.
+   */
+  reductionOf(clip: string, effect: string): number {
+    return this.#reductions.get(`${clip}/${effect}`) ?? 0;
   }
 
   /** What a meter shows, in dBFS: `METER_FLOOR` at the bottom. */

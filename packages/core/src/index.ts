@@ -74,6 +74,7 @@ export { AUTO_REACH, hasAutoTangents, withAutoTangents } from "./tangents.ts";
 export { CommandError, Draft, type ClipFact } from "./draft.ts";
 export {
   EFFECTS_OBJECT_ID,
+  MASTER_CLIP,
   EFFECT_OBJECT_TYPES,
   SCENE_OBJECT_TYPES,
   describeClip,
@@ -178,6 +179,11 @@ export {
   panOf,
   stereoPan,
   trackGainAt,
+  effectParamAt,
+  effectParamMoves,
+  PARAMETER_STEP,
+  type MixEffect,
+  type MixMaster,
   type MixPlan,
   type MixSound,
   type MixTrack,
@@ -185,6 +191,7 @@ export {
 export {
   buildAudioPlan,
   buildMixPlan,
+  masterLimited,
   type TriedValues,
   buildRenderPlan,
   formatOf,

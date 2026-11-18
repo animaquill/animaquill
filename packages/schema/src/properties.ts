@@ -150,6 +150,20 @@ const DESCRIBED: Readonly<Record<string, Described>> = {
   "audio.pan": { type: "number", default: 0, min: -1, max: 1 },
   "audio.pitch": { type: "number", unit: "semitone", default: 0 },
   "audio.preservePitch": { type: "boolean", default: false },
+  /**
+   * The safe limiter at the very end of the master, after its volume: see the project format. Only
+   * the master has these. Without `limit.on` it is on, in old projects too (2026-11-18, see
+   * docs/decisions.md): this default is the one place that says so.
+   */
+  "limit.on": { type: "boolean", default: true, animatable: false },
+  "limit.ceiling": {
+    type: "number",
+    unit: "dbtp",
+    default: -1,
+    min: -12,
+    max: 0,
+    animatable: false,
+  },
 };
 
 /** The properties of clips and tracks that the editor itself knows, by path. */
@@ -203,6 +217,18 @@ export const CLIP_SOUND: ObjectDescriptor = {
   id: "sound",
   type: "clip.sound",
   properties: ["audio.volume", "audio.pan"].map(
+    (path) => BUILT_IN_PROPERTIES[path] as PropertySpec,
+  ),
+};
+
+/**
+ * What the master of a timeline takes besides its effects: its volume (keys on the time of the
+ * timeline) and the safe limiter at its end.
+ */
+export const MASTER_SOUND: ObjectDescriptor = {
+  id: "master",
+  type: "mix.master",
+  properties: ["audio.volume", "limit.on", "limit.ceiling"].map(
     (path) => BUILT_IN_PROPERTIES[path] as PropertySpec,
   ),
 };

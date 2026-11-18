@@ -83,7 +83,7 @@ describe("aq_edit", () => {
     const effect = await call("aq_edit", {
       operations: [{ op: "effect.add", timeline: "main", clip: "clip_voice", type: "blur" }],
     });
-    expect(effect.text).toContain("not on an audio track.");
+    expect(effect.text).toContain("not on a clip on an audio track;");
   });
 
   it("gives a join without duration the default length of its transition", async () => {

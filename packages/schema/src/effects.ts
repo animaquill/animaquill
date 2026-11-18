@@ -8,16 +8,23 @@ import type { PropertySpec } from "./properties.ts";
  * other property. Plain data, so nothing here may bring in Zod.
  */
 
-/** What an effect works on. Only pictures so far: effects of sound come with the mixer. */
+/** What an effect works on: the picture of a clip, or sound (of a clip, a track or the master). */
 export type EffectMedia = "picture" | "sound";
 
 /**
- * What kind of thing an effect does, which is how the effects tab groups them: colors, blur, the
- * shape of the picture.
+ * What kind of thing an effect does, which is how the effects tabs group them: colors, blur, the
+ * shape of the picture; for sound the balance of frequencies, dynamics and space.
  */
-export type EffectCategory = "color" | "blur" | "shape";
+export type EffectCategory = "color" | "blur" | "shape" | "eq" | "dynamics" | "space";
 
-export const EFFECT_CATEGORIES: readonly EffectCategory[] = ["color", "blur", "shape"];
+export const EFFECT_CATEGORIES: readonly EffectCategory[] = [
+  "color",
+  "blur",
+  "shape",
+  "eq",
+  "dynamics",
+  "space",
+];
 
 /**
  * What an effect that comes with the editor is, as a description says it for any other. Each of
@@ -52,6 +59,103 @@ const side = (path: string): PropertySpec => ({
   min: 0,
   max: 1,
 });
+
+/** A number of sound with its unit, range and default. */
+const tone = (
+  path: string,
+  unit: string,
+  min: number,
+  max: number,
+  fallback: number,
+  more: Partial<PropertySpec> = {},
+): PropertySpec => ({ path, type: "number", unit, min, max, default: fallback, ...more });
+
+/** A switch that turns a part of an effect on, which is no thing to change halfway through. */
+const toggle = (path: string, group: string): PropertySpec => ({
+  path,
+  type: "boolean",
+  default: false,
+  animatable: false,
+  group,
+});
+
+/** How steep a filter cuts: 12 or 24 dB an octave, one stage or two. */
+const slope = (path: string, group: string): PropertySpec => ({
+  path,
+  type: "choice",
+  default: "12",
+  options: ["12", "24"],
+  animatable: false,
+  group,
+});
+
+/** A band of the equalizer that boosts or cuts around a frequency. */
+const peak = (band: string, frequency: number): PropertySpec[] => [
+  tone(`${band}.freq`, "hz", 20, 20_000, frequency, { group: band }),
+  tone(`${band}.gain`, "db", -24, 24, 0, { group: band }),
+  tone(`${band}.q`, "count", 0.1, 18, 1, { group: band, unit: "q" }),
+];
+
+/**
+ * The effects of sound that come with the editor. What each does is part of the format, see the
+ * project format ("声音效果"), sample by sample: the mix engine of `@animaquill/audio` is how it is
+ * done. A sound effect never changes what it does once it is out: a better one gets a new name, so
+ * that old projects sound as they did. Every default leaves the sound as it is.
+ */
+export const BUILT_IN_SOUND_EFFECTS: Readonly<Record<string, EffectSpec>> = {
+  /** High pass, low shelf, three peaks, high shelf and low pass, one after the other. */
+  eq: {
+    media: ["sound"],
+    category: "eq",
+    properties: [
+      toggle("hp.on", "hp"),
+      tone("hp.freq", "hz", 20, 20_000, 80, { group: "hp" }),
+      slope("hp.slope", "hp"),
+      tone("low.freq", "hz", 20, 20_000, 100, { group: "low" }),
+      tone("low.gain", "db", -24, 24, 0, { group: "low" }),
+      ...peak("mid1", 250),
+      ...peak("mid2", 1000),
+      ...peak("mid3", 4000),
+      tone("high.freq", "hz", 20, 20_000, 8000, { group: "high" }),
+      tone("high.gain", "db", -24, 24, 0, { group: "high" }),
+      toggle("lp.on", "lp"),
+      tone("lp.freq", "hz", 20, 20_000, 18_000, { group: "lp" }),
+      slope("lp.slope", "lp"),
+    ],
+  },
+  /** Feed-forward, both sides by the louder one, with a soft knee. A ratio of 1 does nothing. */
+  compressor: {
+    media: ["sound"],
+    category: "dynamics",
+    properties: [
+      tone("threshold", "db", -60, 0, 0),
+      tone("ratio", "ratio", 1, 20, 1, { unit: "x" }),
+      tone("attack", "ms", 0.1, 200, 10),
+      tone("release", "ms", 10, 2000, 100),
+      tone("knee", "db", 0, 24, 6),
+      tone("makeup", "db", 0, 24, 0),
+    ],
+  },
+  /** Keeps true peaks under a ceiling, looking 1.5 ms ahead. What stays under it is untouched. */
+  limiter: {
+    media: ["sound"],
+    category: "dynamics",
+    properties: [tone("ceiling", "dbtp", -12, 0, -1), tone("release", "ms", 10, 1000, 100)],
+  },
+  /** A feedback delay network of eight lines. With `mix` at 0 it does nothing. */
+  reverb: {
+    media: ["sound"],
+    category: "space",
+    properties: [
+      tone("decay", "s", 0.1, 10, 1.5),
+      tone("predelay", "ms", 0, 200, 10),
+      tone("size", "ratio", 0, 1, 0.5),
+      tone("damping", "hz", 1000, 20_000, 8000),
+      tone("mix", "ratio", 0, 1, 0),
+      tone("width", "ratio", 0, 1, 1),
+    ],
+  },
+};
 
 /**
  * The effects that come with the editor, by name, which is what projects keep. What each of them
@@ -97,6 +201,19 @@ export const BUILT_IN_EFFECTS: Readonly<Record<string, EffectSpec>> = {
     category: "shape",
     properties: [side("left"), side("top"), side("right"), side("bottom")],
   },
+  ...BUILT_IN_SOUND_EFFECTS,
+};
+
+/**
+ * Rooms for the reverb, which people pick from and AI writes from: each sets these parameters at
+ * once. Not part of the format: a project keeps the parameters, never the name of a preset.
+ */
+export const REVERB_PRESETS: Readonly<Record<string, Readonly<Record<string, number>>>> = {
+  smallRoom: { decay: 0.4, predelay: 5, size: 0.2, damping: 9000, mix: 0.2 },
+  room: { decay: 0.8, predelay: 10, size: 0.4, damping: 8000, mix: 0.25 },
+  hall: { decay: 2.2, predelay: 25, size: 0.8, damping: 6000, mix: 0.3 },
+  plate: { decay: 1.6, predelay: 0, size: 0.5, damping: 12_000, mix: 0.3 },
+  church: { decay: 4.5, predelay: 40, size: 1, damping: 5000, mix: 0.35 },
 };
 
 /** The effects that come with the editor, in the order people see them. */

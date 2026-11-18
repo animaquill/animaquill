@@ -32,7 +32,15 @@ export const layouts: readonly LayoutPreset[] = [
           [
             22,
             {
-              ...left("files", "explorer", "assets", "transitions", "fades", "effects"),
+              ...left(
+                "files",
+                "explorer",
+                "assets",
+                "transitions",
+                "fades",
+                "effects",
+                "soundEffects",
+              ),
               active: "assets",
             },
           ],
@@ -67,7 +75,7 @@ export const layouts: readonly LayoutPreset[] = [
       [
         55,
         row(
-          [18, left("assets", "explorer", "fades", "effects")],
+          [18, left("assets", "explorer", "fades", "soundEffects", "effects")],
           [36, top("music", "recording", "preview")],
           // The faders and meters stay in sight beside what a selected track shows.
           [26, right("mixer")],

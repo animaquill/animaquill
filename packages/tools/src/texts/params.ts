@@ -5,6 +5,7 @@ export const PARAM_TEXTS = {
   "params.timeline": "Timeline id (aq_project_status).",
   "params.track": "Track id (aq_timeline_read).",
   "params.clip": "Clip id (aq_timeline_read).",
+  "params.master": "true for the master of the timeline.",
   "params.section": "Section id (aq_timeline_read).",
   "params.marker": "Marker id (aq_timeline_read).",
   "params.join": "Join id (aq_timeline_read).",
@@ -59,7 +60,7 @@ export const PARAM_TEXTS = {
   "params.keep": "Linked clip ids that stay whole.",
   "params.rippleTracks": "Track ids (aq_timeline_read) whose clips move; without, all tracks.",
   "params.edits":
-    'Each {"owner":{"clip":id} or {"track":id},"path",…,"op"}: "set" a value or keyframes, "clear", "write" at a time, or "setKey", "removeKey", "moveKey", "putKeys", "setInterp", "setExtend", "setNoise", "retimeKeys".',
+    'Each {"owner":{"clip":id}, {"track":id} or {"master":true},"path",…,"op"}: "set" a value or keyframes, "clear", "write" at a time, or "setKey", "removeKey", "moveKey", "putKeys", "setInterp", "setExtend", "setNoise", "retimeKeys".',
   "params.renames": 'Each {"owner":{"clip":id},"from","to"}; paths may end in ".*".',
   "params.time": 'Seconds as a string: "12.5".',
   "params.note": "A longer note.",

@@ -1,5 +1,6 @@
 import {
   CLIP_SOUND,
+  MASTER_SOUND,
   CLIP_VISUAL,
   ELEMENT_PROPERTIES,
   SCENE_VISUAL,
@@ -43,9 +44,19 @@ const WITH_A_PICTURE = new Set(["video", "image", "color"]);
  */
 export function objectsOf(clip: ClipState): readonly ObjectDescriptor[] {
   if (clip.source.kind === "scene") return withEffects(clip, [SCENE_VISUAL]);
-  if (clip.source.kind === "sound" || clip.source.kind === "audio") return [CLIP_SOUND];
+  if (clip.id === MASTER_CLIP) return withEffects(clip, [MASTER_SOUND]);
+  if (clip.source.kind === "sound" || clip.source.kind === "audio") {
+    return withEffects(clip, [CLIP_SOUND]);
+  }
   return WITH_A_PICTURE.has(clip.source.kind) ? withEffects(clip, [CLIP_VISUAL]) : [];
 }
+
+/**
+ * The master of a timeline as the editor shows it among clips, as it shows a track of sound (see
+ * `trackClipId` of the interface): no clip has this id, as ids cannot start with "~". Its objects
+ * are its volume and safe limiter, and its effects.
+ */
+export const MASTER_CLIP = "~master";
 
 /** The types of the objects of effects: what holds them, and each of them by the type of effect. */
 export const EFFECT_OBJECT_TYPES = { effects: "clip.effects", prefix: "effect." } as const;
@@ -352,7 +363,7 @@ export function describeClip(
  * whatever the ids of the elements are.
  */
 export function nameKeyOf(path: string): string {
-  const element = /^(element|effect)\.[^.]+\.([^.]+)$/.exec(path);
+  const element = /^(element|effect)\.[^.]+\.(?:[^.]+\.)*([^.]+)$/.exec(path);
   return element ? `${element[1]}.${element[2]}` : path;
 }
 

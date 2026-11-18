@@ -49,14 +49,31 @@ import {
 import { retimeKeys, type ClockFrames, type Retimed } from "./retime.ts";
 
 /**
- * Whose property it is: a clip, or a track of sound, which takes only `TRACK_PATHS` (its volume and
- * its pan). Keys of a track are on the timeline's time, from its start, as it has no clock.
+ * Whose property it is: a clip, a track of sound, which takes only `TRACK_PATHS` (its volume, its
+ * pan and the parameters of its effects), or the master of the timeline (`MASTER_PATHS`). Keys of a
+ * track and the master are on the timeline's time, from its start, as they have no clock.
  */
-export const PropertyOwner = z.union([z.strictObject({ clip: Id }), z.strictObject({ track: Id })]);
+export const PropertyOwner = z.union([
+  z.strictObject({ clip: Id }),
+  z.strictObject({ track: Id }),
+  z.strictObject({ master: z.literal(true) }),
+]);
 export type PropertyOwner = z.output<typeof PropertyOwner>;
 
 /** What a track takes through `property.edit`: what the mix does with it. */
-export const TRACK_PATHS: readonly string[] = ["audio.volume", "audio.pan"];
+export const TRACK_PATHS: readonly string[] = ["audio.volume", "audio.pan", "effect.*"];
+
+/** What the master takes: its volume, its safe limiter and the parameters of its effects. */
+export const MASTER_PATHS: readonly string[] = [
+  "audio.volume",
+  "limit.on",
+  "limit.ceiling",
+  "effect.*",
+];
+
+/** Whether a path is one of a list of paths, where `effect.*` stands for every parameter of an effect. */
+export const takesPath = (paths: readonly string[], path: string): boolean =>
+  paths.includes(path) || (paths.includes("effect.*") && effectOfPath(path) !== undefined);
 
 const Target = { owner: PropertyOwner, path: PropertyPath };
 
@@ -153,7 +170,7 @@ type Owned<E, O> = E extends unknown ? Omit<E, "owner"> & { readonly owner: O } 
 /** An edit of a property of a clip, which is what the editor's controls and trials make. */
 export type ClipPropertyEdit = Owned<PropertyEdit, { readonly clip: string }>;
 
-/** Whether an edit is about a clip, rather than a track. */
+/** Whether an edit is about a clip, rather than a track or the master. */
 export const isClipEdit = (edit: PropertyEdit): edit is ClipPropertyEdit => "clip" in edit.owner;
 
 type WithoutTarget<T> = T extends unknown ? Omit<T, "owner" | "path"> : never;
@@ -448,15 +465,26 @@ export function editContextOf(
 }
 
 /**
- * What an edit of a property of a track needs to know: its keys are on the timeline's time, from
- * its start, so its first frame is 0 and its frames are those of the project from there.
+ * What an edit of a property of a track or the master needs to know: its keys are on the timeline's
+ * time, from its start, so its first frame is 0 and its frames are those of the project from there.
+ * `effects` are its effects, whose parameters it has.
  */
 export function trackEditContextOf(
   state: ProjectState | undefined,
   track: string,
   path: string,
+  effects: readonly { readonly id: string; readonly type: string }[] = [],
 ): EditContext {
-  const spec = Object.hasOwn(BUILT_IN_PROPERTIES, path) ? BUILT_IN_PROPERTIES[path] : undefined;
+  const of = effectOfPath(path);
+  const listed = of && effects.find(({ id }) => id === of.effect);
+  const spec = Object.hasOwn(BUILT_IN_PROPERTIES, path)
+    ? BUILT_IN_PROPERTIES[path]
+    : listed
+      ? (() => {
+          const effect = builtInEffect(listed.type);
+          return effect && of && parameterOf(effect, of.parameter);
+        })()
+      : undefined;
   const frames: ClockFrames | undefined = state && {
     rate: parseTime(projectFrameRate(state.manifest)),
     shift: ZERO,

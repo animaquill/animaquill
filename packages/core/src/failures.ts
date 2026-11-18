@@ -211,11 +211,15 @@ export const FAILURES = {
   }),
   /** Sections, tracks and clips of a timeline share their ids: `by` is what has it. */
   "id-taken": z.strictObject({ kind: FailedKind, id: z.string(), by: FailedKind }),
-  /** A track that cannot hold this: a clip of another kind, effects, joins. */
+  /**
+   * A track that cannot hold this: a clip of another kind, effects, joins. `media` is what the
+   * effect is for, when it is for the other kind of clip: one of sound on a picture.
+   */
   "wrong-track": z.strictObject({
     trackKind: z.string(),
     holds: z.enum(["clip", "effect", "join"]),
     sourceKind: z.string().optional(),
+    media: z.enum(["picture", "sound"]).optional(),
   }),
   /** Clips in the way, by id and name; `moved` when they are all being moved there at once. */
   overlap: z.strictObject({
@@ -258,16 +262,25 @@ export const FAILURES = {
   }),
   "not-animatable": z.strictObject({ path: z.string() }),
   /**
-   * A property that this kind of owner does not have, such as `transform.x` on a track: what it is
-   * on (`target`, by `track` and its `kind`), and the paths it takes there (`takes`, none on a track
-   * that is not of sound).
+   * A property or an effect that this kind of owner does not have, such as `transform.x` on a track
+   * or `blur` on the master: what it is on (`target`, a track by `track` and its `kind`), and what
+   * it takes there (`takes`: paths, `effect.*` for the parameters of its effects; for an effect, the
+   * effects; none on a track that is not of sound).
    */
   "wrong-target": z.strictObject({
     path: z.string(),
-    target: z.enum(["track"]),
-    track: z.string(),
-    kind: z.string(),
+    target: z.enum(["track", "master"]),
+    track: z.string().optional(),
+    kind: z.string().optional(),
     takes: z.array(z.string()).readonly(),
+  }),
+  /**
+   * A field that does nothing where it would go: `start` and `end` of an effect on a track or the
+   * master, which works all along.
+   */
+  "not-applicable": z.strictObject({
+    field: z.enum(["start", "end"]),
+    target: z.enum(["track", "master"]),
   }),
   "join-taken": z.strictObject({ join: z.string() }),
   /** Clips or versions use it (`clips`), or code does (`code`, in `file`). */

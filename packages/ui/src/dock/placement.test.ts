@@ -184,6 +184,7 @@ describe("sizes of the panels", () => {
         "problems",
         "properties",
         "recording",
+        "soundEffects",
         "terminal",
         "timeline",
         "transitions",

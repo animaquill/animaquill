@@ -58,7 +58,8 @@ function wav(seconds: number, sample: (t: number) => number): Buffer {
 
 /**
  * 30 s of music at −12 dBFS that clips at 11.4 and 22.1 s and is silent from 18.6 to 19.5 s, and
- * a short sound made by code at 12 s (`DING`).
+ * a short sound made by code at 12 s (`DING`). The safe limiter of the master is off, or it would
+ * keep the clips from clipping.
  */
 function soundProject(): string {
   const project = {
@@ -72,6 +73,7 @@ function soundProject(): string {
     tracks: { id: string; kind: string; clips: unknown[] }[];
   };
   timeline.sections = timeline.sections.map((section) => ({ ...section, duration: "30" }));
+  Object.assign(timeline, { mix: { master: { properties: { "limit.on": false } } } });
   (timeline.tracks[0] as { clips: unknown[] }).clips = [
     {
       id: "clip_bg",

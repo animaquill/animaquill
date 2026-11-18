@@ -13,6 +13,10 @@ const STEPS: Readonly<Record<string, number>> = {
   count: 0.25,
   hz: 0.05,
   db: 0.1,
+  dbtp: 0.1,
+  ms: 0.5,
+  x: 0.05,
+  q: 0.01,
 };
 const DEFAULT_STEP = 0.01;
 
@@ -43,6 +47,9 @@ export function formatNumber(value: number, spec: PropertySpec): string {
   if (spec.unit === "deg") return `${fixed(value, SHOWN_DIGITS)}°`;
   if (spec.unit === "s") return `${fixed(value, SHOWN_DIGITS)}s`;
   if (spec.unit === "hz") return `${fixed(value, SHOWN_DIGITS)} Hz`;
+  if (spec.unit === "ms") return `${fixed(value, SHOWN_DIGITS)} ms`;
+  if (spec.unit === "dbtp") return `${value.toFixed(1).replace("-", "\u2212")} dBTP`;
+  if (spec.unit === "x") return `${fixed(value, 1)}:1`;
   return String(fixed(value, SHOWN_DIGITS));
 }
 
@@ -65,6 +72,9 @@ export function scrubbed(
 const UNIT_SUFFIXES: Readonly<Record<string, RegExp>> = {
   s: /(?:s|秒)\s*$/u,
   hz: /hz\s*$/iu,
+  ms: /(?:ms|毫秒)\s*$/iu,
+  dbtp: /dbtp\s*$/iu,
+  x: /(?::\s*1)?\s*$/u,
 };
 
 /** What people typed, or undefined when it is not a number. Too much becomes the limit. */

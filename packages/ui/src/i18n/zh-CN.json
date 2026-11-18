@@ -571,7 +571,8 @@
       "no-room": "这个剪切点两边没有地方放衔接转场"
     },
     "not-animatable": "{{path}} 不能打关键帧",
-    "wrong-target": "轨道上只能改音量和声像，{{path}} 不行",
+    "wrong-target": "这里没有 {{path}}",
+    "not-applicable": "轨道和主输出上的效果一直生效，不能设生效时间",
     "join-taken": "这个剪切点已经有衔接转场了：{{join}}，要换成别的就改它",
     "asset-in-use": {
       "code": "代码在用这个素材，要先改掉：{{file}}",
@@ -695,6 +696,9 @@
     },
     "effects": {
       "title": "效果"
+    },
+    "soundEffects": {
+      "title": "声音效果"
     },
     "notes": {
       "title": "经验库",
@@ -1170,7 +1174,14 @@
     "group": {
       "position": "位置",
       "size": "大小",
-      "anchor": "锚点"
+      "anchor": "锚点",
+      "hp": "高通",
+      "low": "低频",
+      "mid1": "中频 1",
+      "mid2": "中频 2",
+      "mid3": "中频 3",
+      "high": "高频",
+      "lp": "低通"
     },
     "name": {
       "transform": {
@@ -1197,7 +1208,25 @@
         "left": "左",
         "top": "上",
         "right": "右",
-        "bottom": "下"
+        "bottom": "下",
+        "on": "开",
+        "freq": "频率",
+        "slope": "斜率",
+        "gain": "增益",
+        "q": "Q",
+        "threshold": "阈值",
+        "ratio": "比率",
+        "attack": "启动",
+        "release": "释放",
+        "knee": "拐点",
+        "makeup": "补偿增益",
+        "ceiling": "上限",
+        "decay": "衰减时间",
+        "predelay": "预延迟",
+        "size": "大小",
+        "damping": "高频阻尼",
+        "mix": "干湿比",
+        "width": "宽度"
       },
       "audio": {
         "volume": "音量",
@@ -1214,6 +1243,10 @@
         "background": "背景色",
         "fill": "填充",
         "stroke": "描边"
+      },
+      "limit": {
+        "on": "安全限幅",
+        "ceiling": "上限"
       }
     },
     "choice": {
@@ -1236,6 +1269,10 @@
         "edge": {
           "extend": "重复边缘",
           "transparent": "透明"
+        },
+        "slope": {
+          "12": "12 dB/oct",
+          "24": "24 dB/oct"
         }
       }
     }
@@ -2066,7 +2103,7 @@
       "unsupported-audio-effect": {
         "clip": "片段上的 {{count}} 个声音效果这一版还不生效，听到的是没有效果的声音",
         "track": "轨道上的 {{count}} 个声音效果这一版还不生效，听到的是没有效果的声音",
-        "mix": "混音（总线和主输出）这一版还不生效，所有出声的轨道直接混在一起"
+        "mix": "总线这一版还不生效，所有出声的轨道直接进主输出"
       },
       "unsupported-audio-property": "{{property}}这一版还不生效，预览和导出里都是没有它的样子",
       "unsupported-loop": "循环这一版还不生效：素材放完以后不会从头再放",
@@ -2090,7 +2127,11 @@
       "list": "不一样的地方（{{count}} 处）",
       "line": "{{origin}}：{{text}}",
       "more": "还有 {{count}} 处没有列出，在问题选项卡里能看到全部",
-      "anyway": "仍然导出"
+      "anyway": "仍然导出",
+      "clippingTitle": "导出的声音会削波",
+      "clippingMessage": "主输出的限幅关着，下面这些地方超过 0 dBFS，导出时会被削掉。点一条可以跳过去听。",
+      "clipping": "主输出没有限幅，有 {{count}} 处超过 0 dBFS 会削波",
+      "clipAt": "{{seconds}} 秒"
     }
   },
   "keyframes": {
@@ -2861,7 +2902,10 @@
     "types": {
       "color": "调色",
       "blur": "模糊",
-      "shape": "变形"
+      "shape": "变形",
+      "eq": "均衡",
+      "dynamics": "动态",
+      "space": "空间"
     },
     "tags": {
       "brightness": "调色、明暗",
@@ -2869,18 +2913,26 @@
       "saturation": "调色、鲜艳",
       "temperature": "调色、冷暖",
       "blur": "柔和、虚化",
-      "crop": "裁剪、边缘"
+      "crop": "裁剪、边缘",
+      "eq": "均衡器、EQ、频率、高通、低通",
+      "compressor": "压缩器、动态、响度",
+      "limiter": "限幅器、峰值、响度",
+      "reverb": "混响、空间、房间"
     },
     "why": {
       "locked": "选中的片段在锁定的轨道上，不能改",
-      "sound": "声音片段这一版还不能加效果",
+      "sound": "声音片段用“声音效果”选项卡里的效果",
       "caption": "字幕片段这一版还不能加效果",
       "unknown": "这一版的编辑器还不能用这个效果",
       "nothing": "先在时间轴上选中片段，或者把效果拖到片段上",
-      "failed": "没能加上，时间轴上的东西可能刚变了，再试一次"
+      "failed": "没能加上，时间轴上的东西可能刚变了，再试一次",
+      "picture": "画面片段不能加声音效果",
+      "soundNothing": "先在时间轴上选中声音片段或音轨，或者把效果拖到片段、轨道头或混音器上"
     },
     "added": "已加到 {{count}} 个片段",
-    "addedLong": "{{name}}已加到 {{count}} 个片段"
+    "addedLong": "{{name}}已加到 {{count}} 个片段",
+    "addedTrack": "已加到{{name}}",
+    "soundSearch": "搜索声音效果"
   },
   "effect": {
     "names": {
@@ -2889,7 +2941,11 @@
       "saturation": "饱和度",
       "temperature": "色温",
       "blur": "模糊",
-      "crop": "裁切"
+      "crop": "裁切",
+      "eq": "均衡",
+      "compressor": "压缩",
+      "limiter": "限幅",
+      "reverb": "混响"
     },
     "section": "效果",
     "on": "启用{{name}}",
@@ -2906,7 +2962,21 @@
     "rangeHint": "从片段开头算，写成 0:01/00 这样，也可以写秒数。留空是从片段开头或到片段结尾。",
     "rangeInvalid": "开始要在结束之前，并且都在片段之内",
     "nowhere": "生效时间是空的，这个效果不生效",
-    "bar": "{{name}}的生效时间"
+    "bar": "{{name}}的生效时间",
+    "reverbPreset": "预设",
+    "presets": {
+      "smallRoom": "小房间",
+      "room": "房间",
+      "hall": "大厅",
+      "plate": "板式",
+      "church": "教堂"
+    },
+    "reduction": "增益衰减",
+    "graph": {
+      "eq": "频率响应",
+      "compressor": "输入输出曲线",
+      "band": "频段 {{name}}"
+    }
   },
   "assetPanel": {
     "search": "搜索素材",
@@ -6079,6 +6149,14 @@
     "truePeak": "最大真峰值",
     "loudnessTip": "短时响度（LUFS）",
     "truePeakTip": "最大真峰值，点一下归零",
-    "clipTip": "削波，点一下熄灭"
+    "clipTip": "削波，点一下熄灭",
+    "effects": "{{name}} 效果",
+    "addEffect": "添加效果",
+    "effectOn": "{{name}}：打开或关闭",
+    "turnOn": "打开",
+    "turnOff": "关闭",
+    "removeEffect": "删除",
+    "limit": "限幅",
+    "limitOff": "关"
   }
 }

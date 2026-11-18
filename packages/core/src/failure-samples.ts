@@ -110,6 +110,10 @@ const CODES: { readonly [C in FailureCode]: CommandFailure & { readonly code: C 
       takes: ["audio.volume", "audio.pan"],
     },
   },
+  "not-applicable": {
+    code: "not-applicable",
+    params: { field: "start", target: "track" },
+  },
   "join-taken": { code: "join-taken", params: { join: "j1" } },
   "asset-in-use": {
     code: "asset-in-use",

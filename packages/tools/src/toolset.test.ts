@@ -42,10 +42,11 @@ import type { Tool } from "./types.ts";
  * keys presetParams, and took 72 208 (2026-11-17); 2026.16 gave setInterp springs and presets, and
  * took 72 819 (2026-11-17); 2026.17 added setExtend and setNoise to property.edit, and took 73 673
  * (2026-11-17); 2026.18 added retimeKeys, and took 74 466 (2026-11-17); 2026.19 gave
- * property.edit owners that are tracks of sound (PropertyOwner), and took 74 573 (2026-11-18). It
- * is a ceiling, so that the list does not grow unnoticed.
+ * property.edit owners that are tracks of sound (PropertyOwner), and took 74 573 (2026-11-18);
+ * 2026.20 gave the operations of effects tracks and the master, and property.edit the master, and
+ * took 75 475 (2026-11-18). It is a ceiling, so that the list does not grow unnoticed.
  */
-const MOST_CHARACTERS = 75_000;
+const MOST_CHARACTERS = 75_500;
 
 const listOf = (tools: Iterable<Tool>) =>
   [...tools].map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));

@@ -8,10 +8,15 @@ import { OutputDifferences } from "./output.ts";
 
 const t = (await createI18n()).t as TFunction;
 
-function stateWith(clips: readonly object[]): ProjectState {
+function stateWith(clips: readonly object[], mix?: Timeline["mix"]): ProjectState {
   const created = createProject({ name: "导出" });
   const tracks = [{ id: "v", kind: "video", clips }] as Timeline["tracks"];
-  const document: Timeline = { name: "主线", sections: [{ id: "s", duration: "30" }], tracks };
+  const document: Timeline = {
+    name: "主线",
+    sections: [{ id: "s", duration: "30" }],
+    tracks,
+    ...(mix && { mix }),
+  };
   const project: Project = {
     ...created,
     timelines: new Map([["main", { document, overrides: new Map() }]]),
@@ -106,5 +111,34 @@ describe("asking before an export", () => {
     expect(items.at(-1)).toBe("还有 10 处没有列出，在问题选项卡里能看到全部");
     dialogs.answer(false);
     await asking;
+  });
+
+  it("says where the sound would clip, only with the safe limiter of the master off", async () => {
+    const dialogs = new Dialogs();
+    const clipsOf = vi.fn(async () => [{ from: 1.5 }, { from: 12.25 }]);
+    const seek = vi.fn();
+    const check = new OutputDifferences({ dialogs, t, goTo: () => {}, clipsOf, seek });
+    // On, it does not even mix.
+    expect(await check.confirm(stateWith([red("红")]), query)).toBe(true);
+    expect(clipsOf).not.toHaveBeenCalled();
+    const off = stateWith([red("红")], { master: { properties: { "limit.on": false } } });
+    // A still has no sound.
+    expect(await check.confirm(off, { ...query, part: "picture" })).toBe(true);
+    const asking = check.confirm(off, query);
+    await vi.waitFor(() => expect(dialogs.getSnapshot()?.kind).toBe("confirm"));
+    const dialog = dialogs.getSnapshot();
+    if (dialog?.kind !== "confirm") throw new Error("No dialog");
+    expect(dialog.title).toBe("导出的声音会削波");
+    expect(dialog.details?.[0]?.title).toBe("主输出没有限幅，有 2 处超过 0 dBFS 会削波");
+    const [first] = dialog.details?.[0]?.items ?? [];
+    if (typeof first !== "object") throw new Error("No place to go to");
+    expect(first.label).toBe("1.50 秒");
+    first.show();
+    expect(seek).toHaveBeenCalledWith("main", 1.5);
+    dialogs.answer(true);
+    expect(await asking).toBe(true);
+    // Nothing clips: nothing to ask.
+    clipsOf.mockResolvedValueOnce([]);
+    expect(await check.confirm(off, query)).toBe(true);
   });
 });

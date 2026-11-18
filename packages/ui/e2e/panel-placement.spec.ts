@@ -30,7 +30,16 @@ async function box(locator: Locator) {
 
 /** The layout of the first rows of the table: preview; files, assets; timeline, keyframes; properties, chat. */
 async function tableLayout(page: Page) {
-  await close(page, "code", "explorer", "transitions", "fades", "effects", "problems");
+  await close(
+    page,
+    "code",
+    "explorer",
+    "transitions",
+    "fades",
+    "effects",
+    "soundEffects",
+    "problems",
+  );
   await expect(group(page, "files").locator("[data-tab]")).toHaveCount(2);
   await expect(group(page, "timeline").locator("[data-tab]")).toHaveCount(2);
   await expect(group(page, "properties").locator("[data-tab]")).toHaveCount(2);

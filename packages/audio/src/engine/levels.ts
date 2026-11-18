@@ -21,6 +21,11 @@ export interface Levels {
    * Undefined until 100 ms played, and −Infinity for silence.
    */
   readonly shortTerm: number | undefined;
+  /**
+   * What compressors and limiters took off, in dB, by where they are (see
+   * `MixEngine.takeReductions`).
+   */
+  readonly reductions?: readonly (readonly [string, number])[];
 }
 
 /**

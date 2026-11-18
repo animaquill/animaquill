@@ -159,25 +159,24 @@ describe("what this editor does not do yet", () => {
     expect(said({ tracks: [video([]), captions([])] })).toEqual([]);
   });
 
-  it("says where effects on sound are, and a mix", () => {
+  it("says nothing of effects on sound, which work, and only says a mix with buses", () => {
     const effect = { id: "fx", type: "reverb" };
     expect(
       said({ tracks: [video([]), audio([tone("t", { effects: [effect] })])], assets: TONE }),
-    ).toEqual(['unsupported-audio-effect t {"count":1,"where":"clip"} sound']);
-    expect(said({ tracks: [video([]), audio([], { effects: [effect] })] })).toEqual([
-      'unsupported-audio-effect a {"count":1,"where":"track"} sound',
-    ]);
+    ).toEqual([]);
+    expect(said({ tracks: [video([]), audio([], { effects: [effect] })] })).toEqual([]);
     const mix = { buses: [{ id: "bus" }] };
     expect(said({ tracks: [video([]), audio([])], mix })).toEqual([
       'unsupported-audio-effect main {"count":1,"where":"mix"} sound',
     ]);
-    const limiter = { master: { effects: [{ id: "limit", type: "limiter" }] } };
-    expect(said({ tracks: [video([]), audio([])], mix: limiter })).toHaveLength(1);
-    // Off, an effect does nothing; on a picture, it is one that this editor does.
-    const off = { ...effect, enabled: false };
-    expect(
-      said({ tracks: [video([]), audio([tone("t", { effects: [off] })])], assets: TONE }),
-    ).toEqual([]);
+    // The master, its effects, volume and limiter work.
+    const limiter = {
+      master: {
+        effects: [{ id: "limit", type: "limiter" }],
+        properties: { "audio.volume": -3, "limit.on": false },
+      },
+    };
+    expect(said({ tracks: [video([]), audio([])], mix: limiter })).toEqual([]);
     const blur = { id: "fx", type: "blur" };
     expect(said({ tracks: [video([color("red", { effects: [blur] })])] })).toEqual([]);
     expect(said({ tracks: [video([]), audio([])], mix: {} })).toEqual([]);

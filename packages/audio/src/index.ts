@@ -4,15 +4,25 @@ import { ALL_FORMATS, AudioBufferSink, BlobSource, Input } from "mediabunny";
 import { readSamples, type SampleReader } from "./engine/decode.ts";
 import type { DecodedChunk } from "./engine/samples.ts";
 import type { Levels } from "./engine/levels.ts";
+import { prerollSeconds } from "./engine/engine.ts";
 import { MIX_RATE } from "./engine/resample.ts";
 import type { MixerNode } from "./mixer.ts";
 import { semitonesFor, type PitchKeeper } from "./pitch.ts";
 
-export { MixEngine, BLOCK, type OnMissing, type SamplesOf } from "./engine/engine.ts";
+export {
+  MixEngine,
+  BLOCK,
+  mixMemory,
+  prerollSeconds,
+  type OnMissing,
+  type SamplesOf,
+} from "./engine/engine.ts";
 export { readSamples, type SampleReader } from "./engine/decode.ts";
 export { MixerCore, type MixerMessage, type MixerReport } from "./engine/mixer-core.ts";
 export { LEVELS_PER_SECOND, MasterLevels, type Levels } from "./engine/levels.ts";
 export { MIX_RATE } from "./engine/resample.ts";
+export { cookbook, responseDb, type BandKind, type Biquad } from "./engine/effects/eq.ts";
+export { staticCurve } from "./engine/effects/compressor.ts";
 export { SampleStore, type DecodedChunk } from "./engine/samples.ts";
 export { createMixer, type MixerNode } from "./mixer.ts";
 export {
@@ -123,6 +133,11 @@ interface Run {
   readonly at: number;
   /** Timeline seconds per real second, negative backwards. */
   readonly rate: number;
+  /**
+   * Seconds before `seconds` that sounds are sent from, for what effects remember (see
+   * `MixEngine`): none backwards, where effects are left out.
+   */
+  readonly preroll: number;
   /** What the device adds, and what keeps the pitch. It stays the same during a run. */
   latency: number;
   /** The mixer once it plays this run: sound goes to it from then on. */
@@ -139,7 +154,9 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 /** The sounds of a plan as playing has them, apart from what the mixer changes on the spot. */
 const placesOf = ({ sounds, tracks }: MixPlan) =>
   JSON.stringify({
-    sounds: sounds.map(({ gain: _gain, volume: _volume, pan: _pan, ...place }) => place),
+    sounds: sounds.map(
+      ({ gain: _gain, volume: _volume, pan: _pan, effects: _effects, ...place }) => place,
+    ),
     tracks: tracks.map(({ id }) => id),
   });
 
@@ -220,6 +237,7 @@ export class PlaybackAudio {
       seconds,
       at,
       rate,
+      preroll: rate > 0 ? prerollSeconds(plan) : 0,
       latency,
       ready: Promise.resolve(undefined),
       started: new Set(),
@@ -266,8 +284,8 @@ export class PlaybackAudio {
 
   /**
    * Whether a plan differs from another only in what the mixer changes on the spot, see `change`:
-   * how loud things are and where they sit (volume and pan, with their keys), and which tracks are
-   * muted or soloed.
+   * how loud things are and where they sit (volume and pan, with their keys), which tracks are
+   * muted or soloed, and the effects and the master (effects that stay keep what they remember).
    */
   static onTheSpot(a: MixPlan, b: MixPlan): boolean {
     return a === b || placesOf(a) === placesOf(b);
@@ -374,15 +392,16 @@ export class PlaybackAudio {
     const backwards = run.rate < 0;
     // Faster, the same time ahead is more of the timeline.
     const lead = LEAD_SECONDS * Math.max(Math.abs(run.rate), 1);
+    const since = run.seconds - run.preroll;
     for (const sound of run.plan.sounds) {
-      const passed = backwards ? sound.start >= run.seconds : sound.end <= run.seconds;
+      const passed = backwards ? sound.start >= run.seconds : sound.end <= since;
       const ahead = backwards ? position - sound.end : sound.start - position;
       if (run.started.has(sound.id) || passed || ahead > lead) continue;
       const waiting = run.waiting.get(sound.id);
       const gone = backwards ? sound.start >= position : sound.end <= position;
       if (waiting !== undefined && (now < waiting || gone)) continue;
       run.started.add(sound.id);
-      this.#feed(run, context, sound, waiting === undefined ? run.seconds : position).catch(
+      this.#feed(run, context, sound, waiting === undefined ? since : position).catch(
         (error: unknown) => {
           console.warn("A sound could not be played", error);
           if (!run.stopped) this.#problem(run, sound);

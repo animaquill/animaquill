@@ -392,3 +392,117 @@ button.reading:hover {
   color: var(--aq-text-muted);
   font-size: var(--aq-font-10);
 }
+
+.master[data-selected] {
+  background: var(--aq-accent-soft);
+}
+
+.masterName[aria-pressed="true"] {
+  color: var(--aq-text-strong);
+}
+
+/* The effects of a strip: one slot each, a dot to turn it on, "+" to add one. */
+.slots {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  max-height: calc(110px * var(--aq-size-scale));
+  overflow-y: auto;
+}
+
+.slot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: calc(20px * var(--aq-size-scale));
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 3px;
+}
+
+.slot[data-off] .slotName {
+  color: var(--aq-text-muted);
+}
+
+.slot[data-dragged] {
+  opacity: 0.5;
+}
+
+.slot[data-drop="before"]::before,
+.slot[data-drop="after"]::after,
+.slotAdd[data-drop="before"]::before {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 2px;
+  background: var(--aq-accent);
+  content: "";
+}
+
+.slot[data-drop="before"]::before,
+.slotAdd[data-drop="before"]::before {
+  top: -2px;
+}
+
+.slot[data-drop="after"]::after {
+  bottom: -2px;
+}
+
+.slot[data-fixed] {
+  border-style: dashed;
+}
+
+.slotName {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px;
+  overflow: hidden;
+  color: var(--aq-text);
+  font: inherit;
+  font-size: var(--aq-font-11);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.slotDot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin: 0 4px;
+  padding: 0;
+  background: var(--aq-text-muted);
+  border: 0;
+  border-radius: 50%;
+  opacity: 0.5;
+  cursor: pointer;
+}
+
+.slotDot[aria-pressed="true"] {
+  background: var(--aq-meter-low);
+  opacity: 1;
+}
+
+.slotAdd {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: calc(18px * var(--aq-size-scale));
+  color: var(--aq-text-muted);
+  background: none;
+  border: 1px dashed var(--aq-border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.slotAdd:hover:not(:disabled) {
+  color: var(--aq-text);
+  background: var(--aq-bg-hover);
+}

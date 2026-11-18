@@ -44,7 +44,7 @@ export const PROBLEM_TEXTS: Readonly<Record<string, (params: Params) => string>>
     `${str(p.count)} captions on this track do not show in this editor version yet, nor in exported video`,
   "unsupported-audio-effect": (p) =>
     p.where === "mix"
-      ? "the mix (buses and master) is not applied by this editor version yet"
+      ? "the buses of the mix (and sends and outputs to them) are not applied by this editor version yet"
       : `${str(p.count)} sound effects on this ${str(p.where)} are not applied by this editor version yet`,
   "unsupported-audio-property": (p) =>
     `${str(p.property)} is not applied by this editor version yet; preview and export ignore it`,

@@ -156,6 +156,14 @@ export class SampleStore {
     });
   }
 
+  /** Whether frames `from` up to `from + count` of the file are all here (or silence). */
+  has(from: number, count: number): boolean {
+    const to = Math.min(from + count, this.#end);
+    const frame = Math.max(from, 0);
+    if (frame >= to) return true;
+    return this.#known.some((span) => span.from <= frame && span.to >= to);
+  }
+
   /**
    * Frames `from` up to `from + count` of the file, down-mixed (see `channels`), into `left` and
    * `right` from `at` on. Silence where the file has nothing. Returns whether all of it was read.

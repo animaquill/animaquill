@@ -189,7 +189,16 @@
             "kind": "audio",
             "media": { "asset": "narration-zh" }
           },
-          "properties": { "audio.volume": -3 }
+          "properties": {
+            "audio.volume": -3,
+            "effect.fx_clean.hp.freq": 90,
+            "effect.fx_clean.hp.on": true,
+            "effect.fx_clean.mid3.gain": 2.5,
+            "effect.fx_clean.mid3.q": 1.4
+          },
+          "effects": [
+            { "id": "fx_clean", "type": "eq" }
+          ]
         },
         {
           "id": "clip_interview_audio",
@@ -242,13 +251,13 @@
         }
       ],
       "properties": {
-        "effect.fx_duck.amount": 0.75,
-        "effect.fx_duck.attack": 0.02,
-        "effect.fx_duck.release": 0.3,
-        "effect.fx_duck.track": "track_voice"
+        "effect.fx_tame.attack": 20,
+        "effect.fx_tame.ratio": 3,
+        "effect.fx_tame.release": 300,
+        "effect.fx_tame.threshold": -24
       },
       "effects": [
-        { "id": "fx_duck", "type": "duck" }
+        { "id": "fx_tame", "type": "compressor" }
       ],
       "sends": [
         {
@@ -290,11 +299,7 @@
       {
         "id": "bus_room",
         "name": "房间混响",
-        "properties": {
-          "effect.fx_room.mix": 0.3,
-          "effect.fx_room.seconds": 1.8,
-          "effect.fx_room.seed": 3
-        },
+        "properties": { "effect.fx_room.decay": 1.8, "effect.fx_room.mix": 0.3 },
         "effects": [
           { "id": "fx_room", "type": "reverb" }
         ],
@@ -302,7 +307,12 @@
       }
     ],
     "master": {
-      "properties": { "effect.fx_limit.ceiling": -1, "effect.fx_limit.release": 0.1 },
+      "properties": {
+        "audio.volume": -1,
+        "effect.fx_limit.ceiling": -2,
+        "effect.fx_limit.release": 100,
+        "limit.ceiling": -1.5
+      },
       "effects": [
         { "id": "fx_limit", "type": "limiter" }
       ]

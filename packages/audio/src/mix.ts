@@ -99,8 +99,10 @@ export class SoundMixer {
   /** The samples of the timeline from `from` for `frames` samples, at the rate of the mix. */
   async mix(from: number, frames: number): Promise<MixedPiece> {
     const first = Math.round(from * MIX_RATE);
-    const start = first / MIX_RATE;
-    const end = (first + frames) / MIX_RATE;
+    // Effects take in what comes before a piece that does not follow on (see `MixEngine`), and
+    // what comes after it, as far as limiters look ahead.
+    const start = this.#engine.startFor(first) / MIX_RATE;
+    const end = (first + frames + this.#engine.lookahead) / MIX_RATE;
     const heard = this.#plan.sounds.filter(
       (sound) => this.#engine.hears(sound) && sound.start < end && sound.end > start,
     );

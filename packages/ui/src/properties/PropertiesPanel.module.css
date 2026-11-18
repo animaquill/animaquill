@@ -706,3 +706,122 @@
 .panText[data-tried] {
   color: var(--aq-trial);
 }
+
+/* The graphs of the effects of sound: the response of an equalizer, the curve of a compressor. */
+.effectGraph,
+.effectGraphSquare {
+  display: block;
+  width: 100%;
+  height: calc(120px * var(--aq-size-scale));
+  margin: 4px 0;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+  touch-action: none;
+  user-select: none;
+}
+
+.effectGraphSquare {
+  width: calc(120px * var(--aq-size-scale));
+  height: calc(120px * var(--aq-size-scale));
+}
+
+.graphGrid {
+  stroke: var(--aq-border);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.graphAxis {
+  stroke: var(--aq-text-muted);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.graphCurve {
+  fill: none;
+  stroke: var(--aq-accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.graphHit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 12;
+  vector-effect: non-scaling-stroke;
+  cursor: ns-resize;
+}
+
+.graphKnee {
+  fill: var(--aq-accent);
+  stroke: var(--aq-bg-panel);
+  stroke-width: 1.5;
+  cursor: ew-resize;
+}
+
+.graphPoint {
+  cursor: move;
+}
+
+.graphPoint circle {
+  fill: var(--aq-bg-panel);
+  stroke: var(--aq-accent);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.graphPoint[data-on] circle {
+  fill: var(--aq-accent);
+}
+
+.graphPoint text {
+  font-size: 9px;
+  text-anchor: middle;
+  fill: var(--aq-accent);
+  pointer-events: none;
+}
+
+.graphPoint[data-on] text {
+  fill: var(--aq-on-accent);
+}
+
+/* A graph and the meter of what is taken off, side by side. */
+.effectGraphs {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.reduction {
+  position: relative;
+  flex: none;
+  width: 8px;
+  height: calc(120px * var(--aq-size-scale));
+  margin: 4px 0;
+  overflow: hidden;
+  background: var(--aq-meter-bed);
+  border-radius: 2px;
+}
+
+.reductionAcross {
+  position: relative;
+  height: 6px;
+  margin: 6px 0;
+  overflow: hidden;
+  background: var(--aq-meter-bed);
+  border-radius: 2px;
+}
+
+.reductionBar {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  background: var(--aq-meter-mid);
+}
+
+.reductionAcross .reductionBar {
+  right: auto;
+  bottom: 0;
+}

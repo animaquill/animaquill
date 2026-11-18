@@ -775,19 +775,24 @@ export const OPERATION_TEXTS = {
     },
   ],
 
-  "ops.effect.add.summary": "puts an effect on a clip, with the values of its parameters",
+  "ops.effect.add.summary":
+    "puts an effect on a clip, an audio track or the master, with the values of its parameters",
   "ops.effect.add.description":
-    'Puts an effect on the picture of a clip on a video track. Effects work in the order of the list of the clip, each on what the one before made; index puts it at a place of the list, and without index it goes last. Built-in effects: brightness, contrast, saturation, temperature, blur, crop (topic "howto/effects"). The parameters of the effect are properties of the clip, effect.<effect id>.<parameter>: values sets them here, plain or with keyframes, and property.edit changes them later. A parameter left out has a default that leaves the picture as it is. start and end, in seconds from the start of the clip, limit when it works.',
-  "ops.effect.add.params.start": "Seconds from the clip's start.",
-  "ops.effect.add.params.end": "Seconds from the clip's start.",
+    'Puts an effect on one of: a clip (clip), an audio track (track) or the master of the timeline (master: true). Clips on video tracks take effects of pictures: brightness, contrast, saturation, temperature, blur, crop (topic "howto/effects"). Clips on audio tracks, audio tracks and the master take effects of sound: eq, compressor, limiter, reverb (topic "howto/mixing"). Effects work in the order of their list, each on what the one before made; index puts it at a place of the list, and without index it goes last. The parameters of the effect are properties of what it is on, effect.<effect id>.<parameter>: values sets them here, plain or with keyframes, and property.edit changes them later (owner clip, track or master). A parameter left out has a default that changes nothing. start and end, in seconds from the start of the clip, limit when an effect of a clip works; tracks and the master have none.',
+  "ops.effect.add.params.start": "Seconds from the clip's start; only for a clip.",
+  "ops.effect.add.params.end": "Seconds from the clip's start; only for a clip.",
   "ops.effect.add.fields.type":
-    "Built in: brightness, contrast, saturation, temperature, blur or crop; a name with a dot is an effect of a plugin.",
+    "Pictures: brightness, contrast, saturation, temperature, blur or crop. Sound: eq, compressor, limiter or reverb. A name with a dot is an effect of a plugin.",
   "ops.effect.add.fields.values":
-    'Parameter → a value or keyframes, such as {"radius":8} for blur; the effect\'s own parameter names, without effect.<id>.',
+    'Parameter → a value or keyframes, such as {"radius":8} for blur or {"mid2.gain":-6} for eq; the effect\'s own parameter names, without effect.<id>.',
   "ops.effect.add.errors.not-found":
-    "There is no timeline or clip with this id, no effect of this type, or no parameter of this name in values (the error names it).",
+    "There is no timeline, clip or track with this id, no effect of this type, or no parameter of this name in values (the error names it).",
   "ops.effect.add.errors.wrong-track":
-    "The clip is not on a video track: only those have effects so far.",
+    "The effect is not for the clip: effects of sound go on clips on audio tracks, effects of pictures on clips on video tracks; or the track is not an audio track.",
+  "ops.effect.add.errors.wrong-target":
+    "An effect of pictures on an audio track or the master, which take effects of sound only.",
+  "ops.effect.add.errors.not-applicable":
+    "start or end on an effect of a track or the master, which works all along.",
   "ops.effect.add.errors.invalid-value":
     "A value does not fit its parameter, or start and end are not within the clip with start before end.",
   "ops.effect.add.errors.id-taken": "The clip has an effect with this id already.",
@@ -797,6 +802,24 @@ export const OPERATION_TEXTS = {
     {
       title: "A blur",
       params: { timeline: "main", clip: "clip_title", type: "blur", values: { radius: 8 } },
+    },
+    {
+      title: "An equalizer on an audio track that takes 6 dB off around 300 Hz",
+      params: {
+        timeline: "main",
+        track: "track_music",
+        type: "eq",
+        values: { "mid1.freq": 300, "mid1.gain": -6, "mid1.q": 1.4 },
+      },
+    },
+    {
+      title: "A compressor on the master",
+      params: {
+        timeline: "main",
+        master: true,
+        type: "compressor",
+        values: { threshold: -18, ratio: 3, attack: 10, release: 150 },
+      },
     },
     {
       title: "A blur that grows over the first second, first in the list",
@@ -818,12 +841,13 @@ export const OPERATION_TEXTS = {
     },
   ],
 
-  "ops.effect.remove.summary": "takes effects off a clip",
+  "ops.effect.remove.summary": "takes effects off a clip, an audio track or the master",
   "ops.effect.remove.description":
-    "Takes effects off a clip with their parameters (the properties effect.<effect id>.*), also in versions.",
-  "ops.effect.remove.params.effects": "Effect ids of the clip.",
+    "Takes effects off a clip, an audio track (track) or the master (master: true) with their parameters (the properties effect.<effect id>.*), also in versions.",
+  "ops.effect.remove.params.effects": "Effect ids of the clip, track or master.",
   "ops.effect.remove.errors.not-found":
-    "There is no timeline or clip with this id, or the clip has no effect with one of these ids.",
+    "There is no timeline, clip or track with this id, or it has no effect with one of these ids.",
+  "ops.effect.remove.errors.wrong-track": "The track is not an audio track: it has no effects.",
   "ops.effect.remove.examples": [
     {
       title: "An effect",
@@ -832,11 +856,12 @@ export const OPERATION_TEXTS = {
   ],
 
   "ops.effect.move.summary":
-    "moves an effect in the list of its clip, which changes what it works on",
+    "moves an effect in the list of its clip, track or master, which changes what it works on",
   "ops.effect.move.description":
-    "Moves an effect to another place in the list of its clip. Effects work in the order of the list, each on what the one before made, so the order changes the picture. index counts from 0 in the list without the effect.",
+    "Moves an effect to another place in the list of its clip, audio track (track) or the master (master: true). Effects work in the order of the list, each on what the one before made, so the order changes the result. index counts from 0 in the list without the effect.",
   "ops.effect.move.errors.not-found":
-    "There is no timeline or clip with this id, or the clip has no such effect.",
+    "There is no timeline, clip or track with this id, or it has no such effect.",
+  "ops.effect.move.errors.wrong-track": "The track is not an audio track: it has no effects.",
   "ops.effect.move.examples": [
     {
       title: "An effect first in the list",
@@ -846,11 +871,14 @@ export const OPERATION_TEXTS = {
 
   "ops.effect.update.summary": "turns an effect on or off, or changes when it works",
   "ops.effect.update.description":
-    "Turns an effect on or off, or changes when it works. Off, it does nothing and keeps its place and parameters. start and end are seconds from the start of the clip, within it; null takes one away, which is the start or the end of the clip. What is left out stays as it is. Its parameters are properties: property.edit changes them.",
+    "Turns an effect of a clip, an audio track (track) or the master (master: true) on or off, or changes when an effect of a clip works. Off, it does nothing and keeps its place and parameters. start and end are seconds from the start of the clip, within it; null takes one away, which is the start or the end of the clip. What is left out stays as it is. Its parameters are properties: property.edit changes them.",
   "ops.effect.update.params.start": "Seconds from the clip's start; null for its start.",
   "ops.effect.update.params.end": "Seconds from the clip's start; null for its end.",
   "ops.effect.update.errors.not-found":
-    "There is no timeline or clip with this id, or the clip has no such effect.",
+    "There is no timeline, clip or track with this id, or it has no such effect.",
+  "ops.effect.update.errors.wrong-track": "The track is not an audio track: it has no effects.",
+  "ops.effect.update.errors.not-applicable":
+    "start or end for an effect of a track or the master, which works all along.",
   "ops.effect.update.errors.invalid-value":
     "start and end are not within the clip, with start before end.",
   "ops.effect.update.examples": [
@@ -1109,9 +1137,9 @@ export const OPERATION_TEXTS = {
   ],
 
   "ops.property.edit.summary":
-    "sets properties of clips and of tracks of sound, and their keyframes, in one step",
+    "sets properties of clips, of tracks of sound and of the master, and their keyframes, in one step",
   "ops.property.edit.description":
-    'Changes properties of clips: values that can change over time with keyframes, such as opacity, transform.x, param.<scene param> or effect.<effect id>.<parameter> (topic "howto/keyframes"). edits run in order as one step, each on what the ones before made, and can be about several clips of the timeline. Each edit names the clip (owner), the property (path) and what to do (op): "set" the whole property to a value or keyframes, "clear" it, "write" a value at a time (a keyframe there when it has keyframes, else the value), "setKey" a keyframe, "removeKey", "moveKey", "putKeys" (whole keyframes in place of what is at those times), "setInterp" (how keyframes go on to the next), "setExtend" (what it does before the first keyframe and after the last: hold, loop, pingpong, continue), "setNoise" (shaking on top, or null to stop it) or "retimeKeys" (stretch, squeeze, move or reverse keyframes in time, keeping their values; the result lists in removed the keyframes that gave way where one landed), as topic "types/PropertyEdit" has it. Keyframe times are on the clip\'s clock (topic "howto/times"). An owner {"track": id} is a track of sound: only audio.volume and audio.pan, keyframe times on the timeline. aq_object_read gives the properties a clip has and those its scene describes.',
+    'Changes properties of clips: values that can change over time with keyframes, such as opacity, transform.x, param.<scene param> or effect.<effect id>.<parameter> (topic "howto/keyframes"). edits run in order as one step, each on what the ones before made, and can be about several clips of the timeline. Each edit names the clip (owner), the property (path) and what to do (op): "set" the whole property to a value or keyframes, "clear" it, "write" a value at a time (a keyframe there when it has keyframes, else the value), "setKey" a keyframe, "removeKey", "moveKey", "putKeys" (whole keyframes in place of what is at those times), "setInterp" (how keyframes go on to the next), "setExtend" (what it does before the first keyframe and after the last: hold, loop, pingpong, continue), "setNoise" (shaking on top, or null to stop it) or "retimeKeys" (stretch, squeeze, move or reverse keyframes in time, keeping their values; the result lists in removed the keyframes that gave way where one landed), as topic "types/PropertyEdit" has it. Keyframe times are on the clip\'s clock (topic "howto/times"). An owner {"track": id} is a track of sound: only audio.volume, audio.pan and effect.<effect id>.<parameter>, keyframe times on the timeline. An owner {"master": true} is the master of the timeline: audio.volume, limit.on, limit.ceiling and effect.<effect id>.<parameter>, keyframe times on the timeline (topic "howto/mixing"). aq_object_read gives the properties a clip has and those its scene describes.',
   "ops.property.edit.errors.not-found":
     "There is no timeline or clip with this id, or an edit is about a keyframe at a time where there is none (the error gives the time).",
   "ops.property.edit.errors.invalid-value":
@@ -1119,7 +1147,7 @@ export const OPERATION_TEXTS = {
   "ops.property.edit.errors.not-animatable":
     "A property that cannot have keyframes gets them, such as fit.",
   "ops.property.edit.errors.wrong-target":
-    "An edit of a track is about another property than audio.volume or audio.pan, or about a track that is not of sound.",
+    "An edit of a track or the master is about a property it does not have (a track: audio.volume, audio.pan, effect.*; the master: audio.volume, limit.on, limit.ceiling, effect.*), or about a track that is not of sound.",
   "ops.property.edit.examples": [
     {
       title: "A property that fades in with two keyframes",

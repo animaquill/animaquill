@@ -38,6 +38,7 @@ import {
   effectsOf,
   entryOf,
   orderedTracks,
+  type ClipEffect,
   type ClipState,
   type JoinState,
   type TrackState,
@@ -45,7 +46,14 @@ import {
 import type { ProjectState, TimelineState } from "./model.ts";
 import { isSceneOwned } from "./registration.ts";
 import { sceneSourceOf, type SceneSource } from "./scene-plan.ts";
-import { audibleTracks, gainOfDecibels, panOf, type MixPlan, type MixSound } from "./mix-plan.ts";
+import {
+  audibleTracks,
+  gainOfDecibels,
+  panOf,
+  type MixEffect,
+  type MixPlan,
+  type MixSound,
+} from "./mix-plan.ts";
 import type { SoundFade } from "./sound-fades.ts";
 import { madeSoundOf } from "./sound-plan.ts";
 import { stageOf, type Size } from "./view.ts";
@@ -769,6 +777,7 @@ function withTried(
 
 /** A clip with sound as a mix has it, with its own properties apart from those of its track. */
 interface ClipSound {
+  readonly clip: ClipState;
   readonly layer: Omit<SoundLayer, "gain">;
   readonly track: AudioTrackState;
   readonly properties: Properties;
@@ -836,6 +845,7 @@ function clipSounds(
       if (fade) fades.push(fade);
     }
     sounds.push({
+      clip,
       track,
       properties,
       layer: {
@@ -869,7 +879,11 @@ export function buildAudioPlan(state: ProjectState, timelineId: string, only?: s
     (track) => heard.has(track.id) && (only === undefined || track.id === only),
   );
   const kept = new Set(tracks.map(({ id }) => id));
-  return { sounds: plan.sounds.filter((sound) => kept.has(sound.track)), tracks };
+  return {
+    sounds: plan.sounds.filter((sound) => kept.has(sound.track)),
+    tracks,
+    ...(plan.master && { master: plan.master }),
+  };
 }
 
 /**
@@ -883,27 +897,114 @@ export function buildMixPlan(
   tried?: TriedValues,
   /** What people are trying on tracks, as a fader that is still in their hands, by track. */
   triedTracks?: TriedValues,
+  /** What people are trying on the master, by path. */
+  triedMaster?: ReadonlyMap<string, PropertyValue | undefined>,
 ): MixPlan {
   const timeline = entryOf(state.timelines, timelineId);
   if (!timeline) return { sounds: [], tracks: [] };
   const all = audioTracksOf(timeline);
   const sounds = clipSounds(state, timeline, new Map(all.map((track) => [track.id, track])), tried);
+  const master = timeline.mix?.master;
+  const masterProperties = withTried(master?.properties ?? {}, triedMaster);
+  const limitOn = firstValue(entryOf(masterProperties, "limit.on"));
+  const ceiling = firstValue(entryOf(masterProperties, "limit.ceiling"));
+  const masterEffects = soundEffectsOf(master?.effects ?? [], masterProperties);
   return {
-    sounds: sounds.map(({ layer, track, properties }) => ({
-      ...layer,
-      ...volumeOf(properties),
-      ...panIn(properties),
-      track: track.id,
-    })),
+    sounds: sounds.map(({ layer, track, properties, clip }) => {
+      const effects = soundEffectsOf(effectsOf(clip), properties, clip);
+      return {
+        ...layer,
+        ...volumeOf(properties),
+        ...panIn(properties),
+        track: track.id,
+        ...(effects.length > 0 && { effects }),
+      };
+    }),
     tracks: all.map((track) => {
       const properties = withTried(track.properties ?? {}, triedTracks?.get(track.id));
+      const effects = soundEffectsOf(track.effects ?? [], properties);
       return {
         id: track.id,
         ...volumeOf(properties),
         ...panIn(properties),
+        ...(effects.length > 0 && { effects }),
         muted: track.muted === true,
         solo: track.solo === true,
       };
     }),
+    master: {
+      ...volumeOf(masterProperties),
+      ...(masterEffects.length > 0 && { effects: masterEffects }),
+      ...((typeof limitOn === "boolean" ? limitOn : MASTER_LIMIT_ON) && {
+        limit: { ceiling: ceilingOf(ceiling) },
+      }),
+    },
   };
+}
+
+/** Whether the safe limiter of the master is on where a project does not say: see `limit.on`. */
+const MASTER_LIMIT_ON = BUILT_IN_PROPERTIES["limit.on"]?.default !== false;
+
+/** Whether the master of a timeline has its safe limiter on, as the mix has it. */
+export function masterLimited(state: ProjectState, timelineId: string): boolean {
+  const on = firstValue(
+    entryOf(entryOf(state.timelines, timelineId)?.mix?.master?.properties, "limit.on"),
+  );
+  return typeof on === "boolean" ? on : MASTER_LIMIT_ON;
+}
+const CEILING = BUILT_IN_PROPERTIES["limit.ceiling"];
+
+/** The ceiling of the safe limiter, within what the format takes. */
+function ceilingOf(value: Value | undefined): number {
+  const fallback = (CEILING?.default as number | undefined) ?? -1;
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
+  return Math.min(Math.max(value, CEILING?.min ?? -12), CEILING?.max ?? 0);
+}
+
+/**
+ * The effects of sound of a clip, a track or the master as the mix runs them: those that are on and
+ * that this editor has for sound, with their parameters as numbers. A clip's have the stretch of the
+ * timeline they work in.
+ */
+function soundEffectsOf(
+  effects: readonly ClipEffect[],
+  properties: Properties,
+  clip?: ClipState,
+): MixEffect[] {
+  return effects.flatMap((effect): MixEffect[] => {
+    if (effect.enabled === false) return [];
+    const found = findEffect(effect.type, "sound");
+    if (found.kind !== "built-in") return [];
+    const range = clip ? effectRangeOf(clip, effect) : {};
+    if (range === "nowhere") return [];
+    const params: Record<string, Channel> = {};
+    for (const spec of found.spec.properties) {
+      const value = entryOf(properties, effectPath(effect.id, spec.path));
+      if (value === undefined) continue;
+      const channel = paramChannelOf(spec, value);
+      if (channel) params[spec.path] = channel;
+    }
+    return [{ id: effect.id, type: effect.type, params, ...range }];
+  });
+}
+
+/** A parameter of a sound effect as a number the engine reads: switches 0 or 1, choices a number. */
+function paramChannelOf(spec: PropertySpec, value: PropertyValue): Channel | undefined {
+  if (spec.type === "number" && spec.animatable !== false) return channelOf(value, "number");
+  const plain = firstValue(value);
+  const number =
+    spec.type === "boolean"
+      ? plain === true
+        ? 1
+        : plain === false
+          ? 0
+          : undefined
+      : typeof plain === "string"
+        ? Number(plain)
+        : typeof plain === "number"
+          ? plain
+          : undefined;
+  return number === undefined || !Number.isFinite(number)
+    ? undefined
+    : { kind: "still", value: number };
 }

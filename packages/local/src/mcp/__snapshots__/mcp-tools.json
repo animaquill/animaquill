@@ -1689,7 +1689,7 @@
               },
               {
                 "type": "object",
-                "description": "Puts an effect on a clip, with the values of its parameters.",
+                "description": "Puts an effect on a clip, an audio track or the master, with the values of its parameters.",
                 "properties": {
                   "op": {
                     "const": "effect.add"
@@ -1701,6 +1701,14 @@
                   "clip": {
                     "description": "Clip id (aq_timeline_read).",
                     "type": "string"
+                  },
+                  "track": {
+                    "description": "Track id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "master": {
+                    "description": "true for the master of the timeline.",
+                    "const": true
                   },
                   "id": {
                     "description": "New id, to use later in the batch; optional.",
@@ -1727,25 +1735,24 @@
                     }
                   },
                   "start": {
-                    "description": "Seconds from the clip's start.",
+                    "description": "Seconds from the clip's start; only for a clip.",
                     "type": "string"
                   },
                   "end": {
-                    "description": "Seconds from the clip's start.",
+                    "description": "Seconds from the clip's start; only for a clip.",
                     "type": "string"
                   }
                 },
                 "required": [
                   "op",
                   "timeline",
-                  "clip",
                   "type"
                 ],
                 "additionalProperties": false
               },
               {
                 "type": "object",
-                "description": "Takes effects off a clip.",
+                "description": "Takes effects off a clip, an audio track or the master.",
                 "properties": {
                   "op": {
                     "const": "effect.remove"
@@ -1758,8 +1765,16 @@
                     "description": "Clip id (aq_timeline_read).",
                     "type": "string"
                   },
+                  "track": {
+                    "description": "Track id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "master": {
+                    "description": "true for the master of the timeline.",
+                    "const": true
+                  },
                   "effects": {
-                    "description": "Effect ids of the clip.",
+                    "description": "Effect ids of the clip, track or master.",
                     "minItems": 1,
                     "type": "array",
                     "items": {
@@ -1770,14 +1785,13 @@
                 "required": [
                   "op",
                   "timeline",
-                  "clip",
                   "effects"
                 ],
                 "additionalProperties": false
               },
               {
                 "type": "object",
-                "description": "Moves an effect in the list of its clip, which changes what it works on.",
+                "description": "Moves an effect in the list of its clip, track or master, which changes what it works on.",
                 "properties": {
                   "op": {
                     "const": "effect.move"
@@ -1789,6 +1803,14 @@
                   "clip": {
                     "description": "Clip id (aq_timeline_read).",
                     "type": "string"
+                  },
+                  "track": {
+                    "description": "Track id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "master": {
+                    "description": "true for the master of the timeline.",
+                    "const": true
                   },
                   "effect": {
                     "description": "Effect id, of the clip (aq_object_read).",
@@ -1803,7 +1825,6 @@
                 "required": [
                   "op",
                   "timeline",
-                  "clip",
                   "effect",
                   "index"
                 ],
@@ -1823,6 +1844,14 @@
                   "clip": {
                     "description": "Clip id (aq_timeline_read).",
                     "type": "string"
+                  },
+                  "track": {
+                    "description": "Track id (aq_timeline_read).",
+                    "type": "string"
+                  },
+                  "master": {
+                    "description": "true for the master of the timeline.",
+                    "const": true
                   },
                   "effect": {
                     "description": "Effect id, of the clip (aq_object_read).",
@@ -1850,7 +1879,6 @@
                 "required": [
                   "op",
                   "timeline",
-                  "clip",
                   "effect"
                 ],
                 "additionalProperties": false
@@ -2286,7 +2314,7 @@
               },
               {
                 "type": "object",
-                "description": "Sets properties of clips and of tracks of sound, and their keyframes, in one step.",
+                "description": "Sets properties of clips, of tracks of sound and of the master, and their keyframes, in one step.",
                 "properties": {
                   "op": {
                     "const": "property.edit"
@@ -2296,7 +2324,7 @@
                     "type": "string"
                   },
                   "edits": {
-                    "description": "Each {\"owner\":{\"clip\":id} or {\"track\":id},\"path\",…,\"op\"}: \"set\" a value or keyframes, \"clear\", \"write\" at a time, or \"setKey\", \"removeKey\", \"moveKey\", \"putKeys\", \"setInterp\", \"setExtend\", \"setNoise\", \"retimeKeys\".",
+                    "description": "Each {\"owner\":{\"clip\":id}, {\"track\":id} or {\"master\":true},\"path\",…,\"op\"}: \"set\" a value or keyframes, \"clear\", \"write\" at a time, or \"setKey\", \"removeKey\", \"moveKey\", \"putKeys\", \"setInterp\", \"setExtend\", \"setNoise\", \"retimeKeys\".",
                     "minItems": 1,
                     "type": "array",
                     "items": {
@@ -3350,9 +3378,20 @@
                   "required": [
                     "track"
                   ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "master": {
+                      "const": true
+                    }
+                  },
+                  "required": [
+                    "master"
+                  ]
                 }
               ],
-              "description": "Whose property: {\"clip\":\"<clip id>\"}, or {\"track\":\"<track id>\"} for the volume and pan of a track of sound."
+              "description": "Whose property: {\"clip\":\"<clip id>\"}, {\"track\":\"<track id>\"} for a track of sound (its volume, pan and effects), or {\"master\":true} for the master of the timeline (its volume, safe limiter and effects)."
             },
             "PropertyPath": {
               "type": "string",

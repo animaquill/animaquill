@@ -4,11 +4,14 @@ import {
   effectOfPath,
   findEffect,
   parameterOf,
+  type EffectMedia,
   type EffectSpec,
 } from "./effects.ts";
 import { cannotHaveKeys, isAnimation, specValueProblem } from "./properties.ts";
 import { add, compare, parseTime, type Rational } from "./time.ts";
 import type { Clip, ClipSource, Join, Timeline, Track } from "./timeline.ts";
+
+type Effect = NonNullable<Clip["effects"]>[number];
 import {
   TRANSITION_USE_NAMES,
   describeMissing,
@@ -221,17 +224,56 @@ function checkTransitions(
 /**
  * What the effects of the clips of a track come to, where that is not what they say: one that this
  * editor does not know does nothing in the preview, and an export stops there. A value that its
- * effect cannot take does nothing either, and the default counts. They stay as they are.
+ * effect cannot take does nothing either, and the default counts. They stay as they are. Clips on
+ * tracks of sound take effects of sound, the others those of pictures.
  */
 function checkEffects(track: Track, trackPath: string, file: string, problems: Problem[]): void {
-  // Captions are not drawn yet, and sound has no effects of its own yet.
-  if (track.kind !== "video") return;
+  // Captions are not drawn yet.
+  if (track.kind === "caption") return;
+  const media = track.kind === "audio" ? "sound" : "picture";
   track.clips.forEach((clip, index) => {
     const path = `${trackPath}.clips.${index}`;
-    const types = new Map<string, EffectSpec | undefined>();
-    const length = parseTime(clip.duration);
-    clip.effects?.forEach((effect, at) => {
-      const range = `${path}.effects.${at}`;
+    checkEffectList(clip.effects ?? [], clip.properties ?? {}, media, path, file, problems, {
+      length: parseTime(clip.duration),
+    });
+  });
+  if (track.kind === "audio") {
+    checkEffectList(
+      track.effects ?? [],
+      track.properties ?? {},
+      "sound",
+      trackPath,
+      file,
+      problems,
+      {
+        whole: "track",
+      },
+    );
+  }
+}
+
+/** The effects of something, and what their parameters take: see `checkEffects`. */
+function checkEffectList(
+  effects: readonly Effect[],
+  properties: Readonly<Record<string, PropertyValue>>,
+  media: EffectMedia,
+  path: string,
+  file: string,
+  problems: Problem[],
+  /** The length of a clip, or what has its effects work all along. */
+  of: { readonly length: Rational } | { readonly whole: "track" | "master" },
+): void {
+  const types = new Map<string, EffectSpec | undefined>();
+  effects.forEach((effect, at) => {
+    const range = `${path}.effects.${at}`;
+    if ("whole" in of) {
+      if (effect.start !== undefined || effect.end !== undefined) {
+        const where = of.whole === "track" ? "轨道" : "主输出";
+        const message = `${where}上的效果一直生效，start 和 end 不起作用`;
+        problems.push(warning("not-applicable", file, range, message));
+      }
+    } else {
+      const { length } = of;
       const start = effect.start === undefined ? undefined : parseTime(effect.start);
       const end = effect.end === undefined ? undefined : parseTime(effect.end);
       if ([start, end].some((time) => time !== undefined && compare(time, length) > 0)) {
@@ -242,36 +284,51 @@ function checkEffects(track: Track, trackPath: string, file: string, problems: P
         const message = "效果的开始不在结束之前，这个效果不生效";
         problems.push(warning("effect-range", file, range, message));
       }
-      const found = findEffect(effect.type, "picture");
-      types.set(effect.id, found.kind === "built-in" ? found.spec : undefined);
-      if (found.kind === "missing" && effect.enabled !== false) {
-        const message = `${describeMissingEffect(found.why)}，预览里跳过它，导出会停在这里`;
-        problems.push(warning("effect-missing", file, `${path}.effects.${at}.type`, message));
-      }
-    });
-    for (const [property, value] of Object.entries(clip.properties ?? {})) {
-      const of = effectOfPath(property);
-      const spec = of && types.get(of.effect);
-      const parameter = spec && parameterOf(spec, of.parameter);
-      if (!of || !spec) continue;
-      const where = `${path}.properties.${property}`;
-      if (!parameter) {
-        problems.push(warning("effect-property", file, where, `效果没有这个参数：${property}`));
-        continue;
-      }
-      if (isAnimation(value) && parameter.animatable === false) {
-        const message = `${property} 不能打关键帧，这里只用第一个关键帧的值`;
-        problems.push(warning("not-animatable", file, where, message));
-      }
-      const values = isAnimation(value) ? value.keys.map((key) => key.value) : [value];
-      const problem = values
-        .map((item) => specValueProblem(parameter, item, property))
-        .find(Boolean);
-      if (problem) {
-        problems.push(warning("effect-property", file, where, `${problem}，超出范围的按边界算`));
-      }
+    }
+    const found = findEffect(effect.type, media);
+    types.set(effect.id, found.kind === "built-in" ? found.spec : undefined);
+    if (found.kind === "missing" && effect.enabled !== false) {
+      const message = `${describeMissingEffect(found.why)}，预览里跳过它，导出会停在这里`;
+      problems.push(warning("effect-missing", file, `${range}.type`, message));
     }
   });
+  for (const [property, value] of Object.entries(properties)) {
+    const effect = effectOfPath(property);
+    const spec = effect && types.get(effect.effect);
+    const parameter = spec && parameterOf(spec, effect.parameter);
+    if (!effect || !spec) continue;
+    const where = `${path}.properties.${property}`;
+    if (!parameter) {
+      problems.push(warning("effect-property", file, where, `效果没有这个参数：${property}`));
+      continue;
+    }
+    if (isAnimation(value) && parameter.animatable === false) {
+      const message = `${property} 不能打关键帧，这里只用第一个关键帧的值`;
+      problems.push(warning("not-animatable", file, where, message));
+    }
+    const values = isAnimation(value) ? value.keys.map((key) => key.value) : [value];
+    const problem = values.map((item) => specValueProblem(parameter, item, property)).find(Boolean);
+    if (problem) {
+      problems.push(warning("effect-property", file, where, `${problem}，超出范围的按边界算`));
+    }
+  }
+}
+
+/**
+ * The master of a timeline: its effects, as those of a track, and what it does not take: a pan,
+ * which only sends, tracks, buses and clips have.
+ */
+function checkMaster(timeline: Timeline, file: string, problems: Problem[]): void {
+  const master = timeline.mix?.master;
+  if (!master) return;
+  const properties = master.properties ?? {};
+  checkEffectList(master.effects ?? [], properties, "sound", "mix.master", file, problems, {
+    whole: "master",
+  });
+  if (properties["audio.pan"] !== undefined) {
+    const message = "主输出没有声像，audio.pan 不起作用";
+    problems.push(warning("not-applicable", file, "mix.master.properties.audio.pan", message));
+  }
 }
 
 /** Finds what points at nothing. These are warnings: a project still opens with something missing. */
@@ -420,6 +477,7 @@ export function checkProject(project: Project): Problem[] {
     const clips = new Set<string>();
     const buses = new Set(document.mix?.buses?.map((bus) => bus.id));
     const sections = new Set(document.sections.map((section) => section.id));
+    checkMaster(document, file, problems);
 
     document.tracks.forEach((track, trackIndex) => {
       const trackPath = `tracks.${trackIndex}`;

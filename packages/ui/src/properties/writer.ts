@@ -30,7 +30,7 @@ import { Emitter } from "../workbench/emitter.ts";
 import type { ProjectSession } from "../workbench/session.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
 import type { PreviewedValues, TrialSession } from "./trial.ts";
-import { ownerOf, trackOfClip, withTrackClips } from "../mixer/track-clip.ts";
+import { ownerOf, standsFor, withTrackClips } from "../mixer/track-clip.ts";
 
 export type { PreviewedValues } from "./trial.ts";
 
@@ -130,7 +130,7 @@ export class PropertyWriter {
       const last = this.#lastProperty;
       if (!last) return;
       const { selection, track } = timeline.getSnapshot();
-      const ofTrack = trackOfClip(last.clip);
+      const ofTrack = standsFor(last.clip);
       const selected = ofTrack === undefined ? selection.has(last.clip) : ofTrack === track;
       if (!selected) this.#lastProperty = undefined;
     });
@@ -181,7 +181,7 @@ export class PropertyWriter {
   #clipOf(id: string): ClipState | undefined {
     const model = this.#timeline.model;
     if (!model) return undefined;
-    if (trackOfClip(id) === undefined) return model.state.clips[id];
+    if (standsFor(id) === undefined) return model.state.clips[id];
     return withTrackClips(model).boxes.get(id)?.clip;
   }
 
@@ -343,7 +343,7 @@ export class PropertyWriter {
     const recorded = this.recorded(edits);
     const all = [...recorded, ...this.#autoEdits(recorded)];
     // Trying out is for clips: a track is written at once.
-    const ofTracks = all.filter(({ owner }) => trackOfClip(owner.clip) !== undefined);
+    const ofTracks = all.filter(({ owner }) => standsFor(owner.clip) !== undefined);
     const ofClips = ofTracks.length === 0 ? all : all.filter((edit) => !ofTracks.includes(edit));
     const write = (some: readonly ClipPropertyEdit[]) =>
       this.#trials.takesEdits ? this.#trials.write(some) : this.#writeNow(some);

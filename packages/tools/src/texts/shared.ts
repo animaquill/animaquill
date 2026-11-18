@@ -11,7 +11,7 @@ export const TYPE_TEXTS = {
   "types.PropertyEdit":
     "One edit of a property of a clip. Its times (time, times, moves) are on the clip's clock, as the times of keys are: it reads the clip's offset (0 by default) at the clip's first frame.",
   "types.PropertyOwner":
-    'Whose property: {"clip":"<clip id>"}, or {"track":"<track id>"} for the volume and pan of a track of sound.',
+    'Whose property: {"clip":"<clip id>"}, {"track":"<track id>"} for a track of sound (its volume, pan and effects), or {"master":true} for the master of the timeline (its volume, safe limiter and effects).',
   "types.PropertyPath": 'The path of a property, such as "transform.x" or "param.title".',
   "types.PropertyRename": "Another path for properties of a clip.",
   "types.PropertyValue":

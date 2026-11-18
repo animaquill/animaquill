@@ -892,6 +892,20 @@ export class Workbench {
       dialogs: this.dialogs,
       t,
       goTo: (problem) => this.goToProblem({ problem }),
+      clipsOf: async (state, query) => {
+        const from = query.from ?? 0;
+        const to = query.to ?? this.timeline.model?.duration ?? from;
+        const controller = new AbortController();
+        const answer = await this.#soundListens().listen(
+          { state, timeline: query.timeline, from, to, envelope: false, buckets: 1 },
+          controller.signal,
+        );
+        return answer.ok ? answer.heard.clips.map((clip) => ({ from: from + clip.from })) : [];
+      },
+      seek: (timeline, seconds) => {
+        const model = this.timeline.model;
+        if (model?.id === timeline) this.timeline.seek(frameAt(seconds, model.rate));
+      },
     });
     this.stills = new StillExport({
       session: this.session,

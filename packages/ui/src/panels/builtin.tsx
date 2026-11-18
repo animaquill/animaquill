@@ -1,4 +1,5 @@
 import {
+  AudioLines,
   Blend,
   BookOpen,
   CodeXml,
@@ -40,7 +41,7 @@ import { PropertiesPanel } from "../properties/PropertiesPanel.tsx";
 import { MixerPanel } from "../mixer/MixerPanel.tsx";
 import { AssetsPanel } from "./AssetsPanel.tsx";
 import { PreviewPanel } from "./PreviewPanel.tsx";
-import { EffectsPanel } from "./EffectsPanel.tsx";
+import { EffectsPanel, SoundEffectsPanel } from "./EffectsPanel.tsx";
 import { ExplorerPanel } from "./ExplorerPanel.tsx";
 import { FadesPanel, TransitionsPanel } from "./TransitionsPanel.tsx";
 import styles from "./Placeholder.module.css";
@@ -73,6 +74,7 @@ function planned(
     | "transitions"
     | "fades"
     | "effects"
+    | "soundEffects"
     | "explorer"
     | "chat"
     | "mixer"
@@ -154,6 +156,14 @@ export const builtinPanels: readonly PanelDefinition[] = [
     area: "left",
     sizes: ["tall", "large"],
     component: EffectsPanel,
+  },
+  {
+    type: "soundEffects",
+    title: (t) => t("panel.soundEffects.title"),
+    icon: AudioLines,
+    area: "left",
+    sizes: ["tall", "large"],
+    component: SoundEffectsPanel,
   },
   {
     type: "preview",

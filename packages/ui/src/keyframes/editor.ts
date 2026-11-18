@@ -32,7 +32,6 @@ import {
 } from "@animaquill/core";
 import type { SettingsStore, WindowMemory } from "@animaquill/host";
 import {
-  CLIP_SOUND,
   ZERO,
   add,
   compare,
@@ -100,7 +99,7 @@ import { animationIn, hasKeyAt } from "./tables.ts";
 import { TimelineLanes } from "./timeline-lanes.ts";
 import { KeyframesView } from "./view.ts";
 import { VolumeLines } from "./volume-lines.ts";
-import { trackClipId, trackOfClip, withTrackClip } from "../mixer/track-clip.ts";
+import { standsFor, trackClipId, trackOfClip, withTrackClip } from "../mixer/track-clip.ts";
 import { nameOfTrack } from "../mixer/names.ts";
 
 const REMEMBER_DELAY_MS = 300;
@@ -109,7 +108,13 @@ const SETTINGS_VERSION = 1;
 export const DEFAULT_LIST_WIDTH = 320;
 
 /** What a track offers to animate: its volume and pan, as a clip of sound has them. */
-const TRACK_DESCRIPTION: ClipDescription = { objects: [CLIP_SOUND] };
+/** What a track of sound, or the master, has: what the mix does with it, and its effects. */
+const standInDescriptions = new WeakMap<ClipState, ClipDescription>();
+function standInDescription(clip: ClipState): ClipDescription {
+  let known = standInDescriptions.get(clip);
+  if (!known) standInDescriptions.set(clip, (known = { objects: objectsOf(clip) }));
+  return known;
+}
 const MIN_LIST_WIDTH = 220;
 const MAX_LIST_WIDTH = 640;
 /** The moment of a clip can be a little off as a float, and that should not hide it. */
@@ -521,8 +526,8 @@ export class KeyframeEditor {
 
   /** What a clip offers, with what its scene declares and registered. */
   describe = (clip: ClipState): ClipDescription | undefined => {
-    // A track has what the mix does with it: its volume and pan.
-    if (trackOfClip(clip.id) !== undefined) return TRACK_DESCRIPTION;
+    // A track has what the mix does with it: its volume and pan, and its effects.
+    if (standsFor(clip.id) !== undefined) return standInDescription(clip);
     const { state } = this;
     return state ? this.#descriptions.describe(state, clip) : undefined;
   };
@@ -1015,7 +1020,7 @@ export class KeyframeEditor {
     this.#setKeys(selection);
     if (selection.size === 0) return;
     // The keys of a track keep the track selected.
-    const clips = [...selection.clips()].filter((clip) => trackOfClip(clip) === undefined);
+    const clips = [...selection.clips()].filter((clip) => standsFor(clip) === undefined);
     if (clips.length > 0) this.#timeline.selectClipsOfKeys(clips);
   }
 

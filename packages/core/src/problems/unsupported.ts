@@ -198,19 +198,6 @@ export function unsupportedProblems(state: ProjectState): readonly ProjectProble
       }
       const library = libraryOf(clip);
       if (library !== undefined) report("unsupported-library", subject, { library }, part);
-      if (track?.kind === "audio") {
-        const effects = Object.values(clip.effects ?? {}).filter(
-          (effect) => effect.type !== undefined && effect.enabled !== false,
-        );
-        if (effects.length > 0) {
-          report(
-            "unsupported-audio-effect",
-            subject,
-            { where: "clip", count: effects.length },
-            part,
-          );
-        }
-      }
       const properties = clip.properties ?? {};
       const speed = differs(properties["time.speed"], 1) && WITH_TIME.has(kind);
       if (speed)
@@ -252,15 +239,6 @@ export function unsupportedProblems(state: ProjectState): readonly ProjectProble
       }
       if (track.kind !== "audio") continue;
       const part = heard(track) ? "sound" : undefined;
-      const effects = (track.effects ?? []).filter((effect) => effect.enabled !== false);
-      if (effects.length > 0) {
-        report(
-          "unsupported-audio-effect",
-          trackOf(track),
-          { where: "track", count: effects.length },
-          part,
-        );
-      }
       const properties = track.properties ?? {};
       for (const [path, fallback] of Object.entries(AUDIO_PROPERTIES)) {
         if (!differs(properties[path], fallback)) continue;
@@ -286,13 +264,9 @@ export function unsupportedProblems(state: ProjectState): readonly ProjectProble
       report("unsupported-library", subject, { library, join: id }, part);
     }
 
-    const { mix } = timeline;
-    const buses = mix?.buses?.length ?? 0;
-    const master = mix?.master;
-    const mastered =
-      (master?.effects ?? []).some((effect) => effect.enabled !== false) ||
-      Object.keys(master?.properties ?? {}).length > 0;
-    if (buses > 0 || mastered) {
+    // Buses come later: the master, its effects and its limiter work.
+    const buses = timeline.mix?.buses?.length ?? 0;
+    if (buses > 0) {
       const anyHeard = tracks.some(heard);
       report(
         "unsupported-audio-effect",

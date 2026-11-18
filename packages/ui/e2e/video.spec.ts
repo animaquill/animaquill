@@ -5,6 +5,7 @@ import { createProject, writeProject, type SoundManifest } from "@animaquill/sch
 import type { Page } from "@playwright/test";
 import { ALL_FORMATS, BufferSource, EncodedPacketSink, Input } from "mediabunny";
 import { png } from "./property-helpers.ts";
+import { chooseLayout } from "./support.ts";
 import {
   canCapture,
   chooseFolder,
@@ -65,11 +66,16 @@ function projectFolder(
     readonly muted?: boolean;
     readonly clips: readonly Clip[];
     readonly joins?: readonly Record<string, unknown>[];
+    /** Effects of sound on the track, and its properties. */
+    readonly effects?: readonly Record<string, unknown>[];
+    readonly properties?: Record<string, unknown>;
   }[] = [],
   /** Sounds that code makes, by id: what is in their `sound.js`. */
   codes: Readonly<Record<string, string>> = {},
   /** Joins between the clips of the first track. */
   joins: readonly Record<string, unknown>[] = [],
+  /** The mix of the timeline: its master. */
+  mix?: Record<string, unknown>,
 ): string {
   const manifests = Object.keys(codes).map((id): [string, SoundManifest] => [
     id,
@@ -92,8 +98,14 @@ function projectFolder(
   }));
   (timeline.tracks[0] as { clips: unknown[] }).clips = [...clips];
   if (joins.length > 0) Object.assign(timeline.tracks[0] as object, { joins });
-  sound.forEach(({ muted, clips: heard, joins: crossing }, index) => {
-    const more = { ...(muted && { muted }), ...(crossing && { joins: crossing }) };
+  if (mix) Object.assign(timeline, { mix });
+  sound.forEach(({ muted, clips: heard, joins: crossing, effects, properties }, index) => {
+    const more = {
+      ...(muted && { muted }),
+      ...(crossing && { joins: crossing }),
+      ...(effects && { effects }),
+      ...(properties && { properties }),
+    };
     const track = { id: `sound${index}`, kind: "audio", clips: heard, ...more };
     if (index === 0) Object.assign(timeline.tracks[1] as object, { clips: heard, ...more });
     else timeline.tracks.push(track as never);
@@ -1025,6 +1037,140 @@ test.describe("the sound of a video", () => {
     // Nothing of the muted track, which is louder and higher.
     expect(decibels(before.rms)).toBeLessThan(-60);
     expect(decibels(after.rms)).toBeLessThan(-60);
+  });
+});
+
+test.describe("the effects of sound and the safe limiter in the sound of a video", () => {
+  /** A track of a tone of 1 kHz at `level`, as long as the timeline. */
+  const toneClip = (id: string): Clip => ({
+    id,
+    start: "0",
+    duration: "3",
+    source: { kind: "audio", media: { asset: "tone" } },
+  });
+  const toneAssets = {
+    tone: { name: "测试音", kind: "audio", path: "assets/tone.wav", storage: "git" },
+  };
+  /** The level of a channel of the export from 1 to 2 s, in dBFS of a sine's RMS. */
+  const levelOf = async (page: Page) => {
+    const file = (await savedFile(page)) as Buffer;
+    const sound = await soundOf(page, file);
+    if (!sound) throw new Error("No sound");
+    const { rms } = measure(sound.samples, sound.rate, 1, 2);
+    const peak = sound.samples.reduce((most, value) => Math.max(most, Math.abs(value)), 0);
+    return { rms: decibels(rms * Math.SQRT2), peak: decibels(peak) };
+  };
+  /** Exports again, the `count`th time: the file of the one before goes first. */
+  const exportAgain = async (page: Page, count: number) => {
+    await page.evaluate(async () => {
+      const root = await navigator.storage.getDirectory();
+      await root.removeEntry("chosen-video").catch(() => {});
+    });
+    await startExport(page);
+    await expect(page.getByRole("status").getByText("已导出“")).toHaveCount(count, {
+      timeout: 60_000,
+    });
+  };
+
+  test("keeps an old project that would clip under −1 dBTP, where it was over", async ({
+    page,
+  }) => {
+    test.setTimeout(120_000);
+    // Two tones of 0.9 at once: 1.8, which clipped before.
+    await open(
+      page,
+      projectFolder(
+        3,
+        [movingSquare(3)],
+        { "assets/tone.wav": tones([{ hz: 1000, seconds: 3 }], 0.9) },
+        toneAssets,
+        [{ clips: [toneClip("a")] }, { clips: [toneClip("b")] }],
+      ),
+    );
+    await startExport(page);
+    await exported(page);
+    const { rms, peak } = await levelOf(page);
+    console.log(
+      `two tones of 0.9 at once, limited: peak ${peak.toFixed(2)} dBFS, sine ${rms.toFixed(2)} dB`,
+    );
+    // The limiter keeps it at −1 dBTP; the codec rings a little around that.
+    expect(peak).toBeLessThan(-0.5);
+    expect(rms).toBeGreaterThan(-2);
+  });
+
+  test("takes 12 dB off 1 kHz with an equalizer", async ({ page }) => {
+    test.setTimeout(120_000);
+    const eq = { id: "fx_eq", type: "eq" };
+    await open(
+      page,
+      projectFolder(
+        3,
+        [movingSquare(3)],
+        { "assets/tone.wav": tones([{ hz: 1000, seconds: 3 }]) },
+        toneAssets,
+        [
+          {
+            clips: [toneClip("a")],
+            effects: [eq],
+            properties: { "effect.fx_eq.mid2.gain": -12, "effect.fx_eq.mid2.freq": 1000 },
+          },
+        ],
+      ),
+    );
+    await startExport(page);
+    await exported(page);
+    const { rms } = await levelOf(page);
+    console.log(`1 kHz at 0.5 through −12 dB at 1 kHz: ${rms.toFixed(2)} dB`);
+    expect(Math.abs(rms - (decibels(0.5) - 12))).toBeLessThan(0.3);
+  });
+
+  test("sounds otherwise when the mixer puts the compressor before the equalizer, and undo brings it back", async ({
+    page,
+  }) => {
+    test.setTimeout(240_000);
+    const effects = [
+      { id: "fx_eq", type: "eq" },
+      { id: "fx_comp", type: "compressor" },
+    ];
+    await open(
+      page,
+      projectFolder(
+        3,
+        [movingSquare(3)],
+        { "assets/tone.wav": tones([{ hz: 1000, seconds: 3 }]) },
+        toneAssets,
+        [
+          {
+            clips: [toneClip("a")],
+            effects,
+            properties: {
+              "effect.fx_eq.mid2.gain": 12,
+              "effect.fx_comp.threshold": -20,
+              "effect.fx_comp.ratio": 8,
+              "effect.fx_comp.attack": 1,
+            },
+          },
+        ],
+      ),
+    );
+    await startExport(page);
+    await exported(page);
+    const first = (await levelOf(page)).rms;
+    await chooseLayout(page, "音频");
+    const slots = content(page, "mixer").getByRole("listitem");
+    await slots.nth(1).dragTo(slots.nth(0), { targetPosition: { x: 10, y: 2 } });
+    await expect(slots.nth(0)).toContainText("压缩");
+    await exportAgain(page, 2);
+    const moved = (await levelOf(page)).rms;
+    await page.keyboard.press("Control+z");
+    await expect(slots.nth(0)).toContainText("均衡");
+    await exportAgain(page, 3);
+    const back = (await levelOf(page)).rms;
+    console.log(
+      `equalizer then compressor ${first.toFixed(2)}, the other way ${moved.toFixed(2)}, undone ${back.toFixed(2)} dB`,
+    );
+    expect(Math.abs(first - moved)).toBeGreaterThan(3);
+    expect(Math.abs(first - back)).toBeLessThan(0.05);
   });
 });
 

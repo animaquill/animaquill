@@ -65,6 +65,8 @@ import {
   EffectUpdate,
   addEffect,
   checkEffectWrite,
+  checkListedWrite,
+  updateMaster,
   moveEffect,
   removeEffects,
   updateEffect,
@@ -133,6 +135,8 @@ import { StorageChange, setStorage } from "./places.ts";
 import {
   PropertyEdit,
   TRACK_PATHS,
+  MASTER_PATHS,
+  takesPath,
   applyEdit,
   editContextOf,
   retimedValue,
@@ -340,6 +344,11 @@ const rippled = ({ moved, joinsRemoved, sectionsRemoved }: Rippled) => ({
 const RemovedKeys = z.union([
   z.strictObject({ clip: Id, path: z.string(), times: z.array(z.string()).readonly() }),
   z.strictObject({ track: Id, path: z.string(), times: z.array(z.string()).readonly() }),
+  z.strictObject({
+    master: z.literal(true),
+    path: z.string(),
+    times: z.array(z.string()).readonly(),
+  }),
 ]);
 type RemovedKeys = z.output<typeof RemovedKeys>;
 const EditedProperties = z.strictObject({ removed: z.array(RemovedKeys).readonly() }).optional();
@@ -619,6 +628,10 @@ function editProperties(
     }
   }
   for (const owned of changes.values()) {
+    if ("master" in owned.owner) {
+      writeMasterProperties(draft, timeline, owned);
+      continue;
+    }
     for (const [path, value] of owned.values) {
       const saved = entryOf(owned.properties, path);
       if (deepEqual(saved, value)) continue;
@@ -635,7 +648,35 @@ function editProperties(
   return removed;
 }
 
-/** What the edits of a step come to for the properties of one clip or track. */
+/**
+ * The properties of the master after the edits of a step: the mix is one value, as in files, so it
+ * gets written whole, once.
+ */
+function writeMasterProperties(draft: Draft, timeline: string, owned: OwnedChanges): void {
+  const changed: Record<string, PropertyValue> = { ...owned.properties };
+  let any = false;
+  for (const [path, value] of owned.values) {
+    const saved = entryOf(owned.properties, path);
+    if (deepEqual(saved, value)) continue;
+    any = true;
+    if (value === undefined) delete changed[path];
+    else {
+      checkWrite(path, saved, value);
+      owned.check(path, value);
+      changed[path] = value;
+    }
+  }
+  if (!any) return;
+  updateMaster(draft, timeline, (master) => {
+    const { properties: _properties, ...rest } = master;
+    const sorted = Object.fromEntries(
+      Object.entries(changed).toSorted(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
+    );
+    return { ...rest, ...(Object.keys(sorted).length > 0 && { properties: sorted }) };
+  });
+}
+
+/** What the edits of a step come to for the properties of one clip, track or the master. */
 interface OwnedChanges {
   readonly owner: PropertyOwner;
   readonly where: readonly string[];
@@ -665,15 +706,40 @@ function ownedOf(
       properties: clip.properties,
       values: new Map(),
       context: (at) => editContextOf(draft.state, clip, at),
-      check: (at, value) => checkEffectWrite(clip, at, value),
+      check: (at, value) =>
+        checkEffectWrite(
+          clip,
+          at,
+          value,
+          entryOf(target.tracks, clip.track)?.kind === "audio" ? "sound" : "picture",
+        ),
     };
     changes.set(id, made);
+    return made;
+  }
+  if ("master" in owner) {
+    if (!takesPath(MASTER_PATHS, path)) {
+      return fail("wrong-target", { path, target: "master", takes: MASTER_PATHS });
+    }
+    const known = changes.get("master");
+    if (known) return known;
+    const master = target.mix?.master;
+    const effects = master?.effects ?? [];
+    const made: OwnedChanges = {
+      owner: { master: true },
+      where: [],
+      properties: master?.properties,
+      values: new Map(),
+      context: (at) => trackEditContextOf(draft.state, "master", at, effects),
+      check: (at, value) => checkListedWrite(effects, at, value, "sound"),
+    };
+    changes.set("master", made);
     return made;
   }
   const track = trackOf(target, owner.track);
   // Only what the mix does with a track: a picture has no volume, a track no transform.
   const sound = track.kind === "audio" ? track : undefined;
-  if (!sound || !TRACK_PATHS.includes(path)) {
+  if (!sound || !takesPath(TRACK_PATHS, path)) {
     return fail("wrong-target", {
       path,
       target: "track",
@@ -685,13 +751,14 @@ function ownedOf(
   const id = `track ${track.id}`;
   const known = changes.get(id);
   if (known) return known;
+  const effects = sound.effects ?? [];
   const made: OwnedChanges = {
     owner: { track: track.id },
     where: trackPath(timeline, track.id),
     properties: sound.properties,
     values: new Map(),
-    context: (at) => trackEditContextOf(draft.state, track.id, at),
-    check: () => {},
+    context: (at) => trackEditContextOf(draft.state, track.id, at, effects),
+    check: (at, value) => checkListedWrite(effects, at, value, "sound"),
   };
   changes.set(id, made);
   return made;
@@ -1694,33 +1761,45 @@ export const OPERATIONS = [
   }),
   define(
     "effect.add",
-    "给片段加一个效果，可以指定放在效果列表的哪里和参数的初始值。",
+    "给片段、音轨或主输出加一个效果，可以指定放在效果列表的哪里和参数的初始值。",
     EffectAdd,
     addEffect,
     {
       group: "effect",
       result: Made,
-      failures: ["not-found", "wrong-track", "invalid-value", "id-taken", "not-animatable"],
+      failures: [
+        "not-found",
+        "wrong-track",
+        "wrong-target",
+        "not-applicable",
+        "invalid-value",
+        "id-taken",
+        "not-animatable",
+      ],
     },
   ),
-  define("effect.remove", "去掉片段上的效果。", EffectRemove, removeEffects, {
+  define("effect.remove", "去掉片段、音轨或主输出上的效果。", EffectRemove, removeEffects, {
     group: "effect",
     result: Nothing,
-    failures: ["not-found"],
+    failures: ["not-found", "wrong-track"],
   }),
   define(
     "effect.move",
-    "调整效果在片段效果列表里的位置，先后顺序会影响结果。",
+    "调整效果在效果列表里的位置，先后顺序会影响结果。",
     EffectMove,
     moveEffect,
-    { group: "effect", result: Nothing, failures: ["not-found"] },
+    { group: "effect", result: Nothing, failures: ["not-found", "wrong-track"] },
   ),
   define(
     "effect.update",
-    "打开或关闭效果，或改它在片段里生效的开始和结束时间。",
+    "打开或关闭效果，或改片段上的效果生效的开始和结束时间。",
     EffectUpdate,
     updateEffect,
-    { group: "effect", result: Nothing, failures: ["not-found", "invalid-value"] },
+    {
+      group: "effect",
+      result: Nothing,
+      failures: ["not-found", "invalid-value", "wrong-track", "not-applicable"],
+    },
   ),
   define("join.update", "改衔接转场的类型、时长、对齐、速度曲线或参数。", JoinUpdate, updateJoin, {
     group: "transition",
@@ -2095,7 +2174,7 @@ export const OPERATIONS = [
   /** Everything people, tools and AI do to properties, in one step however much it is. */
   define(
     "property.edit",
-    "一步里批量改片段的属性和关键帧：写值、加删移关键帧、改插值、伸缩和反转关键帧的时间、整个设置或清除。",
+    "一步里批量改片段、音轨或主输出的属性和关键帧：写值、加删移关键帧、改插值、伸缩和反转关键帧的时间、整个设置或清除。",
     z.strictObject({ timeline: Id, edits: z.array(PropertyEdit).min(1) }),
     (draft, { timeline, edits }) => {
       const removed = editProperties(draft, timeline, edits);

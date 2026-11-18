@@ -1,4 +1,4 @@
-import { trackOfClip } from "../mixer/track-clip.ts";
+import { standsFor } from "../mixer/track-clip.ts";
 import type zhCN from "../i18n/zh-CN.json";
 import { keyEdit } from "../properties/inspect.ts";
 import type { PropertyWriter } from "../properties/writer.ts";
@@ -73,7 +73,7 @@ export function registerKeyframeActions(
     const last = properties.lastProperty;
     const { selection, track } = timeline.getSnapshot();
     // A selected track of sound is a clip of its own here, see `withTrackClip`.
-    const ofTrack = last && trackOfClip(last.clip);
+    const ofTrack = last && standsFor(last.clip);
     const selected =
       last !== undefined && (ofTrack === undefined ? selection.has(last.clip) : ofTrack === track);
     const box = selected ? keyframes.model?.boxes.get(last.clip) : undefined;

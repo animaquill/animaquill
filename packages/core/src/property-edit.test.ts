@@ -758,7 +758,7 @@ describe("the property.edit command", () => {
           target: "track",
           track: audio,
           kind: "audio",
-          takes: ["audio.volume", "audio.pan"],
+          takes: ["audio.volume", "audio.pan", "effect.*"],
         },
       });
       const picture = failure(

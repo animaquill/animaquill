@@ -183,11 +183,15 @@ export const FAILURE_TEXTS: Texts = {
   },
   "id-taken": ({ kind, id, by }) =>
     `The id ${id} is taken by a ${word(by)}${by === kind ? "" : ` (sections, tracks and clips of a timeline share their ids)`}. Without an id, a new one is made.`,
-  "wrong-track": ({ trackKind, holds, sourceKind }) =>
+  "wrong-track": ({ trackKind, holds, sourceKind, media }) =>
     holds === "clip"
       ? `${an(trackKind, true)} track cannot hold ${sourceKind ? `${an(sourceKind)} clip` : "this clip"}: ${trackFor(sourceKind)}`
       : holds === "effect"
-        ? `Only clips on video tracks can have effects so far, not on ${an(trackKind)} track.`
+        ? media === "sound"
+          ? `This is an effect of sound: it goes on clips on audio tracks, on audio tracks themselves (track) and on the master (master), not on a clip on ${an(trackKind)} track.`
+          : media === "picture"
+            ? `This is an effect of pictures: it goes on clips on video tracks, not on a clip on ${an(trackKind)} track; sound takes eq, compressor, limiter and reverb.`
+            : `${an(trackKind, true)} track takes no effects: only audio tracks (track) and clips on video and audio tracks have them.`
         : `${an(trackKind, true)} track cannot have joins; joins go between clips on video and audio tracks.`,
   overlap: ({ clips, moved }) =>
     moved
@@ -221,10 +225,14 @@ export const FAILURE_TEXTS: Texts = {
           ? `The join is too long: at most ${longest} seconds here.`
           : "There is no room for a join at this cut.",
   "not-animatable": ({ path }) => `${path} cannot have keys.`,
-  "wrong-target": ({ path, track, kind, takes }) =>
-    takes.length > 0
-      ? `Track ${track} has no ${path}: a track takes ${takes.join(" and ")}.`
-      : `Track ${track} has no ${path}: it is a ${kind} track, and only tracks of sound have properties (audio.volume and audio.pan).`,
+  "wrong-target": ({ path, target, track, kind, takes }) =>
+    target === "master"
+      ? `The master has no ${path}: it takes ${takes.join(", ")}.`
+      : takes.length > 0
+        ? `Track ${track ?? ""} has no ${path}: a track takes ${takes.join(", ")}.`
+        : `Track ${track ?? ""} has no ${path}: it is a ${kind ?? ""} track, and only tracks of sound have properties (audio.volume, audio.pan and effect.*).`,
+  "not-applicable": ({ field, target }) =>
+    `${field} does nothing on ${target === "master" ? "the master" : "a track"}: its effects work all along. Only effects of clips have start and end.`,
   "join-taken": ({ join }) => `This cut has a join already: ${join}. join.update changes it.`,
   "asset-in-use": ({ asset, by, file }) =>
     by === "code"

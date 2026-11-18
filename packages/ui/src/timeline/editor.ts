@@ -72,9 +72,12 @@ import {
   effectContext,
   effectDropAt,
   effectProblem,
+  mediaOfEffect,
   type EffectContext,
 } from "./effect-place.ts";
 import { sceneTemplate } from "./scene-template.ts";
+import { effectDrag } from "./effect-drag.ts";
+import { MASTER_CLIP, effectTargetOf, trackClipId, trackOfClip } from "../mixer/track-clip.ts";
 import { joinTroubleKey } from "./transition-names.ts";
 import { soundTemplate } from "./sound-template.ts";
 import type { TouchStart, TouchTarget } from "./touch.ts";
@@ -475,6 +478,7 @@ export interface TimelineSnapshot {
 /** A track of sound that is on a timeline, or undefined. */
 function soundTrackIn(model: TimelineModel | undefined, track: string | undefined) {
   if (track === undefined || !model) return undefined;
+  if (track === MASTER_CLIP) return track;
   const row = model.rows.find((one) => one.id === track);
   return row?.track.kind === "audio" && !row.gone ? track : undefined;
 }
@@ -680,6 +684,7 @@ export class TimelineEditor implements TouchTarget {
     | {
         readonly model: TimelineModel | undefined;
         readonly selection: ReadonlySet<string>;
+        readonly track: string | undefined;
         readonly context: EffectContext;
       }
     | undefined;
@@ -1420,7 +1425,8 @@ export class TimelineEditor implements TouchTarget {
 
   /**
    * Selects a track of sound instead of clips: the properties and the keyframes show its volume and
-   * pan, and the mixer its strip. Nothing for a track of pictures or captions.
+   * pan, and the mixer its strip. Nothing for a track of pictures or captions. `MASTER_CLIP` is the
+   * master, the same way.
    */
   selectTrack(track: string): void {
     if (soundTrackIn(this.model, track) === undefined) return;
@@ -3351,10 +3357,11 @@ export class TimelineEditor implements TouchTarget {
   /* Effects from the effects tab, see docs/design/resource-panels.md, section 4. */
 
   /** The clip that an effect dragged here would go on, or nothing where none can take it. */
-  effectDropAt(pointer: Pointer): ClipBox | undefined {
+  effectDropAt(pointer: Pointer, type = effectDrag.current()): ClipBox | undefined {
     const { model } = this;
     if (!model || pointer.y < RULER_HEIGHT || this.#pixelsPerSecond <= 0) return undefined;
-    return effectDropAt(rowAt(model, this.laneAt(pointer.y)), this.timeAt(pointer.x))?.box;
+    const media = type === undefined ? "picture" : mediaOfEffect(type);
+    return effectDropAt(rowAt(model, this.laneAt(pointer.y)), this.timeAt(pointer.x), media)?.box;
   }
 
   /**
@@ -3384,7 +3391,7 @@ export class TimelineEditor implements TouchTarget {
   /** Puts an effect last on the clip it was dropped on, in one step, and selects that clip. */
   dropEffect(pointer: Pointer, type: string): boolean {
     const { model } = this;
-    const box = model && this.effectDropAt(pointer);
+    const box = model && this.effectDropAt(pointer, type);
     this.showEffectDrop(undefined);
     if (!model || !box) return false;
     const { calls, added } = effectCalls(model, [box], type);
@@ -3426,6 +3433,20 @@ export class TimelineEditor implements TouchTarget {
   }
 
   /** Effects that clicks or drops put on clips last, by clip, and a number that tells two apart. */
+  /**
+   * Has the list of effects of a clip (or of a track or the master, see `withTrackClips`) go to
+   * one of them, which stands out for a moment, as a new one does: what a click on it in the mixer
+   * does.
+   */
+  showEffect(clip: string, effect: string): void {
+    this.#added = {
+      effects: new Map([[clip, effect]]),
+      at: (this.#added?.at ?? 0) + 1,
+      time: Date.now(),
+    };
+    this.#addedEmitter.emit();
+  }
+
   get lastAdded(): AddedEffects | undefined {
     return this.#added;
   }
@@ -3473,11 +3494,13 @@ export class TimelineEditor implements TouchTarget {
 
   /** What a click on an effect in the tab is about: the clips selected. */
   get effectContext(): EffectContext {
-    const { model, selection } = this.#snapshot;
+    const { model, selection, track } = this.#snapshot;
     const known = this.#effectContext;
-    if (known && known.model === model && known.selection === selection) return known.context;
-    const context = effectContext(model, selection);
-    this.#effectContext = { model, selection, context };
+    if (known && known.model === model && known.selection === selection && known.track === track) {
+      return known.context;
+    }
+    const context = effectContext(model, selection, track);
+    this.#effectContext = { model, selection, track, context };
     return context;
   }
 
@@ -3494,10 +3517,42 @@ export class TimelineEditor implements TouchTarget {
     const { model } = this;
     const context = this.effectContext;
     if (!model || effectProblem(context, type) !== undefined) return 0;
-    const { calls, added } = effectCalls(model, context.boxes, type);
+    const media = mediaOfEffect(type);
+    if (context.selected === 0 && context.track !== undefined) {
+      return this.attachEffectTo(context.track, type) ? 1 : 0;
+    }
+    const { calls, added } = effectCalls(model, context.boxes[media], type);
     if (!this.#run(calls)) return 0;
     this.#effectsAdded(added);
     return added.size;
+  }
+
+  /**
+   * Puts an effect of sound last (or at `index`) on a track of sound, or on the master with
+   * `MASTER_CLIP`, in one step: what a drop on the header of a track or on the mixer does. Says
+   * whether it went on.
+   */
+  attachEffectTo(track: string, type: string, index?: number): boolean {
+    const { model } = this;
+    if (!model || mediaOfEffect(type) !== "sound") return false;
+    const target = effectTargetOf(track === MASTER_CLIP ? MASTER_CLIP : trackClipId(track));
+    if ("track" in target) {
+      const row = model.rows.find((one) => one.id === target.track);
+      if (row?.track.kind !== "audio" || row.track.locked === true || row.gone) return false;
+    }
+    const id = newId("fx");
+    const params = {
+      timeline: model.id,
+      ...target,
+      type,
+      id,
+      ...(index === undefined ? {} : { index }),
+    };
+    if (!this.#run([{ type: "effect.add", params }])) return false;
+    const clip = track === MASTER_CLIP ? MASTER_CLIP : trackClipId(track);
+    this.selectTrack(track);
+    this.#effectsAdded(new Map([[clip, id]]));
+    return true;
   }
 
   /**
@@ -3522,7 +3577,7 @@ export class TimelineEditor implements TouchTarget {
     if (next.start === current.start && next.end === current.end) return false;
     const params = {
       timeline: model.id,
-      clip,
+      ...effectTargetOf(clip),
       effect,
       start: next.start ?? null,
       end: next.end ?? null,
@@ -3530,8 +3585,17 @@ export class TimelineEditor implements TouchTarget {
     return this.#run([{ type: "effect.update", params }]);
   }
 
-  /** Whether the effects of a clip can change: it is there, and its track is not locked. */
+  /**
+   * Whether the effects of a clip can change: it is there, and its track is not locked. The clip of
+   * a track of sound, or of the master, stands for it (see `withTrackClips`).
+   */
   canChangeEffects(clip: string): boolean {
+    if (clip === MASTER_CLIP) return this.model !== undefined;
+    const track = trackOfClip(clip);
+    if (track !== undefined) {
+      const row = this.model?.rows.find((one) => one.id === track);
+      return row?.track.kind === "audio" && row.track.locked !== true && !row.gone;
+    }
     return this.#changeable([clip], this.model).length > 0;
   }
 
@@ -3539,7 +3603,7 @@ export class TimelineEditor implements TouchTarget {
   removeEffect(clip: string, effect: string): boolean {
     const { model } = this;
     if (!model || !this.canChangeEffects(clip)) return false;
-    const params = { timeline: model.id, clip, effects: [effect] };
+    const params = { timeline: model.id, ...effectTargetOf(clip), effects: [effect] };
     return this.#run([{ type: "effect.remove", params }]);
   }
 
@@ -3547,7 +3611,12 @@ export class TimelineEditor implements TouchTarget {
   moveEffect(clip: string, effect: string, index: number): boolean {
     const { model } = this;
     if (!model || !this.canChangeEffects(clip)) return false;
-    const params = { timeline: model.id, clip, effect, index: Math.max(index, 0) };
+    const params = {
+      timeline: model.id,
+      ...effectTargetOf(clip),
+      effect,
+      index: Math.max(index, 0),
+    };
     return this.#run([{ type: "effect.move", params }]);
   }
 
@@ -3555,7 +3624,7 @@ export class TimelineEditor implements TouchTarget {
   setEffectEnabled(clip: string, effect: string, enabled: boolean): boolean {
     const { model } = this;
     if (!model || !this.canChangeEffects(clip)) return false;
-    const params = { timeline: model.id, clip, effect, enabled };
+    const params = { timeline: model.id, ...effectTargetOf(clip), effect, enabled };
     return this.#run([{ type: "effect.update", params }]);
   }
 

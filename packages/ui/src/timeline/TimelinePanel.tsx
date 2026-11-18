@@ -58,6 +58,7 @@ import { effectName } from "../resources/effects.ts";
 import { EFFECT_NAMES_SEPARATOR, effectBandOf } from "./effect-band.ts";
 import { mediaDrag } from "./media-drag.ts";
 import { EFFECT_DRAG_TYPE, effectDrag } from "./effect-drag.ts";
+import { mediaOfEffect } from "./effect-place.ts";
 import { TRANSITION_DRAG_TYPE, transitionDrag } from "./transition-drag.ts";
 import { transitionName } from "./transition-names.ts";
 import { pointerOf, useStage } from "./stage.ts";
@@ -358,6 +359,29 @@ function TrackHeader({
   const OnIcon = sound ? Volume2 : Eye;
   const OffIcon = off ? (sound ? VolumeX : EyeOff) : OnIcon;
   const { track: selectedTrack } = useSyncExternalStore(editor.subscribe, editor.getSnapshot);
+  // An effect of sound dragged here goes on the whole track.
+  const [effectOver, setEffectOver] = useState(false);
+  const takesEffect = () => {
+    const type = effectDrag.current();
+    return (
+      sound &&
+      !row.gone &&
+      track.locked !== true &&
+      type !== undefined &&
+      mediaOfEffect(type) === "sound"
+    );
+  };
+  const onEffectOver = (event: DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes(EFFECT_DRAG_TYPE)) return;
+    event.stopPropagation();
+    if (!takesEffect()) {
+      event.dataTransfer.dropEffect = "none";
+      return;
+    }
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setEffectOver(true);
+  };
 
   const laneOf = (event: PointerEvent<HTMLDivElement>) =>
     event.clientY - reorder.current!.listTop + editor.scrollY;
@@ -434,6 +458,20 @@ function TrackHeader({
       className={styles.header}
       style={{ height: row.height }}
       data-selected={(sound && selectedTrack === row.id) || undefined}
+      data-effect-drop={effectOver || undefined}
+      onDragEnter={onEffectOver}
+      onDragOver={onEffectOver}
+      onDragLeave={() => setEffectOver(false)}
+      onDrop={(event) => {
+        const type = effectDrag.current();
+        setEffectOver(false);
+        if (!event.dataTransfer.types.includes(EFFECT_DRAG_TYPE) || type === undefined) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const takes = takesEffect();
+        effectDrag.end();
+        if (takes) editor.attachEffectTo(row.id, type);
+      }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}

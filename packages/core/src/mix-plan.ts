@@ -1,3 +1,4 @@
+import { BUILT_IN_SOUND_EFFECTS } from "@animaquill/schema/effects";
 import { BUILT_IN_PROPERTIES } from "@animaquill/schema/properties";
 import { numberAt, type Channel } from "./curve.ts";
 import type { SoundLayer } from "./render-plan.ts";
@@ -23,6 +24,46 @@ export interface MixSound extends SoundLayer {
   /** Where it sits between left (−1) and right (1), on the clock of the clip. Without, the middle. */
   readonly pan?: Channel;
   readonly track: string;
+  /**
+   * Its effects in the order they work, on the sound of its file before its transitions: those that
+   * are on and that this editor has. Their keys are on the clock of the clip. Without, none.
+   */
+  readonly effects?: readonly MixEffect[];
+}
+
+/**
+ * An effect of sound as the mix engine runs it (see `BUILT_IN_SOUND_EFFECTS`): every parameter, a
+ * number (switches are 0 or 1, choices their number), still or with keys. A parameter with keys is
+ * read every `PARAMETER_STEP` samples.
+ */
+export interface MixEffect {
+  /** Its id where it is, which is how the engine keeps its memory while it gets changed. */
+  readonly id: string;
+  readonly type: string;
+  readonly params: Readonly<Record<string, Channel>>;
+  /**
+   * Only on clips: when it works, in seconds on the timeline, from `from` up to `to`. Outside it
+   * the sound goes through as it is; inside it starts from nothing at `from`.
+   */
+  readonly from?: number;
+  readonly to?: number;
+}
+
+/**
+ * Effects with keys take a value every this many samples of the mix, from sample 0 of the timeline
+ * on: the value at the moment of sample 32·k holds for samples 32·k up to 32·k + 31.
+ */
+export const PARAMETER_STEP = 32;
+
+/** The master of a mix: after all tracks are added up. */
+export interface MixMaster {
+  readonly effects?: readonly MixEffect[];
+  /** From a volume that stays the same. With `volume` it is that instead. */
+  readonly gain: number;
+  /** Its volume with keys, on the time of the timeline. */
+  readonly volume?: Channel;
+  /** The safe limiter at its end, with its ceiling in dBTP. Without, it is off. */
+  readonly limit?: { readonly ceiling: number };
 }
 
 /** A track of sound in a mix, muted or not: what mutes it or soloes it changes on the spot. */
@@ -34,6 +75,8 @@ export interface MixTrack {
   readonly volume?: Channel;
   /** Its pan, on the timeline's time. Without, the middle. */
   readonly pan?: Channel;
+  /** Its effects, before its volume, on the timeline's time. Without, none. */
+  readonly effects?: readonly MixEffect[];
   readonly muted: boolean;
   readonly solo: boolean;
 }
@@ -46,6 +89,8 @@ export interface MixTrack {
 export interface MixPlan {
   readonly sounds: readonly MixSound[];
   readonly tracks: readonly MixTrack[];
+  /** Without, the tracks add up and that is it: no effects, no volume and no limiter. */
+  readonly master?: MixMaster;
 }
 
 /** The tracks of a mix that are heard: with any soloed, those, otherwise all that are not muted. */
@@ -146,3 +191,41 @@ export function stereoPan(p: number, out: Float64Array): void {
     out[3] = 1;
   }
 }
+
+/**
+ * The value of a parameter of an effect at a reading of its clock, within the range that the effect
+ * gives it, whatever keys go on to.
+ */
+export function effectParamAt(effect: MixEffect, name: string, clock: number): number {
+  const channel = effect.params[name];
+  const spec = BUILT_IN_SOUND_EFFECTS[effect.type]?.properties.find(({ path }) => path === name);
+  const preset = spec?.default;
+  const fallback =
+    typeof preset === "number"
+      ? preset
+      : typeof preset === "string"
+        ? Number(preset) || 0
+        : preset === true
+          ? 1
+          : 0;
+  if (!channel) return fallback;
+  const value =
+    channel.kind === "still" ? (channel.value as number) : numberAt(channel, clock, fallback);
+  if (!Number.isFinite(value)) return fallback;
+  const min = spec?.min ?? -Infinity;
+  const max = spec?.max ?? Infinity;
+  return value < min ? min : value > max ? max : value;
+}
+
+/** Whether a parameter of an effect has keys, so that it gets read again as the mix goes. */
+export const effectParamMoves = (effect: MixEffect, name: string): boolean =>
+  effect.params[name]?.kind === "curve";
+
+/** The range a parameter of a sound effect takes, from the effect's description. */
+export function effectParamRange(type: string, name: string): readonly [number, number] {
+  const spec = BUILT_IN_SOUND_EFFECTS[type]?.properties.find(({ path }) => path === name);
+  return [spec?.min ?? 0, spec?.max ?? 0];
+}
+
+/** The effects of sound there are, see `@animaquill/schema/effects`. */
+export { BUILT_IN_SOUND_EFFECTS };

@@ -1,4 +1,4 @@
-import { CLIP_SOUND, type PropertySpec } from "@animaquill/schema";
+import { CLIP_SOUND, MASTER_SOUND, type PropertySpec } from "@animaquill/schema";
 import {
   useEffect,
   useLayoutEffect,
@@ -31,9 +31,15 @@ import {
   stuckPan,
   volumeOfFader,
 } from "./scale.ts";
-import { trackClipId, withTrackClips } from "./track-clip.ts";
+import { EffectSlots } from "./EffectSlots.tsx";
+import { MASTER_CLIP, trackClipId, withTrackClips } from "./track-clip.ts";
 
 const [VOLUME, PAN] = CLIP_SOUND.properties as [PropertySpec, PropertySpec];
+const [, LIMIT_ON, LIMIT_CEILING] = MASTER_SOUND.properties as [
+  PropertySpec,
+  PropertySpec,
+  PropertySpec,
+];
 /**
  * The marks along faders and meters, in dB: full scale, where green and yellow end, and the
  * bottom. Faint and without numbers, so that they take no room.
@@ -489,6 +495,13 @@ function Strip({ row, rows, painter, selected }: StripProps) {
       data-selected={selected || undefined}
     >
       <StripName row={row} name={name} selected={selected} />
+      <EffectSlots
+        clip={clip}
+        target={row.id}
+        name={name}
+        effects={track.effects ?? []}
+        readOnly={track.locked === true}
+      />
       <Knob
         label={t("mixer.pan", { name })}
         pan={panValue}
@@ -592,18 +605,149 @@ function MasterReadout({ painter }: { painter: MeterPainter }) {
   );
 }
 
-/** The master: both sides metered, its loudness and true peak. */
-function MasterStrip({ painter }: { painter: MeterPainter }) {
+/** What is in somebody's hands, and how to write it, for the volume of a track or the master. */
+function useWrites(rows: PropertyRows, clip: string) {
+  const { properties } = useWorkbench();
+  const edit = (spec: PropertySpec, value: number | boolean) => {
+    const now = rows.inspect(clip, spec);
+    return now && now.blocked === undefined ? writeEdit(clip, now.row, now.time, value) : undefined;
+  };
+  return {
+    preview: (spec: PropertySpec) => (value: number) => {
+      properties.noteProperty(clip, spec);
+      const one = edit(spec, value);
+      if (one) properties.preview([one]);
+    },
+    commit: (spec: PropertySpec) => (value: number | boolean) => {
+      const one = edit(spec, value);
+      if (one) properties.commit([one]);
+      else properties.cancel();
+    },
+  };
+}
+
+/**
+ * The safe limiter at the end of the master: always the last slot, which does not move. A click
+ * shows it in the properties tab, the dot turns it on and off.
+ */
+function LimiterSlot({ rows }: { rows: PropertyRows }) {
+  const { timeline, layout } = useWorkbench();
+  const { t } = useTranslation();
+  const on = useTrackProperty(rows, MASTER_CLIP, LIMIT_ON);
+  const ceiling = useTrackProperty(rows, MASTER_CLIP, LIMIT_CEILING);
+  const { commit } = useWrites(rows, MASTER_CLIP);
+  if (!on || !ceiling) return null;
+  const active = on.row.value !== false;
+  const level = typeof ceiling.row.value === "number" ? ceiling.row.value : -1;
+  const label = t("mixer.limit");
+  return (
+    <div className={styles.slot} data-fixed="" data-off={active ? undefined : true}>
+      <button
+        type="button"
+        className={styles.slotName}
+        title={label}
+        onClick={() => {
+          timeline.selectTrack(MASTER_CLIP);
+          layout.openPanel("properties");
+        }}
+      >
+        {label} {active ? level.toFixed(1).replace("-", "\u2212") : t("mixer.limitOff")}
+      </button>
+      <button
+        type="button"
+        className={styles.slotDot}
+        aria-pressed={active}
+        aria-label={t("mixer.effectOn", { name: label })}
+        title={t("mixer.effectOn", { name: label })}
+        onClick={() => commit(LIMIT_ON)(!active)}
+      />
+    </div>
+  );
+}
+
+/**
+ * The master: its effects and safe limiter, its volume, both sides metered, its loudness and true
+ * peak. A click on its name shows it in the properties tab.
+ */
+function MasterStrip({
+  painter,
+  rows,
+  selected,
+}: {
+  painter: MeterPainter;
+  rows: PropertyRows;
+  selected: boolean;
+}) {
+  const { timeline } = useWorkbench();
+  const { properties } = useWorkbench();
   const { t } = useTranslation();
   const name = t("mixer.master");
+  const volume = useTrackProperty(rows, MASTER_CLIP, VOLUME);
+  const { preview, commit } = useWrites(rows, MASTER_CLIP);
+  const [moving, setMoving] = useState<number>();
+  const { model } = useSyncExternalStore(timeline.subscribe, timeline.getSnapshot);
+  const effects = model?.state.mix?.master?.effects ?? [];
+  const decibels = typeof volume?.row.value === "number" ? volume.row.value : 0;
+  const readOnly = volume?.blocked !== undefined;
   return (
-    <div className={styles.master} role="group" aria-label={name}>
-      <div className={styles.masterName}>{name}</div>
+    <div
+      className={styles.master}
+      role="group"
+      aria-label={name}
+      data-selected={selected || undefined}
+    >
+      <button
+        type="button"
+        className={styles.masterName}
+        aria-pressed={selected}
+        onClick={() => timeline.selectTrack(MASTER_CLIP)}
+      >
+        {name}
+      </button>
+      <EffectSlots
+        clip={MASTER_CLIP}
+        target={MASTER_CLIP}
+        name={name}
+        effects={effects}
+        readOnly={false}
+        last={<LimiterSlot rows={rows} />}
+      />
       <div className={styles.masterBody}>
-        <div className={styles.masterMeters}>
-          <Meter id={MASTER_LEFT} label={t("mixer.left", { name })} painter={painter} />
-          <Meter id={MASTER_RIGHT} label={t("mixer.right", { name })} painter={painter} />
+        <div className={styles.faderArea}>
+          {volume && (
+            <Fader
+              label={t("mixer.volume", { name })}
+              decibels={moving ?? decibels}
+              readOnly={readOnly}
+              animated={volume.row.animated}
+              onMove={(value) => {
+                setMoving(value);
+                preview(VOLUME)(value);
+              }}
+              onLetGo={(value) => {
+                setMoving(undefined);
+                commit(VOLUME)(value);
+              }}
+              onCancel={() => {
+                setMoving(undefined);
+                properties.cancel();
+              }}
+              onReset={() => commit(VOLUME)(0)}
+            />
+          )}
+          <div className={styles.masterMeters}>
+            <Meter id={MASTER_LEFT} label={t("mixer.left", { name })} painter={painter} />
+            <Meter id={MASTER_RIGHT} label={t("mixer.right", { name })} painter={painter} />
+          </div>
         </div>
+        {volume && (
+          <VolumeBox
+            label={t("mixer.volumeNumber", { name })}
+            decibels={moving ?? decibels}
+            readOnly={readOnly}
+            onCommit={commit(VOLUME)}
+          />
+        )}
         <MasterReadout painter={painter} />
       </div>
     </div>
@@ -658,7 +802,7 @@ export function MixerPanel() {
           />
         ))}
       </div>
-      <MasterStrip painter={painter} />
+      <MasterStrip painter={painter} rows={rows} selected={selected === MASTER_CLIP} />
     </div>
   );
 }

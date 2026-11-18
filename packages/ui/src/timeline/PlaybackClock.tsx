@@ -69,7 +69,7 @@ export function PlaybackClock() {
       // What people are trying out is what they want to hear.
       const tried = triedApart(properties.getPreviewed());
       const next = planChanged
-        ? buildMixPlan(store.getState(), model.id, tried.clips, tried.tracks)
+        ? buildMixPlan(store.getState(), model.id, tried.clips, tried.tracks, tried.master)
         : plan;
       planChanged = false;
       if (next && plan && playbackStart === start && PlaybackAudio.onTheSpot(next, plan)) {

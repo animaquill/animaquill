@@ -96,6 +96,8 @@ export function resample(
   count: number,
   left: Float64Array,
   right: Float64Array,
+  /** Where sample `offset` goes in `left` and `right`, from `offset`. */
+  shift = 0,
 ): void {
   const { width, table } = kernel;
   const row = 2 * (width + 1);
@@ -128,7 +130,7 @@ export function resample(
         sumRight += (inputRight[base + tap] as number) * weight;
         at2 += 2;
       }
-      right[index] = sumRight;
+      right[index + shift] = sumRight;
     } else {
       for (let tap = 0; tap < width; tap += 1) {
         const weight = (table[at1] as number) + beforeShare * (table[at1 + 1] as number);
@@ -141,7 +143,7 @@ export function resample(
         at2 += 2;
       }
     }
-    left[index] = sumLeft;
+    left[index + shift] = sumLeft;
   }
 }
 

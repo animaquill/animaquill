@@ -22,6 +22,14 @@ import { effectName } from "../resources/effects.ts";
 import { formatTimecode, frameContaining, frameTime, parseTimecode } from "../timeline/frames.ts";
 import { RowButton } from "./controls.tsx";
 import styles from "./PropertiesPanel.module.css";
+import type { PropertyRows } from "./rows.ts";
+import {
+  CompressorGraph,
+  EqGraph,
+  LimiterView,
+  ReverbPresets,
+} from "./sound-effects/SoundEffectViews.tsx";
+import { standsFor } from "../mixer/track-clip.ts";
 
 /** What a drag of an effect within its list carries: its id. */
 const ORDER_DRAG_TYPE = "application/x-animaquill-effect-order";
@@ -33,7 +41,17 @@ export interface EffectsSectionProps {
   readonly readOnly: boolean;
   /** The rows of what each effect takes, by its object: those of any other property. */
   readonly rows: ReadonlyMap<string, ReactNode>;
+  /** What the rows read, for the graphs of effects of sound. */
+  readonly propertyRows: PropertyRows;
 }
+
+/** What an effect of sound shows above its rows: a graph to drag, or rooms to start from. */
+const VIEWS = {
+  eq: EqGraph,
+  compressor: CompressorGraph,
+  limiter: LimiterView,
+  reverb: ReverbPresets,
+} as const;
 
 /** Where a drop goes in the list without the effect that moves: before the one it is over, or after. */
 function dropIndex(event: DragEvent<HTMLElement>, index: number): number {
@@ -160,7 +178,13 @@ function useFresh(clip: string): string | undefined {
  * What each takes has the rows of any property, with keys. One that just went on the clip comes into
  * view and stands out for a moment. See docs/design/resource-panels.md, sections 4 and 7.
  */
-export function EffectsSection({ clip, objects, readOnly, rows }: EffectsSectionProps) {
+export function EffectsSection({
+  clip,
+  objects,
+  readOnly,
+  rows,
+  propertyRows,
+}: EffectsSectionProps) {
   const { timeline } = useWorkbench();
   const { t } = useTranslation();
   const list = effectsOf(clip);
@@ -276,7 +300,23 @@ export function EffectsSection({ clip, objects, readOnly, rows }: EffectsSection
                   <Trash2 size={12} />
                 </RowButton>
               </div>
-              <RangeRow clip={clip} effect={effect} readOnly={readOnly} />
+              {/* A track and the master have their effects work all along. */}
+              {standsFor(clip.id) === undefined && (
+                <RangeRow clip={clip} effect={effect} readOnly={readOnly} />
+              )}
+              {known && Object.hasOwn(VIEWS, type)
+                ? (() => {
+                    const View = VIEWS[type as keyof typeof VIEWS];
+                    return (
+                      <View
+                        rows={propertyRows}
+                        clip={clip.id}
+                        object={object}
+                        readOnly={readOnly}
+                      />
+                    );
+                  })()
+                : null}
               {known ? (
                 rows.get(object.id)
               ) : (
