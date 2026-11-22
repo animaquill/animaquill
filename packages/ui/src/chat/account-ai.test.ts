@@ -288,3 +288,83 @@ describe("the settings store over the online mode's, as people set up a service"
     });
   });
 });
+
+describe("what changed of the online mode's, as the page goes", () => {
+  test("a key goes to the backend at once, without waiting", async () => {
+    const backend = backendOf();
+    const one = pageOf(backend);
+    await one.ai.start();
+    await one.ai.keys.write("s1", { key: "sk-typed-just-now" });
+    // No timer ran: it went as it was written.
+    expect(backend.keys.s1).toMatchObject({ secret: { key: "sk-typed-just-now" } });
+  });
+
+  test("settings changed a moment before go as the page goes", async () => {
+    const backend = backendOf();
+    const one = pageOf(backend);
+    await one.ai.start();
+    await one.ai.settings.save("ai", settingsWith(service("s1", "刚改的")));
+    expect(one.ai.hasUnsent).toBe(true);
+    one.ai.close();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(backend.entries["service:s1"]).toMatchObject({ value: { name: "刚改的" } });
+  });
+
+  test("what could not go makes them read-only at once, and people are told once", async () => {
+    const backend = backendOf();
+    let told = 0;
+    const timers: (() => void)[] = [];
+    const ai = new AccountAi({
+      access: backend.access,
+      account: "u1",
+      browser: memorySettings(),
+      channel: () => undefined,
+      unsent: () => (told += 1),
+      setTimer: (run) => {
+        timers.push(run);
+        return () => {};
+      },
+    });
+    await ai.start();
+    backend.state.down = true;
+    await ai.keys.write("s1", { key: "sk-x" }).catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(ai.writable).toBe(false);
+    expect(ai.hasUnsent).toBe(true);
+    await ai.flush();
+    expect(told).toBe(1);
+    // Nothing to give: flushing does not make it writable again.
+    backend.state.down = false;
+    expect(ai.writable).toBe(false);
+    await ai.pull();
+    await ai.flush();
+    expect(ai.hasUnsent).toBe(false);
+    expect(ai.writable).toBe(true);
+  });
+
+  test("what the browser keeps has no address or headers of a service or a model", async () => {
+    const backend = backendOf();
+    backend.entries["service:s1"] = {
+      at: 1,
+      value: {
+        id: "s1",
+        kind: "openai-compatible",
+        name: "S",
+        enabled: [],
+        baseUrl: "https://proxy.example/v1?token=SECRET-IN-URL",
+        headers: { "x-key": "SECRET-IN-SERVICE-HEADER" },
+      },
+    };
+    backend.entries["model:s1/m"] = {
+      at: 1,
+      value: { id: "m", headers: { Authorization: "Bearer SECRET-IN-HEADER" } },
+    };
+    backend.state.revision = 1;
+    const one = pageOf(backend);
+    await one.ai.start();
+    const cached = JSON.stringify(one.browser.kept.get(CACHE_KEY));
+    expect(cached).toContain('"name":"S"');
+    for (const secret of ["SECRET-IN-URL", "SECRET-IN-SERVICE-HEADER", "SECRET-IN-HEADER"])
+      expect(cached).not.toContain(secret);
+  });
+});

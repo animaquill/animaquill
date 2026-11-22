@@ -524,6 +524,7 @@ export class Workbench {
             browser: host.settings,
             signedOut: () => void host.account?.refresh(),
             tooLarge: () => this.notifications.push(t("ai.tooLarge")),
+            unsent: () => this.notifications.push(t("ai.unsent"), { stays: true }),
           })
         : undefined;
     const aiSettings = this.accountAi?.settings ?? host.settings;
@@ -1967,7 +1968,14 @@ export class Workbench {
   async load(): Promise<void> {
     // The AI settings of the online mode wait for the backend, as the page starts.
     void this.accountAi?.start();
+    if (this.#host.clearBlocked)
+      this.notifications.push(this.t("settings.clear.blocked"), { stays: true });
     this.#flushChats();
+    // Online they come from the backend, which may be slow to answer, or not answer: the project
+    // opens meanwhile, and they come when they come.
+    const ai = Promise.all([this.ai.load(), this.packs.load()]);
+    if (this.accountAi)
+      ai.catch((error: unknown) => console.warn("The AI settings did not load", error));
     await Promise.all([
       this.appearance.load(),
       this.layout.load(),
@@ -1982,8 +1990,7 @@ export class Workbench {
       this.proxyOffer.load(),
       this.agentsFile.load(),
       this.trials.load(),
-      this.ai.load(),
-      this.packs.load(),
+      ...(this.accountAi ? [] : [ai]),
     ]);
     this.tools.start();
     // An address of a project folder opens as one once the page is there, see `resume`; and so
@@ -2217,11 +2224,13 @@ export class Workbench {
         const projects = await cloud.unsavedHere();
         const chats = (await this.chatSync?.waiting()) ?? 0;
         const ai = this.accountAi?.getSnapshot().pending ?? 0;
+        const images = this.chatSync?.heldCount ?? 0;
         return [
           ...projects.map(({ name, said }) =>
             t("settings.clear.project", { name, said, interpolation: { escapeValue: false } }),
           ),
           ...(chats > 0 ? [t("settings.clear.chats", { count: chats })] : []),
+          ...(images > 0 ? [t("settings.clear.images", { count: images })] : []),
           ...(ai > 0 ? [t("settings.clear.ai")] : []),
         ];
       } catch (error) {
@@ -2298,7 +2307,23 @@ export class Workbench {
     try {
       // What changed here goes to the backend first, where it can.
       await this.accountAi?.flush();
-      await this.chatSync?.flush();
+      const chats = this.chatSync;
+      if (chats) {
+        await chats.flush();
+        // Conversations that wait here for the backend go with signing out: nothing of the account
+        // stays in this browser but the copies of projects. People say so first.
+        const waiting = await chats.waiting();
+        if (waiting > 0) {
+          const go = await this.dialogs.confirm({
+            title: t("account.signOutWaitingTitle"),
+            message: t("account.signOutWaiting", { count: waiting }),
+            confirm: t("account.signOut"),
+            danger: true,
+          });
+          if (!go) return;
+        }
+        await chats.dropWaiting();
+      }
       await account.signOut();
       this.notifications.push(t("account.signedOut"));
     } catch (error) {
@@ -3287,13 +3312,9 @@ export class Workbench {
       noted = key;
       if (key === undefined) return;
       void (async () => {
-        const marks =
-          this.mode === "online"
-            ? await this.#platform?.links
-                .get(key)
-                .then((link) => link && cloudMarksKey(link.project))
-                .catch(() => undefined)
-            : key;
+        // Online, by the project on the backend; a project that is not one, by what it is kept by.
+        const link = await this.#platform?.links.get(key).catch(() => undefined);
+        const marks = link ? cloudMarksKey(link.project) : key;
         if (marks !== undefined) await this.organizer.noteOpened(marks);
       })();
     };

@@ -648,7 +648,7 @@ export class ChatSession {
       } catch (error) {
         if (error instanceof ChatNewer) {
           // Another device wrote it meanwhile: theirs is the conversation now, and what this one
-          // had is a conversation of its own (see `CloudChats`), which the list shows.
+          // had is a conversation of its own (see `AccountChats`), which the list shows.
           if (this.#project?.key === project && this.#snapshot.id === id) {
             clearTimeout(this.#saving);
             this.#pending = undefined;

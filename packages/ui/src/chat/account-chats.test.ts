@@ -149,4 +149,15 @@ describe("conversations of the online mode", () => {
     // It stays, as the backend could not be told.
     expect(await device.chats.waiting()).toBe(1);
   });
+
+  test("what waits here goes as people sign out, and says how many", async () => {
+    const backend = backendOf();
+    const device = deviceOf(backend);
+    backend.state.down = true;
+    await device.chats.save(chatOf("c1", "没存上的"));
+    expect(await device.chats.waiting()).toBe(1);
+    expect(await device.chats.dropWaiting()).toBe(1);
+    expect(await device.chats.waiting()).toBe(0);
+    expect(await device.outbox.list("k1")).toEqual([]);
+  });
 });

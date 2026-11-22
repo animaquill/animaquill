@@ -252,6 +252,29 @@ describe("the organizer of the online mode, on the backend", () => {
     await expect(other.read()).rejects.toThrow();
   });
 
+  it("takes a backend that answers badly, or not in time, for one that cannot be reached", async () => {
+    const backend = backendOf();
+    const one = platformOrganizer({
+      access: {
+        read: backend.access.read,
+        change: async () => {
+          throw new Error("The platform answered 502");
+        },
+      },
+      account: "u1",
+      watch: false,
+    });
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      await expect(one.mark("cloud:p1", { starredAt: 1, at: 1 })).rejects.toBeInstanceOf(
+        OrganizerOffline,
+      );
+    } finally {
+      console.warn = warn;
+    }
+  });
+
   it("tells the other windows of this browser what one changed", async () => {
     const backend = backendOf();
     const channel = channels();

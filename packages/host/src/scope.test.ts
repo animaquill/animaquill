@@ -98,7 +98,7 @@ describe("what the browser keeps, by mode and account", () => {
         () => storage,
         () => memoryStorage(),
       ),
-    ).toBe(false);
+    ).toBe("none");
     resetStorageScope();
     setStorageScope(ada);
     clearOnNextStart(() => storage);
@@ -110,7 +110,7 @@ describe("what the browser keeps, by mode and account", () => {
         () => storage,
         () => memoryStorage(),
       ),
-    ).toBe(false);
+    ).toBe("none");
     expect(
       await clearIfAsked(
         ada,
@@ -118,7 +118,7 @@ describe("what the browser keeps, by mode and account", () => {
         () => storage,
         () => memoryStorage(),
       ),
-    ).toBe(true);
+    ).toBe("cleared");
     const names = (await factory.databases()).map(({ name }) => name ?? "");
     expect(names.filter((name) => name.startsWith(ada))).toEqual([]);
     expect(await pageIn(ada, factory, storage).settings.load("palette")).toBeUndefined();
@@ -134,7 +134,46 @@ describe("what the browser keeps, by mode and account", () => {
         () => storage,
         () => memoryStorage(),
       ),
-    ).toBe(false);
+    ).toBe("none");
+  });
+
+  it("does not clear what was asked long ago, and tries again while a window holds a database", async () => {
+    const factory = new IDBFactory();
+    const storage = memoryStorage();
+    const ada = onlineScope("app.example", "user-ada");
+    const page = pageIn(ada, factory, storage);
+    await page.settings.save("palette", { ada: true });
+    let time = 1_000_000;
+    const clear = () =>
+      clearIfAsked(
+        ada,
+        () => factory,
+        () => storage,
+        () => memoryStorage(),
+        { now: () => time },
+      );
+    clearOnNextStart(
+      () => storage,
+      () => time,
+    );
+    // A page that did not load again then: an hour later it holds no more.
+    time += 60 * 60_000;
+    expect(await clear()).toBe("none");
+    expect(await pageIn(ada, factory, storage).settings.load("palette")).toEqual({ ada: true });
+    // Another window holds a database of the scope, and does not let go of it.
+    const held = await new Promise<IDBDatabase>((resolve) => {
+      const request = factory.open(`${ada}held`, 1);
+      request.addEventListener("success", () => resolve(request.result));
+    });
+    clearOnNextStart(
+      () => storage,
+      () => time,
+    );
+    expect(await clear()).toBe("blocked");
+    // Nothing else of it went, and it is asked again the next time.
+    expect(await pageIn(ada, factory, storage).settings.load("palette")).toEqual({ ada: true });
+    held.close();
+    expect(await clear()).toBe("cleared");
   });
 
   it("names everything of a scope with it, and takes one scope per page", () => {
@@ -243,8 +282,8 @@ describe("what the editor kept before there were scopes", () => {
     await before(factory, "animaquill-cloud", [{ key: "b", creating: true }]);
     expect([...(await left.databases())].toSorted()).toEqual(["animaquill", "animaquill-cloud"]);
     expect(await left.bytes()).toBeGreaterThan(0);
-    // What the editor leaves as it starts, as it may have changes: people may let it go.
-    expect(await left.unsent()).toBe(1);
+    // What goes with it that is nowhere else: here a project that never got to the platform.
+    expect(await left.contents()).toEqual({ changes: 1, projects: 0, keys: 0, chats: 0 });
     expect(await left.drop()).toEqual([]);
     expect(await left.databases()).toEqual([]);
   });

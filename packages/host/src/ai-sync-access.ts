@@ -44,6 +44,9 @@ export interface BrowserAiSyncOptions {
   readonly timeoutMs?: number;
 }
 
+/** What a browser lets a request that outlives its page carry, with room to spare: 64 KB. */
+const KEEPALIVE_BYTES = 60_000;
+
 /** The platform said it is busy: again after `retryAfterMs`. */
 export class AiSyncBusy extends Error {
   override readonly name = "AiSyncBusy";
@@ -186,12 +189,15 @@ export function browserAiSyncAccess(options: BrowserAiSyncOptions): AiSyncAccess
       withinTime(timeout ?? CHANGE_TIMEOUT_MS, async (signal) => {
         if (changes.entries.length > AI_SYNC_BATCH || changes.keys.length > AI_SYNC_KEYS)
           throw new RangeError("Too many changes in one go");
+        const body = JSON.stringify({ ...changes, now: now(), format: changes.format ?? 1 });
         const { response, answer, sent, came } = await ask(
           "/me/ai-settings",
           {
             method: "POST",
             headers: { ...options.changeHeaders, "content-type": "application/json" },
-            body: JSON.stringify({ ...changes, now: now(), format: changes.format ?? 1 }),
+            body,
+            // A change made right as the page goes still goes, where it is small enough to.
+            keepalive: body.length < KEEPALIVE_BYTES,
           },
           signal,
         );

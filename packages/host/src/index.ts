@@ -210,6 +210,11 @@ export interface Host {
    */
   readonly clearHere?: () => void;
   /**
+   * Online: clearing what this browser keeps of the account, as asked, did not finish, as another
+   * window still had some of it open, see `clearIfAsked`: people are told to close it.
+   */
+  readonly clearBlocked?: boolean;
+  /**
    * What an editor of before the modes (0.3.117 and before) left in this browser, and that stayed
    * as it may have changes no backend has, see `LeftOver`. Missing where the host cannot tell.
    */
@@ -601,6 +606,18 @@ export interface ProjectOrganizer {
   listen(listener: () => void): () => void;
 }
 
+/** What is in what an editor of before the modes left that may be nowhere else, see `LeftOver`. */
+export interface LeftOverContents {
+  /** Projects of a platform with changes it may not have, see `unscopedUnsent`. */
+  readonly changes: number;
+  /** Projects of the browser that never went to a platform. */
+  readonly projects: number;
+  /** Keys of AI services kept in the browser, of this device or of accounts. */
+  readonly keys: number;
+  /** Conversations with AI kept in the browser. */
+  readonly chats: number;
+}
+
 /**
  * What an editor of before the modes left in this browser: its databases, which the editor takes
  * away as it starts unless they may have changes no backend has, or a page of before still has
@@ -612,8 +629,8 @@ export interface LeftOver {
   databases(): Promise<readonly string[]>;
   /** About how many bytes they take. */
   bytes(): Promise<number>;
-  /** How many projects in them may have changes no backend has, see `unscopedUnsent`. */
-  unsent(): Promise<number>;
+  /** What goes with them that is nowhere else, as far as they can be read, see `LeftOverContents`. */
+  contents(): Promise<LeftOverContents>;
   /** Takes them away. Resolves to the names of those still there, as a page of before holds them. */
   drop(): Promise<readonly string[]>;
 }

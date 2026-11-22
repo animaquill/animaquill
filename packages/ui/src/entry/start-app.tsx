@@ -10,7 +10,7 @@ import {
   modeOfPath,
   pathOf,
   projectOfPath,
-  unscopedUnsent,
+  unscopedContents,
   type ModeMemory,
 } from "@animaquill/host/browser";
 import { StrictMode } from "react";
@@ -151,15 +151,19 @@ export async function startApp(element: HTMLElement, options: AppOptions): Promi
   memory.setPrefersOffline(false);
   memory.setLastAccount(online.backend, who);
   // "清掉这台电脑上的数据" of a page of this account before, before anything opens it.
-  await clearIfAsked(onlineScope(online.backend, who.id)).catch((error: unknown) => {
-    console.warn("What this browser keeps of the account could not be cleared", error);
-  });
-  const host = createOnlineHost({
+  const cleared = await clearIfAsked(onlineScope(online.backend, who.id)).catch(
+    (error: unknown) => {
+      console.warn("What this browser keeps of the account could not be cleared", error);
+      return "none" as const;
+    },
+  );
+  const made = createOnlineHost({
     backend: online.backend,
     account: who.id,
     parts: { ...online.parts(), account: signsOutToEntry(account, memory, online.backend) },
     ...(!offlineRefused && { offlineAddress: goTo(pathOf("offline", undefined)).href }),
   });
+  const host: Host = cleared === "blocked" ? { ...made, clearBlocked: true } : made;
   followAccount(account, who.id);
   void dropOld();
   await mountEditor(element, { ...editor, host: extend(host) });
@@ -195,27 +199,33 @@ function signsOutToEntry(
 
 /**
  * The page is of one account for all its life: where another one signs in, in another window,
- * this one starts again as that one's, as nothing of the one before may go to it.
+ * this one starts again as that one's, as nothing of the one before may go to it. Where nobody is
+ * signed in any more, as another window signed out or the session ran out, it starts again too:
+ * the keys this page has in its memory go with it (docs/design/online-offline.md of AnimaQuill
+ * Cloud, 2.1).
  */
 function followAccount(account: AccountAccess, id: string): void {
   const look = () => {
     const now: AccountSnapshot = account.getSnapshot();
-    if (now.status === "signedIn" && now.id !== undefined && now.id !== id) location.reload();
+    if (now.status === "signedOut") location.reload();
+    else if (now.status === "signedIn" && now.id !== undefined && now.id !== id) location.reload();
   };
   account.subscribe(look);
 }
 
 /**
  * What the editor kept before there were modes goes (docs/design/online-offline.md of AnimaQuill
- * Cloud, 6): it cannot be read any more. Not while its links say that the platform may not have
- * changes of this browser yet: those stay for whoever looks for them, and the page says so.
+ * Cloud, 6): it cannot be read any more. Only where nothing in it is anywhere else: no changes the
+ * platform may not have, no project that was only in the browser, no key, no conversation. What
+ * has any stays, for people to take away themselves in the settings ("旧版本留下的数据"), told
+ * what goes with it.
  */
 async function dropOld(): Promise<void> {
   try {
-    const unsent = await unscopedUnsent();
-    if (unsent > 0) {
+    const { changes, projects, keys, chats } = await unscopedContents();
+    if (changes + projects + keys + chats > 0) {
       console.warn(
-        `What this browser kept before 0.3.118 stays: ${unsent} projects may have changes the platform does not have`,
+        `What this browser kept before 0.3.118 stays: ${changes} projects with changes, ${projects} of the browser only, ${keys} keys, ${chats} conversations`,
       );
       return;
     }

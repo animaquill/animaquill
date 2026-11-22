@@ -391,11 +391,15 @@ export function platformOrganizer(options: PlatformOrganizerOptions): ProjectOrg
         marks,
       });
     } catch (error) {
-      if (isWhoProblem(error)) options.signedOut?.();
-      // A request that never arrived, as the network is gone: not what the browser says of its
-      // network, as a backend on this computer answers without one.
-      if (error instanceof TypeError) throw new OrganizerOffline();
-      throw error;
+      if (isWhoProblem(error)) {
+        options.signedOut?.();
+        throw error;
+      }
+      // Whatever else: the backend could not take it now (no network, a gateway that answered
+      // 502, no answer in time, busy). Not what the browser says of its network, as a backend on
+      // this computer answers without one.
+      console.warn("How projects are organised could not change on the backend", error);
+      throw new OrganizerOffline();
     }
     keep(answer.state);
     windows.changed();

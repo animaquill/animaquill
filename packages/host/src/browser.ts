@@ -23,6 +23,7 @@ import type {
   ChangeSource,
   Host,
   LeftOver,
+  LeftOverContents,
   LocalFolder,
   LocalFolders,
   SavedFolders,
@@ -1465,6 +1466,11 @@ export function createOnlineHost({
 
 /** The scope whose things go the next time a page of it starts, see `clearOnNextStart`. */
 const CLEAR_KEY = "animaquill.clearScope";
+/**
+ * How long asking for that holds: the page loads again right away, and one that did not (as
+ * people stayed) must not clear the account at some start much later, without a word.
+ */
+const CLEAR_MS = 10 * 60_000;
 
 /**
  * Online: has everything this browser keeps of the account of this page go ("清掉这台电脑上的数
@@ -1472,38 +1478,74 @@ const CLEAR_KEY = "animaquill.clearScope";
  * starts, before anything opens it, see `clearIfAsked`. The page loads again for it, once nothing
  * of it is only here, and no other window of it is open.
  */
-export function clearOnNextStart(storage: () => Storage = () => localStorage): void {
-  storage().setItem(CLEAR_KEY, storageScope());
+export function clearOnNextStart(
+  storage: () => Storage = () => localStorage,
+  now: () => number = Date.now,
+): void {
+  storage().setItem(CLEAR_KEY, JSON.stringify({ scope: storageScope(), at: now() }));
 }
 
 /**
+ * What came of `clearIfAsked`: "cleared"; "blocked" where a window of before still had a database
+ * of the scope open, which goes once it lets go, and all of it is tried again at the next start;
+ * "none" where nothing was asked for, or not lately.
+ */
+export type Cleared = "cleared" | "blocked" | "none";
+
+/**
  * Takes away what this browser keeps in `scope`, where a page of it asked for that as it went
- * (`clearOnNextStart`): its databases, and its keys in the local and the session storage. Before
- * anything of the scope is opened. Resolves to whether it did.
+ * (`clearOnNextStart`) within `CLEAR_MS`: its databases, its files waiting in the private folder
+ * of the site, and its keys in the local and the session storage. Before anything of the scope is
+ * opened.
  */
 export async function clearIfAsked(
   scope: string,
   factory: () => IDBFactory = () => indexedDB,
   storage: () => Storage = () => localStorage,
   windowStorage: () => Storage = () => sessionStorage,
-): Promise<boolean> {
+  {
+    now = Date.now,
+    files = () => globalThis.navigator?.storage?.getDirectory?.(),
+  }: {
+    readonly now?: () => number;
+    readonly files?: () => Promise<FileSystemDirectoryHandle> | undefined;
+  } = {},
+): Promise<Cleared> {
   try {
-    if (storage().getItem(CLEAR_KEY) !== scope) return false;
+    const asked: unknown = JSON.parse(storage().getItem(CLEAR_KEY) ?? "null");
+    const { scope: of, at } = (asked ?? {}) as { scope?: unknown; at?: unknown };
+    if (typeof at !== "number" || now() - at > CLEAR_MS || at > now() + CLEAR_MS) {
+      // Too long ago: it holds no more.
+      if (asked !== null) storage().removeItem(CLEAR_KEY);
+      return "none";
+    }
+    if (of !== scope) return "none";
   } catch {
-    return false;
+    return "none";
   }
   const all =
     (await factory()
       .databases?.()
       .catch(() => undefined)) ?? [];
+  let blocked = false;
   for (const { name } of all) {
     if (name === undefined || !name.startsWith(scope)) continue;
     const request = factory().deleteDatabase(name);
     await new Promise<void>((resolve) => {
       request.addEventListener("success", () => resolve());
       request.addEventListener("error", () => resolve());
-      request.addEventListener("blocked", () => resolve());
+      request.addEventListener("blocked", () => {
+        blocked = true;
+        resolve();
+      });
     });
+  }
+  // Not done: everything again the next time, once nothing holds it.
+  if (blocked) return "blocked";
+  try {
+    await (await files())?.removeEntry(`${scope}exports`, { recursive: true });
+  } catch {
+    // None there.
   }
   for (const place of [storage, windowStorage]) {
     try {
@@ -1518,7 +1560,7 @@ export async function clearIfAsked(
     }
   }
   storage().removeItem(CLEAR_KEY);
-  return true;
+  return "cleared";
 }
 
 // ---- folders saved to, and handed over to the offline mode
@@ -1799,6 +1841,59 @@ export async function unscopedBytes(factory: () => IDBFactory = () => indexedDB)
   return total;
 }
 
+/** How many records a store of a database of before the scopes has; none where it has none. */
+async function countOf(factory: () => IDBFactory, name: string, store: string): Promise<number> {
+  const database = await openUnscoped(factory, name);
+  if (!database) return 0;
+  try {
+    if (!database.objectStoreNames.contains(store)) return 0;
+    return await resultOf(database.transaction(store).objectStore(store).count());
+  } finally {
+    database.close();
+  }
+}
+
+/** What is in the databases of before the scopes that may be nowhere else, see `LeftOverContents`. */
+export async function unscopedContents(
+  factory: () => IDBFactory = () => indexedDB,
+): Promise<LeftOverContents> {
+  const changes = await unscopedUnsent(factory);
+  // Projects without a link to a platform were only ever here.
+  let projects = 0;
+  const library = await openUnscoped(factory, "animaquill");
+  if (library) {
+    try {
+      if (library.objectStoreNames.contains(PROJECTS)) {
+        const ids = await resultOf<IDBValidKey[]>(
+          library.transaction(PROJECTS).objectStore(PROJECTS).getAllKeys(),
+        );
+        const cloud = await openUnscoped(factory, "animaquill-cloud");
+        let linked = new Set<IDBValidKey>();
+        if (cloud) {
+          try {
+            if (cloud.objectStoreNames.contains("links"))
+              linked = new Set(
+                await resultOf<IDBValidKey[]>(
+                  cloud.transaction("links").objectStore("links").getAllKeys(),
+                ),
+              );
+          } finally {
+            cloud.close();
+          }
+        }
+        projects = ids.filter((id) => !linked.has(id)).length;
+      }
+    } finally {
+      library.close();
+    }
+  }
+  const keys =
+    (await countOf(factory, "animaquill-keys", "keys")) +
+    (await countOf(factory, "animaquill-account-keys", "keys"));
+  const chats = await countOf(factory, "animaquill-chats", "chats");
+  return { changes, projects, keys, chats };
+}
+
 /** What the editor of before the scopes left here, see `LeftOver`. */
 export function browserLeftOver(
   factory: () => IDBFactory = () => indexedDB,
@@ -1808,7 +1903,7 @@ export function browserLeftOver(
   return {
     databases: () => unscopedDatabases(factory),
     bytes: () => unscopedBytes(factory),
-    unsent: () => unscopedUnsent(factory),
+    contents: () => unscopedContents(factory),
     // What may have changes goes too: people said so, knowing it.
     drop: async () => {
       await dropUnscopedData(factory, storage, locks);

@@ -305,6 +305,15 @@ export class AccountChats implements ChatStore {
    * Why a picture stayed in this browser as its conversation went to the backend, as this page
    * last tried; nothing where it went, or this page did not try.
    */
+  /**
+   * How many pictures stayed in this browser as their conversations went, as far as this page
+   * tried: the backend had no room for them, a conversation had as many there as it may, or it
+   * kept no pictures then.
+   */
+  get heldCount(): number {
+    return this.#held.size;
+  }
+
   heldOf(image: string): ChatImageHeld | undefined {
     return this.#held.get(image)?.why;
   }
@@ -455,6 +464,18 @@ export class AccountChats implements ChatStore {
   /** What waits here of a project that is gone. */
   async forget(project: string): Promise<void> {
     await this.#options.outbox.forget(project);
+  }
+
+  /**
+   * Takes away what waits here, as people sign out and said so: what did not get to the backend is
+   * gone then. Resolves to how many conversations went.
+   */
+  async dropWaiting(): Promise<number> {
+    const { outbox } = this.#options;
+    const usage = (await outbox.usage?.().catch(() => undefined)) ?? [];
+    for (const { project } of usage) await outbox.forget(project);
+    await this.#settle();
+    return usage.reduce((sum, { count }) => sum + count, 0);
   }
 
   /** How many conversations wait here for the backend. */

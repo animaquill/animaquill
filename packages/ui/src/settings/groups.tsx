@@ -1,4 +1,4 @@
-import type { AccountSpace, ChatImageUsage, UndoUsage } from "@animaquill/host";
+import type { AccountSpace, ChatImageUsage, LeftOverContents, UndoUsage } from "@animaquill/host";
 import { TOOL_CALL_LIMITS } from "@animaquill/agent";
 import type { VideoCodecName } from "@animaquill/media";
 import type { TFunction } from "i18next";
@@ -604,7 +604,7 @@ export function StorageGroup() {
 function LeftOverRow() {
   const { leftOver, dialogs, notifications } = useWorkbench();
   const { t } = useTranslation();
-  const [found, setFound] = useState<{ bytes: number; unsent: number } | "none">();
+  const [found, setFound] = useState<{ bytes: number; contents: LeftOverContents } | "none">();
   const [busy, setBusy] = useState(false);
   const read = useCallback(() => {
     if (!leftOver) return;
@@ -614,8 +614,8 @@ function LeftOverRow() {
           setFound("none");
           return;
         }
-        const [bytes, unsent] = await Promise.all([leftOver.bytes(), leftOver.unsent()]);
-        setFound({ bytes, unsent });
+        const [bytes, contents] = await Promise.all([leftOver.bytes(), leftOver.contents()]);
+        setFound({ bytes, contents });
       } catch (error) {
         console.warn("What the editor kept before could not be read", error);
         setFound("none");
@@ -625,11 +625,16 @@ function LeftOverRow() {
   useEffect(read, [read]);
   if (!leftOver || found === undefined || found === "none") return null;
   const remove = async () => {
+    const { contents } = found;
+    // What goes with it that is nowhere else, each with how many.
+    const lost = (["changes", "projects", "keys", "chats"] as const)
+      .filter((what) => contents[what] > 0)
+      .map((what) => t(`settings.leftOver.lost.${what}`, { count: contents[what] }));
     const sure = await dialogs.confirm({
       title: t("settings.leftOver.title"),
       message:
-        found.unsent > 0
-          ? t("settings.leftOver.unsent", { count: found.unsent })
+        lost.length > 0
+          ? t("settings.leftOver.lostMessage", { list: lost.join("、") })
           : t("settings.leftOver.message"),
       confirm: t("settings.leftOver.confirm"),
       danger: true,

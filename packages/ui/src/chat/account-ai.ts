@@ -92,6 +92,11 @@ export interface AccountAiOptions {
   readonly signedOut?: () => void;
   /** Entries the backend did not take, as they would be too large together. */
   readonly tooLarge?: () => void;
+  /**
+   * What changed here could not go to the backend: it is only in this page, until it can. Each
+   * time a try fails.
+   */
+  readonly unsent?: () => void;
   readonly now?: () => number;
   /** Only tests: timers of their own. */
   readonly setTimer?: (run: () => void, ms: number) => () => void;
@@ -128,10 +133,14 @@ const isCached = (value: unknown, account: string): value is Cached =>
   isRecord(value.entries);
 
 /** A service of settings of before 0.3.72 has its headers in it, which may say a key. */
+/**
+ * What the browser may keep of an entry: a service or a model of settings of before 0.3.72 can
+ * have its address and headers in it, which may say a key. Nothing of that, whatever it says.
+ */
 const withoutSecret = (name: string, entry: AiEntry): AiEntry => {
-  if (entry.deleted || !name.startsWith("service:") || !isRecord(entry.value)) return entry;
-  if (!("headers" in entry.value)) return entry;
-  const { headers: _headers, ...rest } = entry.value;
+  if (entry.deleted || !isRecord(entry.value)) return entry;
+  if (!name.startsWith("service:") && !name.startsWith("model:")) return entry;
+  const { headers: _headers, baseUrl: _baseUrl, ...rest } = entry.value;
   return { at: entry.at, value: rest };
 };
 
@@ -169,6 +178,8 @@ export class AccountAi {
   #cancelPush: (() => void) | undefined;
   #cancelPull: (() => void) | undefined;
   #failures = 0;
+  /** People were told that changes could not go, see `AccountAiOptions.unsent`: once a time. */
+  #toldUnsent = false;
   #channel: BroadcastChannel | undefined;
   readonly #listeners = new Map<string, Set<(value: unknown) => void>>();
   readonly #stops: (() => void)[] = [];
@@ -479,7 +490,10 @@ export class AccountAi {
     }
     this.#pendingKeys.add(service);
     this.#set({});
-    this.#pushSoon();
+    // A key goes at once: it is nowhere else, and a page can go right after it was typed.
+    this.#cancelPush?.();
+    this.#cancelPush = undefined;
+    void this.push();
   }
 
   #pushSoon(ms = PUSH_MS): void {
@@ -501,6 +515,8 @@ export class AccountAi {
 
   async #push(): Promise<void> {
     const { access, account } = this.#options;
+    // Nothing to give: how it stands is as the last answer said.
+    if (!this.hasUnsent) return;
     try {
       for (let round = 0; round < 50; round += 1) {
         if (this.#pending.size === 0 && this.#pendingKeys.size === 0) break;
@@ -542,6 +558,7 @@ export class AccountAi {
       }
       await this.#keepCache();
       this.#failures = 0;
+      this.#toldUnsent = false;
       this.#set({ status: "ready" });
       this.#channel?.postMessage("changed");
     } catch (error) {
@@ -555,6 +572,11 @@ export class AccountAi {
         return;
       }
       const wait = this.#failed(error);
+      // What changed is only in this page now: people are told at once, not as it goes.
+      if (this.hasUnsent && !this.#toldUnsent) {
+        this.#toldUnsent = true;
+        this.#options.unsent?.();
+      }
       this.#pushSoon(wait);
     }
   }
@@ -587,7 +609,17 @@ export class AccountAi {
     await this.push();
   }
 
+  /** What changed here that the backend does not have, which goes with the page: see `flush`. */
+  get hasUnsent(): boolean {
+    return this.#pending.size + this.#pendingKeys.size > 0;
+  }
+
+  /** The page goes: what waits goes now, as far as it can. */
   close(): void {
+    if (this.hasUnsent) {
+      this.#cancelPush?.();
+      void this.push();
+    }
     this.#closed = true;
     this.#cancelPull?.();
     this.#cancelPush?.();

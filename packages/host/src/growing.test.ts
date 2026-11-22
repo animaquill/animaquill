@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { dropTarget, growingFile, reopenTarget, type SaveFilePicker } from "./growing.ts";
+import {
+  dropTarget,
+  growingFile,
+  reopenTarget,
+  scratchFolder,
+  type SaveFilePicker,
+} from "./growing.ts";
 
 const KIND = { description: "MP4 视频", mime: "video/mp4", extension: "mp4" };
 
@@ -199,22 +205,22 @@ describe("a file without a dialog to save it", () => {
     const [file, name] = saveFile.mock.calls[0] as [Blob, string];
     expect(name).toBe("片子.mp4");
     expect(new Uint8Array(await file.arrayBuffer())).toEqual(bytes(5, 6));
-    expect(root.folders.get("exports")?.files.size).toBe(1);
+    expect(root.folders.get(scratchFolder())?.files.size).toBe(1);
   });
 
   it("leaves nothing when it is abandoned", async () => {
     const { root, saveFile, options } = scratchSetup();
     const target = await growingFile("片子.mp4", KIND, options);
     await target?.write(bytes(5) as Uint8Array<ArrayBuffer>, 0);
-    expect(root.folders.get("exports")?.files.size).toBe(1);
+    expect(root.folders.get(scratchFolder())?.files.size).toBe(1);
     await target?.abandon();
     expect(saveFile).not.toHaveBeenCalled();
-    expect(root.folders.get("exports")?.files.size).toBe(0);
+    expect(root.folders.get(scratchFolder())?.files.size).toBe(0);
   });
 
   it("cleans up after downloads that are long over, and leaves the others", async () => {
     const { root, options } = scratchSetup();
-    const folder = await root.getDirectoryHandle("exports");
+    const folder = await root.getDirectoryHandle(scratchFolder());
     (await folder.getFileHandle("old.mp4", { create: true })).lastModified =
       Date.now() - 2 * 3600_000;
     await folder.getFileHandle("recent.mp4", { create: true });

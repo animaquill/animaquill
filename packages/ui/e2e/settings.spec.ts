@@ -497,7 +497,7 @@ test("what an editor of before left, as it may have changes, shows and can go", 
   await expect(row.getByTestId("settings-left-over")).toHaveText(/^旧版本留下的数据：占 /);
   await row.getByRole("button", { name: "删掉…" }).click();
   const asked = page.getByRole("dialog", { name: "删掉旧版本留下的数据？" });
-  await expect(asked).toContainText("里面有 1 个项目的改动可能还没传到服务器");
+  await expect(asked).toContainText("里面有 1 个服务器上的项目还没传上去的改动");
   await asked.getByRole("button", { name: "删掉", exact: true }).click();
   await expect(page.getByText("已删掉旧版本留下的数据。")).toBeVisible();
   await expect(row).toHaveCount(0);

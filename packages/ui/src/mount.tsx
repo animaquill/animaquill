@@ -156,6 +156,10 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     void workbench.chat.flush();
     // AI tasks and batches can still be taken back after a reload.
     void workbench.undo.flush();
+    // The AI settings and keys of the online mode are only in this page until the backend has
+    // them, and conversations wait here: they go now.
+    void workbench.accountAi?.flush();
+    void workbench.chatSync?.flush();
   };
   document.addEventListener("visibilitychange", save);
   // A reload or a closing tab does not always say it hid first.
@@ -237,7 +241,9 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
       trials.notKept ||
       exporting ||
       moving ||
-      workbench.uploading;
+      workbench.uploading ||
+      // Changes of the AI settings or keys that the backend does not have: nowhere else.
+      workbench.accountAi?.hasUnsent === true;
     if (atRisk || code.hasUnsaved) event.preventDefault();
   };
   window.addEventListener("beforeunload", onBeforeUnload);

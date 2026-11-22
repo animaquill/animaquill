@@ -1,9 +1,13 @@
 import type { FileKind, GrowingFile } from "./index.ts";
+import { scoped } from "./scope.ts";
 
 /** Lets the browser come back to the place people used the last time. */
 const PICKER_ID = "animaquill-exports";
-/** Where files wait in the private folder of the site until they are finished. */
-const SCRATCH_FOLDER = "exports";
+/**
+ * Where files wait in the private folder of the site until they are finished: in the scope of the
+ * page, as what clearing an account takes away is, see `clearIfAsked`.
+ */
+export const scratchFolder = (): string => scoped("exports");
 /** A download takes the file from there, and it should be done after this. */
 const KEEP_SCRATCH_MS = 60 * 60 * 1000;
 
@@ -103,7 +107,7 @@ export async function cleanUpDownloads(
   scratch: () => Promise<FileSystemDirectoryHandle>,
 ): Promise<void> {
   const root = await scratch();
-  const folder = await root.getDirectoryHandle(SCRATCH_FOLDER).catch(() => undefined);
+  const folder = await root.getDirectoryHandle(scratchFolder()).catch(() => undefined);
   if (folder) await cleanUp(folder);
 }
 
@@ -133,7 +137,7 @@ function downloadedFile(
   const open = () =>
     (opened ??= (async () => {
       const root = await scratch();
-      const folder = await root.getDirectoryHandle(SCRATCH_FOLDER, { create: true });
+      const folder = await root.getDirectoryHandle(scratchFolder(), { create: true });
       await cleanUp(folder);
       return { folder, handle: await folder.getFileHandle(own, { create: true }) };
     })());
