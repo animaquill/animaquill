@@ -96,6 +96,21 @@ describe("effects of sound on tracks and the master", () => {
     expect(timeline.effectProblem("eq")).toBe("picture");
   });
 
+  it("start a reverb and a compressor from the interface where they are heard, an equalizer flat", async () => {
+    const { store, timeline, audio } = await setup();
+    timeline.attachEffectTo(audio, "compressor");
+    timeline.attachEffectTo(audio, "eq");
+    const track = store.getState().timelines["main"]?.tracks[audio] as {
+      effects?: { id: string }[];
+      properties?: Record<string, unknown>;
+    };
+    const [compressor] = track.effects ?? [];
+    expect(track.properties).toEqual({
+      [effectPath(compressor?.id as string, "threshold")]: -18,
+      [effectPath(compressor?.id as string, "ratio")]: 4,
+    });
+  });
+
   it("write the preset of a reverb as one step", async () => {
     const { store, timeline, writer, rows, audio } = await setup();
     timeline.attachEffectTo(audio, "reverb");
@@ -119,7 +134,8 @@ describe("effects of sound on tracks and the master", () => {
     expect(properties()[effectPath(effect, "mix")]).toBe(0.3);
     store.undo();
     expect(properties()[effectPath(effect, "decay")]).toBeUndefined();
-    expect(properties()[effectPath(effect, "mix")]).toBeUndefined();
+    // Back to where it started from the interface: a little wet, so that it is heard.
+    expect(properties()[effectPath(effect, "mix")]).toBe(0.2);
   });
 });
 

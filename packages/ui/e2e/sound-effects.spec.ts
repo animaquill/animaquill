@@ -124,6 +124,10 @@ test.describe("effects of sound", () => {
     // Onto the strip in the mixer, in front of the equalizer.
     await dragEffect(page, "压缩", slotsOf(strip(page)).first());
     await expect(slotsOf(strip(page))).toHaveCount(2);
+    // Anywhere on the strip: last.
+    await dragEffect(page, "限幅", strip(page).getByRole("slider", { name: "配音 声像" }));
+    await expect(slotsOf(strip(page))).toHaveCount(3);
+    await expect(slotsOf(strip(page)).nth(2)).toContainText("限幅");
     // Onto the clip.
     const clip = content(page, "timeline").getByRole("option").first();
     await dragEffect(page, "混响", clip);
@@ -144,14 +148,15 @@ test.describe("effects of sound", () => {
     const graph = properties(page).locator("[data-eq-graph]");
     await expect(graph).toBeVisible();
     const box = await boxOf(graph);
-    // Band 4 (mid 2, 1 kHz) dragged down a quarter of what the graph draws (8 of 120 around it):
-    // −12 dB.
+    // Mid 2 (1 kHz) dragged down a quarter of what the graph draws (26 of its 140 are room for
+    // numbers and grabbing): −12 dB, which the point says while it is in the hand.
     const point = graph.locator('[data-band="mid2"]');
     const at = await boxOf(point);
     await page.mouse.move(at.x + at.width / 2, at.y + at.height / 2);
     await page.mouse.down();
-    const quarter = (box.height * (104 / 120)) / 4;
+    const quarter = (box.height - 26) / 4;
     await page.mouse.move(at.x + at.width / 2, at.y + at.height / 2 + quarter, { steps: 6 });
+    await expect(graph.locator("[data-reading]")).toContainText("dB");
     await page.mouse.up();
     await expect(point).toHaveAttribute("data-on", "true");
     await expect(field(page, "中频 2 增益")).toHaveValue(/−1[12]\./);
@@ -185,13 +190,17 @@ test.describe("effects of sound", () => {
     await slotsOf(strip(page)).first().getByRole("button", { name: "压缩", exact: true }).click();
     const graph = properties(page).locator("[data-compressor-graph]");
     await expect(graph).toBeVisible();
+    // The graph is as wide as the tab, which settles once the list of effects scrolled to it.
+    await expect.poll(async () => (await boxOf(graph)).width).toBeGreaterThan(0);
+    await page.waitForTimeout(300);
     const box = await boxOf(graph);
     const knee = graph.locator('[data-part="knee"]');
     const at = await boxOf(knee);
     await page.mouse.move(at.x + at.width / 2, at.y + at.height / 2);
     await page.mouse.down();
-    // To the middle across: −30 dB.
-    await page.mouse.move(box.x + box.width / 2, at.y + at.height / 2, { steps: 6 });
+    // To the middle across (22 on the left and 10 on the right are room for numbers): −30 dB.
+    await page.mouse.move(box.x + 22 + (box.width - 32) / 2, at.y + at.height / 2, { steps: 6 });
+    await expect(graph.locator("[data-reading]")).toContainText(":1");
     await page.mouse.up();
     await expect(field(page, "阈值")).toHaveValue(/−30/);
     await properties(page).screenshot({ path: test.info().outputPath("compressor-panel.png") });
@@ -203,7 +212,8 @@ test.describe("effects of sound", () => {
     await expect(field(page, "干湿比")).toHaveValue("30%");
     await undo(page);
     await expect(decay).toHaveValue("1.5s");
-    await expect(field(page, "干湿比")).toHaveValue("0%");
+    // Back to where it started from the interface: 20% wet.
+    await expect(field(page, "干湿比")).toHaveValue("20%");
   });
 
   test("move in the mixer, turn off with their dot, and the master has a limiter last", async ({

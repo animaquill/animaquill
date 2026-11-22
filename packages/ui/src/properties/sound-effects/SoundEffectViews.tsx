@@ -1,4 +1,9 @@
-import { REVERB_PRESETS, type ObjectDescriptor, type Value } from "@animaquill/schema";
+import {
+  REVERB_PRESETS,
+  type ObjectDescriptor,
+  type PropertySpec,
+  type Value,
+} from "@animaquill/schema";
 import {
   useEffect,
   useLayoutEffect,
@@ -6,18 +11,21 @@ import {
   useState,
   useSyncExternalStore,
   type PointerEvent,
+  type RefObject,
 } from "react";
 import { useWorkbench } from "../../app/context.ts";
 import { useTranslation } from "react-i18next";
+import { groupOf } from "../names.ts";
 import type { PropertyRows } from "../rows.ts";
 import styles from "../PropertiesPanel.module.css";
 import {
   EQ_BANDS,
   bandOn,
   dragTo,
+  frequencyOf,
+  gainOf,
   hasQ,
   isPass,
-  pointOf,
   qAfterWheel,
   qOf,
   responsePath,
@@ -25,18 +33,20 @@ import {
   yOfGain,
   type EqBand,
 } from "./eq-graph.ts";
-import { curvePath, kneePoint, ratioAt, thresholdAt } from "./compressor-graph.ts";
+import { curvePath, kneePoint, ratioAt, shareOfDb, thresholdAt } from "./compressor-graph.ts";
+import { CompactField } from "./CompactField.tsx";
 import { useEffectValues } from "./values.ts";
 
-/** The size the graphs are drawn at; they stretch to the width of the tab. */
-const WIDTH = 300;
-const HEIGHT = 120;
 /** Room around what a graph draws, so that a point at its edge is all there to grab. */
-const PAD = 8;
+const PAD = 10;
+/** Room on the left and at the bottom of a graph for its numbers. */
+const AXIS = 22;
 /** A pointer that moves less than this many pixels clicks rather than drags. */
 const CLICK_SLOP = 3;
 /** The wheel writes one step this long after it stops. */
 const WHEEL_REST_MS = 400;
+/** The size a graph is drawn at before it knows how wide its place is. */
+const FIRST_WIDTH = 300;
 
 interface ViewProps {
   readonly rows: PropertyRows;
@@ -45,49 +55,86 @@ interface ViewProps {
   readonly readOnly: boolean;
 }
 
-/**
- * Where a pointer is in an SVG drawn `width` × `height` with `PAD` around what it draws, from 0 to 1
- * each way within that.
- */
-function shareIn(
-  svg: SVGSVGElement,
-  event: { clientX: number; clientY: number },
-  width: number,
-  height: number,
-) {
+/** How wide an element is on the screen, as it changes: graphs are drawn in its pixels. */
+function useWidth(element: RefObject<HTMLElement | null>): number {
+  const [width, setWidth] = useState(FIRST_WIDTH);
+  useLayoutEffect(() => {
+    const shown = element.current;
+    // The observer says it the first time too, before the next frame is drawn.
+    if (!shown || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setWidth(shown.clientWidth || FIRST_WIDTH));
+    observer.observe(shown);
+    return () => observer.disconnect();
+  }, [element]);
+  return width;
+}
+
+/** The part of a graph that its curve takes: inside the room for numbers and grabbing. */
+interface Plot {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
+const plotOf = (width: number, height: number): Plot => ({
+  left: AXIS,
+  top: PAD,
+  width: Math.max(width - AXIS - PAD, 1),
+  height: Math.max(height - PAD - AXIS + 6, 1),
+});
+
+/** Where a pointer is in a plot, from 0 to 1 each way. */
+function shareIn(svg: SVGSVGElement, event: { clientX: number; clientY: number }, plot: Plot) {
   const box = svg.getBoundingClientRect();
-  const padX = (PAD / width) * box.width;
-  const padY = (PAD / height) * box.height;
-  const inner = { width: box.width - 2 * padX, height: box.height - 2 * padY };
-  const x = inner.width > 0 ? (event.clientX - box.left - padX) / inner.width : 0;
-  const y = inner.height > 0 ? (event.clientY - box.top - padY) / inner.height : 0;
+  const x = (event.clientX - box.left - plot.left) / plot.width;
+  const y = (event.clientY - box.top - plot.top) / plot.height;
   return { x: Math.min(Math.max(x, 0), 1), y: Math.min(Math.max(y, 0), 1) };
 }
 
-/** The part of a graph inside its padding, where what it draws goes. */
-const inside = (width: number, height: number) =>
-  `translate(${PAD} ${PAD}) scale(${(width - 2 * PAD) / width} ${(height - 2 * PAD) / height})`;
-
 /** Frequencies the graph marks, and the levels. */
-const FREQUENCY_LINES = [100, 1000, 10_000];
-const GAIN_LINES = [12, 0, -12];
+const FREQUENCY_LINES: readonly (readonly [number, string])[] = [
+  [100, "100"],
+  [1000, "1k"],
+  [10_000, "10k"],
+];
+const GAIN_LINES: readonly (readonly [number, string])[] = [
+  [12, "+12"],
+  [0, "0"],
+  [-12, "−12"],
+];
+
+const signed = (value: number, digits: number) => value.toFixed(digits).replace("-", "−");
+const hertz = (value: number) =>
+  value >= 1000
+    ? `${signed(value / 1000, value >= 10_000 ? 1 : 2)} kHz`
+    : `${Math.round(value)} Hz`;
+
+/** What a band is called on its point: its number, and HP and LP for the passes. */
+const markOf = (band: EqBand) =>
+  band.name === "hp" ? "HP" : band.name === "lp" ? "LP" : String(band.number - 1);
 
 /**
- * The frequency response of an equalizer, with a numbered point for each band: dragged across for
- * its frequency and up and down for its gain, the wheel for the Q of a peak, a double click for
- * 0 dB; a click on the point of a pass turns it on or off. A band that does nothing is hollow.
+ * The frequency response of an equalizer, with a point for each band: dragged across for its
+ * frequency and up and down for its gain, the wheel for the Q of a peak, a double click for 0 dB.
+ * The passes sit at the bottom: dragged across, a click turns them on or off. A band that does
+ * nothing is hollow. While a point is in a hand, it says what it is set to.
  */
 export function EqGraph({ rows, clip, object, readOnly }: ViewProps) {
   const { t } = useTranslation();
   const { values, blocked, preview, commit, cancel } = useEffectValues(rows, clip, object);
+  const frame = useRef<HTMLDivElement>(null);
   const svg = useRef<SVGSVGElement>(null);
+  const width = useWidth(frame);
+  const height = 140;
+  const plot = plotOf(width, height);
   const drag = useRef<{ band: EqBand; x: number; y: number; moved: boolean }>(undefined);
   const [held, setHeld] = useState<Readonly<Record<string, Value>>>();
+  const [active, setActive] = useState<EqBand>();
   const wheel = useRef<{ timer: ReturnType<typeof setTimeout>; changes: Record<string, Value> }>(
     undefined,
   );
   useEffect(() => () => clearTimeout(wheel.current?.timer), []);
-
   const shown = held ? { ...values, ...held } : values;
   const still = readOnly || blocked;
 
@@ -96,6 +143,7 @@ export function EqGraph({ rows, clip, object, readOnly }: ViewProps) {
     event.stopPropagation();
     (event.currentTarget as Element).setPointerCapture(event.pointerId);
     drag.current = { band, x: event.clientX, y: event.clientY, moved: false };
+    setActive(band);
   };
   const move = (event: PointerEvent<SVGElement>) => {
     const pressed = drag.current;
@@ -103,10 +151,11 @@ export function EqGraph({ rows, clip, object, readOnly }: ViewProps) {
     if (
       !pressed.moved &&
       Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) < CLICK_SLOP
-    )
+    ) {
       return;
+    }
     pressed.moved = true;
-    const { x, y } = shareIn(svg.current, event, WIDTH, HEIGHT);
+    const { x, y } = shareIn(svg.current, event, plot);
     const changes = dragTo(pressed.band, x, y);
     setHeld(changes);
     preview(changes);
@@ -114,6 +163,7 @@ export function EqGraph({ rows, clip, object, readOnly }: ViewProps) {
   const up = () => {
     const pressed = drag.current;
     drag.current = undefined;
+    setActive(undefined);
     if (!pressed) return;
     if (pressed.moved) {
       if (held) commit(held);
@@ -135,16 +185,17 @@ export function EqGraph({ rows, clip, object, readOnly }: ViewProps) {
     clearTimeout(was?.timer);
     preview(changes);
     setHeld(changes);
+    setActive(band);
     wheel.current = {
       changes,
       timer: setTimeout(() => {
         wheel.current = undefined;
         commit(changes);
         setHeld(undefined);
+        setActive(undefined);
       }, WHEEL_REST_MS),
     };
   };
-
   // Not through React, whose wheel listener cannot keep the tab from scrolling.
   const wheelOn = useRef(onWheel);
   useLayoutEffect(() => {
@@ -164,83 +215,182 @@ export function EqGraph({ rows, clip, object, readOnly }: ViewProps) {
     return () => element.removeEventListener("wheel", listen);
   }, [svg]);
 
+  const xAt = (share: number) => plot.left + share * plot.width;
+  const yAt = (share: number) => plot.top + share * plot.height;
+  const pointAt = (band: EqBand) =>
+    isPass(band)
+      ? { x: xAt(xOfFrequency(frequencyOf(shown, band))), y: plot.top + plot.height }
+      : { x: xAt(xOfFrequency(frequencyOf(shown, band))), y: yAt(yOfGain(gainOf(shown, band))) };
+  const said = active && [
+    hertz(frequencyOf(shown, active)),
+    ...(isPass(active) ? [] : [`${signed(gainOf(shown, active), 1)} dB`]),
+    ...(hasQ(active) ? [`Q ${qOf(shown, active).toFixed(2)}`] : []),
+  ];
+  const at = active && pointAt(active);
+
   return (
-    <svg
-      ref={svg}
-      className={styles.effectGraph}
-      viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
-      preserveAspectRatio="none"
-      role="group"
-      aria-label={t("effect.graph.eq")}
-      data-eq-graph=""
-      onPointerMove={move}
-      onPointerUp={up}
-      onPointerCancel={() => {
-        drag.current = undefined;
-        setHeld(undefined);
-        cancel();
-      }}
-    >
-      <g transform={inside(WIDTH, HEIGHT)}>
-        {FREQUENCY_LINES.map((frequency) => (
-          <line
-            key={frequency}
-            className={styles.graphGrid}
-            x1={xOfFrequency(frequency) * WIDTH}
-            x2={xOfFrequency(frequency) * WIDTH}
-            y1={0}
-            y2={HEIGHT}
-          />
-        ))}
-        {GAIN_LINES.map((gain) => (
-          <line
-            key={gain}
-            className={gain === 0 ? styles.graphAxis : styles.graphGrid}
-            x1={0}
-            x2={WIDTH}
-            y1={yOfGain(gain) * HEIGHT}
-            y2={yOfGain(gain) * HEIGHT}
-          />
-        ))}
-        <path className={styles.graphCurve} d={responsePath(shown, WIDTH, HEIGHT)} />
-      </g>
-      {EQ_BANDS.map((band) => {
-        const { x, y } = pointOf(shown, band);
-        const on = bandOn(shown, band);
-        const px = PAD + x * (WIDTH - 2 * PAD);
-        const py = PAD + y * (HEIGHT - 2 * PAD);
-        return (
-          <g
-            key={band.name}
-            className={styles.graphPoint}
-            data-band={band.name}
-            data-on={on || undefined}
-            transform={`translate(${px.toFixed(1)} ${py.toFixed(1)})`}
-            role="slider"
-            aria-label={t("effect.graph.band", { name: band.number })}
-            aria-valuetext={`${Math.round(Number(shown[`${band.name}.freq`] ?? 0))} Hz`}
-            onPointerDown={down(band)}
-            onDoubleClick={() => {
-              if (!still && !isPass(band)) commit({ [`${band.name}.gain`]: 0 });
-            }}
+    <div ref={frame} className={styles.graphFrame}>
+      <svg
+        ref={svg}
+        className={styles.effectGraph}
+        width={width}
+        height={height}
+        viewBox={`0 0 ${width} ${height}`}
+        role="group"
+        aria-label={t("effect.graph.eq")}
+        data-eq-graph=""
+        onPointerMove={move}
+        onPointerUp={up}
+        onPointerCancel={() => {
+          drag.current = undefined;
+          setHeld(undefined);
+          setActive(undefined);
+          cancel();
+        }}
+      >
+        {FREQUENCY_LINES.map(([frequency, label]) => {
+          const x = xAt(xOfFrequency(frequency));
+          return (
+            <g key={frequency}>
+              <line
+                className={styles.graphGrid}
+                x1={x}
+                x2={x}
+                y1={plot.top}
+                y2={plot.top + plot.height}
+              />
+              <text className={styles.graphLabel} x={x} y={height - 3} textAnchor="middle">
+                {label}
+              </text>
+            </g>
+          );
+        })}
+        {GAIN_LINES.map(([gain, label]) => {
+          const y = yAt(yOfGain(gain));
+          return (
+            <g key={gain}>
+              <line
+                className={gain === 0 ? styles.graphAxis : styles.graphGrid}
+                x1={plot.left}
+                x2={plot.left + plot.width}
+                y1={y}
+                y2={y}
+              />
+              <text
+                className={styles.graphLabel}
+                x={plot.left - 4}
+                y={y}
+                dy="0.35em"
+                textAnchor="end"
+              >
+                {label}
+              </text>
+            </g>
+          );
+        })}
+        <path
+          className={styles.graphCurve}
+          transform={`translate(${plot.left} ${plot.top})`}
+          d={responsePath(shown, plot.width, plot.height)}
+        />
+        {EQ_BANDS.map((band) => {
+          const { x, y } = pointAt(band);
+          const on = bandOn(shown, band);
+          return (
+            <g
+              key={band.name}
+              className={styles.graphPoint}
+              data-band={band.name}
+              data-on={on || undefined}
+              data-pass={isPass(band) || undefined}
+              transform={`translate(${x.toFixed(1)} ${y.toFixed(1)})`}
+              role="slider"
+              aria-label={`${groupOf(t, band.name)} ${t("effect.graph.point")}`}
+              aria-valuetext={hertz(frequencyOf(shown, band))}
+              onPointerDown={down(band)}
+              onDoubleClick={() => {
+                if (!still && !isPass(band)) commit({ [`${band.name}.gain`]: 0 });
+              }}
+            >
+              {isPass(band) ? (
+                <rect x={-9} y={-7} width={18} height={14} rx={3} />
+              ) : (
+                <circle r={7} />
+              )}
+              <text dy="0.35em">{markOf(band)}</text>
+            </g>
+          );
+        })}
+        {said && at && (
+          <text
+            className={styles.graphReading}
+            x={Math.min(Math.max(at.x, plot.left + 50), plot.left + plot.width - 50)}
+            y={at.y > plot.top + 24 ? at.y - 14 : at.y + 22}
+            textAnchor="middle"
+            data-reading=""
           >
-            <circle r={7} />
-            <text dy="0.35em">{band.number}</text>
-          </g>
-        );
-      })}
-    </svg>
+            {said.join(" / ")}
+          </text>
+        )}
+      </svg>
+      <EqBands rows={rows} clip={clip} object={object} readOnly={readOnly} />
+    </div>
   );
 }
 
 /**
- * What a compressor does to levels: the knee dragged across sets the threshold, the line after it
- * dragged sets the ratio.
+ * The numbers of an equalizer under its graph, a band to a row: frequency, gain and Q of each,
+ * with their keys; the passes are on or off, and how steep.
+ */
+function EqBands({ rows, clip, object, readOnly }: ViewProps) {
+  const { t } = useTranslation();
+  const specOf = (name: string): PropertySpec | undefined =>
+    object.properties.find(({ path }) => path === `${object.id}.${name}`);
+  const parts = (band: EqBand) =>
+    isPass(band) ? ["freq", "on", "slope"] : hasQ(band) ? ["freq", "gain", "q"] : ["freq", "gain"];
+  return (
+    <div className={styles.eqBands} role="group" aria-label={t("effect.graph.bands")}>
+      {EQ_BANDS.map((band) => {
+        const group = groupOf(t, band.name);
+        return (
+          <div key={band.name} className={styles.eqBand} data-band={band.name}>
+            <span className={styles.eqBandName}>{group}</span>
+            {parts(band).map((part) => {
+              const spec = specOf(`${band.name}.${part}`);
+              if (!spec) return <span key={part} />;
+              const name = t(`property.name.effect.${part}` as "property.name.effect.freq");
+              return (
+                <CompactField
+                  key={part}
+                  rows={rows}
+                  clip={clip}
+                  spec={spec}
+                  label={`${group} ${name}`}
+                  readOnly={readOnly}
+                />
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * What a compressor does to levels, as wide as there is room: the knee dragged across sets the
+ * threshold, the handle on the line after it sets the ratio; while one is in a hand, the graph says
+ * both.
  */
 export function CompressorGraph({ rows, clip, object, readOnly }: ViewProps) {
   const { t } = useTranslation();
   const { values, blocked, preview, commit, cancel } = useEffectValues(rows, clip, object);
+  const frame = useRef<HTMLDivElement>(null);
   const svg = useRef<SVGSVGElement>(null);
+  const width = useWidth(frame);
+  // Square, as wide as there is room next to its meter, at most 220.
+  const size = Math.min(Math.max(width - 20, 120), 220);
+  const plot = plotOf(size, size);
   const drag = useRef<"knee" | "ratio">(undefined);
   const [held, setHeld] = useState<Readonly<Record<string, Value>>>();
   const number = (name: string, fallback: number) => {
@@ -254,18 +404,27 @@ export function CompressorGraph({ rows, clip, object, readOnly }: ViewProps) {
   };
   const still = readOnly || blocked;
   const knee = kneePoint(shape);
-  const SIZE = HEIGHT;
+  const xAt = (share: number) => plot.left + share * plot.width;
+  const yAt = (share: number) => plot.top + share * plot.height;
+  // The handle of the ratio: on the line, a little more than halfway from the knee to 0 dB in.
+  const handleIn = shape.threshold + (0 - shape.threshold) * 0.6;
+  const handleOut = Math.min(
+    shape.threshold + (handleIn - shape.threshold) / Math.max(shape.ratio, 1),
+    0,
+  );
+  const handle = { x: shareOfDb(handleIn), y: 1 - shareOfDb(handleOut) };
 
   const down = (part: "knee" | "ratio") => (event: PointerEvent<SVGElement>) => {
     if (still || event.button !== 0) return;
     event.stopPropagation();
     (event.currentTarget as Element).setPointerCapture(event.pointerId);
     drag.current = part;
+    setHeld({});
   };
   const move = (event: PointerEvent<SVGElement>) => {
     const part = drag.current;
     if (!part || !svg.current) return;
-    const { x, y } = shareIn(svg.current, event, SIZE, SIZE);
+    const { x, y } = shareIn(svg.current, event, plot);
     const changes =
       part === "knee" ? { threshold: thresholdAt(x) } : { ratio: ratioAt(shape, x, y) };
     setHeld(changes);
@@ -274,57 +433,98 @@ export function CompressorGraph({ rows, clip, object, readOnly }: ViewProps) {
   const up = () => {
     if (!drag.current) return;
     drag.current = undefined;
-    if (held) commit(held);
+    if (held && Object.keys(held).length > 0) commit(held);
     else cancel();
     setHeld(undefined);
   };
-  const curve = curvePath(shape, SIZE, SIZE);
+  const curve = curvePath(shape, plot.width, plot.height);
+  const ticks = [-12, -24, -36, -48];
   return (
-    <div className={styles.effectGraphs}>
-      <svg
-        ref={svg}
-        className={styles.effectGraphSquare}
-        viewBox={`0 0 ${SIZE} ${SIZE}`}
-        role="group"
-        aria-label={t("effect.graph.compressor")}
-        data-compressor-graph=""
-        onPointerMove={move}
-        onPointerUp={up}
-        onPointerCancel={() => {
-          drag.current = undefined;
-          setHeld(undefined);
-          cancel();
-        }}
-      >
-        <g transform={inside(SIZE, SIZE)}>
-          {[-12, -24, -36, -48].map((db) => {
-            const at = (1 - (db + 60) / 60) * SIZE;
+    <div ref={frame} className={styles.graphFrame}>
+      <div className={styles.effectGraphs}>
+        <svg
+          ref={svg}
+          className={styles.effectGraphSquare}
+          width={size}
+          height={size}
+          viewBox={`0 0 ${size} ${size}`}
+          role="group"
+          aria-label={t("effect.graph.compressor")}
+          data-compressor-graph=""
+          onPointerMove={move}
+          onPointerUp={up}
+          onPointerCancel={() => {
+            drag.current = undefined;
+            setHeld(undefined);
+            cancel();
+          }}
+        >
+          {ticks.map((db) => {
+            const share = shareOfDb(db);
             return (
               <g key={db}>
-                <line className={styles.graphGrid} x1={0} x2={SIZE} y1={at} y2={at} />
-                <line className={styles.graphGrid} x1={SIZE - at} x2={SIZE - at} y1={0} y2={SIZE} />
+                <line
+                  className={styles.graphGrid}
+                  x1={plot.left}
+                  x2={plot.left + plot.width}
+                  y1={yAt(1 - share)}
+                  y2={yAt(1 - share)}
+                />
+                <line
+                  className={styles.graphGrid}
+                  x1={xAt(share)}
+                  x2={xAt(share)}
+                  y1={plot.top}
+                  y2={plot.top + plot.height}
+                />
+                <text
+                  className={styles.graphLabel}
+                  x={plot.left - 4}
+                  y={yAt(1 - share)}
+                  dy="0.35em"
+                  textAnchor="end"
+                >
+                  {signed(db, 0)}
+                </text>
+                <text className={styles.graphLabel} x={xAt(share)} y={size - 3} textAnchor="middle">
+                  {signed(db, 0)}
+                </text>
               </g>
             );
           })}
-          <line className={styles.graphAxis} x1={0} y1={SIZE} x2={SIZE} y2={0} />
-          <path className={styles.graphCurve} d={curve} />
-          <path
-            className={styles.graphHit}
-            d={curve}
+          <line className={styles.graphAxis} x1={xAt(0)} y1={yAt(1)} x2={xAt(1)} y2={yAt(0)} />
+          <g transform={`translate(${plot.left} ${plot.top})`}>
+            <path className={styles.graphCurve} d={curve} />
+          </g>
+          <circle
+            className={styles.graphHandle}
             data-part="ratio"
+            cx={xAt(handle.x)}
+            cy={yAt(handle.y)}
+            r={5}
             onPointerDown={down("ratio")}
           />
-        </g>
-        <circle
-          className={styles.graphKnee}
-          data-part="knee"
-          cx={PAD + knee.x * (SIZE - 2 * PAD)}
-          cy={PAD + knee.y * (SIZE - 2 * PAD)}
-          r={6}
-          onPointerDown={down("knee")}
-        />
-      </svg>
-      <ReductionMeter clip={clip} effect={object.id.slice("effect.".length)} />
+          <circle
+            className={styles.graphKnee}
+            data-part="knee"
+            cx={xAt(knee.x)}
+            cy={yAt(knee.y)}
+            r={6}
+            onPointerDown={down("knee")}
+          />
+          {held !== undefined && (
+            <text
+              className={styles.graphReading}
+              x={plot.left + 6}
+              y={plot.top + 12}
+              data-reading=""
+            >
+              {`${signed(shape.threshold, 1)} dB / ${shape.ratio.toFixed(1)}:1`}
+            </text>
+          )}
+        </svg>
+        <ReductionMeter clip={clip} effect={object.id.slice("effect.".length)} />
+      </div>
     </div>
   );
 }
@@ -368,9 +568,20 @@ export function ReductionMeter({
   );
 }
 
-/** A limiter: its meter of gain reduction above its rows. */
+/** A limiter: its meter of gain reduction above its rows, and how much it takes off. */
 export function LimiterView({ clip, object }: ViewProps) {
-  return <ReductionMeter clip={clip} effect={object.id.slice("effect.".length)} across />;
+  const { levels } = useWorkbench();
+  const { t } = useTranslation();
+  const effect = object.id.slice("effect.".length);
+  const reduction = useSyncExternalStore(levels.subscribe, () => levels.reductionOf(clip, effect));
+  return (
+    <div className={styles.reductionRow}>
+      <ReductionMeter clip={clip} effect={effect} across />
+      <span className={styles.reductionText} data-reduction-text="">
+        {t("effect.reductionText", { value: signed(-reduction, 1) })}
+      </span>
+    </div>
+  );
 }
 
 /** Rooms to start a reverb from: picking one writes all it sets, in one step. */

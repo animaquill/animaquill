@@ -2976,8 +2976,11 @@
     "graph": {
       "eq": "频率响应",
       "compressor": "输入输出曲线",
-      "band": "频段 {{name}}"
-    }
+      "band": "频段 {{name}}",
+      "point": "的点",
+      "bands": "各频段"
+    },
+    "reductionText": "增益衰减 {{value}} dB"
   },
   "assetPanel": {
     "search": "搜索素材",
@@ -6158,6 +6161,7 @@
     "turnOff": "关闭",
     "removeEffect": "删除",
     "limit": "限幅",
-    "limitOff": "关"
+    "limitOff": "关",
+    "limitFixed": "安全限幅，固定在最后"
   }
 }

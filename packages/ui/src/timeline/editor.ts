@@ -73,6 +73,7 @@ import {
   effectDropAt,
   effectProblem,
   mediaOfEffect,
+  startingValues,
   type EffectContext,
 } from "./effect-place.ts";
 import { sceneTemplate } from "./scene-template.ts";
@@ -3546,6 +3547,7 @@ export class TimelineEditor implements TouchTarget {
       ...target,
       type,
       id,
+      ...startingValues(type),
       ...(index === undefined ? {} : { index }),
     };
     if (!this.#run([{ type: "effect.add", params }])) return false;

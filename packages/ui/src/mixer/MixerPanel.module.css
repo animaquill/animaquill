@@ -35,7 +35,7 @@
 }
 
 .master {
-  width: calc(96px * var(--aq-size-scale));
+  width: calc(112px * var(--aq-size-scale));
   border-right: 0;
   border-left: 1px solid var(--aq-border);
 }
@@ -451,7 +451,18 @@ button.reading:hover {
 }
 
 .slot[data-fixed] {
-  border-style: dashed;
+  background: var(--aq-bg-raised);
+}
+
+.slotLock {
+  flex: none;
+  margin-left: 4px;
+  color: var(--aq-text-muted);
+}
+
+.strip[data-effect-drop],
+.master[data-effect-drop] {
+  box-shadow: inset 0 0 0 2px var(--aq-accent);
 }
 
 .slotName {

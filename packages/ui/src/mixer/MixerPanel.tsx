@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type DragEvent,
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
@@ -31,7 +32,10 @@ import {
   stuckPan,
   volumeOfFader,
 } from "./scale.ts";
+import { Lock } from "lucide-react";
 import { EffectSlots } from "./EffectSlots.tsx";
+import { EFFECT_DRAG_TYPE, effectDrag } from "../timeline/effect-drag.ts";
+import { mediaOfEffect } from "../timeline/effect-place.ts";
 import { MASTER_CLIP, trackClipId, withTrackClips } from "./track-clip.ts";
 
 const [VOLUME, PAN] = CLIP_SOUND.properties as [PropertySpec, PropertySpec];
@@ -393,6 +397,48 @@ function VolumeBox({
   );
 }
 
+/**
+ * What makes a whole strip take an effect of sound dragged from its tab: it lights up, and the
+ * effect goes last on the track (or the master). Slots and "+" take it at a place of their own.
+ */
+function useStripDrop() {
+  const { timeline } = useWorkbench();
+  const [over, setOver] = useState<string>();
+  return (target: string | undefined) => {
+    const takes = (event: DragEvent<HTMLElement>) => {
+      const type = effectDrag.current();
+      return (
+        target !== undefined &&
+        event.dataTransfer.types.includes(EFFECT_DRAG_TYPE) &&
+        type !== undefined &&
+        mediaOfEffect(type) === "sound"
+      );
+    };
+    const enter = (event: DragEvent<HTMLElement>) => {
+      if (!takes(event)) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "copy";
+      setOver(target);
+    };
+    return {
+      "data-effect-drop": (target !== undefined && over === target) || undefined,
+      onDragEnter: enter,
+      onDragOver: enter,
+      onDragLeave: (event: DragEvent<HTMLElement>) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(undefined);
+      },
+      onDrop: (event: DragEvent<HTMLElement>) => {
+        setOver(undefined);
+        if (!takes(event) || target === undefined) return;
+        event.preventDefault();
+        const type = effectDrag.current() as string;
+        effectDrag.end();
+        timeline.attachEffectTo(target, type);
+      },
+    };
+  };
+}
+
 /** The name on top of a strip: a click selects the track, a double click renames it. */
 function StripName({ row, name, selected }: { row: Row; name: string; selected: boolean }) {
   const { timeline } = useWorkbench();
@@ -457,6 +503,7 @@ interface StripProps {
 /** The strip of a track of sound: pan, fader and meter, the volume as a number, M and S. */
 function Strip({ row, rows, painter, selected }: StripProps) {
   const { properties, timeline } = useWorkbench();
+  const dropOn = useStripDrop();
   const { t } = useTranslation();
   const nameOf = useTrackName();
   const name = nameOf(row);
@@ -486,6 +533,7 @@ function Strip({ row, rows, painter, selected }: StripProps) {
   };
   const decibels = typeof volume.row.value === "number" ? volume.row.value : 0;
   const panValue = typeof pan.row.value === "number" ? pan.row.value : 0;
+  const drop = dropOn(track.locked === true ? undefined : row.id);
 
   return (
     <div
@@ -493,6 +541,7 @@ function Strip({ row, rows, painter, selected }: StripProps) {
       role="group"
       aria-label={name}
       data-selected={selected || undefined}
+      {...drop}
     >
       <StripName row={row} name={name} selected={selected} />
       <EffectSlots
@@ -641,11 +690,17 @@ function LimiterSlot({ rows }: { rows: PropertyRows }) {
   const level = typeof ceiling.row.value === "number" ? ceiling.row.value : -1;
   const label = t("mixer.limit");
   return (
-    <div className={styles.slot} data-fixed="" data-off={active ? undefined : true}>
+    <div
+      className={styles.slot}
+      data-fixed=""
+      data-off={active ? undefined : true}
+      title={t("mixer.limitFixed")}
+    >
+      <Lock size={10} className={styles.slotLock} aria-hidden />
       <button
         type="button"
         className={styles.slotName}
-        title={label}
+        title={t("mixer.limitFixed")}
         onClick={() => {
           timeline.selectTrack(MASTER_CLIP);
           layout.openPanel("properties");
@@ -680,6 +735,7 @@ function MasterStrip({
 }) {
   const { timeline } = useWorkbench();
   const { properties } = useWorkbench();
+  const dropOn = useStripDrop();
   const { t } = useTranslation();
   const name = t("mixer.master");
   const volume = useTrackProperty(rows, MASTER_CLIP, VOLUME);
@@ -689,12 +745,14 @@ function MasterStrip({
   const effects = model?.state.mix?.master?.effects ?? [];
   const decibels = typeof volume?.row.value === "number" ? volume.row.value : 0;
   const readOnly = volume?.blocked !== undefined;
+  const drop = dropOn(MASTER_CLIP);
   return (
     <div
       className={styles.master}
       role="group"
       aria-label={name}
       data-selected={selected || undefined}
+      {...drop}
     >
       <button
         type="button"

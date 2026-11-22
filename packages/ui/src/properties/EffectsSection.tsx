@@ -317,8 +317,11 @@ export function EffectsSection({
                     );
                   })()
                 : null}
+              {/* The equalizer has its numbers under its graph, a band to a row. */}
               {known ? (
-                rows.get(object.id)
+                type === "eq" ? null : (
+                  rows.get(object.id)
+                )
               ) : (
                 <p className={styles.effectMissing}>{t("effect.missing")}</p>
               )}

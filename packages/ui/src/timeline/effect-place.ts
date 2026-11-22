@@ -19,6 +19,20 @@ export type EffectBlocked = "locked" | "sound" | "picture" | "caption";
 export const mediaOfEffect = (type: string): EffectMedia =>
   builtInEffect(type)?.media.includes("sound") ? "sound" : "picture";
 
+/**
+ * What an effect of sound put on from the interface starts with, so that it is heard at once: the
+ * format's defaults change nothing (a reverb all dry, a compressor at 1:1). An equalizer stays flat.
+ * See docs/decisions.md 2026-11-18.
+ */
+export const STARTING_VALUES: Readonly<Record<string, Readonly<Record<string, number>>>> = {
+  reverb: { mix: 0.2 },
+  compressor: { threshold: -18, ratio: 4 },
+};
+
+/** The starting values of an effect, as `effect.add` takes them, when it has any. */
+export const startingValues = (type: string) =>
+  Object.hasOwn(STARTING_VALUES, type) ? { values: STARTING_VALUES[type] } : {};
+
 /** Why the clips of a row cannot take effects for this, or nothing when they can. */
 export function blockedRow(row: Row, media: EffectMedia = "picture"): EffectBlocked | undefined {
   if (row.track.locked === true) return "locked";
@@ -119,7 +133,10 @@ export function effectCalls(
   const calls = boxes.map((box): CommandCall => {
     const id = newId("fx");
     added.set(box.id, id);
-    return { type: "effect.add", params: { timeline: model.id, clip: box.id, type, id } };
+    return {
+      type: "effect.add",
+      params: { timeline: model.id, clip: box.id, type, id, ...startingValues(type) },
+    };
   });
   return { calls, added };
 }
