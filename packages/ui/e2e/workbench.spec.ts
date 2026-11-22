@@ -391,6 +391,7 @@ const EVERY_TAB = [
   "assets",
   "transitions",
   "fades",
+  "soundEffects",
   "effects",
   "preview",
   "code",
