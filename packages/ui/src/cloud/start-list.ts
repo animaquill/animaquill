@@ -16,15 +16,14 @@ import { Emitter } from "../workbench/emitter.ts";
 import type { ListedArchive } from "./github-status.ts";
 
 /**
- * What the start page lists, see the design of the start page (docs/design/start-and-cloud.md of
- * AnimaQuill Cloud), 2: the projects on this computer, which are folders, each with how it stands
- * with the platform; the projects of the platform that have no folder here, to open as they are or
- * to download into one; and the projects that are only in this browser, where there are any.
+ * What the start page lists (docs/design/online-offline.md of AnimaQuill Cloud, 1.2 and 1.3): in
+ * the online mode the projects of the platform, with or without a copy in this browser; in the
+ * offline mode the folders this browser knows, which are its projects; and in either, the projects
+ * that are only in this browser, where there are any.
  *
- * It is put together from four things: the folders this browser knows, the projects it keeps, its
- * links to projects of the platform, and the platform's own list. Every project shows once. A
- * project of the platform is the one a folder is connected to, or the one this browser has a copy
- * of ("opened here before"), or neither: it never is two lines.
+ * It is put together from four things: the folders this browser knows (offline), the projects it
+ * keeps, its links to projects of the platform and the platform's own list (online). Every project
+ * shows once.
  *
  * The first three are on this computer, and show at once. The platform's list comes when it comes,
  * and where it does not, as without a network or while nobody is signed in, the links say what
@@ -49,8 +48,6 @@ export type AttentionReason =
 
 /** How a project of this computer stands with the platform, for the mark on its line. */
 export type CloudMark =
-  /** Not connected: only on this computer. */
-  | { readonly kind: "local" }
   /**
    * Connected. `repository`: the name of its repository, where it is known. `stale`: as this
    * browser remembers it, since the platform's list could not be read.
@@ -66,7 +63,7 @@ export type CloudMark =
   /** A project of the platform of somebody else than whoever is signed in. */
   | { readonly kind: "otherAccount" };
 
-/** A project that is a folder on this computer. */
+/** A project that is a folder on this computer, of the offline mode. */
 export interface LocalRow {
   /** What this browser keeps it by, see `FolderRecord.id`. */
   readonly key: string;
@@ -76,40 +73,13 @@ export interface LocalRow {
   readonly folder: string;
   /** Milliseconds since 1970. */
   readonly openedAt: number;
-  /** Undefined where the editor is hosted on no platform. */
-  readonly mark: CloudMark | undefined;
-  /** The project of the platform it is connected to, by its id there. */
-  readonly project: string | undefined;
-  /** Changes of this browser may not be on the platform yet, see `CloudLink.pending`: a hint. */
-  readonly pending: boolean;
-  /**
-   * When it last changed, as far as this browser knows: in its log here, or on the platform, the
-   * later of the two. Undefined where neither says.
-   */
+  /** When it last changed, as far as its log in this browser knows. */
   readonly updatedAt: number | undefined;
-  /** Where its repository is, as the platform's list says: an https address or nothing. */
-  readonly repositoryUrl: string | undefined;
-  /** It can be taken away on the platform: see `CloudRow.deletable`. */
-  readonly deletable: boolean;
-  /** Whose project of the platform it is, see `CloudLink.owner`, where that is known. */
-  readonly owner: string | undefined;
-  /** See `CloudRow.behind`. */
-  readonly behind: boolean;
-  /** See `CloudRow.archive`. */
-  readonly archive: ListedArchive | undefined;
-  /** See `CloudRow.unusable`. */
-  readonly unusable: RepositoryUnusable | undefined;
-  /** See `CloudRow.copy`; "live" where the platform's list does not say. */
-  readonly copy: string;
-  /** See `CloudRow.cover`. */
-  readonly cover: CloudProjectSummary["cover"] | null;
-  /** See `CloudRow.durationMs`. */
-  readonly durationMs: number | undefined;
-  /** See `CloudRow.description`: as this browser noted it, or the platform's list says. */
+  /** What it says about itself, as this browser noted it. */
   readonly description: string | undefined;
 }
 
-/** A project of the platform that has no folder on this computer. */
+/** A project of the platform, of the online mode. */
 export interface CloudRow {
   /** Its id on the platform. */
   readonly project: string;
@@ -170,9 +140,9 @@ export interface CloudRow {
 }
 
 export interface StartLists {
-  /** The projects on this computer, the most recently opened first. */
+  /** The folders of the offline mode, the most recently opened first. */
   readonly local: readonly LocalRow[];
-  /** The projects of the platform without a folder here. */
+  /** The projects of the platform, online. */
   readonly cloud: readonly CloudRow[];
   /** The projects that are only in this browser, the most recently changed first. */
   readonly browser: readonly ProjectSummary[];
@@ -219,13 +189,11 @@ const listedArchive = ({
   repository,
   archive,
   openedAt,
-  releaseAt,
 }: CloudProjectSummary): ListedArchive => ({
   ...(attention !== undefined && { attention }),
   ...(repository && { repository }),
   ...(archive && { archive }),
   ...(openedAt !== undefined && { openedAt }),
-  ...(releaseAt !== undefined && { releaseAt }),
 });
 
 const isPending = (link: CloudLink | undefined): boolean =>
@@ -265,8 +233,7 @@ export function composeStartList(input: StartInput): StartLists {
     }
   };
 
-  const markOf = (link: CloudLink | undefined): CloudMark => {
-    if (!link) return { kind: "local" };
+  const markOf = (link: CloudLink): CloudMark => {
     const summary = summaryOf.get(link.project);
     if (summary) return markOfListed(summary, link);
     // Not on the platform yet, as far as this browser knows: connecting has to be finished.
@@ -281,34 +248,15 @@ export function composeStartList(input: StartInput): StartLists {
   };
 
   const keptOf = new Map(kept.map((summary) => [summary.id, summary]));
-  const local = records.map((record): LocalRow => {
-    const link = linkOf.get(record.id);
-    const onPlatform = link && summaryOf.get(link.project);
-    const times = [keptOf.get(record.id)?.updatedAt, onPlatform?.updatedAt].filter(
-      (at): at is number => at !== undefined,
-    );
-    return {
-      key: record.id,
-      record,
-      name: record.name,
-      folder: record.folder.name,
-      openedAt: record.openedAt,
-      mark: platform === undefined ? undefined : markOf(link),
-      project: link?.project,
-      pending: isPending(link),
-      updatedAt: times.length > 0 ? Math.max(...times) : undefined,
-      repositoryUrl: onPlatform?.repository?.url || undefined,
-      deletable: input.canDelete && onPlatform !== undefined,
-      owner: onPlatform ? (account ?? link?.owner) : link?.owner,
-      behind: onPlatform !== undefined && isBehind(onPlatform),
-      archive: onPlatform && listedArchive(onPlatform),
-      unusable: onPlatform?.repository?.unusable,
-      copy: onPlatform?.copy ?? "live",
-      cover: onPlatform ? (onPlatform.cover ?? null) : undefined,
-      durationMs: onPlatform?.durationMs,
-      description: keptOf.get(record.id)?.description ?? onPlatform?.description,
-    };
-  });
+  const local = records.map((record): LocalRow => ({
+    key: record.id,
+    record,
+    name: record.name,
+    folder: record.folder.name,
+    openedAt: record.openedAt,
+    updatedAt: keptOf.get(record.id)?.updatedAt,
+    description: keptOf.get(record.id)?.description,
+  }));
 
   // The log of a folder is in the browser too, and is no project of the browser. Where the folders
   // cannot be read, nothing tells the two apart: then none of them shows as one.
@@ -317,60 +265,53 @@ export function composeStartList(input: StartInput): StartLists {
     ? kept.filter((summary) => summary.folder !== true && !folders.has(summary.id))
     : [];
 
-  // Projects of the platform that a folder is connected to show as that folder, and only there.
-  // Without knowing the folders, any link may be one of a folder.
-  const inFolders = new Set(
-    links.filter((link) => !isReadable || folders.has(link.key)).map((link) => link.project),
-  );
   /** The copy this browser has of a project of the platform, by the project: the first one. */
   const copyOf = new Map<string, { readonly link: CloudLink; readonly summary: ProjectSummary }>();
   for (const summary of inBrowser) {
     const link = linkOf.get(summary.id);
-    if (!link || inFolders.has(link.project) || copyOf.has(link.project)) continue;
+    if (!link || copyOf.has(link.project)) continue;
     copyOf.set(link.project, { link, summary });
   }
   const copies = new Set([...copyOf.values()].map(({ summary }) => summary.id));
 
-  const fromList = (list ?? [])
-    .filter((summary) => !inFolders.has(summary.id))
-    .map((summary): CloudRow => {
-      const copy = copyOf.get(summary.id);
-      return {
-        project: summary.id,
-        // What the copy here is called where it has changes the platform does not have yet, as one
-        // renamed on the start page; and where the list could not say what it is called.
-        name:
-          (copy && isPending(copy.link) && copy.summary.name) ||
-          summary.name ||
-          copy?.summary.name ||
-          copy?.link.name ||
-          "",
-        repository: summary.repository && {
-          fullName: summary.repository.fullName,
-          url: summary.repository.url || undefined,
-        },
-        updatedAt: summary.updatedAt,
-        key: copy?.link.key,
-        pending: isPending(copy?.link),
-        mark: markOfListed(summary, copy?.link),
-        listed: true,
-        needsSignIn: false,
-        copy: summary.copy ?? "live",
-        ...(summary.copy !== "live" && summary.releasedAt !== undefined && { released: true }),
-        ...(summary.copy === "released" && summary.copyProblem && { copyFailed: true }),
-        deletable: input.canDelete,
-        owner: account ?? copy?.link.owner,
-        behind: isBehind(summary),
-        archive: listedArchive(summary),
-        unusable: summary.repository?.unusable,
-        cover: summary.cover ?? null,
-        durationMs: summary.durationMs,
-        description:
-          (copy && isPending(copy.link) ? copy.summary.description : undefined) ??
-          summary.description ??
-          copy?.summary.description,
-      };
-    });
+  const fromList = (list ?? []).map((summary): CloudRow => {
+    const copy = copyOf.get(summary.id);
+    return {
+      project: summary.id,
+      // What the copy here is called where it has changes the platform does not have yet, as one
+      // renamed on the start page; and where the list could not say what it is called.
+      name:
+        (copy && isPending(copy.link) && copy.summary.name) ||
+        summary.name ||
+        copy?.summary.name ||
+        copy?.link.name ||
+        "",
+      repository: summary.repository && {
+        fullName: summary.repository.fullName,
+        url: summary.repository.url || undefined,
+      },
+      updatedAt: summary.updatedAt,
+      key: copy?.link.key,
+      pending: isPending(copy?.link),
+      mark: markOfListed(summary, copy?.link),
+      listed: true,
+      needsSignIn: false,
+      copy: summary.copy ?? "live",
+      ...(summary.copy !== "live" && summary.releasedAt !== undefined && { released: true }),
+      ...(summary.copy === "released" && summary.copyProblem && { copyFailed: true }),
+      deletable: input.canDelete,
+      owner: account ?? copy?.link.owner,
+      behind: isBehind(summary),
+      archive: listedArchive(summary),
+      unusable: summary.repository?.unusable,
+      cover: summary.cover ?? null,
+      durationMs: summary.durationMs,
+      description:
+        (copy && isPending(copy.link) ? copy.summary.description : undefined) ??
+        summary.description ??
+        copy?.summary.description,
+    };
+  });
   // What this browser has and the list does not: all of it while there is no list.
   const remembered = [...copyOf.values()]
     .filter(({ link }) => !summaryOf.has(link.project))
@@ -409,11 +350,9 @@ export function composeStartList(input: StartInput): StartLists {
 
 const plain = { interpolation: { escapeValue: false } } as const;
 
-/** The mark on the line of a project: "仅本机", "☁ 已连云端 · ada/atom", "☁ 要处理"… */
+/** The mark on the line of a project: "☁ 已连云端 · ada/atom", "☁ 要处理"… */
 export function markText(mark: CloudMark, t: TFunction): string {
   switch (mark.kind) {
-    case "local":
-      return t("start.mark.local");
     case "linked":
       return mark.repository === undefined
         ? t("start.mark.linked")
@@ -430,8 +369,6 @@ export function markText(mark: CloudMark, t: TFunction): string {
 /** What a mark means and what people can do, for hovering, or undefined where it says it all. */
 export function markHint(mark: CloudMark, t: TFunction): string | undefined {
   switch (mark.kind) {
-    case "local":
-      return undefined;
     case "linked":
       return mark.stale ? t("start.hint.stale") : undefined;
     case "attention":

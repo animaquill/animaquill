@@ -119,6 +119,27 @@ test("playing from one clip into the next needs no decoder to start", async ({ p
 
 test.describe("errors", () => {
   devPageOnly("the tab 崩溃测试");
+  // Reports go to the backend: only the online mode has one, the offline mode saves them as files.
+  test.use({ withProject: false });
+
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      if (window !== window.top) return;
+      if (sessionStorage.getItem("animaquill.fakeAccount") === null)
+        sessionStorage.setItem(
+          "animaquill.fakeAccount",
+          JSON.stringify({ signedIn: true, installed: true }),
+        );
+    });
+    await page.goto("/?account=fake&cloud=fake");
+    await page.getByRole("button", { name: "新建项目" }).first().click();
+    const box = page.locator("dialog[data-create-phase]");
+    await box.getByRole("textbox", { name: "项目名称" }).fill("测试项目");
+    await box.getByRole("button", { name: "新建", exact: true }).click();
+    await expect(box).toHaveAttribute("data-create-phase", /archiving|done/);
+    await box.getByRole("button", { name: /^(关闭|完成)$/ }).click();
+    await expect(tab(page, "preview")).toBeVisible();
+  });
 
   const prompt = (page: Page) =>
     page.getByRole("alertdialog", { name: "出错了，要发送错误报告吗？" });

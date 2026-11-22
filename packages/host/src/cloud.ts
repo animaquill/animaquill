@@ -1,3 +1,4 @@
+import { scoped } from "./scope.ts";
 import { browserFolderWriter } from "./folder-writer.ts";
 import { newSyncId } from "./sync-protocol.ts";
 import type {
@@ -200,7 +201,7 @@ export function browserCloudLinks(factory: () => IDBFactory = () => indexedDB): 
   let opening: Promise<IDBDatabase> | undefined;
   const database = () => {
     opening ??= new Promise<IDBDatabase>((resolve, reject) => {
-      const request = factory().open(DATABASE, DATABASE_VERSION);
+      const request = factory().open(scoped(DATABASE), DATABASE_VERSION);
       request.addEventListener("upgradeneeded", () => {
         const links = request.result.createObjectStore(LINKS, { keyPath: "key" });
         links.createIndex(BY_PROJECT, "where");
@@ -353,7 +354,7 @@ export function webSocketConnection(url: string): CloudConnection {
 /** What windows of a browser tell each other about a project, over a BroadcastChannel. */
 export function broadcastLine(name: string): CloudLine | undefined {
   if (typeof BroadcastChannel === "undefined") return undefined;
-  const channel = new BroadcastChannel(name);
+  const channel = new BroadcastChannel(scoped(name));
   return {
     // oxlint-disable-next-line unicorn/require-post-message-target-origin -- not a window
     post: (message) => channel.postMessage(message),

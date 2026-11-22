@@ -379,7 +379,7 @@ test("an earlier conversation with the tools before goes on, with those calls as
   // As the tools before these kept it: a call of project_overview, which is no more.
   await page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("animaquill-chats");
+      const request = indexedDB.open("aq-offline-animaquill-chats");
       request.addEventListener("success", () => resolve(request.result));
       request.addEventListener("error", () => reject(request.error));
     });

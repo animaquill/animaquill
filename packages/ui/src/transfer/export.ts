@@ -66,7 +66,7 @@ const samePathKey = (path: string) => path.normalize("NFC").toLowerCase();
  */
 export async function exportProject(
   store: ProjectStore,
-  media: MediaStore,
+  media: Pick<MediaStore, "get">,
   target: TargetFolder,
   { notice, signal, onStep }: ExportOptions,
 ): Promise<ExportReport> {

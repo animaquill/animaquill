@@ -458,13 +458,9 @@ export class MemoryExports implements ExportStore {
 export class MemoryPresence {
   /** How many windows have each project open. */
   readonly open = new Map<string, number>();
-  readonly #windows = new Set<{ readonly listeners: Set<(project: string) => void> }>();
 
   window(): ProjectPresence {
     const own = new Map<string, number>();
-    const listeners = new Set<(project: string) => void>();
-    const page = { listeners };
-    this.#windows.add(page);
     return {
       enter: (project) => {
         own.set(project, (own.get(project) ?? 0) + 1);
@@ -478,16 +474,6 @@ export class MemoryPresence {
         };
       },
       others: async (project) => (this.open.get(project) ?? 0) - (own.get(project) ?? 0),
-      moved: (project) => {
-        for (const other of this.#windows) {
-          if (other === page) continue;
-          for (const listener of other.listeners) listener(project);
-        }
-      },
-      onMoved: (listener) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
     };
   }
 }

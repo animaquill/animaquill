@@ -699,7 +699,7 @@ test("pictures dropped anywhere on the chat; a lost one holds the message; forma
   await page.evaluate(
     () =>
       new Promise<void>((resolve, reject) => {
-        const open = indexedDB.open("animaquill-chat-images");
+        const open = indexedDB.open("aq-offline-animaquill-chat-images");
         open.addEventListener("error", () => reject(open.error));
         open.addEventListener("success", () => {
           const transaction = open.result.transaction("images", "readwrite");

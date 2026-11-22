@@ -341,18 +341,22 @@ function LocalAiGuide() {
                       folder,
                       interpolation: { escapeValue: false },
                     })
-                  : t("localAi.guide.browserOnly")}
+                  : t(
+                      workbench.mode === "online"
+                        ? "localAi.guide.onlineOnly"
+                        : "localAi.guide.browserOnly",
+                    )}
               </span>
-              {project === "browser" && (
+              {project === "browser" && workbench.mode === "online" && (
                 <button
                   type="button"
                   className={settings.button}
                   onClick={() => {
                     close();
-                    workbench.linkFolder();
+                    void workbench.saveToFolder();
                   }}
                 >
-                  {t("localAi.guide.linkFolder")}
+                  {t("saveToFolder.action")}
                 </button>
               )}
             </div>

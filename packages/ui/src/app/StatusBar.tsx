@@ -323,7 +323,7 @@ function ProblemsStatus() {
 
 const noSubscription = () => () => {};
 const noProxies = () => NO_PROXIES;
-const NO_FOLDERS: ProjectFoldersSnapshot = { open: undefined, waiting: undefined, moves: 0 };
+const NO_FOLDERS: ProjectFoldersSnapshot = { open: undefined, waiting: undefined };
 const noFolders = () => NO_FOLDERS;
 const writtenWhen = new Intl.DateTimeFormat("zh-CN", { timeStyle: "medium" });
 
@@ -490,14 +490,12 @@ const FRESH_MS = 3000;
 function CloudPanelBubble({
   snapshot,
   name,
-  folder,
   place,
   button,
   focus,
 }: {
   snapshot: CloudProjectsSnapshot;
   name: string;
-  folder: string | undefined;
   place: Place;
   /** What it points at. */
   button: RefObject<HTMLElement | null>;
@@ -536,8 +534,6 @@ function CloudPanelBubble({
   const panel = cloudPanel(
     panelInputOf(snapshot, {
       name,
-      ...(folder !== undefined && { folder }),
-      canMoveToFolder: workbench.projectFolders !== undefined,
       ...storedOf(workbench),
       ...cloudOf(workbench),
       now,
@@ -562,6 +558,9 @@ function CloudPanelBubble({
   );
 }
 
+/** A project only in this browser, without the platform, for its panel offline. */
+const ONLY_HERE: CloudProjectsSnapshot = { kind: "none", local: "browser" };
+
 /** The icon of the status of syncing, by how it goes. */
 const SyncIcon = ({ panel }: { panel: CloudPanel }) =>
   panel.sync === "offline" || panel.sync === "reconnecting" ? (
@@ -575,25 +574,24 @@ const SyncIcon = ({ panel }: { panel: CloudPanel }) =>
   );
 
 /**
- * How the open project is saved, as three statuses side by side, see `cloudPanel` and the design
- * of the start page, 8: "本地", whether this computer has the changes, in its folder or in this
- * browser; for a project of the platform also "云同步", whether the platform has them, and "GitHub
- * 仓库", whether its repository has them, which stands out only where something is wrong. Each
- * opens its part of the panel. A project that does not sync has "仅本机" in place of the other two,
- * which connects it, and one only in this browser says that. Nothing of the platform where the
- * editor is hosted on none.
+ * How the open project is saved, see `cloudPanel` (docs/design/online-offline.md of AnimaQuill
+ * Cloud, 1.2 and 1.3). Online, "云同步", whether the platform has the changes, and "GitHub 仓库",
+ * whether its repository has them, which stands out only where something is wrong; what this
+ * browser keeps says something only where it cannot keep it. Offline, "本地": whether its folder
+ * has them, or for a project only in this browser, that it is, which stands out and opens what
+ * that means.
  */
 function SaveStatuses({
   name,
   place,
-  folder,
+  saveFailed,
   children,
 }: {
   name: string;
   /** Where the project is, see `PlaceIcon`. */
   place: Place;
-  /** What its folder is called, for a project that is a folder. */
-  folder: string | undefined;
+  /** What this computer keeps of it could not be kept. */
+  saveFailed: boolean;
   /** What says whether this computer has the changes. */
   children: ReactNode;
 }) {
@@ -615,7 +613,7 @@ function SaveStatuses({
   // ...and how taking it back onto a copy made again goes, which is no part of the snapshot.
   useSyncExternalStore(cloud?.subscribe ?? noSubscription, () => cloud?.takeBack);
   const open = useSyncExternalStore(shown.subscribe, shown.getSnapshot);
-  // Until the project was looked at, nothing says how it stands: "仅本机" could be wrong.
+  // Until the project was looked at, nothing says how it stands.
   const known = useSyncExternalStore(
     workbench.cloudKnown.subscribe,
     workbench.cloudKnown.getSnapshot,
@@ -651,13 +649,14 @@ function SaveStatuses({
     return () => window.removeEventListener("pointerdown", onPointerDown, true);
   }, [shown]);
 
+  // Offline, only a project that is only in this browser has a panel: what that means.
+  const onlyHere = !cloud && place === "browser";
+  const snapshot: CloudProjectsSnapshot = onlyHere ? ONLY_HERE : outer;
   const panel =
-    cloud && known
+    (cloud && known) || onlyHere
       ? cloudPanel(
-          panelInputOf(outer, {
+          panelInputOf(snapshot, {
             name,
-            ...(folder !== undefined && { folder }),
-            canMoveToFolder: workbench.projectFolders !== undefined,
             ...storedOf(workbench),
             ...cloudOf(workbench),
             now,
@@ -665,7 +664,6 @@ function SaveStatuses({
           t,
         )
       : undefined;
-  const opensPanel = panel?.opens === "panel";
   const openAt = (section: PanelSection | "assets") => {
     if (wasOpen.current && focus === section) shown.set(false);
     else {
@@ -702,35 +700,21 @@ function SaveStatuses({
                 ? t("storage.downloads.panel.bar", { percent: downloading.percent })
                 : undefined;
   const githubWord = github && (uploadWord ?? githubText(github, t));
+  // Online, what this browser keeps is no status of its own unless it could not keep it.
+  const showsLocal = workbench.mode === "offline" || saveFailed || outer.kind !== "linked";
   return (
     <span ref={group} className={styles.saves}>
-      <LocalStatus
-        place={place}
-        {...(opensPanel && outer.kind === "linked" && { onOpen: () => openAt("local") })}
-      >
-        {children}
-      </LocalStatus>
-      {panel && !opensPanel && (
-        <Tip name={panel.bar} usage={panel.barAbout}>
-          <button
-            type="button"
-            className={`${styles.name} ${styles.cloud}`}
-            aria-label={`${t("cloud.statusLabel")}：${panel.bar}`}
-            data-cloud-level={panel.level}
-            onClick={() => void workbench.connectToCloud()}
-          >
-            {panel.bar}
-          </button>
-        </Tip>
+      {showsLocal && (!onlyHere || saveFailed) && (
+        <LocalStatus place={place}>{children}</LocalStatus>
       )}
-      {panel && opensPanel && outer.kind === "none" && (
+      {panel && snapshot.kind === "none" && (
         // Only in this browser, without the platform: one status, which stands out.
         <Tip name={panel.bar} usage={panel.barAbout}>
           <button
             type="button"
             className={`${styles.name} ${styles.cloud} ${styles.failed}`}
             aria-haspopup="dialog"
-            aria-label={`${t("cloud.statusLabel")}：${panel.bar}`}
+            aria-label={cloud ? `${t("cloud.statusLabel")}：${panel.bar}` : panel.bar}
             data-cloud-level={panel.level}
             onClick={() => openAt("local")}
           >
@@ -738,7 +722,7 @@ function SaveStatuses({
           </button>
         </Tip>
       )}
-      {panel && opensPanel && outer.kind === "linked" && (
+      {panel && outer.kind === "linked" && (
         <>
           <Tip name={label("sync", panel.bar)} usage={panel.barAbout}>
             <button
@@ -780,13 +764,7 @@ function SaveStatuses({
                       : undefined
                 }
                 data-downloads={
-                  outer.kind !== "linked"
-                    ? undefined
-                    : downloading.needsPeople
-                      ? "failed"
-                      : isDownloading
-                        ? "going"
-                        : undefined
+                  downloading.needsPeople ? "failed" : isDownloading ? "going" : undefined
                 }
                 onClick={() => openAt(uploadWord === undefined ? "github" : "assets")}
               >
@@ -802,11 +780,10 @@ function SaveStatuses({
           )}
         </>
       )}
-      {open && opensPanel && (
+      {open && panel && (
         <CloudPanelBubble
-          snapshot={outer}
+          snapshot={snapshot}
           name={name}
-          folder={folder}
           place={place}
           button={group}
           focus={focus}
@@ -818,18 +795,9 @@ function SaveStatuses({
 
 /**
  * Whether this computer has the changes, as the first of the statuses: where the project is, the
- * word "本地", and how its folder or the log in this browser is. `open` opens its part of the panel,
- * for a project of the platform.
+ * word "本地", and how its folder or the log in this browser is.
  */
-function LocalStatus({
-  place,
-  onOpen,
-  children,
-}: {
-  place: Place;
-  onOpen?: () => void;
-  children: ReactNode;
-}) {
+function LocalStatus({ place, children }: { place: Place; children: ReactNode }) {
   const { t } = useTranslation();
   const sign = (
     <>
@@ -844,19 +812,7 @@ function LocalStatus({
   );
   return (
     <span className={styles.local} data-save-status="local">
-      {onOpen ? (
-        <button
-          type="button"
-          className={`${styles.name} ${styles.save}`}
-          aria-haspopup="dialog"
-          aria-label={t("saveStatus.local")}
-          onClick={onOpen}
-        >
-          {sign}
-        </button>
-      ) : (
-        <span className={styles.save}>{sign}</span>
-      )}
+      <span className={styles.save}>{sign}</span>
       {children}
     </span>
   );
@@ -905,14 +861,7 @@ export function StatusBar() {
     workbench.cloud?.subscribe ?? noSubscription,
     workbench.cloud?.getSnapshot ?? noCloud,
   );
-  const place: Place =
-    cloudSnapshot.kind === "linked"
-      ? cloudSnapshot.local === "folder"
-        ? "cloudFolder"
-        : "cloud"
-      : folder
-        ? "folder"
-        : "browser";
+  const place: Place = cloudSnapshot.kind === "linked" ? "cloud" : folder ? "folder" : "browser";
 
   return (
     <footer className={styles.bar}>
@@ -933,11 +882,7 @@ export function StatusBar() {
       {format && <SizeStatus width={format.width} height={format.height} />}
       {project && <FrameRateStatus />}
       {project && (
-        <SaveStatuses
-          name={project.manifest.name}
-          place={place}
-          folder={folder?.record.folder.name}
-        >
+        <SaveStatuses name={project.manifest.name} place={place} saveFailed={save === "failed"}>
           {folder && <FolderSaveStatus open={folder} />}
           {(!folder || save === "failed") && !(isOpening && save === "saving") && (
             <span className={save === "failed" ? styles.failed : undefined} role="status">

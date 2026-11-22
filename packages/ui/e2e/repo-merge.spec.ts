@@ -385,9 +385,7 @@ test.describe("merges of what changed on GitHub", () => {
     await expect(githubStatus(page)).toHaveAttribute("data-github-cause", "conflicts");
     await githubStatus(page).hover();
     await expect(
-      page
-        .getByText(/存进 GitHub 失败：有 3 处和 GitHub 上的改动冲突。平台临时存储只保存 7 天/)
-        .first(),
+      page.getByText(/存进 GitHub 失败：有 3 处和 GitHub 上的改动冲突。/).first(),
     ).toBeVisible();
     const stays = page.getByText("GitHub 上的改动和这里有 3 处冲突");
     await expect(stays).toBeVisible();

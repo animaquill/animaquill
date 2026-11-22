@@ -35,35 +35,13 @@ class Locks {
   }
 }
 
-/** Windows that hear each other, as BroadcastChannel has it: never what they said themselves. */
-function channels() {
-  const all = new Set<{ deliver: (data: unknown) => void }>();
-  return () => {
-    const listeners = new Set<(event: MessageEvent) => void>();
-    const own = {
-      deliver: (data: unknown) => {
-        for (const listener of listeners) listener({ data } as MessageEvent);
-      },
-    };
-    all.add(own);
-    return {
-      addEventListener: (_type: string, listener: (event: MessageEvent) => void) =>
-        listeners.add(listener),
-      postMessage(data: unknown) {
-        for (const other of all) if (other !== own) other.deliver(data);
-      },
-    } as unknown as BroadcastChannel;
-  };
-}
-
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 describe("which windows have a project open", () => {
   it("counts the other windows, and what one lets go of or takes away with it goes", async () => {
     const locks = new Locks();
-    const channel = channels();
-    const first = browserPresence(() => locks.forWindow(1), channel);
-    const second = browserPresence(() => locks.forWindow(2), channel);
+    const first = browserPresence(() => locks.forWindow(1));
+    const second = browserPresence(() => locks.forWindow(2));
     const leave = first.enter("project_a");
     await tick();
     expect(await first.others("project_a")).toBe(0);
@@ -85,35 +63,15 @@ describe("which windows have a project open", () => {
     const manager = locks.forWindow(1);
     // The browser has the locks, and does not say what is held.
     const silent = { ...manager, query: async () => Promise.reject(new Error("not allowed")) };
-    const presence = browserPresence(() => silent as unknown as LockManager, channels());
+    const presence = browserPresence(() => silent as unknown as LockManager);
     await expect(presence.others("project_a")).rejects.toThrow("not allowed");
     // A browser without them at all has nothing to ask: every window is on its own.
-    expect(await browserPresence(() => undefined, channels()).others("project_a")).toBe(0);
-  });
-
-  it("tells the other windows that a project moved, and not itself", () => {
-    const channel = channels();
-    const first = browserPresence(() => undefined, channel);
-    const second = browserPresence(() => undefined, channel);
-    const heardFirst: string[] = [];
-    const heardSecond: string[] = [];
-    first.onMoved((project) => heardFirst.push(project));
-    const stop = second.onMoved((project) => heardSecond.push(project));
-    first.moved("project_a");
-    expect(heardSecond).toEqual(["project_a"]);
-    expect(heardFirst).toEqual([]);
-    stop();
-    first.moved("project_b");
-    expect(heardSecond).toEqual(["project_a"]);
+    expect(await browserPresence(() => undefined).others("project_a")).toBe(0);
   });
 
   it("counts nobody where the browser cannot tell", async () => {
-    const presence = browserPresence(
-      () => undefined,
-      () => undefined,
-    );
+    const presence = browserPresence(() => undefined);
     presence.enter("project_a");
     expect(await presence.others("project_a")).toBe(0);
-    presence.moved("project_a");
   });
 });

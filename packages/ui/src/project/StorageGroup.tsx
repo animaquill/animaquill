@@ -18,13 +18,11 @@ const nothing = () => undefined;
 
 /** Where the open project is, as the design of the properties tells the kinds apart (5.4). */
 export type StoredAs =
-  /** A folder of this computer, without the platform. */
+  /** A folder of this computer: offline. */
   | "folder"
-  /** A folder of this computer, which syncs with the platform. */
-  | "cloudFolder"
-  /** A project of the platform, only in this browser: no folder. */
+  /** A project of the platform, which this browser has a copy of: online. */
   | "cloudBrowser"
-  /** Only in this browser, without the platform, as projects were made before. */
+  /** Only in this browser, without the platform. */
   | "browser";
 
 /** What the platform says of the open project, once, as the group opens. */
@@ -89,20 +87,12 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
 
   const folder = folders?.open?.record.folder.name;
   const linked = outer?.kind === "linked" ? outer : undefined;
-  const storedAs: StoredAs = linked
-    ? linked.local === "folder"
-      ? "cloudFolder"
-      : "cloudBrowser"
-    : folder !== undefined
-      ? "folder"
-      : "browser";
+  const storedAs: StoredAs = linked ? "cloudBrowser" : folder !== undefined ? "folder" : "browser";
   const panel =
     cloud && outer && known
       ? cloudPanel(
           panelInputOf(outer, {
             name: state.manifest.name,
-            ...(folder !== undefined && { folder }),
-            canMoveToFolder: projectFolders !== undefined,
             ...storedOf(workbench),
             ...cloudOf(workbench),
             now,
@@ -122,7 +112,7 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
     workbench.runCloudAction(id);
   };
   /** Ways out, as the panel of the platform has them: the properties close first. */
-  const exit = (id: "saveAsLocal" | "disconnect") => {
+  const exit = (id: "saveToFolder") => {
     workbench.projectNav.close();
     workbench.runCloudAction(id);
   };
@@ -167,14 +157,9 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
             below={
               <>
                 <div className={styles.listRow}>
-                  {projectFolders && (
-                    <Small disabled={!cloud?.isOnPlatform} onClick={() => exit("saveAsLocal")}>
-                      {t("cloud.saveAsLocalAction")}
-                    </Small>
-                  )}
-                  {linked.local === "folder" && (
-                    <Small onClick={() => exit("disconnect")}>{t("cloud.disconnectAction")}</Small>
-                  )}
+                  <Small disabled={!cloud?.isOnPlatform} onClick={() => exit("saveToFolder")}>
+                    {t("saveToFolder.action")}
+                  </Small>
                 </div>
                 <Facts
                   items={[
@@ -233,8 +218,9 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
       {linked && workbench.repoMerges && repository?.status?.repository && (
         <PreferRow prefer={repository.status.prefer} />
       )}
-      <Heading>{t("projectProps.storage.local")}</Heading>
-      {folder !== undefined ? (
+      {/* Online a project is the platform's: this computer has a copy of it in the browser only. */}
+      {!linked && <Heading>{t("projectProps.storage.local")}</Heading>}
+      {linked ? null : folder !== undefined ? (
         <>
           <Row
             id="folder"
@@ -269,9 +255,7 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
         <Row
           id="folder"
           name={t("projectProps.storage.noFolder")}
-          help={t(
-            linked ? "projectProps.storage.noFolderCloud" : "projectProps.storage.noFolderBrowser",
-          )}
+          help={t("projectProps.storage.noFolderBrowser")}
         />
       )}
       {linked && <AssetRows project={linked.link.project} />}
@@ -284,13 +268,13 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
         </>
       )}
       {panel && !linked && (
-        // Not syncing: only the ways to it, as buttons, without the panel around them.
+        // Not syncing: only the ways out, as buttons, without the panel around them.
         <>
           <Heading>{t("projectProps.storage.sync")}</Heading>
           <Row
             id="sync"
-            name={t("projectProps.storage.noSync")}
-            help={t("projectProps.storage.noSyncHelp")}
+            name={t("projectProps.storage.kind.browser")}
+            help={t("projectProps.storage.kindHelp.browser")}
           >
             {[...panel.rows.flatMap((row) => row.actions), ...panel.actions]
               .filter((action, index, all) => all.findIndex(({ id }) => id === action.id) === index)

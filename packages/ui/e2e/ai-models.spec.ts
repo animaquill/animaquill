@@ -257,7 +257,7 @@ test("a server of one's own: the picker, its settings one under another, models 
   await expect(service.getByLabel("Key 用哪个请求头")).toHaveCount(0);
   await expect(service.getByTestId("ai-api")).toHaveValue("openai-completions");
   // The address and the key are not among the settings in the clear.
-  const plain = await page.evaluate(() => localStorage.getItem("animaquill.ai"));
+  const plain = await page.evaluate(() => localStorage.getItem("aq-offline-animaquill.ai"));
   expect(plain).not.toContain(KEY);
   expect(plain).not.toContain(new URL(GATEWAY).host);
 
@@ -708,7 +708,7 @@ test("a gateway that takes its key in a header of its own, as Azure's does: a he
   expect(asked?.headers["api-key"]).toBe(KEY);
   expect(asked?.headers["authorization"]).toBeUndefined();
   // Neither the header nor the address is among the settings: they are kept with the key.
-  const plain = await page.evaluate(() => localStorage.getItem("animaquill.ai"));
+  const plain = await page.evaluate(() => localStorage.getItem("aq-offline-animaquill.ai"));
   expect(plain).not.toContain(KEY);
   expect(plain).not.toContain(new URL(GATEWAY).host);
   problems.splice(

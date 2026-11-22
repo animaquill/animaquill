@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import type { CardKind, ProjectCard } from "./cards.ts";
 import {
   cardsOfView,
-  filtersOf,
   isWelcome,
   readHabits,
   remoteCards,
@@ -44,7 +43,7 @@ const group = (id: string, name: string): ProjectGroup => ({ id, name, scope: "b
 
 const CARDS = [
   card("课程片头", "local", { openedAt: 50, updatedAt: 10, starred: true, group: "work" }),
-  card("旅行 Vlog", "cloudFolder", { openedAt: 40, updatedAt: 60, group: "work" }),
+  card("旅行 Vlog", "cloudHere", { openedAt: 40, updatedAt: 60, group: "work" }),
   card("产品发布", "cloudHere", { openedAt: 80, updatedAt: 20 }),
   card("年会开场", "cloudRemote", { updatedAt: 90, group: "channel" }),
   card("旧项目", "onlyHere", { openedAt: 7, updatedAt: 7 }),
@@ -53,7 +52,6 @@ const CARDS = [
 const names = (cards: readonly ProjectCard[]) => cards.map((each) => each.name);
 const choice = (more: Partial<ViewChoice>): ViewChoice => ({
   view: "all",
-  filter: "all",
   search: "",
   sort: "updated",
   ...more,
@@ -96,23 +94,6 @@ describe("the views of the start page", () => {
       "课程片头",
     ]);
     expect(names(viewCards(CARDS, choice({ view: "group:channel" })))).toEqual(["年会开场"]);
-  });
-
-  it("filters to the projects of the platform or the folders, in every view", () => {
-    expect(names(viewCards(CARDS, choice({ filter: "cloud" })))).toEqual([
-      "年会开场",
-      "旅行 Vlog",
-      "产品发布",
-    ]);
-    expect(names(viewCards(CARDS, choice({ filter: "local" })))).toEqual(["课程片头"]);
-    expect(names(viewCards(CARDS, choice({ view: "group:work", filter: "cloud" })))).toEqual([
-      "旅行 Vlog",
-    ]);
-    // "最近打开" never has a project that was not opened here.
-    expect(names(viewCards(CARDS, choice({ view: "recent", filter: "cloud" })))).toEqual([
-      "产品发布",
-      "旅行 Vlog",
-    ]);
   });
 
   it("searches the names of the view, whatever the case and width of the letters", () => {
@@ -159,12 +140,6 @@ describe("the side bar", () => {
     expect(viewThere("starred", sections)).toBe("recent");
     expect(viewThere("group:work", sections)).toBe("recent");
     expect(viewThere("all", sections)).toBe("all");
-  });
-
-  it("has filters only where both kinds of projects can be here", () => {
-    expect(filtersOf({ hasPlatform: true, canFolders: true })).toEqual(["all", "cloud", "local"]);
-    expect(filtersOf({ hasPlatform: true, canFolders: false })).toEqual([]);
-    expect(filtersOf({ hasPlatform: false, canFolders: true })).toEqual([]);
   });
 });
 

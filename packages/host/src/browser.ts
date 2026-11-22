@@ -1,3 +1,10 @@
+import {
+  OFFLINE_SCOPE,
+  UNSCOPED_DATABASES,
+  onlineScope,
+  scoped,
+  setStorageScope,
+} from "./scope.ts";
 import { browserDownloads } from "./downloads.ts";
 import { browserUploads } from "./uploads.ts";
 import { browserAccountKeys, browserChatImages, browserChats, browserKeys } from "./ai.ts";
@@ -14,6 +21,9 @@ import { browserPresence } from "./presence.ts";
 import type {
   ChangeSource,
   Host,
+  LocalFolder,
+  LocalFolders,
+  SavedFolders,
   IncomingProject,
   LogEntry,
   MediaStore,
@@ -32,12 +42,13 @@ import type {
 
 const PREFIX = "animaquill.";
 const DATABASE = "animaquill";
-const DATABASE_VERSION = 2;
+const DATABASE_VERSION = 1;
 const PROJECTS = "projects";
 const UPDATES = "updates";
 const MEDIA = "media";
 const BY_PROJECT = "project";
-const PROJECT_PARAM = "project";
+/** Where the address said which project, before it was in the path. */
+const OLD_PROJECT_PARAM = "project";
 /**
  * What is being tried gets a database of its own, and so does code that is not saved. They come and
  * go, and a new version of the main database would lock out every page that is still open, for
@@ -156,24 +167,20 @@ const committed = (transaction: IDBTransaction) =>
   });
 
 function openDatabase(factory: IDBFactory): Promise<IDBDatabase> {
-  const request = factory.open(DATABASE, DATABASE_VERSION);
+  const request = factory.open(scoped(DATABASE), DATABASE_VERSION);
   request.addEventListener("upgradeneeded", () => {
     const database = request.result;
-    if (!database.objectStoreNames.contains(PROJECTS)) {
-      database.createObjectStore(PROJECTS, { keyPath: "id" });
-      const updates = database.createObjectStore(UPDATES, { keyPath: "seq", autoIncrement: true });
-      updates.createIndex(BY_PROJECT, BY_PROJECT);
-    }
-    if (!database.objectStoreNames.contains(MEDIA)) {
-      const media = database.createObjectStore(MEDIA, { keyPath: [BY_PROJECT, "hash"] });
-      media.createIndex(BY_PROJECT, BY_PROJECT);
-    }
+    database.createObjectStore(PROJECTS, { keyPath: "id" });
+    const updates = database.createObjectStore(UPDATES, { keyPath: "seq", autoIncrement: true });
+    updates.createIndex(BY_PROJECT, BY_PROJECT);
+    const media = database.createObjectStore(MEDIA, { keyPath: [BY_PROJECT, "hash"] });
+    media.createIndex(BY_PROJECT, BY_PROJECT);
   });
   return resultOf(request);
 }
 
 function openPlaceDatabase(factory: IDBFactory, { name, database }: PlaceKind) {
-  const request = factory.open(database, PLACE_DATABASE_VERSION);
+  const request = factory.open(scoped(database), PLACE_DATABASE_VERSION);
   request.addEventListener("upgradeneeded", () => {
     const places = request.result.createObjectStore(`${name}s`, {
       keyPath: [BY_PROJECT, "place"],
@@ -215,7 +222,7 @@ function connector(open: () => Promise<IDBDatabase>): () => Promise<IDBDatabase>
 function channelFor(id: string): BroadcastChannel | undefined {
   return typeof BroadcastChannel === "undefined"
     ? undefined
-    : new BroadcastChannel(`${PREFIX}project.${id}`);
+    : new BroadcastChannel(scoped(`${PREFIX}project.${id}`));
 }
 
 /** Whether a project is the one with this instance, and not one that came after it with its id. */
@@ -555,7 +562,7 @@ function createLibrary(
   lockManager: () => LockManager | undefined,
   forgetPlaces: (project: string) => Promise<unknown>,
 ): ProjectLibrary {
-  const incomingLock = (id: string) => `${PREFIX}incoming.${id}`;
+  const incomingLock = (id: string) => scoped(`${PREFIX}incoming.${id}`);
   const allStores = [UPDATES, PROJECTS, MEDIA];
 
   /** Checks once more inside the transaction, because this deletes: it may have finished by now. */
@@ -878,7 +885,8 @@ function createPlaces(
 ) {
   const database = connector(() => openPlaceDatabase(factory(), kind));
   const storeName = `${kind.name}s`;
-  const placeLock = (project: string, place: string) => `${PREFIX}${kind.name}.${project}.${place}`;
+  const placeLock = (project: string, place: string) =>
+    scoped(`${PREFIX}${kind.name}.${project}.${place}`);
   const memoryKey = (project: string) => `${kind.name}.${project}`;
   let isSwept = false;
 
@@ -1019,29 +1027,73 @@ function createPlaces(
 }
 
 /** The address bar has exactly the right lifetime: one per window, kept through a reload. */
-const address: ProjectAddress = {
-  read: () => new URLSearchParams(location.search).get(PROJECT_PARAM) || undefined,
-  write(id) {
-    const url = new URL(location.href);
-    if (id === undefined) url.searchParams.delete(PROJECT_PARAM);
-    else url.searchParams.set(PROJECT_PARAM, id);
-    history.replaceState(history.state, "", url);
-  },
-  linkTo(id) {
-    // What else the address says, such as which site this is, stays as it is.
+/**
+ * Where the mode is in the address of the page, and the project after it (docs/design/
+ * online-offline.md of AnimaQuill Cloud, 2.2): `/` and `/p/<project>` online, `/offline` and
+ * `/offline/p/<project>` offline. A reload stays in the mode, and with the project.
+ */
+export const OFFLINE_PATH = "/offline";
+const PROJECT_PATH = "/p/";
+
+/** The mode an address is of. */
+export const modeOfPath = (pathname: string): "online" | "offline" =>
+  pathname === OFFLINE_PATH || pathname.startsWith(`${OFFLINE_PATH}/`) ? "offline" : "online";
+
+/** The project an address shows, by its path: undefined on the start page. */
+export function projectOfPath(pathname: string): string | undefined {
+  const rest = modeOfPath(pathname) === "offline" ? pathname.slice(OFFLINE_PATH.length) : pathname;
+  if (!rest.startsWith(PROJECT_PATH)) return undefined;
+  const id = rest.slice(PROJECT_PATH.length);
+  if (id === "" || id.includes("/")) return undefined;
+  try {
+    return decodeURIComponent(id);
+  } catch {
+    return undefined;
+  }
+}
+
+/** The path of a project, or of the start page, in a mode. */
+export function pathOf(mode: "online" | "offline", project: string | undefined): string {
+  const base = mode === "offline" ? OFFLINE_PATH : "";
+  return project === undefined
+    ? base || "/"
+    : `${base}${PROJECT_PATH}${encodeURIComponent(project)}`;
+}
+
+/** The address of this page in a mode, as the page asks for it: what else it says stays. */
+function browserAddress(mode: "online" | "offline"): ProjectAddress {
+  const at = (project: string | undefined) => {
     const url = new URL(location.href);
     url.hash = "";
-    url.searchParams.set(PROJECT_PARAM, id);
-    return url.href;
-  },
-};
+    url.pathname = pathOf(mode, project);
+    // From before the project was in the path.
+    url.searchParams.delete(OLD_PROJECT_PARAM);
+    return url;
+  };
+  return {
+    read: () => projectOfPath(location.pathname),
+    write(id) {
+      const url = at(id);
+      // What else the address says stays, the part after # too.
+      url.hash = location.hash;
+      if (url.href !== location.href) history.replaceState(history.state, "", url);
+    },
+    linkTo: (id) => at(id).href,
+  };
+}
+
+/**
+ * Settings of the device rather than of a mode or an account, in no scope: how the editor looks,
+ * which web/public/boot.js puts on the page before anything knows the mode.
+ */
+const DEVICE_SETTINGS: ReadonlySet<string> = new Set(["appearance"]);
 
 /** Session storage has the lifetime of a tab, and a duplicated tab starts with a copy of it. */
 function createWindowMemory(storage: () => Storage): WindowMemory {
   return {
     read(key) {
       try {
-        return storage().getItem(`${PREFIX}window.${key}`) ?? undefined;
+        return storage().getItem(scoped(`${PREFIX}window.${key}`)) ?? undefined;
       } catch (error) {
         console.warn("Window memory is out of reach", error);
         return undefined;
@@ -1049,7 +1101,7 @@ function createWindowMemory(storage: () => Storage): WindowMemory {
     },
     write(key, value) {
       try {
-        storage().setItem(`${PREFIX}window.${key}`, value);
+        storage().setItem(scoped(`${PREFIX}window.${key}`), value);
       } catch (error) {
         console.warn("Window memory is out of reach", error);
       }
@@ -1080,11 +1132,19 @@ export { browserCloudProjects, projectSummaryOf } from "./cloud-projects.ts";
 export type { BrowserCloudProjectsOptions } from "./cloud-projects.ts";
 
 /**
- * For tests only: projects stay in this browser, as where it cannot write folders, and a new one can
- * be made there, see `Host.projectsHereForTests`. Tests of everything that is not about folders set
- * it, as a page cannot answer the browser's dialog for a folder.
+ * For tests: the browser cannot write folders, as Firefox and Safari, and projects of the offline
+ * mode stay in it, as a test cannot answer the browser's dialog for a folder. For the whole browser,
+ * whatever the scope.
  */
 export const PROJECTS_HERE_KEY = "animaquill.projectsInBrowser";
+
+/**
+ * Whether a browser is Safari, by its name: no interface says that it clears what a site stores
+ * after seven days without a visit, which is what this is for.
+ */
+export const isSafariAgent = (agent: string): boolean =>
+  /Safari\//.test(agent) &&
+  !/Chrome\/|Chromium\/|CriOS\/|FxiOS\/|EdgiOS\/|Edg\/|Android/.test(agent);
 
 /**
  * Whether the browser keeps what the editor stores, as `navigator.storage` says, see
@@ -1097,9 +1157,7 @@ export function browserPersistence(
   if (typeof navigator === "undefined") return undefined;
   const storage = navigator.storage as StorageManager | undefined;
   const agent = navigator.userAgent;
-  const isSafari =
-    /Safari\//.test(agent) &&
-    !/Chrome\/|Chromium\/|CriOS\/|FxiOS\/|EdgiOS\/|Edg\/|Android/.test(agent);
+  const isSafari = isSafariAgent(agent);
   const isInstalled =
     (navigator as { standalone?: boolean }).standalone === true ||
     (typeof matchMedia === "function" && matchMedia("(display-mode: standalone)").matches);
@@ -1154,7 +1212,7 @@ export function browserMakingNotes(
 ): MakingNotes {
   const read = (): string[] => {
     try {
-      const kept: unknown = JSON.parse(local().getItem(MAKING_KEY) || "[]");
+      const kept: unknown = JSON.parse(local().getItem(scoped(MAKING_KEY)) || "[]");
       return Array.isArray(kept) ? kept.filter((id): id is string => typeof id === "string") : [];
     } catch {
       return [];
@@ -1162,12 +1220,12 @@ export function browserMakingNotes(
   };
   const write = (ids: readonly string[]) => {
     try {
-      local().setItem(MAKING_KEY, JSON.stringify(ids));
+      local().setItem(scoped(MAKING_KEY), JSON.stringify(ids));
     } catch (error) {
       console.warn("What is being made on the platform could not be noted", error);
     }
   };
-  const lockOf = (project: string) => `${PREFIX}making.${project}`;
+  const lockOf = (project: string) => scoped(`${PREFIX}making.${project}`);
   return {
     list: read,
     note: (project) => write([...read().filter((id) => id !== project), project]),
@@ -1212,21 +1270,22 @@ export function createBrowserHost(
   windowStorage: () => Storage = () => sessionStorage,
   locks: () => LockManager | undefined = () => navigator.locks,
 ): Host {
+  const keyOf = (key: string) => (DEVICE_SETTINGS.has(key) ? PREFIX + key : scoped(PREFIX + key));
   const settings: SettingsStore = {
     async load(key) {
-      const text = storage().getItem(PREFIX + key);
+      const text = storage().getItem(keyOf(key));
       return text === null ? undefined : JSON.parse(text);
     },
     async save(key, value) {
-      storage().setItem(PREFIX + key, JSON.stringify(value));
+      storage().setItem(keyOf(key), JSON.stringify(value));
     },
     async remove(key) {
-      storage().removeItem(PREFIX + key);
+      storage().removeItem(keyOf(key));
     },
     listen(key, listener) {
       // The browser tells every window but the one that wrote.
       const onStorage = (event: StorageEvent) => {
-        if (event.key !== PREFIX + key || event.newValue === null) return;
+        if (event.key !== keyOf(key) || event.newValue === null) return;
         try {
           listener(JSON.parse(event.newValue));
         } catch (error) {
@@ -1280,13 +1339,13 @@ export function createBrowserHost(
     ? undefined
     : browserLocalFolders(database, locks);
   return {
+    mode: "offline",
     settings,
     projects: createLibrary(projects, locks, forget),
-    address,
+    address: browserAddress("offline"),
     windowMemory,
     folders: browserFolders(),
     ...(localFolders && { localFolders }),
-    ...(!localFolders && keepsProjectsHere(storage) && { projectsHereForTests: true as const }),
     ...(persistence && { persistence }),
     making,
     trials: trials.store,
@@ -1304,4 +1363,339 @@ export function createBrowserHost(
     downloads,
     undo,
   };
+}
+
+/** What the offline mode adds to the browser's host. */
+export interface OfflineHostOptions {
+  /** What signs in, where the site has a backend, see `Host.goOnline`. */
+  readonly goOnline?: () => void;
+}
+
+/**
+ * The host of the offline mode: no backend, projects in folders, or in this browser where it
+ * cannot write folders. It keeps what it keeps in the offline scope, see `setStorageScope`.
+ */
+export function createOfflineHost({ goOnline }: OfflineHostOptions = {}): Host {
+  setStorageScope(OFFLINE_SCOPE);
+  const host = createBrowserHost();
+  const { localFolders } = host;
+  return {
+    ...host,
+    ...(goOnline && { goOnline }),
+    ...(localFolders && { handedOver: () => takeHandedOver(localFolders) }),
+  };
+}
+
+/** What the online mode adds to the browser's host, see `Host`. */
+export interface OnlineHostOptions {
+  /** The backend, as the site of the page: part of the scope. */
+  readonly backend: string;
+  /** Whose the scope is: the id of the account on the backend, see `AccountSnapshot.id`. */
+  readonly account: string;
+  readonly parts: Pick<Host, "account" | "cloud" | "aiRelay" | "diagnostics">;
+  /**
+   * The offline mode of the same site, to go to and open folders in, see `Host.openOffline`.
+   * Missing where this browser gets no offline mode, as Safari.
+   */
+  readonly offlineAddress?: string;
+}
+
+/**
+ * The host of the online mode: an account on a backend, which has the projects. What it keeps in
+ * this browser is in the scope of the backend and the account, see `setStorageScope`.
+ */
+export function createOnlineHost({
+  backend,
+  account,
+  parts,
+  offlineAddress,
+}: OnlineHostOptions): Host {
+  setStorageScope(onlineScope(backend, account));
+  const host = createBrowserHost();
+  const { localFolders } = host;
+  const offline = () => {
+    const url = new URL(offlineAddress ?? OFFLINE_PATH, location.href);
+    return url;
+  };
+  return {
+    ...host,
+    ...parts,
+    mode: "online",
+    address: browserAddress("online"),
+    ...(offlineAddress !== undefined && { goOffline: () => location.assign(offline()) }),
+    ...(localFolders && { savedFolders: browserSavedFolders(localFolders) }),
+    ...(localFolders &&
+      offlineAddress !== undefined && {
+        openOffline: async (folder: LocalFolder) => {
+          const id = await handOver(localFolders, folder);
+          const url = offline();
+          url.searchParams.set(HANDED_OVER_PARAM, id);
+          window.open(url, "_blank");
+        },
+      }),
+  };
+}
+
+// ---- folders saved to, and handed over to the offline mode
+
+const SAVED_FOLDERS_DATABASE = "animaquill-saved-folders";
+const SAVED = "folders";
+
+function openSavedFolders(factory: IDBFactory, name: string): Promise<IDBDatabase> {
+  const request = factory.open(name, 1);
+  request.addEventListener("upgradeneeded", () => {
+    request.result.createObjectStore(SAVED);
+  });
+  return resultOf(request);
+}
+
+/** The folders projects were saved to, see `SavedFolders`, in the scope of the page. */
+export function browserSavedFolders(
+  folders: Pick<LocalFolders, "keep" | "fromKept">,
+  factory: () => IDBFactory = () => indexedDB,
+): SavedFolders {
+  const database = connector(() => openSavedFolders(factory(), scoped(SAVED_FOLDERS_DATABASE)));
+  const change = async (work: (store: IDBObjectStore) => void) => {
+    const transaction = (await database()).transaction(SAVED, "readwrite");
+    work(transaction.objectStore(SAVED));
+    await committed(transaction);
+  };
+  return {
+    async get(project) {
+      const read = (await database()).transaction(SAVED).objectStore(SAVED).get(project);
+      return folders.fromKept(await resultOf<unknown>(read));
+    },
+    put: (project, folder) => change((store) => store.put(folders.keep(folder), project)),
+    forget: (project) => change((store) => store.delete(project)),
+  };
+}
+
+/**
+ * Folders that a window of the online mode handed over to one of the offline mode, see
+ * `Host.openOffline`: in no scope, as they go from one to the other, each taken once.
+ */
+const HANDOVER_DATABASE = "aq-handover";
+/** Where the address of the offline window says which, see `takeHandedOver`. */
+export const HANDED_OVER_PARAM = "folder";
+/** One that nobody took for this long is from a window that never opened. */
+const HANDOVER_MS = 10 * 60_000;
+
+async function handOver(
+  folders: Pick<LocalFolders, "keep">,
+  folder: LocalFolder,
+  factory: () => IDBFactory = () => indexedDB,
+): Promise<string> {
+  const id = crypto.randomUUID();
+  const database = await openSavedFolders(factory(), HANDOVER_DATABASE);
+  try {
+    const transaction = database.transaction(SAVED, "readwrite");
+    transaction.objectStore(SAVED).put({ kept: folders.keep(folder), at: Date.now() }, id);
+    await committed(transaction);
+  } finally {
+    database.close();
+  }
+  return id;
+}
+
+/** The folder handed over to this window, once, see `HANDED_OVER_PARAM`. */
+async function takeHandedOver(
+  folders: Pick<LocalFolders, "fromKept">,
+  factory: () => IDBFactory = () => indexedDB,
+): Promise<LocalFolder | undefined> {
+  const url = new URL(location.href);
+  const id = url.searchParams.get(HANDED_OVER_PARAM);
+  if (id === null) return undefined;
+  url.searchParams.delete(HANDED_OVER_PARAM);
+  history.replaceState(history.state, "", url);
+  const database = await openSavedFolders(factory(), HANDOVER_DATABASE);
+  try {
+    const transaction = database.transaction(SAVED, "readwrite");
+    const store = transaction.objectStore(SAVED);
+    const read = store.get(id);
+    let found: { kept?: unknown; at?: unknown } | undefined;
+    read.addEventListener("success", () => {
+      found = read.result as typeof found;
+      store.delete(id);
+      // What nobody took goes too.
+      const all = store.openCursor();
+      all.addEventListener("success", () => {
+        const cursor = all.result;
+        if (!cursor) return;
+        const { at } = (cursor.value ?? {}) as { at?: unknown };
+        if (typeof at !== "number" || Date.now() - at > HANDOVER_MS) cursor.delete();
+        cursor.continue();
+      });
+    });
+    await committed(transaction);
+    return found ? folders.fromKept(found.kept) : undefined;
+  } finally {
+    database.close();
+  }
+}
+
+// ---- which mode, as this browser remembers it
+
+/** People chose the offline mode on the entry page: next time it opens right away. */
+export const MODE_KEY = "animaquill.mode";
+/** Who was signed in last, by backend: the online mode opens for them where the backend cannot be reached. */
+export const LAST_ACCOUNT_KEY = "animaquill.lastAccount";
+
+export interface ModeMemory {
+  /** People chose the offline mode, and have not signed in since. */
+  prefersOffline(): boolean;
+  setPrefersOffline(offline: boolean): void;
+  /** Who was signed in last on a backend, see `AccountSnapshot.id`. */
+  lastAccount(backend: string): { readonly id: string; readonly name?: string } | undefined;
+  setLastAccount(
+    backend: string,
+    account: { readonly id: string; readonly name?: string } | undefined,
+  ): void;
+}
+
+/** What this browser remembers of the modes, for every page of the site. */
+export function browserModeMemory(storage: () => Storage = () => localStorage): ModeMemory {
+  const read = (key: string): string | null => {
+    try {
+      return storage().getItem(key);
+    } catch {
+      return null;
+    }
+  };
+  const write = (key: string, value: string | undefined) => {
+    try {
+      if (value === undefined) storage().removeItem(key);
+      else storage().setItem(key, value);
+    } catch {
+      // Not remembered, then: the entry page asks again.
+    }
+  };
+  const accounts = (): Record<string, { id: string; name?: string }> => {
+    try {
+      const kept: unknown = JSON.parse(read(LAST_ACCOUNT_KEY) ?? "{}");
+      return typeof kept === "object" && kept !== null
+        ? (kept as Record<string, { id: string }>)
+        : {};
+    } catch {
+      return {};
+    }
+  };
+  return {
+    prefersOffline: () => read(MODE_KEY) === "offline",
+    setPrefersOffline: (offline) => write(MODE_KEY, offline ? "offline" : undefined),
+    lastAccount(backend) {
+      const found = accounts()[backend];
+      return typeof found?.id === "string" && found.id !== ""
+        ? { id: found.id, ...(typeof found.name === "string" && { name: found.name }) }
+        : undefined;
+    },
+    setLastAccount(backend, account) {
+      const all = accounts();
+      if (account) all[backend] = { id: account.id, ...(account.name && { name: account.name }) };
+      else delete all[backend];
+      write(LAST_ACCOUNT_KEY, JSON.stringify(all));
+    },
+  };
+}
+
+// ---- what the editor kept before there were scopes
+
+/** Keys of the local storage of before the scopes: all that begin so, but these. */
+const UNSCOPED_PREFIX = "animaquill.";
+const UNSCOPED_KEPT: ReadonlySet<string> = new Set([
+  PROJECTS_HERE_KEY,
+  "animaquill.persistAsked",
+  "animaquill.appearance",
+  MODE_KEY,
+  LAST_ACCOUNT_KEY,
+]);
+
+/**
+ * Takes away what the editor kept before there were scopes (0.3.117 and before): its databases,
+ * and its keys in the local storage. The online mode is where this goes first, once the changes
+ * of its projects that this browser had are on the backend, see `dropUnscoped` in the editor. Each
+ * database goes once every page that has it open let go of it; one that a page of before holds
+ * goes the next time. Resolves to the names of the databases it took away.
+ */
+export async function dropUnscopedData(
+  factory: () => IDBFactory = () => indexedDB,
+  storage: () => Storage = () => localStorage,
+): Promise<readonly string[]> {
+  try {
+    const keys: string[] = [];
+    for (let index = 0; index < storage().length; index += 1) {
+      const key = storage().key(index);
+      if (key?.startsWith(UNSCOPED_PREFIX) && !UNSCOPED_KEPT.has(key)) keys.push(key);
+    }
+    for (const key of keys) storage().removeItem(key);
+  } catch (error) {
+    console.warn("What the editor kept before stays in the local storage for now", error);
+  }
+  const there = await unscopedDatabases(factory);
+  const gone: string[] = [];
+  for (const name of there) {
+    const request = factory().deleteDatabase(name);
+    await new Promise<void>((resolve) => {
+      request.addEventListener("success", () => {
+        gone.push(name);
+        resolve();
+      });
+      request.addEventListener("error", () => resolve());
+      // A page of before holds it: it goes once that one lets go, without anybody waiting.
+      request.addEventListener("blocked", () => resolve());
+    });
+  }
+  return gone;
+}
+
+/** Which databases of before the scopes this browser has, where it can say. */
+export async function unscopedDatabases(
+  factory: () => IDBFactory = () => indexedDB,
+): Promise<readonly string[]> {
+  const all = await factory()
+    .databases?.()
+    .catch(() => undefined);
+  // A browser that cannot list them: all of them, as taking away one that is not there is nothing.
+  if (!all) return UNSCOPED_DATABASES;
+  const names = new Set(all.map(({ name }) => name));
+  return UNSCOPED_DATABASES.filter((name) => names.has(name));
+}
+
+/**
+ * How many projects of the platform the editor of before the scopes had changes of here that the
+ * platform may not have, as its links say (`CloudLink.pending`, `creating`, `resync`): what
+ * `dropUnscopedData` must not take away. Zero where it kept no links.
+ */
+export async function unscopedUnsent(factory: () => IDBFactory = () => indexedDB): Promise<number> {
+  if (!(await unscopedDatabases(factory)).includes("animaquill-cloud")) return 0;
+  const request = factory().open("animaquill-cloud");
+  // Never made here: nothing of it to keep.
+  request.addEventListener("upgradeneeded", () => request.transaction?.abort());
+  let database: IDBDatabase;
+  try {
+    database = await resultOf(request);
+  } catch {
+    return 0;
+  }
+  try {
+    if (!database.objectStoreNames.contains("links")) return 0;
+    const links = await resultOf<unknown[]>(
+      database.transaction("links").objectStore("links").getAll(),
+    );
+    return links.filter((value) => {
+      const link = value as {
+        creating?: unknown;
+        pending?: unknown;
+        resync?: unknown;
+        renewing?: unknown;
+      } | null;
+      return (
+        link?.creating === true ||
+        (typeof link?.pending === "number" && link.pending > 0) ||
+        link?.resync !== undefined ||
+        link?.renewing !== undefined
+      );
+    }).length;
+  } finally {
+    database.close();
+  }
 }

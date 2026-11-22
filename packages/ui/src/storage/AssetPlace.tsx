@@ -10,6 +10,7 @@ import { downloadFrom } from "./places.ts";
 import { percentOf, phaseText, progressText } from "./upload-text.ts";
 import type { UploadItem } from "./uploads.ts";
 import styles from "./AssetPlace.module.css";
+import { OnlineOnly } from "../app/OnlineOnly.tsx";
 
 const noSubscription = () => () => {};
 const NONE: CloudProjectsSnapshot = { kind: "none" };
@@ -44,8 +45,8 @@ export function AssetPlace({ asset }: { asset: string }) {
     repository?.subscribe ?? noSubscription,
     repository?.getSnapshot ?? nothing,
   )?.status;
-  // Without a platform, as on this computer alone, there is nowhere else for files to go.
-  if (!state || !cloud) return null;
+  // Without a platform there is nowhere else for files to go: offline that needs signing in.
+  if (!state || (!cloud && workbench.mode !== "offline")) return null;
   const placed = placedAsset(state, asset, workbench.here());
   if (!placed || placed.hash === undefined) return null;
   const item = snapshot.items.find((each) => each.asset === asset);
@@ -358,15 +359,19 @@ export function AssetPlace({ asset }: { asset: string }) {
       <p className={styles.headline}>{t("storage.uploads.row.here")}</p>
       <p className={styles.note}>{t("storage.uploads.row.hereNote")}</p>
       <Buttons>
-        <button
-          type="button"
-          className={styles.primary}
-          disabled={!canPut}
-          title={canPut ? undefined : (why ?? undefined)}
-          onClick={() => void workbench.putInLfs([asset])}
-        >
-          {t("storage.uploads.row.put")}
-        </button>
+        {workbench.mode === "offline" ? (
+          <OnlineOnly className={styles.primary}>{t("storage.uploads.row.put")}</OnlineOnly>
+        ) : (
+          <button
+            type="button"
+            className={styles.primary}
+            disabled={!canPut}
+            title={canPut ? undefined : (why ?? undefined)}
+            onClick={() => void workbench.putInLfs([asset])}
+          >
+            {t("storage.uploads.row.put")}
+          </button>
+        )}
         {isCloud ? (
           <button
             type="button"
@@ -375,13 +380,9 @@ export function AssetPlace({ asset }: { asset: string }) {
           >
             {t("storage.uploads.row.change")}
           </button>
-        ) : (
-          <button type="button" onClick={() => void workbench.connectToCloud()}>
-            {t("storage.uploads.row.connect")}
-          </button>
-        )}
+        ) : undefined}
       </Buttons>
-      {!canPut && why && <p className={styles.note}>{why}</p>}
+      {!canPut && why && workbench.mode === "online" && <p className={styles.note}>{why}</p>}
     </>,
   );
 }

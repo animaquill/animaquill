@@ -1,3 +1,4 @@
+import { scoped } from "./scope.ts";
 import type { FolderWriter, WriterClaim } from "./index.ts";
 
 /**
@@ -47,7 +48,7 @@ export function browserFolderWriter(
     typeof BroadcastChannel === "undefined" ? undefined : new BroadcastChannel(name),
   prefix = PREFIX,
 ): FolderWriter {
-  const name = `${prefix}${folder}`;
+  const name = scoped(`${prefix}${folder}`);
   /**
    * The turn, as the lock gives it. Resolves to undefined where `ifAvailable` finds that another
    * window has it.

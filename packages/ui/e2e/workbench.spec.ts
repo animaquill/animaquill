@@ -10,7 +10,7 @@ import {
   test,
 } from "./support.ts";
 
-const LAYOUT_KEY = "animaquill.layout";
+const LAYOUT_KEY = "aq-offline-animaquill.layout";
 
 const groups = (page: Page) => page.locator(".dv-groupview");
 
@@ -132,7 +132,7 @@ test("the status bar has the project on the left and what goes on now on the rig
     bar.getByRole("button", { name: "测试项目" }),
     bar.getByLabel("项目分辨率：1920×1080"),
     bar.getByRole("button", { name: "项目帧率" }),
-    bar.getByRole("status").filter({ hasText: "已保存" }),
+    bar.getByRole("button", { name: /只在浏览器里$/ }),
   ];
   const right = [
     bar.getByRole("button", { name: "当前时间和总时长" }),
@@ -319,7 +319,7 @@ test.describe("several windows", () => {
   test("a window on the start page has not chosen a layout yet", async ({ page }) => {
     const waiting = await page.context().newPage();
     await waiting.goto("/");
-    await expect(waiting.getByRole("button", { name: "新建项目" })).toBeVisible();
+    await expect(waiting.getByRole("button", { name: "新建项目" }).first()).toBeVisible();
 
     const before = await savedLayout(page);
     await chooseLayout(page, "动画");

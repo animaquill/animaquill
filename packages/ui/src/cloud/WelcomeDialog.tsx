@@ -78,13 +78,6 @@ function WelcomeDialog({ welcome }: { readonly welcome: WelcomeRequest }) {
             name={t("welcome.chats.name")}
             control={<Switch checked={values.chats} onChange={set("chats")} />}
           />
-          <FeatureRow
-            id="newProjectsInCloud"
-            name={t("welcome.newProjectsInCloud.name")}
-            control={
-              <Switch checked={values.newProjectsInCloud} onChange={set("newProjectsInCloud")} />
-            }
-          />
         </div>
         <div className={styles.footer}>
           <div className={styles.buttons}>

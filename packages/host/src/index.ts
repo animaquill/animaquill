@@ -108,9 +108,19 @@ export {
   MAX_PATH_LENGTH,
   isSafeName,
   isSafePath,
+  folderNameFor,
   newNameFor,
   sameNameKey,
 } from "./paths.ts";
+export {
+  OFFLINE_SCOPE,
+  UNSCOPED_DATABASES,
+  onlineScope,
+  resetStorageScope,
+  scoped,
+  setStorageScope,
+  storageScope,
+} from "./scope.ts";
 
 /** What the editor needs from the place it runs in: a browser, the desktop app or the platform. */
 export interface Host {
@@ -190,11 +200,36 @@ export interface Host {
    */
   readonly making?: MakingNotes;
   /**
-   * For tests only: a new project can stay in this browser, with no folder and no platform, as a
-   * test cannot answer the browser's dialog for a folder. People get no such projects any more:
-   * one only in a browser goes when the browser clears what it stores. Missing for everyone else.
+   * Which of the two modes the editor is in (docs/design/online-offline.md of AnimaQuill Cloud, 1).
+   * "online": signed in to a backend, which keeps the projects, with `account` and `cloud`; folders
+   * are only for saving a copy into and for importing from. "offline": no backend at all, and no
+   * `account` or `cloud`: projects are folders on this computer, or stay in this browser where it
+   * cannot write folders (no `localFolders`). What the two keep in the browser never meets, see
+   * `setStorageScope`.
    */
-  readonly projectsHereForTests?: true;
+  readonly mode: "online" | "offline";
+  /**
+   * Offline: what takes people to the online mode, which signs in. Missing where the site has no
+   * backend, as the editor put on a site as plain files: then there is only the offline mode.
+   */
+  readonly goOnline?: () => void;
+  /** Online: what takes people to the offline mode of this site, staying signed in. */
+  readonly goOffline?: () => void;
+  /**
+   * Online: opens a folder in the offline mode, in a window of its own, as "在离线模式里打开" after
+   * a copy of a project went into it. Missing where there is no offline mode to open it in.
+   */
+  readonly openOffline?: (folder: LocalFolder) => Promise<void>;
+  /**
+   * Offline: a folder that a window of the online mode handed over to open, see `openOffline`:
+   * once, as it is taken. Undefined where none was.
+   */
+  readonly handedOver?: () => Promise<LocalFolder | undefined>;
+  /**
+   * Online: the folder each project was last saved to, to save it there again, see "保存到文件夹"
+   * (docs/design/online-offline.md of AnimaQuill Cloud, 1.2). Missing where folders cannot be kept.
+   */
+  readonly savedFolders?: SavedFolders;
   /**
    * How people organise their projects on the start page, in this browser: which they starred, which
    * group each is in, and when each was last opened here, see `ProjectOrganizer`.
@@ -2219,8 +2254,11 @@ export interface AccountAccess {
   refresh(): Promise<void>;
   /** How the sign-in that brought this page here ended, once, and then undefined. */
   takeOutcome(): SignInOutcome | undefined;
-  /** Leaves the page to sign in, and comes back to this page as it is now. */
-  signIn(): void;
+  /**
+   * Leaves the page to sign in, and comes back to this page as it is now, or to `returnTo`: a path
+   * of this site, such as the online start page from the offline mode.
+   */
+  signIn(returnTo?: string): void;
   /** Leaves the page to install the GitHub App on the account, and comes back. */
   installApp(): void;
   /** Rejects when the host could not be reached: people are then still signed in. */
@@ -2244,8 +2282,7 @@ export interface AccountSpace {
 }
 
 /**
- * Which windows of this browser have which projects open, and what they have to hear of another
- * window: a project that moved into a folder in one window is a folder in all of them.
+ * Which windows of this browser have which projects open.
  */
 export interface ProjectPresence {
   /** This window has a project open, by what the browser keeps it by, until this returns. */
@@ -2255,10 +2292,6 @@ export interface ProjectPresence {
    * where it cannot tell at all, which is not the same as none: one may have it open then.
    */
   others(project: string): Promise<number>;
-  /** Tells the other windows that a project is a folder now, see `onMoved`. */
-  moved(project: string): void;
-  /** What another window says about a project that moved into a folder. Returns how to stop. */
-  onMoved(listener: (project: string) => void): () => void;
 }
 
 /** An export that stopped before it was finished, and can go on from where it got. */
@@ -2479,6 +2512,16 @@ export interface ProjectAddress {
    * where a window cannot be asked for a project that way.
    */
   linkTo?(id: string): string;
+}
+
+/**
+ * The folder each project of the online mode was last saved to, as a copy, by the project's id on
+ * the backend: kept in this browser, in the scope of the account.
+ */
+export interface SavedFolders {
+  get(project: string): Promise<LocalFolder | undefined>;
+  put(project: string, folder: LocalFolder): Promise<void>;
+  forget(project: string): Promise<void>;
 }
 
 /**
@@ -3003,6 +3046,13 @@ export interface LocalFolders {
    * a time, so that no two of them write a file, or take in what changed in it, at once.
    */
   writer(folder: string): FolderWriter;
+  /**
+   * What a folder is, to keep in a database of this browser and have it again with `fromKept`, as
+   * a folder people saved a copy to (`SavedFolders`), or one handed over to the offline mode.
+   */
+  keep(folder: LocalFolder): unknown;
+  /** The folder that `keep` gave this for, or undefined for anything else. */
+  fromKept(kept: unknown): LocalFolder | undefined;
 }
 
 /**

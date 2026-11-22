@@ -78,9 +78,7 @@ describe("organising projects", () => {
     });
     const cards = composeCards(lists, organizer.getSnapshot());
     expect(
-      viewCards(cards, { view: "starred", filter: "all", search: "", sort: "updated" }).map(
-        (card) => card.name,
-      ),
+      viewCards(cards, { view: "starred", search: "", sort: "updated" }).map((card) => card.name),
     ).toEqual(["片尾"]);
   });
 

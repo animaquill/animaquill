@@ -1,10 +1,10 @@
 import type { ProjectGroup } from "@animaquill/host";
-import { isCloudKind, type ProjectCard } from "./cards.ts";
+import type { ProjectCard } from "./cards.ts";
 
 /**
  * The views of the start page, see the design of the start page (docs/design/start-and-cloud.md of
  * AnimaQuill Cloud), 6.1 and 6.2: each item of the side bar is a view on the right, which lists
- * the cards it is about, filtered, searched and sorted as people say. A library of their own or
+ * the cards it is about, searched and sorted as people say. A library of their own or
  * "发现" later are items more, of the same kind. No DOM.
  */
 
@@ -17,7 +17,6 @@ export const groupOfView = (view: ViewId): string | undefined =>
   view.startsWith("group:") ? view.slice("group:".length) : undefined;
 
 /** Which projects of a view show: all of them, those of the platform, or folders. */
-export type Filter = "all" | "cloud" | "local";
 export type Sort = "opened" | "updated" | "name";
 export type Display = "cards" | "list";
 
@@ -85,17 +84,6 @@ export function viewThere(view: ViewId, sections: readonly StartSection[]): View
   return sections.some((section) => section.id === view) ? view : "recent";
 }
 
-/** Which filters there are: none where only one kind of project can be here at all, see 6.2. */
-export function filtersOf({
-  hasPlatform,
-  canFolders,
-}: {
-  readonly hasPlatform: boolean;
-  readonly canFolders: boolean;
-}): Filter[] {
-  return hasPlatform && canFolders ? ["all", "cloud", "local"] : [];
-}
-
 /** The cards of a view, before filtering: "最近打开" only has what was opened in this browser. */
 export function cardsOfView(cards: readonly ProjectCard[], view: ViewId): ProjectCard[] {
   const group = groupOfView(view);
@@ -110,17 +98,6 @@ export function cardsOfView(cards: readonly ProjectCard[], view: ViewId): Projec
       return [];
     default:
       return [...cards];
-  }
-}
-
-export function passes(card: ProjectCard, filter: Filter): boolean {
-  switch (filter) {
-    case "all":
-      return true;
-    case "cloud":
-      return isCloudKind(card.kind);
-    case "local":
-      return card.kind === "local";
   }
 }
 
@@ -162,16 +139,13 @@ export const sortOfView = (view: ViewId, sort: Sort): Sort => (view === "recent"
 
 export interface ViewChoice {
   readonly view: ViewId;
-  readonly filter: Filter;
   readonly search: string;
   readonly sort: Sort;
 }
 
 /** What a view lists, as people chose. */
 export function viewCards(cards: readonly ProjectCard[], choice: ViewChoice): ProjectCard[] {
-  const listed = cardsOfView(cards, choice.view).filter(
-    (card) => passes(card, choice.filter) && matches(card, choice.search),
-  );
+  const listed = cardsOfView(cards, choice.view).filter((card) => matches(card, choice.search));
   return sortCards(listed, sortOfView(choice.view, choice.sort));
 }
 

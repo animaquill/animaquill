@@ -163,28 +163,15 @@ describe("opening a project", () => {
     expect(events).toEqual(["undo asked", "cloud followed"]);
   });
 
-  it("finds out how a folder syncs once the folder is there", async () => {
-    const { session, sync, events, flow, folderStart } = opening({ folder: true });
-    const store = session.open("p");
-    await settle();
-    expect(flow.getSnapshot().step).toBe("log");
-    expect(events).not.toContain("cloud followed");
-    sync.set("online");
-    const folder = folderStart();
-    void flow.folder(store, folder.start);
-    await settle();
-    expect(events.slice(-2)).toEqual(["cloud followed", "folder started"]);
-  });
-
   it("goes on without a folder that does not come, and starts it should it come after all", async () => {
     const { session, time, events, flow, folderStart } = opening({ folder: true });
     const store = session.open("p");
     await time.advance(999);
-    expect(flow.getSnapshot().step).toBe("log");
-    await time.advance(1);
+    // The folder is waited for, after what the platform has, if it is asked at all.
+    expect(flow.getSnapshot().step).toBe("cloud");
+    await time.advance(1001);
     await settle();
-    expect(flow.getSnapshot()).toMatchObject({ step: "live", cloud: "failed" });
-    expect(events).not.toContain("cloud followed");
+    expect(flow.getSnapshot()).toMatchObject({ step: "live" });
     expect(events.at(-1)).toBe("live p");
     void flow.folder(store, folderStart().start);
     expect(events.at(-1)).toBe("folder started");

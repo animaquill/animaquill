@@ -141,6 +141,16 @@ describe("the server", () => {
     expect(headers["access-control-allow-origin"]).toBeUndefined();
   });
 
+  test("the page is the same for every mode and project its address says", async () => {
+    for (const path of ["/offline", "/offline/p/1a2b", "/p/project-1"]) {
+      const { status, body } = await get(EDITOR, path);
+      expect(status, path).toBe(200);
+      expect(body, path).toContain("<title>AnimaQuill</title>");
+    }
+    for (const path of ["/offline/x", "/p/a/b", "/offline/p/"])
+      expect((await get(EDITOR, path)).status, path).toBe(404);
+  });
+
   test("code is kept, as its name changes with it", async () => {
     const { status, headers } = await get(EDITOR, "/assets/index-abc.js");
     expect(status).toBe(200);

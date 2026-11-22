@@ -5,23 +5,15 @@
  *
  * 1. `log`: the project is open from its log here (`ProjectSession.open`), and what this device
  *    kept with it is taken up: the undo logs of AI tasks and batches of files (`UndoKeeper`).
- * 2. `cloud`: where it syncs with a platform and the browser is online, what the platform has comes
- *    first, until the project has all of it, or for `catchUpMs` at most.
- * 3. `folder`: a project folder is compared with the project (`FolderSession.start`), and what
- *    changed in it while the editor was away comes in.
- * 4. `live`: both go on as changes come: what AI tools on this computer wrote is looked at, and
+ * 2. `cloud`: online, where the browser is online, what the platform has comes first, until the
+ *    project has all of it, or for `catchUpMs` at most.
+ * 3. `folder`: offline, a project folder is compared with the project (`FolderSession.start`), and
+ *    what changed in it while the editor was away comes in.
+ * 4. `live`: it goes on as changes come: what AI tools on this computer wrote is looked at, and
  *    files that are not here start to download.
  *
- * Why the platform comes before the folder: a folder is often a clone of the repository the
- * platform saves to, and the same change can come from both, as when people committed and pushed
- * while the editor was away, which the platform merged. Once the project has the platform's, the
- * folder has nothing new there, and nothing comes in twice. The other way round both insertions of
- * the same lines stay, and code would have them twice, without a word.
- *
- * Where the platform takes too long, cannot be reached, or the browser is offline, the folder comes
- * in first, as it does offline, and the platform after it. The change from the folder then says the
- * update of the platform it was made on (`ChangeSource.seq`): the platform knows that it was made
- * without what it merged, puts code back that came in twice, and lists what it cannot tell.
+ * A project has one of the two (docs/design/online-offline.md of AnimaQuill Cloud): online it is a
+ * copy that syncs, offline a folder, or only the log in this browser.
  *
  * Nothing here touches the page.
  */
@@ -95,8 +87,8 @@ export interface OpeningOptions {
   readonly undoLoaded: (store: ProjectStore) => Promise<void>;
   readonly cloud?: OpeningCloud | undefined;
   /**
-   * Whether the project of this key opens as a folder: then the step of the platform waits for
-   * the folder to be there (`folder`), as which project of the platform it is goes by it.
+   * Whether the project of this key opens as a folder: then it waits for the folder to be there,
+   * so that what changed in it comes in before the project is live.
    */
   readonly isFolder: (key: string) => boolean;
   /** The project is live, see `OpeningStep`. */
@@ -239,20 +231,18 @@ export class ProjectOpening {
     // 1. What this device kept with the log.
     await this.#within(this.#options.undoLoaded(run.store), this.#timing.undoMs, run);
     if (this.#isOver(run)) return;
-    // Which project of the platform a folder is goes by the folder, which has to be there.
-    let folderCame = true;
-    if (this.#options.isFolder(run.key)) {
-      folderCame = await this.#within(run.folderCame, this.#timing.catchUpMs, run);
-      if (this.#isOver(run)) return;
-      // Nothing is known to keep it, but nothing else waits for it for ever either: should it come
-      // after all, it starts as it comes, see `folder`.
-      if (!folderCame) console.warn("The folder of the project did not come: it opens without");
-    }
     // 2. What the platform has.
     run.step = "cloud";
     this.#show(run);
-    run.cloud = folderCame ? await this.#catchUp(run) : "failed";
+    run.cloud = await this.#catchUp(run);
     if (this.#isOver(run)) return;
+    // A folder is waited for, but not for ever: should it come after all, it starts as it comes,
+    // see `folder`.
+    if (this.#options.isFolder(run.key) && !run.folder) {
+      const came = await this.#within(run.folderCame, this.#timing.catchUpMs, run);
+      if (this.#isOver(run)) return;
+      if (!came) console.warn("The folder of the project did not come: it opens without");
+    }
     // 3. The folder.
     run.step = "folder";
     this.#show(run);

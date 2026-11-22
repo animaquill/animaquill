@@ -27,18 +27,19 @@ import {
  */
 
 export type CardKind =
-  /** A folder on this computer, not connected. */
+  /** A folder on this computer: a project of the offline mode. */
   | "local"
-  /** A folder on this computer, connected to a project of the platform. */
-  | "cloudFolder"
-  /** A project of the platform with a copy in this browser, and no folder. */
+  /** A project of the platform with a copy in this browser: online. */
   | "cloudHere"
-  /** A project of the platform that this browser has nothing of. */
+  /** A project of the platform that this browser has nothing of: online. */
   | "cloudRemote"
-  /** Only in this browser, with no folder and no platform: from before, or of a test. */
+  /**
+   * Only in this browser, with no folder and no platform: offline where the browser cannot write
+   * folders, or one that the platform took away with changes that did not get there.
+   */
   | "onlyHere";
 
-const CLOUD_KINDS: ReadonlySet<CardKind> = new Set(["cloudFolder", "cloudHere", "cloudRemote"]);
+const CLOUD_KINDS: ReadonlySet<CardKind> = new Set(["cloudHere", "cloudRemote"]);
 
 export const isCloudKind = (kind: CardKind): boolean => CLOUD_KINDS.has(kind);
 
@@ -177,23 +178,20 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
   const openedOf = (key: string | undefined) =>
     key === undefined ? undefined : marks.get(key)?.openedAt;
 
-  const local = lists.local.map((row): ProjectCard => {
-    const linked = row.project !== undefined;
-    return {
-      id: row.key,
-      kind: linked ? "cloudFolder" : "local",
-      name: row.name,
-      key: row.key,
-      project: row.project,
-      ...organizing(row.key, row.project, row.mark, row.owner),
-      openedAt: latest(row.openedAt, openedOf(row.key)),
-      updatedAt: row.updatedAt,
-      durationMs: row.durationMs,
-      cover: row.cover,
-      description: row.description,
-      source: { kind: "local", row },
-    };
-  });
+  const local = lists.local.map((row): ProjectCard => ({
+    id: row.key,
+    kind: "local",
+    name: row.name,
+    key: row.key,
+    project: undefined,
+    ...organizing(row.key, undefined, undefined, undefined),
+    openedAt: latest(row.openedAt, openedOf(row.key)),
+    updatedAt: row.updatedAt,
+    durationMs: undefined,
+    cover: undefined,
+    description: row.description,
+    source: { kind: "local", row },
+  }));
   const cloud = lists.cloud.map((row): ProjectCard => {
     const here = row.key !== undefined;
     return {
@@ -235,26 +233,21 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
 export type StatusTone = "plain" | "warning";
 
 /**
- * Where a project is, for the small sign before its line: a folder of this computer, a project of
- * the platform, one of those with a folder of this computer too, or only this browser.
+ * Where a project is, for the small sign before its line in the offline mode: a folder of this
+ * computer, or only this browser. Online every project is of the platform, and has no sign.
  */
-export type CardPlace = "cloud" | "cloudFolder" | "folder" | "browser";
+export type CardPlace = "cloud" | "folder" | "browser";
 
 export interface CardStatus {
   /** Where it is, for the small sign before the line. */
   readonly place: CardPlace;
-  /** The line under the name, such as "本地 · intro" or "云端 · 只在这个浏览器里". */
+  /** The line under the name, such as the folder, or the repository. */
   readonly text: string;
   readonly tone: StatusTone;
   /** It stands out more than a warning: saving into GitHub went wrong. */
   readonly alert?: true;
   /** What the line means and what people can do, for hovering. */
   readonly hint: string | undefined;
-  /**
-   * What people can do about it right there, under the line: choose a repository for a project
-   * that has none, as it goes as a whole once nobody opened it for a week.
-   */
-  readonly way?: "chooseRepository";
 }
 
 const DAY = 24 * 60 * 60_000;
@@ -300,12 +293,8 @@ function cloudTrouble(
 }
 
 /** What the platform says of a card of one of its projects, see `CloudRow`, or undefined. */
-const platformOf = (card: ProjectCard) => {
-  const { source } = card;
-  if (source.kind === "browser") return undefined;
-  if (source.kind === "local" && card.kind === "local") return undefined;
-  return source.row;
-};
+const platformOf = (card: ProjectCard): CloudRow | undefined =>
+  card.source.kind === "cloud" ? card.source.row : undefined;
 
 /**
  * Whether the repository of the project of a card cannot be used, and so the project cannot be
@@ -335,45 +324,6 @@ function lineOf(
   now: number,
 ): CardStatus {
   const { source } = card;
-  // What says most: a project that cannot be edited, then one that cannot get into its repository,
-  // as the platform keeps it a week only. Changes on their way there say so, as nothing to do.
-  const platform = platformOf(card);
-  const where: CardPlace = card.kind === "cloudFolder" ? "cloudFolder" : "cloud";
-  if (platform?.unusable) {
-    return {
-      place: where,
-      text: unusableLine(platform.unusable, now, t),
-      tone: "warning",
-      hint: t("start.hint.unusable"),
-    };
-  }
-  // One with no repository goes as a whole once nobody opened it for a week, where the platform
-  // says when: it stands out, with the way out right under it.
-  if (
-    platform?.archive?.attention === "noRepository" &&
-    platform.archive.releaseAt !== undefined &&
-    platform.mark?.kind === "noRepository"
-  ) {
-    return {
-      place: where,
-      text: t("start.status.noRepositoryDeletes"),
-      tone: "warning",
-      alert: true,
-      hint: t("start.hint.noRepository"),
-      way: "chooseRepository",
-    };
-  }
-  const github = platform?.archive && githubOfListed(platform.archive, now, t);
-  if (github?.kind === "error" && github.cause !== "noRepository") {
-    return {
-      place: where,
-      text: t("start.status.githubFailed"),
-      tone: "warning",
-      alert: true,
-      hint: githubAbout(github, t),
-    };
-  }
-  const githubWord = github?.kind === "pending" ? t("start.status.githubPending") : undefined;
   if (source.kind === "browser") {
     return source.known
       ? {
@@ -386,54 +336,55 @@ function lineOf(
   }
   if (source.kind === "local") {
     const { row } = source;
-    const isGone = folder === "gone" || folder === "blocked";
-    if (card.kind === "local" || row.mark === undefined) {
-      return isGone
-        ? {
-            place: "folder",
-            text: t(`folder.recentStatus.${folder}`),
-            tone: "warning",
-            hint: undefined,
-          }
-        : {
-            place: "folder",
-            text: t("start.status.local", { folder: row.folder, ...plain }),
-            tone: "plain",
-            hint: t("folder.folderLabel", { folder: row.folder, ...plain }),
-          };
-    }
-    const trouble = isGone
-      ? t(`folder.recentStatus.${folder}`)
-      : cloudTrouble(row.mark, { pending: row.pending, needsSignIn: false }, t);
+    return folder === "gone" || folder === "blocked"
+      ? {
+          place: "folder",
+          text: t(`folder.recentStatus.${folder}`),
+          tone: "warning",
+          hint: undefined,
+        }
+      : {
+          place: "folder",
+          text: row.folder,
+          tone: "plain",
+          hint: t("folder.folderLabel", { folder: row.folder, ...plain }),
+        };
+  }
+  // What says most: a project that cannot be edited, then one that cannot get into its repository.
+  // Changes on their way there say so, as nothing to do.
+  const { row } = source;
+  if (row.unusable) {
     return {
-      place: "cloudFolder",
-      text: t("start.status.cloud", {
-        what: trouble ?? githubWord ?? t("start.status.withFolder"),
-        ...plain,
-      }),
-      tone: trouble === undefined ? "plain" : "warning",
-      hint:
-        markHint(row.mark, t) ??
-        (githubWord !== undefined && github
-          ? githubAbout(github, t)
-          : t("folder.folderLabel", { folder: row.folder, ...plain })),
+      place: "cloud",
+      text: unusableLine(row.unusable, now, t),
+      tone: "warning",
+      hint: t("start.hint.unusable"),
     };
   }
-  const { row } = source;
+  const github = row.archive && githubOfListed(row.archive, now, t);
+  if (github?.kind === "error" && github.cause !== "noRepository") {
+    return {
+      place: "cloud",
+      text: t("start.status.githubFailed"),
+      tone: "warning",
+      alert: true,
+      hint: githubAbout(github, t),
+    };
+  }
+  const githubWord = github?.kind === "pending" ? t("start.status.githubPending") : undefined;
   const trouble =
     cloudTrouble(row.mark, row, t) ??
     (row.copyFailed === true ? t("start.status.restoreFailed") : undefined);
-  const place =
-    row.key !== undefined
-      ? t("start.status.onlyBrowser")
-      : row.copy === "live"
-        ? t("start.status.notHere")
-        : row.copy === "restoring"
-          ? t("cloud.open.restoring")
-          : t("start.status.fromGitHub");
+  // Nothing to say: its repository, which is where it is.
+  const quiet =
+    row.copy === "restoring"
+      ? t("cloud.open.restoring")
+      : row.copy !== "live"
+        ? t("start.status.fromGitHub")
+        : (row.repository?.fullName ?? t("start.place.noRepository"));
   return {
     place: "cloud",
-    text: t("start.status.cloud", { what: trouble ?? githubWord ?? place, ...plain }),
+    text: trouble ?? githubWord ?? quiet,
     tone: trouble === undefined ? "plain" : "warning",
     hint:
       markHint(row.mark, t) ??
@@ -441,7 +392,9 @@ function lineOf(
       // Coming back from GitHub, and why, on hovering: the line is too short for it.
       (row.copy === "restoring" && trouble === undefined
         ? t(row.released === true ? "cloud.open.restoringReleased" : "cloud.open.restoring")
-        : undefined),
+        : row.key === undefined
+          ? t("start.status.notHere")
+          : undefined),
   };
 }
 
@@ -449,20 +402,9 @@ function lineOf(
 export function cardPlace(card: ProjectCard, t: TFunction): string {
   const { source } = card;
   if (source.kind === "browser") return t("start.place.browser");
-  if (source.kind === "local") {
-    const { row } = source;
-    const repository =
-      row.mark?.kind === "linked" || row.mark?.kind === "attention"
-        ? row.mark.repository
-        : undefined;
-    return card.kind === "local"
-      ? t("start.place.local", { folder: row.folder, ...plain })
-      : t("start.place.cloud", { where: repository ?? row.folder, ...plain });
-  }
-  return t("start.place.cloud", {
-    where: source.row.repository?.fullName ?? t("start.place.noRepository"),
-    ...plain,
-  });
+  if (source.kind === "local")
+    return t("start.place.local", { folder: source.row.folder, ...plain });
+  return source.row.repository?.fullName ?? t("start.place.noRepository");
 }
 
 // ---- what a card offers
@@ -473,14 +415,11 @@ export type CardAction =
   | "star"
   | "unstar"
   | "moveToGroup"
-  | "connect"
-  | "linkFolder"
-  | "disconnect"
   | "removeHere"
   | "openOnGitHub"
   | "deleteCloud"
-  /** A copy into a folder, as a project of this computer that does not sync. */
-  | "saveAsLocal"
+  /** A copy into a folder, once, see `Workbench.saveToFolder`. */
+  | "saveToFolder"
   /** Asks GitHub again about a repository that cannot be used. */
   | "recheck"
   | "reauthorize"
@@ -491,24 +430,14 @@ export type CardAction =
   | "saveElsewhere"
   | "releaseCopies"
   | "removeFromList"
-  | "moveToFolder"
   | "saveCopy"
   | "delete"
   /** People choose a picture as the cover, see start/cover-choice.ts. */
   | "setCover"
-  /**
-   * Opens the project and has people choose a repository for it, from under the line of one that
-   * has none, see `CardStatus.way`.
-   */
-  | "chooseRepository"
   /** Back to the cover the editor makes. */
   | "autoCover";
 
 export interface CardContext {
-  /** The editor is hosted on a platform. */
-  readonly hasPlatform: boolean;
-  /** This browser can write folders. */
-  readonly canFolders: boolean;
   /** How its folder is, where it has one and that is known. */
   readonly folder: FolderStatus | undefined;
   /** Bytes of copies of its files that this browser keeps and can let go of, see `releaseCopies`. */
@@ -522,9 +451,7 @@ export interface CardContext {
 /** Where "在 GitHub 上打开" goes: only an https address. */
 export function gitHubAddress(card: ProjectCard): string | undefined {
   const { source } = card;
-  if (source.kind === "local") return httpsLink(source.row.repositoryUrl);
-  if (source.kind === "cloud") return httpsLink(source.row.repository?.url);
-  return undefined;
+  return source.kind === "cloud" ? httpsLink(source.row.repository?.url) : undefined;
 }
 
 /**
@@ -532,7 +459,6 @@ export function gitHubAddress(card: ProjectCard): string | undefined {
  * card has first, then what is of its kind.
  */
 export function cardActions(card: ProjectCard, context: CardContext): CardAction[][] {
-  const { hasPlatform, canFolders } = context;
   // Only a folder has a status, and copies of files people brought in.
   const isFolder = card.source.kind === "local";
   const folder = isFolder ? context.folder : undefined;
@@ -541,15 +467,12 @@ export function cardActions(card: ProjectCard, context: CardContext): CardAction
   const when = (isThere: boolean, ...actions: CardAction[]): CardAction[] =>
     isThere ? actions : [];
   const github = when(gitHubAddress(card) !== undefined, "openOnGitHub");
-  const deletable = when(
-    card.source.kind !== "browser" && card.source.row.deletable,
-    "deleteCloud",
-  );
   const platform = platformOf(card);
+  const deletable = when(platform?.deletable === true, "deleteCloud");
   const unusable = platform?.unusable;
   // What the platform has of it to copy, or what this browser has: not once both are gone.
   const hasContent = platform?.copy === "live" || card.key !== undefined;
-  const savable = when(canFolders && hasPlatform && hasContent, "saveAsLocal");
+  const savable = when(platform !== undefined && hasContent, "saveToFolder");
   const common: CardAction[] = [
     "open",
     // One that this browser has nothing of has to change on the platform: not yet. One that
@@ -570,53 +493,26 @@ export function cardActions(card: ProjectCard, context: CardContext): CardAction
   const folderGone = when(isGone, "findAgain", "saveElsewhere");
   const kept = when(copies > 0, "releaseCopies");
   const groups = (): CardAction[][] => {
-    if (unusable && card.kind !== "local" && card.kind !== "onlyHere") {
+    if (unusable && platform) {
       // Why it cannot be edited and what helps, see the design, 5.1.
       const ways: CardAction[] = unusableWays(unusable, {
-        hasContent: platform?.copy === "live",
+        hasContent: platform.copy === "live",
       });
       return [
         common,
-        [
-          ...savable,
-          ...ways,
-          ...when(card.kind === "cloudFolder" && !isGone, "disconnect"),
-          ...github,
-        ],
-        [
-          ...when(card.kind === "cloudFolder", "removeFromList"),
-          ...when(card.kind === "cloudHere", "removeHere"),
-          ...deletable,
-        ],
+        [...savable, ...ways, ...github],
+        [...when(card.kind === "cloudHere", "removeHere"), ...deletable],
       ];
     }
     switch (card.kind) {
       case "local":
-        return [
-          common,
-          [...when(hasPlatform && !isGone, "connect"), ...folderGone, ...kept],
-          ["removeFromList"],
-        ];
-      case "cloudFolder":
-        return [
-          common,
-          [...when(!isGone, "disconnect"), ...savable, ...folderGone, ...github, ...kept],
-          ["removeFromList", ...deletable],
-        ];
+        return [common, [...folderGone, ...kept], ["removeFromList"]];
       case "cloudHere":
-        return [
-          common,
-          [...when(canFolders, "linkFolder"), ...savable, ...github],
-          ["removeHere", ...deletable],
-        ];
+        return [common, [...savable, ...github], ["removeHere", ...deletable]];
       case "cloudRemote":
-        return [common, [...when(canFolders, "linkFolder"), ...savable, ...github], deletable];
+        return [common, [...savable, ...github], deletable];
       case "onlyHere":
-        return [
-          common,
-          [...when(canFolders, "moveToFolder"), ...when(hasPlatform, "connect"), "saveCopy"],
-          ["delete"],
-        ];
+        return [common, ["saveCopy"], ["delete"]];
     }
   };
   return groups().filter((group) => group.length > 0);

@@ -2,7 +2,6 @@ import type { Page } from "@playwright/test";
 import { dialog, footer, installChosen, privateText } from "./folder-support.ts";
 import {
   cardMenu,
-  filterTo,
   openCard,
   projectCard,
   projectList,
@@ -64,7 +63,7 @@ const updatesIn = (page: Page) =>
   page.evaluate(
     () =>
       new Promise<number>((resolve) => {
-        const open = indexedDB.open("animaquill");
+        const open = indexedDB.open("aq-offline-animaquill");
         open.onsuccess = () => {
           const request = open.result.transaction("updates").objectStore("updates").count();
           request.onsuccess = () => {
@@ -75,51 +74,34 @@ const updatesIn = (page: Page) =>
       }),
   );
 
-/** A new project in a folder of that name, through the dialog, as people make one. */
+/** A new project in a folder of that name, in the offline mode, through the dialog. */
 async function newInFolder(page: Page, name: string, folder: string) {
   await page.evaluate((chosen) => {
     window.chosenFolder = chosen;
   }, folder);
   await sidebar(page).getByRole("button", { name: "新建项目" }).click();
   await page.getByRole("textbox", { name: "项目名称" }).fill(name);
-  await page.getByRole("radio", { name: /^本地项目/ }).check();
-  await page.getByRole("button", { name: "新建", exact: true }).click();
+  await page.getByRole("button", { name: "选文件夹…" }).click();
   await expect(tab(page, "preview")).toBeVisible();
   await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
-}
-
-/** Connects the open project through the dialog, with a new repository of this name. */
-async function connect(page: Page, repository: string) {
-  await chooseFrom(page, "文件", "云端…");
-  const connecting = page.locator("dialog[data-connect-phase]");
-  await connecting.getByRole("textbox", { name: "仓库名" }).fill(repository);
-  await connecting.getByRole("button", { name: "连接到云端" }).click();
-  await expect(connecting).toHaveAttribute("data-connect-phase", "done");
-  await connecting.getByRole("button", { name: "完成" }).click();
-  await expect(footer(page).locator("[data-cloud-level]")).toHaveAttribute("data-cloud", "online");
 }
 
 const names = (page: Page, list = "项目") =>
   projectList(page, list).locator("li[data-project]").locator("[data-card-name]").allInnerTexts();
 
-test.describe("the start page with projects of this computer and of the platform", () => {
-  test.use({ folders: true });
-
-  test("shows them as a wall, which people filter, search, sort and organise", async ({ page }) => {
+test.describe("the start page of the online mode", () => {
+  test("shows them as a wall, which people search, sort and organise", async ({ page }) => {
     test.setTimeout(120_000);
-    await installChosen(page);
     await arrive(page);
-    await newInFolder(page, "课程片头", "intro");
-    await close(page);
-    await newInFolder(page, "旅行 Vlog 第 3 集", "vlog");
-    await connect(page, "travel-vlog");
-    await close(page);
     await withLab(page, (lab) => {
       lab.seed("产品发布短片", { repository: "launch" });
       lab.seed("年会开场", { repository: "annual", ago: 3 * 24 * 3_600_000 });
       lab.seed("教程：关键帧入门", { repository: "keyframes" });
+      lab.seed("旅行 Vlog 第 3 集", { repository: "travel-vlog" });
     });
+    await chooseFrom(page, "文件", "打开云端的项目…");
     await showView(page, "全部项目");
+    await expect(page.getByRole("group", { name: "筛选" })).toHaveCount(0);
     await openCard(page, "产品发布短片");
     await expect(page).toHaveTitle("产品发布短片 - AnimaQuill");
     await close(page);
@@ -129,31 +111,20 @@ test.describe("the start page with projects of this computer and of the platform
       "aria-current",
       "page",
     );
-    await expect.poll(() => names(page)).toEqual(["产品发布短片", "旅行 Vlog 第 3 集", "课程片头"]);
-    await expect(statusOf(page, "课程片头")).toHaveText(/^本地 · intro/);
-    await expect(statusOf(page, "旅行 Vlog 第 3 集")).toHaveText(/^云端 · 文件夹也有一份/);
-    await expect(statusOf(page, "产品发布短片")).toHaveText(/^云端 · 只在这个浏览器里/);
+    await expect.poll(() => names(page)).toEqual(["产品发布短片"]);
+    // Nothing of where a project is, and a line with the repository.
+    await expect(statusOf(page, "产品发布短片")).toHaveText(/^octo\/launch/);
     // Recent has no sort of its own.
     await expect(page.getByRole("button", { name: /^排序：/ })).toHaveCount(0);
-    await projectCard(page, "旅行 Vlog 第 3 集")
-      .getByRole("button", { name: "收藏“旅行 Vlog 第 3 集”" })
+    await projectCard(page, "产品发布短片")
+      .getByRole("button", { name: "收藏“产品发布短片”" })
       .click();
     await expect(sidebar(page).getByRole("button", { name: /^收藏/ })).toHaveText("收藏1");
     await shot(page, "01-recent");
 
-    // Everything, those only on the platform too.
     await showView(page, "全部项目");
-    await expect(projectList(page).locator("li[data-project]")).toHaveCount(5);
-    await expect(statusOf(page, "年会开场")).toHaveText(/^云端 · 这台电脑还没打开过/);
+    await expect(projectList(page).locator("li[data-project]")).toHaveCount(4);
     await shot(page, "02-all");
-    await filterTo(page, "云端");
-    await expect
-      .poll(async () => (await names(page)).toSorted())
-      .toEqual(["产品发布短片", "年会开场", "教程：关键帧入门", "旅行 Vlog 第 3 集"].toSorted());
-    await shot(page, "03-cloud");
-    await filterTo(page, "本地");
-    await expect.poll(() => names(page)).toEqual(["课程片头"]);
-    await filterTo(page, "全部");
     await page.getByRole("searchbox", { name: "搜索项目" }).fill("vlog");
     await expect.poll(() => names(page)).toEqual(["旅行 Vlog 第 3 集"]);
     await page.getByRole("searchbox", { name: "搜索项目" }).fill("没有这个");
@@ -165,7 +136,7 @@ test.describe("the start page with projects of this computer and of the platform
     await page.getByRole("menuitemradio", { name: "按名称" }).click();
     await expect
       .poll(() => names(page))
-      .toEqual(["产品发布短片", "教程：关键帧入门", "课程片头", "旅行 Vlog 第 3 集", "年会开场"]);
+      .toEqual(["产品发布短片", "教程：关键帧入门", "旅行 Vlog 第 3 集", "年会开场"]);
     await page
       .getByRole("group", { name: "显示方式" })
       .getByRole("button", { name: "列表" })
@@ -185,25 +156,23 @@ test.describe("the start page with projects of this computer and of the platform
       .getByRole("button", { name: "卡片" })
       .click();
 
-    // Only what works now, by kind.
+    // Only what works now: the same for what was opened here and what was not.
     const menuOf = async (name: string) => {
       await projectCard(page, name)
         .getByRole("button", { name: `“${name}”的更多操作` })
         .click();
-      const items = await page.getByRole("menu").getByRole("menuitem").allInnerTexts();
-      return items;
+      return page.getByRole("menu").getByRole("menuitem").allInnerTexts();
     };
     expect(await menuOf("产品发布短片")).toEqual([
       "打开",
       "重命名…",
-      "收藏",
+      "取消收藏",
       "移到分组…",
       "设置封面…",
-      "关联文件夹…",
-      "另存为本地项目…",
+      "保存到文件夹…",
       "在 GitHub 上打开",
       "从这个浏览器移除…",
-      "删除云端项目…",
+      "删除项目…",
     ]);
     await shot(page, "05-menu");
     await page.keyboard.press("Escape");
@@ -212,33 +181,9 @@ test.describe("the start page with projects of this computer and of the platform
       "收藏",
       "移到分组…",
       "设置封面…",
-      "关联文件夹…",
-      "另存为本地项目…",
+      "保存到文件夹…",
       "在 GitHub 上打开",
-      "删除云端项目…",
-    ]);
-    await page.keyboard.press("Escape");
-    expect(await menuOf("课程片头")).toEqual([
-      "打开",
-      "重命名…",
-      "收藏",
-      "移到分组…",
-      "设置封面…",
-      "连接到云端…",
-      "从列表移除",
-    ]);
-    await page.keyboard.press("Escape");
-    expect(await menuOf("旅行 Vlog 第 3 集")).toEqual([
-      "打开",
-      "重命名…",
-      "取消收藏",
-      "移到分组…",
-      "设置封面…",
-      "断开云端…",
-      "另存为本地项目…",
-      "在 GitHub 上打开",
-      "从列表移除",
-      "删除云端项目…",
+      "删除项目…",
     ]);
     await page.keyboard.press("Escape");
 
@@ -254,7 +199,7 @@ test.describe("the start page with projects of this computer and of the platform
     await page.keyboard.press("Enter");
     await expect(sidebar(page).getByRole("alert")).toHaveText("已经有叫这个名字的分组了。");
     await page.keyboard.press("Escape");
-    await projectCard(page, "课程片头").locator("a").first().dragTo(work);
+    await projectCard(page, "产品发布短片").locator("a").first().dragTo(work);
     await expect(work).toHaveText("工作1");
     await cardMenu(page, "年会开场", "移到分组…");
     await page
@@ -266,10 +211,7 @@ test.describe("the start page with projects of this computer and of the platform
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("工作");
     await expect
       .poll(async () => (await names(page)).toSorted())
-      .toEqual(["年会开场", "课程片头"].toSorted());
-    await filterTo(page, "云端");
-    await expect.poll(() => names(page)).toEqual(["年会开场"]);
-    await filterTo(page, "全部");
+      .toEqual(["年会开场", "产品发布短片"].toSorted());
     await shot(page, "06-group");
 
     // Taking the group away leaves its projects where they are.
@@ -281,59 +223,16 @@ test.describe("the start page with projects of this computer and of the platform
     await expect(work).toHaveCount(0);
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("最近打开");
     await showView(page, "全部项目");
-    await expect(projectList(page).locator("li[data-project]")).toHaveCount(5);
+    await expect(projectList(page).locator("li[data-project]")).toHaveCount(4);
   });
 
-  test("opens a card in this tab with a click, and in a new one with Ctrl", async ({
-    page,
-    context,
-  }) => {
-    await installChosen(page);
-    await arrive(page);
-    await newInFolder(page, "课程片头", "intro");
-    await close(page);
-    const link = projectCard(page, "课程片头").getByRole("link");
-    await expect(link).toHaveAttribute("href", /[?&]project=/);
-    const opening = context.waitForEvent("page");
-    await link.click({ modifiers: ["ControlOrMeta"] });
-    const other = await opening;
-    await editorReady(other);
-    // The new tab has the project in its address; this one stays on the start page.
-    expect(new URL(other.url()).searchParams.get("project")).toBeTruthy();
-    await expect(page.getByRole("heading", { level: 1 })).toHaveText("最近打开");
-    await other.close();
-    // With the keyboard, as any link.
-    await link.focus();
-    await page.keyboard.press("Enter");
-    await expect(page).toHaveTitle("课程片头 - AnimaQuill");
-  });
-
-  test("renames a folder from its card, which the folder gets once it opens", async ({ page }) => {
-    await installChosen(page);
-    await arrive(page);
-    await newInFolder(page, "课程片头", "intro");
-    await close(page);
-    await cardMenu(page, "课程片头", "重命名…");
-    const field = page.getByRole("textbox", { name: "“课程片头”的新名字" });
-    await field.fill("课程片头 第二版");
-    await field.press("Enter");
-    await expect(projectCard(page, "课程片头 第二版")).toBeVisible();
-    await openCard(page, "课程片头 第二版");
-    await expect(page).toHaveTitle("课程片头 第二版 - AnimaQuill");
-    await expect
-      .poll(async () => JSON.parse((await privateText(page, "intro/animaquill.json")) ?? "{}").name)
-      .toBe("课程片头 第二版");
-  });
-
-  test("welcomes people with nothing yet, and lists their projects of the platform there", async ({
-    page,
-  }) => {
+  test("welcomes people with nothing yet, and lists their projects there", async ({ page }) => {
     await arrive(page);
     const welcome = page.getByRole("region", { name: "欢迎使用 AnimaQuill" });
     await expect(welcome).toBeVisible();
-    await expect(welcome.getByRole("button", { name: /^新建云端项目/ })).toBeEnabled();
-    await expect(welcome.getByRole("button", { name: /^新建本地项目/ })).toBeEnabled();
-    await expect(welcome.getByRole("button", { name: /^打开文件夹/ })).toBeEnabled();
+    await expect(welcome.getByRole("button", { name: /^新建项目/ })).toBeEnabled();
+    await expect(welcome.getByRole("button", { name: /^新建云端项目/ })).toHaveCount(0);
+    await expect(welcome.getByRole("button", { name: /^新建本地项目/ })).toHaveCount(0);
     await shot(page, "07-empty");
 
     // Another computer: what is on the platform shows under it, and is no project lost.
@@ -352,45 +251,16 @@ test.describe("the start page with projects of this computer and of the platform
     await expect(page).toHaveTitle("年会开场 - AnimaQuill");
   });
 
-  test("makes a project of the platform from its card, with its dialog in the look of the page", async ({
-    page,
-  }) => {
-    await arrive(page);
-    await page.getByRole("button", { name: /^新建云端项目/ }).click();
-    const making = page.locator("dialog[data-create-kind]");
-    await expect(making).toHaveAttribute("data-create-kind", "cloud");
-    await expect(making.getByRole("radio", { name: /^云端项目/ })).toBeChecked();
-    await shot(page, "15-new-dialog");
-    await making.getByRole("radio", { name: /^本地项目/ }).check();
-    await expect(making).toHaveAttribute("data-create-kind", "local");
-    await shot(page, "15-new-dialog-local");
-  });
-
-  test("says how to get to the projects of the platform while nobody is signed in", async ({
-    page,
-  }) => {
-    await installChosen(page);
-    await arrive(page, { signedIn: false });
-    await newInFolder(page, "课程片头", "intro");
-    await close(page);
-    await expect(sidebar(page).getByText("登录后可以用云端项目")).toBeVisible();
-    await shot(page, "09-signed-out");
-    await filterTo(page, "云端");
-    await expect(page.getByText("登录后可以打开你存在云端的项目。")).toBeVisible();
-    await page.getByRole("main").getByRole("button", { name: "登录", exact: true }).click();
-    await expect(page.getByText("登录后可以打开你存在云端的项目。")).toHaveCount(0);
-    await expect(sidebar(page).getByText("octo")).toBeVisible();
-  });
-
   test("is the same in a narrow window, with the side bar on top", async ({ page }) => {
-    await installChosen(page);
     await page.setViewportSize({ width: 390, height: 844 });
     await arrive(page);
     await withLab(page, (lab) => {
       lab.seed("产品发布短片", { repository: "launch" });
+      lab.seed("年会开场", { repository: "annual" });
     });
-    await newInFolder(page, "课程片头", "intro");
-    await close(page);
+    await chooseFrom(page, "文件", "打开云端的项目…");
+    await showView(page, "全部项目");
+    await expect(projectCard(page, "年会开场")).toBeVisible();
     const bar = await sidebar(page).boundingBox();
     const main = await page.getByRole("main").boundingBox();
     expect(bar && main && bar.y + bar.height <= main.y + 1).toBe(true);
@@ -398,12 +268,55 @@ test.describe("the start page with projects of this computer and of the platform
       390,
     );
     await shot(page, "14-narrow");
-    await showView(page, "全部项目");
-    await shot(page, "14-narrow-all");
   });
 });
 
-test.describe("the start page where the editor runs on this computer", () => {
+test.describe("the start page of the offline mode, with folders", () => {
+  test.use({ folders: true });
+
+  test("opens a card in this tab with a click, and in a new one with Ctrl", async ({
+    page,
+    context,
+  }) => {
+    await installChosen(page);
+    await arrive(page, { cloud: false });
+    await newInFolder(page, "课程片头", "intro");
+    await close(page);
+    const link = projectCard(page, "课程片头").getByRole("link");
+    await expect(link).toHaveAttribute("href", /\/offline\/p\//);
+    const opening = context.waitForEvent("page");
+    await link.click({ modifiers: ["ControlOrMeta"] });
+    const other = await opening;
+    await editorReady(other);
+    // The new tab has the project in its address; this one stays on the start page.
+    expect(new URL(other.url()).pathname).toMatch(/^\/offline\/p\//);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("最近打开");
+    await other.close();
+    // With the keyboard, as any link.
+    await link.focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveTitle("课程片头 - AnimaQuill");
+  });
+
+  test("renames a folder from its card, which the folder gets once it opens", async ({ page }) => {
+    await installChosen(page);
+    await arrive(page, { cloud: false });
+    await newInFolder(page, "课程片头", "intro");
+    await close(page);
+    await cardMenu(page, "课程片头", "重命名…");
+    const field = page.getByRole("textbox", { name: "“课程片头”的新名字" });
+    await field.fill("课程片头 第二版");
+    await field.press("Enter");
+    await expect(projectCard(page, "课程片头 第二版")).toBeVisible();
+    await openCard(page, "课程片头 第二版");
+    await expect(page).toHaveTitle("课程片头 第二版 - AnimaQuill");
+    await expect
+      .poll(async () => JSON.parse((await privateText(page, "intro/animaquill.json")) ?? "{}").name)
+      .toBe("课程片头 第二版");
+  });
+});
+
+test.describe("the start page of the offline mode, where the editor runs on this computer", () => {
   test.use({ folders: true });
 
   test("has only projects of this computer, and no account", async ({ page }) => {
@@ -418,37 +331,20 @@ test.describe("the start page where the editor runs on this computer", () => {
     await close(page);
     await expect(projectCard(page, "课程片头")).toBeVisible();
     await expect(page.getByRole("group", { name: "筛选" })).toHaveCount(0);
-    await expect(sidebar(page).getByText("登录")).toHaveCount(0);
     await shot(page, "12-local");
   });
 });
 
 test.describe("the start page in a browser without folders", () => {
-  test("asks people to sign in, or to switch browsers, and lists what this browser has", async ({
-    page,
-  }) => {
-    await arrive(page, { signedIn: false });
-    await expect(page.getByText("登录后使用，或者换用 Edge、Chrome。")).toBeVisible();
-    await shot(page, "10-no-folders-signed-out");
-    await page.getByRole("main").getByRole("button", { name: "登录", exact: true }).click();
-    await expect(sidebar(page).getByText("这个浏览器不能打开文件夹，只能用云端项目")).toBeVisible();
-    await expect(page.getByRole("button", { name: /^新建云端项目/ }).first()).toBeEnabled();
-    const local = page.getByRole("button", { name: /^新建本地项目/ }).first();
-    await expect(local).toBeDisabled();
-    await expect(local).toContainText("这个浏览器不能打开电脑上的文件夹，请换用 Edge 或 Chrome。");
-    await expect(page.getByRole("group", { name: "筛选" })).toHaveCount(0);
-    await shot(page, "11-no-folders-signed-in");
-  });
-
   test("on this computer, says to use Edge or Chrome, and still opens what this browser has", async ({
     page,
   }) => {
     await arrive(page, { cloud: false });
     await createProject(page, "旧项目");
     await close(page);
-    await expect(
-      page.getByText("这个浏览器不能打开电脑上的文件夹，本机版请用 Edge 或 Chrome。"),
-    ).toBeVisible();
+    await expect(page.getByRole("button", { name: /^新建项目/ }).last()).toContainText(
+      "项目存在这个浏览器里",
+    );
     await expect(statusOf(page, "旧项目")).toHaveText(/^只在浏览器里/);
     await shot(page, "13-local-no-folders");
     await openCard(page, "旧项目");

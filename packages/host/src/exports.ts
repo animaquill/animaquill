@@ -1,3 +1,4 @@
+import { scoped } from "./scope.ts";
 import type { ExportPiece, ExportStore, SavedExport } from "./index.ts";
 
 /**
@@ -32,7 +33,7 @@ const committed = (transaction: IDBTransaction) =>
   });
 
 function open(factory: IDBFactory): Promise<IDBDatabase> {
-  const request = factory.open(DATABASE, VERSION);
+  const request = factory.open(scoped(DATABASE), VERSION);
   request.addEventListener("upgradeneeded", () => {
     const database = request.result;
     const exports = database.createObjectStore(EXPORTS, { keyPath: "id" });
@@ -140,7 +141,7 @@ export function createExportStore(
         return Promise.resolve(() => held.delete(id));
       }
       return new Promise((resolve) => {
-        void manager.request(`animaquill-export-${id}`, { ifAvailable: true }, (lock) => {
+        void manager.request(scoped(`animaquill-export-${id}`), { ifAvailable: true }, (lock) => {
           if (!lock) {
             resolve(undefined);
             return undefined;

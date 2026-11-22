@@ -1,3 +1,4 @@
+import { scoped } from "./scope.ts";
 import { isObject, text } from "./answers.ts";
 import { broadcastLine } from "./cloud.ts";
 import { browserFolderWriter, MemoryWriters, type WriterPage } from "./folder-writer.ts";
@@ -41,7 +42,7 @@ const committed = (transaction: IDBTransaction) =>
   });
 
 function open(factory: IDBFactory): Promise<IDBDatabase> {
-  const request = factory.open(DATABASE, VERSION);
+  const request = factory.open(scoped(DATABASE), VERSION);
   request.addEventListener("upgradeneeded", () => {
     const store = request.result.createObjectStore(UPLOADS, { keyPath: ["key", "asset"] });
     store.createIndex("key", "key");
@@ -114,7 +115,7 @@ interface Changes {
 
 function broadcastChanges(): Changes | undefined {
   if (typeof BroadcastChannel === "undefined") return undefined;
-  const channel = new BroadcastChannel(CHANNEL);
+  const channel = new BroadcastChannel(scoped(CHANNEL));
   return {
     // oxlint-disable-next-line unicorn/require-post-message-target-origin -- not a window
     post: (key) => channel.postMessage(key),

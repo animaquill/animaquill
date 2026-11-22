@@ -3,12 +3,13 @@
  * syncs, an account whose state a test sets, and people who answer dialogs.
  */
 import { ProjectStore } from "@animaquill/core";
+import { newSyncId } from "@animaquill/host";
 import type {
   AccountAccess,
   AccountSnapshot,
   CloudAccess,
   CloudLink,
-  LocalFolder,
+  CloudLinks,
   StoragePersistence,
   WindowMemory,
 } from "@animaquill/host";
@@ -99,7 +100,6 @@ export async function windowOf(
   time: TestTime,
   {
     signedIn = true,
-    folders = new Map<string, LocalFolder>(),
     repository,
     browser = new TestCloudBrowser(platform, "ada"),
     library = new MemoryLibrary(),
@@ -110,7 +110,6 @@ export async function windowOf(
     /** Whether the browser keeps what it stores, see `CloudProjectsOptions.persistence`. */
     persistence?: StoragePersistence;
     signedIn?: boolean;
-    folders?: Map<string, LocalFolder>;
     repository?: FakeRepositories;
     /** Another window of a browser that is there already. */
     browser?: TestCloudBrowser;
@@ -137,14 +136,6 @@ export async function windowOf(
     othersWait: undefined as Promise<void> | undefined,
     /** What windows left on a project that is not saved, by its key. */
     left: new Map<string, readonly LeftBehind[]>(),
-    /** How often the dialog that connects a project was asked for, and what showing it does. */
-    shown: 0,
-    showConnect: undefined as (() => Promise<void>) | undefined,
-    /** Whether people did something just now, see `CloudProjectsOptions.isActive`. */
-    active: true,
-    /** What moving into a folder comes to: a test that has a folder for it says so. */
-    move: async (_key: string): Promise<boolean> => false,
-    moved: [] as string[],
     /** Whether the page goes away once it was asked to, see `CloudProjectsOptions.leaving`. */
     leaving: true,
     /** Opening a project only in this browser says that it is not safe, see `CloudProjects`. */
@@ -157,47 +148,29 @@ export async function windowOf(
     await session.open(id);
     await cloud.follow();
   };
+  const access: CloudAccess = {
+    ...browser.access({ isAlive: () => true, asleep: false }),
+    ...(repository && { repository }),
+    ...overrides,
+  };
   const cloud: CloudProjects = new CloudProjects({
-    cloud: {
-      ...browser.access({ isAlive: () => true, asleep: false }),
-      ...(repository && { repository }),
-      ...overrides,
-    },
+    cloud: access,
     session,
     projects: library,
-    folderOf: (key) => folders.get(key),
-    isFolder: (key) => folders.has(key),
-    // The folders this browser knows: those the test put on its list.
-    records: {
-      get: async (id) => {
-        const folder = folders.get(id);
-        return folder && { id, folder, project: "", name: "", openedAt: 0 };
-      },
-    },
     others: async (key) => {
       await world.othersWait;
       if (world.othersFail) throw new Error("no word from the other windows");
       return world.others.get(key) ?? 0;
     },
     leftBehind: async (key) => world.left.get(key) ?? [],
-    showConnect: async () => {
-      world.shown += 1;
-      await world.showConnect?.();
-    },
     closeProject: async () => {
       await cloud.close();
       await session.close();
       return true;
     },
-    moveToFolder: async (key) => {
-      world.moved.push(key);
-      return world.move(key);
-    },
-    isActive: () => world.active,
     memory,
     ...(persistence && { persistence }),
     leaving: () => world.leaving,
-    connectTiming: { patienceMs: 2000, checkMs: 50 },
     account: who,
     dialogs,
     notifications,
@@ -212,6 +185,7 @@ export async function windowOf(
     installApp,
   });
   windows.push({ cloud, session });
+  connecting.set(cloud, { session, links: access.links, platform: access.platform, who });
   return {
     browser,
     library,
@@ -223,7 +197,6 @@ export async function windowOf(
     installApp,
     cloud,
     open,
-    folders,
     world,
     memory,
     time,
@@ -245,14 +218,50 @@ export const track = (window: { cloud: CloudProjects; session: ProjectSession })
   windows.push(window);
 };
 
+/** What `connectNow` needs of a window that `windowOf` made. */
+const connecting = new WeakMap<
+  CloudProjects,
+  {
+    readonly session: ProjectSession;
+    readonly links: CloudLinks;
+    readonly platform: string;
+    readonly who: AccountAccess;
+  }
+>();
+
 /**
- * Connects the open project of a window as the first step of the dialog that connects it does,
- * without the dialog, see `CloudProjects.beginLink`: for tests that need a project of the platform.
+ * Makes the open project of a window a project of the platform for tests that need one: a link
+ * that says it is not on the platform yet, which the first connection makes there with what the
+ * project is then, as the sync protocol does for "hello" with `create`. People make projects of
+ * the platform with the dialog, see `CloudCreate`.
  */
 export async function connectNow(cloud: CloudProjects): Promise<CloudLink> {
-  const begun = await cloud.beginLink();
-  if (typeof begun === "string") throw new Error(`The project did not begin to connect: ${begun}`);
-  return begun.link;
+  const parts = connecting.get(cloud);
+  const { session } = parts ?? {};
+  const key = session?.key;
+  const store = session?.store;
+  if (!parts || !session || !key || !store) throw new Error("No project is open to connect");
+  if (!(await session.trySave())) throw new Error("The project is not saved");
+  const before = await parts.links.get(key);
+  if (before) return before;
+  const entries = (await session.journal.entries()) ?? [];
+  const who = parts.who.getSnapshot();
+  const link: CloudLink = {
+    key,
+    platform: parts.platform,
+    project: newSyncId(),
+    seq: 0,
+    pushed: entries.at(-1)?.mark ?? 0,
+    linkedAt: Date.now(),
+    creating: true,
+    name: store.getState().manifest.name,
+    ...(who.status === "signedIn" && who.id !== undefined && { owner: who.id }),
+  };
+  await parts.links.put(link);
+  // Looked at again, as if the project had just opened: it syncs now.
+  await cloud.close();
+  await cloud.follow();
+  return link;
 }
 
 export const messagesOf = (notifications: Notifications) =>

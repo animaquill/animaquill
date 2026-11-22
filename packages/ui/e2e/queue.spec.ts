@@ -122,7 +122,7 @@ async function factsOf(file: Buffer) {
 const keptExports = (page: Page) =>
   page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("animaquill-exports");
+      const request = indexedDB.open("aq-offline-animaquill-exports");
       request.addEventListener("success", () => resolve(request.result));
       request.addEventListener("error", () => reject(request.error));
     });

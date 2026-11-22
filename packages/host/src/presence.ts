@@ -1,16 +1,8 @@
+import { scoped } from "./scope.ts";
 import type { ProjectPresence } from "./index.ts";
 
 /** One shared lock for each window that has a project open: Web Locks count them across windows. */
 const PREFIX = "animaquill.open.";
-/** Where windows hear that a project moved into a folder. */
-const CHANNEL = "animaquill.moved";
-
-interface Moved {
-  readonly project: string;
-}
-
-const isMoved = (data: unknown): data is Moved =>
-  typeof data === "object" && data !== null && typeof (data as Partial<Moved>).project === "string";
 
 /**
  * Which windows have which projects open, through Web Locks: each window holds a shared lock for
@@ -20,29 +12,16 @@ const isMoved = (data: unknown): data is Moved =>
  */
 export function browserPresence(
   locks: () => LockManager | undefined = () => navigator.locks,
-  channel: () => BroadcastChannel | undefined = () =>
-    typeof BroadcastChannel === "undefined" ? undefined : new BroadcastChannel(CHANNEL),
 ): ProjectPresence {
   /** How many times this window has each project open, which its own locks are. */
   const mine = new Map<string, number>();
-  const listeners = new Set<(project: string) => void>();
-  let line: BroadcastChannel | undefined;
-  const lineOf = () => {
-    if (line) return line;
-    line = channel();
-    line?.addEventListener("message", ({ data }: MessageEvent<unknown>) => {
-      if (!isMoved(data)) return;
-      for (const listener of listeners) listener(data.project);
-    });
-    return line;
-  };
   return {
     enter(project) {
       mine.set(project, (mine.get(project) ?? 0) + 1);
       let release = () => {};
       let isOver = false;
       locks()
-        ?.request(`${PREFIX}${project}`, { mode: "shared" }, () => {
+        ?.request(scoped(`${PREFIX}${project}`), { mode: "shared" }, () => {
           if (isOver) return undefined;
           return new Promise<void>((resolve) => {
             release = resolve;
@@ -64,18 +43,9 @@ export function browserPresence(
       // A browser that does not say what is held cannot tell: that is no "nobody", which is what
       // people would be told before something of the project is taken away.
       const { held = [] } = await manager.query();
-      const all = held.filter(({ name }) => name === `${PREFIX}${project}`).length;
+      const all = held.filter(({ name }) => name === scoped(`${PREFIX}${project}`)).length;
       // A lock this window just asked for may not be held yet.
       return Math.max(0, all - (mine.get(project) ?? 0));
-    },
-    moved(project) {
-      // oxlint-disable-next-line unicorn/require-post-message-target-origin -- not a window
-      lineOf()?.postMessage({ project } satisfies Moved);
-    },
-    onMoved(listener) {
-      lineOf();
-      listeners.add(listener);
-      return () => listeners.delete(listener);
     },
   };
 }

@@ -263,7 +263,7 @@ test.describe("files and code", () => {
     await page.getByRole("menuitem", { name: "关闭项目" }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByRole("button", { name: "全部保存" }).click();
-    await expect(page.getByRole("button", { name: "新建项目" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "新建项目" }).first()).toBeVisible();
     await page.getByRole("link", { name: /^场景项目/ }).click();
     await expect(tab(page, "preview")).toBeVisible();
     await openFile(page, "a.js");

@@ -1,3 +1,4 @@
+import { scoped } from "./scope.ts";
 import { committed, connector, resultOf } from "./ai.ts";
 import type { SavedUndo, UndoGone, UndoStore, UndoUsage } from "./index.ts";
 
@@ -61,7 +62,7 @@ export function browserUndo(
 ): UndoStore {
   const window = newWindow();
   const database = connector(() => {
-    const request = factory().open(UNDO_DATABASE, VERSION);
+    const request = factory().open(scoped(UNDO_DATABASE), VERSION);
     request.addEventListener("upgradeneeded", () => {
       const records = request.result.createObjectStore(RECORDS, { keyPath: ["project", "origin"] });
       records.createIndex(BY_PROJECT, "project");
@@ -71,7 +72,7 @@ export function browserUndo(
     return resultOf(request);
   });
   const channel =
-    typeof BroadcastChannel === "undefined" ? undefined : new BroadcastChannel(CHANNEL);
+    typeof BroadcastChannel === "undefined" ? undefined : new BroadcastChannel(scoped(CHANNEL));
   const listeners = new Set<(project: string, origin: string) => void>();
   channel?.addEventListener("message", (event: MessageEvent<unknown>) => {
     const data = event.data as { project?: unknown; origin?: unknown } | null;
@@ -204,7 +205,7 @@ export function browserUndo(
     async exclusive(project, run) {
       const manager = locks();
       if (!manager) return run();
-      return manager.request(`${LOCK_PREFIX}${project}`, () => run());
+      return manager.request(scoped(`${LOCK_PREFIX}${project}`), () => run());
     },
   };
 }

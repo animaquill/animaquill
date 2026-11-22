@@ -1,7 +1,7 @@
 /**
  * Choosing a side for each file that two versions of one project have differently, see
  * `reconcile.ts`: what differs, what is chosen until people say otherwise, and what both sides
- * are to be once they did. The files themselves are `FolderAdopt`'s, see folder/adopt.test.ts.
+ * are to be once they did.
  */
 import { ProjectStore } from "@animaquill/core";
 import { createProject } from "@animaquill/schema";
@@ -131,33 +131,33 @@ describe("reconcileItems", () => {
     );
     const items = reconcileItems(differences, defaultChoices(differences), t, {
       now,
-      words: "folder.adopt",
+      words: "cloud.takeBack",
     });
     expect(items).toEqual([
       {
         path: "a.js",
-        status: 'folder.adopt.newerHere {"time":"reconcile.today {\\"time\\":\\"14:05\\"}"}',
+        status: 'cloud.takeBack.newerHere {"time":"reconcile.today {\\"time\\":\\"14:05\\"}"}',
         options: [
-          { id: "here", label: "folder.adopt.useHere" },
-          { id: "cloud", label: "folder.adopt.useCloud" },
+          { id: "here", label: "cloud.takeBack.useHere" },
+          { id: "cloud", label: "cloud.takeBack.useCloud" },
         ],
         value: "here",
       },
       {
         path: "b.js",
-        status: "folder.adopt.onlyHere",
+        status: "cloud.takeBack.onlyHere",
         options: [
-          { id: "here", label: "folder.adopt.keep" },
-          { id: "cloud", label: "folder.adopt.drop" },
+          { id: "here", label: "cloud.takeBack.keep" },
+          { id: "cloud", label: "cloud.takeBack.drop" },
         ],
         value: "here",
       },
       {
         path: "c.js",
-        status: "folder.adopt.onlyCloud",
+        status: "cloud.takeBack.onlyCloud",
         options: [
-          { id: "cloud", label: "folder.adopt.keep" },
-          { id: "here", label: "folder.adopt.drop" },
+          { id: "cloud", label: "cloud.takeBack.keep" },
+          { id: "here", label: "cloud.takeBack.drop" },
         ],
         value: "cloud",
       },

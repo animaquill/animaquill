@@ -401,3 +401,12 @@ button {
 .aq-pointed-lines {
   background: var(--aq-pointed-lines);
 }
+
+/*
+ * Something of the online mode, offline: grey as what cannot be used, and still something to
+ * press, which asks to sign in, see app/OnlineOnly.tsx.
+ */
+[data-needs-online] {
+  opacity: 0.5;
+  cursor: default;
+}

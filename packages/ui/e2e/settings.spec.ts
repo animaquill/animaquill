@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { addAnthropic, closeSettings, goToSettingsGroup, settingsOf } from "./ai-support.ts";
+import { createOnline } from "./online-support.ts";
 import {
   chooseLayout,
   createProject,
@@ -17,7 +18,7 @@ import {
  */
 
 const KEY = "sk-ant-test-0123456789abcdefSECRET";
-const LAYOUT_KEY = "animaquill.layout";
+const LAYOUT_KEY = "aq-offline-animaquill.layout";
 /** Where the pictures go besides the output of the test, where it is said. */
 const SHOTS = process.env["AQ_SHOTS"];
 const header = (page: Page) => page.locator("header");
@@ -125,6 +126,19 @@ test.describe("as on the site, where React runs each effect once", () => {
   });
 });
 
+/** Comes to the site as somebody who is signed in: the online mode, as the start page. */
+async function arriveSignedIn(page: Page, address: string) {
+  await page.addInitScript(() => {
+    if (window !== window.top) return;
+    if (sessionStorage.getItem("animaquill.fakeAccount") === null)
+      sessionStorage.setItem(
+        "animaquill.fakeAccount",
+        JSON.stringify({ signedIn: true, installed: true }),
+      );
+  });
+  await page.goto(address);
+}
+
 test.describe("with an account", () => {
   devPageOnly("a fake account with ?account=fake");
   test.use({ withProject: false });
@@ -132,20 +146,12 @@ test.describe("with an account", () => {
   test("opens on the start page: the side bar, the title bar and its key; the account menu", async ({
     page,
   }) => {
-    await page.goto("/?account=fake");
+    await arriveSignedIn(page, "/?account=fake");
     const settingsButton = page.getByTestId("start-settings");
     await expect(settingsButton).toBeVisible();
     await opensAndCloses(page, () => settingsButton.click());
     await opensAndCloses(page, () => header(page).getByRole("button", { name: "设置" }).click());
     await opensAndCloses(page, () => page.keyboard.press("Control+Comma"));
-    // Signed out: the group of the account says what signing in brings, and signs in.
-    await page.keyboard.press("Control+Comma");
-    await goToSettingsGroup(page, "账号");
-    const account = settingsOf(page).getByTestId("settings-sign-in");
-    await expect(account).toHaveText(/^登录以后能用云端项目、云同步和云端 AI。/);
-    // Where each setting is kept is not said before signing in.
-    await expect(settingsOf(page).getByRole("img", { name: "只在这台设备" })).toHaveCount(0);
-    await account.getByRole("button", { name: "登录" }).click();
     const menu = header(page).getByRole("button", { name: "账号：octo" });
     await expect(menu).toBeVisible();
     // Signed in: from the account menu, at the account; and where each setting is kept.
@@ -421,11 +427,11 @@ test.describe("pictures of every group", () => {
       await page.screenshot({ path: test.info().outputPath(`${name}.png`) });
       if (SHOTS) await page.screenshot({ path: `${SHOTS}/${name}.png` });
     };
-    await page.goto("/?account=fake");
+    await arriveSignedIn(page, "/?account=fake&cloud=fake");
     await page.getByTestId("start-settings").click();
     await save("start-page");
     await page.keyboard.press("Escape");
-    await createProject(page);
+    await createOnline(page);
     await addAnthropic(page, KEY, "claude-test");
     for (const name of [
       "常规",

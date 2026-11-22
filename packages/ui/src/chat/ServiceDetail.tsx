@@ -23,6 +23,7 @@ import { failureText } from "./failure.ts";
 import { HeadersEditor, StarButton, dropIndex } from "./modelParts.tsx";
 import { contextLabel, priceLabel } from "./modelText.ts";
 import { protocolOf, type ServiceModel } from "./settings.ts";
+import { OnlineOnly } from "../app/OnlineOnly.tsx";
 
 /** From how many models on the list a filter shows, as pi-web has it. */
 const FILTER_FROM = 8;
@@ -286,7 +287,7 @@ function KeyField({ service }: { readonly service: ServiceConfig }) {
 
 /** Straight from the browser, or through the platform's relay: two buttons side by side. */
 function RouteField({ service }: { readonly service: ServiceConfig }) {
-  const { ai, account } = useWorkbench();
+  const { ai, account, mode } = useWorkbench();
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
   const signedIn =
@@ -308,16 +309,20 @@ function RouteField({ service }: { readonly service: ServiceConfig }) {
           {t("ai.routeDirectShort")}
         </button>
         {/* Where there is none, people who chose it can still see that and change it. */}
-        <button
-          type="button"
-          aria-pressed={service.route === "relay"}
-          aria-invalid={service.route === "relay" && !ai.canRelay}
-          disabled={held || !relay}
-          title={relay ? undefined : why}
-          onClick={() => ai.update(service.id, { route: "relay" })}
-        >
-          {t("ai.routeRelayShort")}
-        </button>
+        {mode === "offline" && service.route !== "relay" ? (
+          <OnlineOnly>{t("ai.routeRelayShort")}</OnlineOnly>
+        ) : (
+          <button
+            type="button"
+            aria-pressed={service.route === "relay"}
+            aria-invalid={service.route === "relay" && !ai.canRelay}
+            disabled={held || !relay}
+            title={relay ? undefined : why}
+            onClick={() => ai.update(service.id, { route: "relay" })}
+          >
+            {t("ai.routeRelayShort")}
+          </button>
+        )}
       </div>
     </div>
   );

@@ -60,7 +60,7 @@ describe("keys of AI services", () => {
 
   it("write nothing over what cannot be read", async () => {
     const factory = new IDBFactory();
-    const opened = factory.open(KEYS_DATABASE, 1);
+    const opened = factory.open(`aq-offline-${KEYS_DATABASE}`, 1);
     opened.onupgradeneeded = () => opened.result.createObjectStore("keys", { keyPath: "service" });
     await new Promise((resolve) => (opened.onsuccess = resolve));
     const bad = opened.result.transaction("keys", "readwrite");
@@ -74,7 +74,7 @@ describe("keys of AI services", () => {
   it("read a key as pages of before 0.3.72 kept it, and keep it where they read it", async () => {
     const factory = new IDBFactory();
     // As those pages wrote it: the key alone.
-    const opened = factory.open(KEYS_DATABASE, 1);
+    const opened = factory.open(`aq-offline-${KEYS_DATABASE}`, 1);
     opened.onupgradeneeded = () => opened.result.createObjectStore("keys", { keyPath: "service" });
     await new Promise((resolve) => (opened.onsuccess = resolve));
     const old = opened.result.transaction("keys", "readwrite");
@@ -85,7 +85,7 @@ describe("keys of AI services", () => {
     expect(await keys.read("a")).toEqual({ key: "sk-old" });
     await keys.write("a", { key: "sk-old", baseUrl: "https://gw.example" });
     // Where they read it.
-    const again = factory.open(KEYS_DATABASE, 1);
+    const again = factory.open(`aq-offline-${KEYS_DATABASE}`, 1);
     await new Promise((resolve) => (again.onsuccess = resolve));
     const read = again.result.transaction("keys").objectStore("keys").get("a");
     await new Promise((resolve) => (read.onsuccess = resolve));
@@ -112,7 +112,7 @@ describe("keys of AI services", () => {
       expect(local.getItem(local.key(index) ?? "")).not.toMatch(/sk-secret|secret-gateway/);
     }
     const databases = await factory.databases();
-    expect(databases.map(({ name }) => name)).toContain(KEYS_DATABASE);
+    expect(databases.map(({ name }) => name)).toContain(`aq-offline-${KEYS_DATABASE}`);
   });
 });
 

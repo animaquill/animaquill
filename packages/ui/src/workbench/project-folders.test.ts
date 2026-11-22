@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { editOnDisk, fixture, putProject, textOn } from "../folder/folder-support.ts";
 import {
   answer,
+  fillNew,
   browserOf,
   closeWindows,
   folderOf,
@@ -29,12 +30,9 @@ describe("a new project", () => {
     const workbench = windowOf(browser);
     browser.disk.chooseNext("文档/新的");
     const creating = workbench.newProject();
-    expect(await answer(workbench, "我的片子")).toMatchObject({
-      kind: "prompt",
-      hint: "folder.chooseHint",
-    });
+    await fillNew(workbench, "我的片子");
     await creating;
-    expect(nameOf(workbench)).toBe("我的片子");
+    await vi.waitFor(() => expect(nameOf(workbench)).toBe("我的片子"));
     await written(workbench);
     expect(manifestOn(browser.disk, "文档/新的")).toMatchObject({ name: "我的片子" });
     // The window shows it by the number of the folder, which its log has too.
@@ -49,7 +47,7 @@ describe("a new project", () => {
     const workbench = windowOf(browser);
     browser.disk.chooseNext("文档/仓库");
     const creating = workbench.newProject();
-    await answer(workbench, "我的片子");
+    await fillNew(workbench, "我的片子");
     expect(await answer(workbench, "inside")).toMatchObject({ kind: "choice" });
     await creating;
     await written(workbench);
@@ -265,13 +263,28 @@ async function answering(
 ) {
   const asked: { kind?: string; title?: string; message?: string; danger?: boolean }[] = [];
   const state = { done: false };
+  const pressed = new Set<number>();
   void work.finally(() => {
     state.done = true;
   });
-  while (!state.done) {
+  // A project of a folder is made on after the dialog that makes it is over (it ends once the
+  // press went on), so questions can still come: wait for a quiet moment too.
+  let quiet = 0;
+  while (!state.done || quiet < 10) {
+    quiet = state.done && workbench.dialogs.getSnapshot() === undefined ? quiet + 1 : 0;
     const dialog = workbench.dialogs.getSnapshot() as
       { kind?: string; title?: string; message?: string; danger?: boolean } | undefined;
-    if (dialog && dialog.kind !== "progress") {
+    const shown = workbench.dialogs.getSnapshot();
+    if (shown?.kind === "create") {
+      // The dialog that makes a project: the name is what a prompt said, and the press asks for the
+      // folder. It goes by itself once the project is made.
+      if (!pressed.has(shown.id)) {
+        pressed.add(shown.id);
+        asked.push({ kind: "create" });
+        shown.create.setName(String(answers({ kind: "prompt" })));
+        void shown.create.submit();
+      }
+    } else if (dialog && dialog.kind !== "progress") {
       asked.push(dialog);
       workbench.dialogs.answer(answers(dialog) as never);
     }
@@ -656,7 +669,7 @@ describe("leaving the page for a moment, as signing in does", () => {
     const workbench = windowOf(browser);
     browser.disk.chooseNext("文档/新的");
     const creating = workbench.newProject();
-    await answer(workbench, "我的片子");
+    await fillNew(workbench, "我的片子");
     await creating;
     await written(workbench);
     return { browser, workbench };

@@ -121,7 +121,7 @@ const WHITE = [255, 255, 255];
 const replaceMedia = (page: Page, text: string | undefined) =>
   page.evaluate(async (junk) => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const open = indexedDB.open("animaquill");
+      const open = indexedDB.open("aq-offline-animaquill");
       open.addEventListener("success", () => resolve(open.result));
       open.addEventListener("error", () => reject(open.error));
     });

@@ -123,29 +123,26 @@ describe("the welcome", () => {
     expect(welcome).toMatchObject({
       account: "u1",
       name: "name-u1",
-      switches: { ai: true, organizer: true, chats: true, newProjectsInCloud: true },
+      switches: { ai: true, organizer: true, chats: true },
     });
     // People turn two off, and press either button: the same.
     await sync.answerWelcome({
       ai: true,
       organizer: false,
       chats: true,
-      newProjectsInCloud: false,
     });
     expect(await asked).toEqual({ on: true, put: true });
     expect(sync.getSnapshot()).toMatchObject({ welcomed: true, welcome: undefined });
     expect(sync.allows("organizer", "u1")).toBe(false);
     expect(sync.allows("chats", "u1")).toBe(true);
-    expect(sync.newProjectsInCloud).toBe(false);
     // Kept on this device, which is where they are.
     expect(deviceSwitchesOf(browser.values.get("cloud@u1"))).toEqual({
       ai: true,
       organizer: false,
       chats: true,
-      newProjectsInCloud: false,
     });
     expect(browser.values.get("welcome@u1")).toMatchObject({
-      switches: { ai: true, organizer: false, chats: true, newProjectsInCloud: false },
+      switches: { ai: true, organizer: false, chats: true },
     });
     expect(changed).toHaveBeenCalled();
   });
@@ -259,14 +256,12 @@ describe("the switches", () => {
         organizerEpoch: 1,
         chats: true,
         chatsEpoch: 0,
-        newProjectsInCloud: false,
       },
     };
     expect(deviceSwitchesOf(before)).toEqual({
       ai: true,
       organizer: false,
       chats: true,
-      newProjectsInCloud: false,
     });
     expect(
       deviceSwitchesOf({ ...before, device: { ...before.switches, organizer: true } }),
@@ -278,13 +273,13 @@ describe("the switches", () => {
     const browser = browserOf();
     const one = windowOf(browser, accountOf("u1"), new Set(["u1"]));
     await settle();
-    await one.sync.set("newProjectsInCloud", false);
+    await one.sync.set("organizer", false);
     const two = windowOf(browser, accountOf("u1"), new Set(["u1"]));
     await settle();
-    expect(two.sync.newProjectsInCloud).toBe(false);
+    expect(two.sync.allows("organizer", "u1")).toBe(false);
     const other = windowOf(browser, accountOf("u2"), new Set(["u2"]));
     await settle();
-    expect(other.sync.newProjectsInCloud).toBe(true);
+    expect(other.sync.allows("organizer", "u2")).toBe(true);
   });
 
   test("the AI settings are turned on and off by them", async () => {

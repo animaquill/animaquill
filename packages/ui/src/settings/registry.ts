@@ -68,7 +68,6 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
   { id: "cloud.ai", group: "cloud", where: "device" },
   { id: "cloud.organizer", group: "cloud", where: "device" },
   { id: "cloud.chats", group: "cloud", where: "device" },
-  { id: "cloud.newProjectsInCloud", group: "cloud", where: "device" },
   { id: "storage.persist", group: "storage", where: "device" },
   { id: "storage.keys", group: "storage", where: "device" },
   { id: "storage.chats", group: "storage", where: "device" },

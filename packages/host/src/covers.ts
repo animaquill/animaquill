@@ -1,3 +1,4 @@
+import { scoped } from "./scope.ts";
 import {
   REQUEST_TIMEOUT_MS,
   CHANGE_TIMEOUT_MS,
@@ -47,7 +48,7 @@ const committed = (transaction: IDBTransaction) =>
   });
 
 function open(factory: IDBFactory): Promise<IDBDatabase> {
-  const request = factory.open(DATABASE, VERSION);
+  const request = factory.open(scoped(DATABASE), VERSION);
   request.addEventListener("upgradeneeded", () => {
     request.result.createObjectStore(COVERS, { keyPath: "key" });
   });
@@ -62,7 +63,7 @@ export interface CoverChannel {
 
 function broadcastChannel(): CoverChannel | undefined {
   if (typeof BroadcastChannel === "undefined") return undefined;
-  const channel = new BroadcastChannel(CHANNEL);
+  const channel = new BroadcastChannel(scoped(CHANNEL));
   return {
     // oxlint-disable-next-line unicorn/require-post-message-target-origin -- not a window
     post: (key) => channel.postMessage(key),

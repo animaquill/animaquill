@@ -5,7 +5,7 @@ import { createProject, writeProject, type SoundManifest } from "@animaquill/sch
 import type { Page } from "@playwright/test";
 import { ALL_FORMATS, BufferSource, EncodedPacketSink, Input } from "mediabunny";
 import { png } from "./property-helpers.ts";
-import { chooseLayout } from "./support.ts";
+import { chooseLayout, waitSaved } from "./support.ts";
 import {
   canCapture,
   chooseFolder,
@@ -514,7 +514,7 @@ test.describe("an export under way", () => {
     );
     await page.evaluate(async () => {
       const database = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open("animaquill");
+        const request = indexedDB.open("aq-offline-animaquill");
         request.addEventListener("success", () => resolve(request.result));
         request.addEventListener("error", () => reject(request.error));
       });
@@ -1623,7 +1623,7 @@ test.describe("the window of an export", () => {
 const keptExports = (page: Page) =>
   page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("animaquill-exports");
+      const request = indexedDB.open("aq-offline-animaquill-exports");
       request.addEventListener("success", () => resolve(request.result));
       request.addEventListener("error", () => reject(request.error));
     });
@@ -1645,7 +1645,7 @@ const offer = (page: Page) => dialog(page).filter({ hasText: "有一个没完成
 const keptFrame = (page: Page) =>
   page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("animaquill-exports");
+      const request = indexedDB.open("aq-offline-animaquill-exports");
       request.addEventListener("success", () => resolve(request.result));
       request.addEventListener("error", () => reject(request.error));
     });
@@ -1666,7 +1666,7 @@ const keptFrame = (page: Page) =>
 const holdKept = (page: Page) =>
   page.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("animaquill-exports");
+      const request = indexedDB.open("aq-offline-animaquill-exports");
       request.addEventListener("success", () => resolve(request.result));
       request.addEventListener("error", () => reject(request.error));
     });
@@ -1764,7 +1764,7 @@ test.describe("an export after a reload", () => {
     await again.getByRole("textbox", { name: "项目名称" }).fill("改过的项目");
     await again.keyboard.press("Enter");
     await again.keyboard.press("Escape");
-    await expect(again.getByRole("contentinfo")).toContainText("已保存");
+    await waitSaved(again);
     await again.reload();
     await offer(again).getByRole("button", { name: "继续导出" }).click();
     await expect(dialog(again)).toContainText("项目在这次导出之后改过了");
@@ -1794,7 +1794,7 @@ test.describe("an export after a reload", () => {
     // As on another computer, or after an update: what the encoder said about decoding differs.
     await again.evaluate(async () => {
       const database = await new Promise<IDBDatabase>((resolve) => {
-        const request = indexedDB.open("animaquill-exports");
+        const request = indexedDB.open("aq-offline-animaquill-exports");
         request.addEventListener("success", () => resolve(request.result));
       });
       const transaction = database.transaction("exports", "readwrite");
@@ -2116,7 +2116,7 @@ test("a new export that stops early leaves the file of the one left for later, w
   // The picture is not on this device any more, so the next export stops at frame 31.
   await again.evaluate(async () => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = indexedDB.open("animaquill");
+      const request = indexedDB.open("aq-offline-animaquill");
       request.addEventListener("success", () => resolve(request.result));
       request.addEventListener("error", () => reject(request.error));
     });
@@ -2185,7 +2185,7 @@ test.describe("a slide show", () => {
           (candidate) =>
             candidate.url().includes("compositor.html") &&
             candidate.parentFrame() !== null &&
-            !candidate.page().url().includes("project="),
+            !candidate.page().url().includes("/p/"),
         );
       const value = await frame
         ?.evaluate(() => Number(document.documentElement.dataset["pictures"] ?? 0))

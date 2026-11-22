@@ -295,14 +295,13 @@ export type TakeBackOutcome =
   /**
    * The log is on the new copy now, with what came of this computer's changes, if any: the project
    * opens again from it. `merged`: files that came in by themselves; `chosen`: files people chose
-   * for; `kept`: where the folder keeps what it had of the files that change, where it does.
+   * for.
    */
   | {
       readonly kind: "renewed";
       readonly merged: readonly string[];
       readonly chosen: number;
       readonly changed: boolean;
-      readonly kept: string | undefined;
     }
   /** The link is on another copy already, as another window took it back: open it again. */
   | { readonly kind: "already" }
@@ -323,13 +322,13 @@ export type TakeBackOutcome =
   /**
    * It did not get there, and nothing changed: `why` says what stopped it ("unsaved": what this
    * window changed is not in the log; "unreadable": the project here cannot be written as files;
-   * "kept": the folder could not keep what it had; "library": this browser could not start the log
+   * "library": this browser could not start the log
    * anew; "gone": the link went; "moved": the platform's copy changed under it each of the times it
    * tried; "refused": the platform did not take what came of this computer's changes).
    */
   | {
       readonly kind: "failed";
-      readonly why: "unsaved" | "unreadable" | "kept" | "library" | "gone" | "moved" | "refused";
+      readonly why: "unsaved" | "unreadable" | "library" | "gone" | "moved" | "refused";
       readonly error?: unknown;
       readonly problems?: readonly Problem[];
     };
@@ -362,12 +361,6 @@ export interface TakeBackRun {
   /** The log as it is. */
   readonly entries: () => Promise<readonly LogEntry[]>;
   readonly choose: ChooseTakeBack;
-  /**
-   * Keeps what the folder of the project has of these files, before they change: resolves to where,
-   * or undefined where it has none of them, and rejects where it could not. Missing for a project
-   * without a folder.
-   */
-  readonly keep?: (paths: readonly string[]) => Promise<string | undefined>;
   readonly signal?: AbortSignal;
 }
 
@@ -454,18 +447,6 @@ export class TakeBack {
       // what got into the log all the same is taken in with the next try.
       const later = await run.entries();
       if ((later.at(-1)?.mark ?? 0) !== lastMark) return "again";
-      const changing = pathsOf(plan.here, after).filter(
-        (path) => plan.here.get(path) !== after.get(path),
-      );
-      let kept: string | undefined;
-      if (run.keep && changing.length > 0) {
-        try {
-          kept = await run.keep(changing);
-        } catch (error) {
-          console.warn("What the folder had could not be kept before taking it back", error);
-          return { kind: "failed", why: "kept", error };
-        }
-      }
       // Nor may the platform have changed what this changes there, while people chose, or another
       // computer took the same back meanwhile: the change is made against the copy as it was, and
       // Yjs would keep either side of such a file at random, or put the same text in twice. Where
@@ -542,7 +523,6 @@ export class TakeBack {
         merged: plan.merged,
         chosen: plan.differences.length,
         changed: update !== undefined,
-        kept,
       };
     } finally {
       plan.store.destroy();

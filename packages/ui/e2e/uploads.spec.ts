@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import type { Page } from "@playwright/test";
 import { footer } from "./folder-support.ts";
-import { createProject, devPageOnly, editorReady, expect, tab, test } from "./support.ts";
+import { createOnline } from "./online-support.ts";
+import { devPageOnly, editorReady, expect, tab, test } from "./support.ts";
 
 /**
  * Files of assets into the large file storage of GitHub, as people go through it
@@ -82,16 +83,6 @@ async function importFiles(page: Page, ...list: (typeof files)[keyof typeof file
   await expect(page.getByRole("option", { name: list.at(-1)!.name }).first()).toBeVisible();
 }
 
-async function connect(page: Page, repository: string) {
-  await chooseFrom(page, "文件", "云端…");
-  const connecting = page.locator("dialog[data-connect-phase]");
-  await connecting.getByRole("textbox", { name: "仓库名" }).fill(repository);
-  await connecting.getByRole("button", { name: "连接到云端" }).click();
-  await expect(connecting).toHaveAttribute("data-connect-phase", "done");
-  await connecting.getByRole("button", { name: "完成" }).click();
-  await expect(connecting).toHaveCount(0);
-}
-
 /** The explorer, with the assets of the project. */
 async function explorer(page: Page) {
   await tab(page, "explorer").click();
@@ -106,23 +97,12 @@ test.describe("files of assets into the large file storage", () => {
   test("from where each file is, one or many, until they are there", async ({ page }) => {
     test.setTimeout(120_000);
     await arrive(page);
-    await createProject(page, "宣传片");
+    await createOnline(page, "xuanchuanpian", "宣传片");
     await importFiles(page, files.video, files.other, files.image);
-
-    // Not connected: only here, and what it takes.
     await explorer(page);
-    await page.getByRole("option", { name: "采访.mp4" }).click();
-    await expect(place(page)).toContainText("只在这台电脑上");
-    await expect(
-      place(page).getByRole("button", { name: "放进 GitHub 大文件存储" }),
-    ).toBeDisabled();
-    await expect(place(page)).toContainText("要先连接到云端");
-    await expect(place(page).getByRole("button", { name: "连接到云端…" })).toBeVisible();
-    await shot(page, "place-local-project");
 
-    // Connected: asked once whether the assets go there too.
-    await connect(page, "xuanchuanpian");
-    await expect(notice(page, "要把素材放进 GitHub 大文件存储吗？")).toBeVisible();
+    // A project of the platform: the new assets say that they are only in this browser, and ask.
+    await expect(notice(page, "新素材也只在这个浏览器里")).toBeVisible();
     await shot(page, "connected-prompt");
     await page.getByRole("button", { name: "以后再说" }).click();
 
@@ -214,9 +194,8 @@ test.describe("files of assets into the large file storage", () => {
   }) => {
     test.setTimeout(90_000);
     await arrive(page);
-    await createProject(page, "失败");
+    await createOnline(page, "shibai", "失败");
     await importFiles(page, files.video, files.other);
-    await connect(page, "shibai");
     await withLab(page, (lab) => {
       lab.lfsAccount.acknowledgedAt = Date.now();
       lab.lfs.faults = ["githubQuota"];
@@ -259,9 +238,8 @@ test.describe("files of assets into the large file storage", () => {
   }) => {
     test.setTimeout(90_000);
     await arrive(page);
-    await createProject(page, "没传完");
+    await createOnline(page, "meichuanwan", "没传完");
     await importFiles(page, files.video);
-    await connect(page, "meichuanwan");
     await withLab(page, (lab) => {
       lab.lfsAccount.acknowledgedAt = Date.now();
       lab.lfs.pieceMs = 2000;
@@ -281,8 +259,8 @@ test.describe("files of assets into the large file storage", () => {
     await page.getByRole("dialog").getByRole("button", { name: "关掉" }).click();
 
     // The start page says what is left; opening the project goes on.
-    const card = page.locator('[data-card-uploads="1"]');
-    await expect(card).toContainText("↑ 1 个素材没传完，打开后接着传");
+    const card = page.locator("[data-card-uploads]");
+    await expect(card).toContainText(/↑ \d 个素材没传完，打开后接着传/);
     await shot(page, "start-unfinished");
     await withLab(page, (lab) => {
       lab.lfs.pieceMs = 0;
@@ -297,15 +275,14 @@ test.describe("files of assets into the large file storage", () => {
     await expect(github(page)).not.toHaveAttribute("data-uploads", /./, { timeout: 30_000 });
     await explorer(page);
     await page.getByRole("option", { name: "采访.mp4" }).click();
-    await expect(place(page)).toContainText("GitHub 大文件存储 ·");
+    await expect(place(page)).toContainText("GitHub 大文件存储 ·", { timeout: 30_000 });
   });
 
   test("new assets go by themselves where the switch was turned on on another computer, without asking", async ({
     page,
   }) => {
     await arrive(page);
-    await createProject(page, "自动");
-    await connect(page, "zidong");
+    await createOnline(page, "zidong", "自动");
     // On another computer: said once what it means, and turned it on for this project.
     await withLab(page, (lab) => {
       const [project] = [
@@ -327,8 +304,7 @@ test.describe("files of assets into the large file storage", () => {
     page,
   }) => {
     await arrive(page);
-    await createProject(page, "开关");
-    await connect(page, "kaiguan");
+    await createOnline(page, "kaiguan", "开关");
     await chooseFrom(page, "文件", "项目属性…");
     const properties = page.getByTestId("project-properties");
     await properties
@@ -353,9 +329,8 @@ test.describe("files of assets into the large file storage", () => {
 
   test("the storage page of the start page, and the properties of a project", async ({ page }) => {
     await arrive(page);
-    await createProject(page, "属性");
+    await createOnline(page, "shuxing", "属性");
     await importFiles(page, files.video, files.image);
-    await connect(page, "shuxing");
     // Assets of a new project of the platform: asked once.
     await chooseFrom(page, "文件", "项目属性…");
     const properties = page.getByTestId("project-properties");

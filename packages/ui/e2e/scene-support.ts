@@ -82,6 +82,12 @@ export function projectFolder(
 
 /** Up to what the editor says about the code in a project. The page has to be on the start page. */
 export async function chooseFolder(page: Page, folder: string): Promise<void> {
+  // On a site with a backend (scripts/e2e-edge) the entry page comes first: the offline mode.
+  const offline = page.getByTestId("entry").getByRole("button", { name: "不登录，使用离线模式" });
+  if (await offline.isVisible()) {
+    await offline.click();
+    await expect(page.locator("header").first()).toBeVisible();
+  }
   const chooser = page.waitForEvent("filechooser");
   // From the file menu: the start page offers only new projects.
   await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();

@@ -1,3 +1,4 @@
+import { scoped } from "./scope.ts";
 import { readServiceSecret, type ServiceSecret } from "./ai-sync-rules.ts";
 import type {
   ChatImageRef,
@@ -105,7 +106,7 @@ async function changeOne(
 /** Keys in this browser only. Failing to read one is no key, which people can type again. */
 export function browserKeys(factory: () => IDBFactory): KeyStore {
   const database = connector(() => {
-    const request = factory().open(KEYS_DATABASE, VERSION);
+    const request = factory().open(scoped(KEYS_DATABASE), VERSION);
     request.addEventListener("upgradeneeded", () => {
       request.result.createObjectStore(KEYS, { keyPath: "service" });
     });
@@ -149,7 +150,7 @@ type AccountKeyRecord = { readonly account: string; readonly service: string } &
 /** Keys of accounts in this browser, each account's apart. */
 export function browserAccountKeys(factory: () => IDBFactory): AccountKeys {
   const database = connector(() => {
-    const request = factory().open(ACCOUNT_KEYS_DATABASE, VERSION);
+    const request = factory().open(scoped(ACCOUNT_KEYS_DATABASE), VERSION);
     request.addEventListener("upgradeneeded", () => {
       const store = request.result.createObjectStore(KEYS, { keyPath: [BY_ACCOUNT, "service"] });
       store.createIndex(BY_ACCOUNT, BY_ACCOUNT);
@@ -239,7 +240,7 @@ export function browserChats(
   limit: number = MAX_CHATS_PER_PROJECT,
 ): ChatStore {
   const database = connector(() => {
-    const request = factory().open(CHATS_DATABASE, VERSION);
+    const request = factory().open(scoped(CHATS_DATABASE), VERSION);
     request.addEventListener("upgradeneeded", () => {
       const chats = request.result.createObjectStore(CHATS, { keyPath: [BY_PROJECT, "id"] });
       chats.createIndex(BY_PROJECT, BY_PROJECT);
@@ -415,7 +416,7 @@ const refOf = (image: string, blob: Blob, size: { width: number; height: number 
 /** The pictures of conversations in this browser. */
 export function browserChatImages(factory: () => IDBFactory): ChatImageStore {
   const database = connector(() => {
-    const request = factory().open(CHAT_IMAGES_DATABASE, VERSION);
+    const request = factory().open(scoped(CHAT_IMAGES_DATABASE), VERSION);
     request.addEventListener("upgradeneeded", () => {
       request.result.createObjectStore(IMAGES, { keyPath: "image" });
     });

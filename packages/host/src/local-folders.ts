@@ -1193,8 +1193,17 @@ export function createLocalFolders(environment: LocalFoldersEnvironment): LocalF
     records,
     bases: environment.bases,
     writer: environment.writer,
+    keep: (folder) => directoryOf(folder),
+    fromKept: (kept) => (isDirectoryHandle(kept) ? folderOf(kept) : undefined),
   };
 }
+
+/** What `LocalFolders.keep` gives: a handle of a folder, as a database gives it back. */
+const isDirectoryHandle = (value: unknown): value is DirectoryHandleLike =>
+  typeof value === "object" &&
+  value !== null &&
+  (value as { kind?: unknown }).kind === "directory" &&
+  typeof (value as { getDirectoryHandle?: unknown }).getDirectoryHandle === "function";
 
 type DirectoryPicker = (options: {
   readonly id: string;

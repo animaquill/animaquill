@@ -1,24 +1,14 @@
 import { STORAGE } from "@animaquill/core";
-import type { LocalFolder } from "@animaquill/host";
-import { MemoryDisk, memoryFolders } from "@animaquill/host/memory";
 import { hashFile } from "@animaquill/media";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Dialogs, type DialogRequest } from "../workbench/dialogs.ts";
-import { MemoryLibrary, memoryAddress } from "../workbench/memory-library.ts";
-import { Notifications } from "../workbench/notifications.ts";
-import { ProjectSession } from "../workbench/session.ts";
-import { MemoryPlatform, TestCloudBrowser, TestTime } from "./cloud-support.ts";
-import { CloudProjects, OLD_CLOUD_FILE } from "./projects.ts";
+import { type DialogRequest } from "../workbench/dialogs.ts";
+import { MemoryPlatform, TestTime } from "./cloud-support.ts";
 import {
-  MESSAGES,
-  account,
   answering,
   closeWindows,
   connectNow,
   fixtureState,
   messagesOf,
-  t,
-  track,
   windowOf,
 } from "./projects-support.ts";
 import { FakeRepositories } from "./repository-support.ts";
@@ -70,210 +60,6 @@ describe("CloudProjects", () => {
     expect((await here.browser.links.get(id))?.creating).toBeUndefined();
   });
 
-  it("keeps the link of a folder in this browser only: a copy of it is a project of this computer", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const disk = new MemoryDisk();
-    const local = memoryFolders(disk);
-    disk.folder("原子", { quietly: true });
-    disk.chooseNext("原子");
-    const original = (await local.choose()) as LocalFolder;
-    const folders = new Map([["本机1", original]]);
-    const here = await windowOf(platform, time, { folders });
-    const { state } = fixtureState();
-    await here.library.create({ id: "本机1", name: "原子", folder: true }, state);
-    await here.open("本机1");
-    const asked = answering(here.dialogs, () => true);
-    await connectNow(here.cloud);
-    await time.advance(200);
-    const link = await here.browser.links.get("本机1");
-    const project = link?.project ?? "";
-    expect(platform.projects.has(project)).toBe(true);
-    // Nothing in the folder says which project of the platform it is.
-    expect(disk.has(`原子/${OLD_CLOUD_FILE}`)).toBe(false);
-
-    // People copy the folder, with the file an older editor left in it, and open the copy here.
-    const old = JSON.stringify({ version: 1, platform: "https://platform.test", project });
-    disk.write(`副本/${OLD_CLOUD_FILE}`, old, { quietly: true });
-    disk.chooseNext("副本");
-    const copy = (await local.choose()) as LocalFolder;
-    folders.set("本机2", copy);
-    await here.library.create({ id: "本机2", name: "原子", folder: true }, state);
-    asked.splice(0);
-    const connections = platform.connections;
-    await here.open("本机2");
-    await time.advance(200);
-    // A project of this computer only: nobody is asked anything, and nothing goes anywhere.
-    expect(here.cloud.getSnapshot().kind).toBe("none");
-    expect(asked).toEqual([]);
-    expect(await here.browser.links.get("本机2")).toBeUndefined();
-    expect(platform.connections).toBe(connections);
-    expect(platform.projects.size).toBe(1);
-    // What an older editor left in the copy stays: another browser may still go by it.
-    expect(disk.text(`副本/${OLD_CLOUD_FILE}`)).toBe(old);
-    here.session.store?.execute(write("code/copy.js", "only in the copy"));
-    await time.advance(200);
-    expect(filesOn(platform, project)["code/copy.js"]).toBeUndefined();
-
-    // The original goes on syncing with the project of the platform, as it did.
-    await here.open("本机1");
-    await time.advance(200);
-    expect(here.cloud.getSnapshot()).toMatchObject({ kind: "linked", link: { project } });
-    here.session.store?.execute(write("code/original.js", "o"));
-    await time.advance(200);
-    expect(filesOn(platform, project)["code/original.js"]).toBe("o");
-    expect(filesOn(platform, project)["code/copy.js"]).toBeUndefined();
-    expect(asked).toEqual([]);
-  });
-
-  it("takes the file of older editors out of a folder that this browser links, and goes on from where it was", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const disk = new MemoryDisk();
-    disk.folder("原子", { quietly: true });
-    disk.chooseNext("原子");
-    const folder = (await memoryFolders(disk).choose()) as LocalFolder;
-    const here = await windowOf(platform, time, { folders: new Map([["本机1", folder]]) });
-    const { state } = fixtureState();
-    await here.library.create({ id: "本机1", name: "原子", folder: true }, state);
-    await here.open("本机1");
-    const asked = answering(here.dialogs, () => true);
-    await connectNow(here.cloud);
-    await time.advance(200);
-    here.session.store?.execute(write("code/synced.js", "s"));
-    await time.advance(200);
-    // Then the network goes, and a change stays in the log only.
-    platform.faults.silent = true;
-    platform.drop();
-    here.session.store?.execute(write("code/offline.js", "only here"));
-    await time.advance(100);
-    const before = await here.browser.links.get("本机1");
-    if (!before) throw new Error("no link");
-    const project = before.project;
-    expect(filesOn(platform, project)["code/synced.js"]).toBe("s");
-    expect(filesOn(platform, project)["code/offline.js"]).toBeUndefined();
-    await here.cloud.close();
-    await here.session.close();
-
-    // As an older editor left the folder: it says which project of the platform it is.
-    const old = `${JSON.stringify({ version: 1, platform: "https://platform.test", project }, null, 2)}\n`;
-    disk.write(`原子/.animaquill/.gitignore`, "*\n", { quietly: true });
-    disk.write(`原子/${OLD_CLOUD_FILE}`, old, { quietly: true });
-    // The page loads again, as a newer editor.
-    platform.faults.silent = false;
-    asked.splice(0);
-    const again = await windowOf(platform, time, {
-      browser: here.browser,
-      library: here.library,
-      folders: new Map([["本机1", folder]]),
-    });
-    const pushed: number[] = [];
-    await again.open("本机1");
-    pushed.push((await again.browser.links.get("本机1"))?.pushed ?? -1);
-    await time.advance(2000);
-    pushed.push((await again.browser.links.get("本机1"))?.pushed ?? -1);
-    // The link is what it was: the same project of the platform, from where it got to.
-    expect(again.cloud.getSnapshot()).toMatchObject({ kind: "linked", link: { project } });
-    expect(again.cloud.session?.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
-    expect(pushed.every((mark) => mark >= before.pushed)).toBe(true);
-    expect(pushed.at(-1)).toBeGreaterThan(before.pushed);
-    expect(filesOn(platform, project)["code/offline.js"]).toBe("only here");
-    expect(filesOn(platform, project)["code/synced.js"]).toBe("s");
-    expect(platform.projects.size).toBe(1);
-    expect(asked).toEqual([]);
-    // The file of older editors is gone; what keeps .animaquill out of Git stays.
-    expect(disk.has(`原子/${OLD_CLOUD_FILE}`)).toBe(false);
-    expect(disk.text("原子/.animaquill/.gitignore")).toBe("*\n");
-  });
-
-  it("leaves the file of older editors in a folder that this browser does not link", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const disk = new MemoryDisk();
-    const old = '{"version":1,"platform":"https://platform.test","project":"far"}';
-    disk.write(`别处/${OLD_CLOUD_FILE}`, old, { quietly: true });
-    disk.chooseNext("别处");
-    const folder = (await memoryFolders(disk).choose()) as LocalFolder;
-    const here = await windowOf(platform, time, { folders: new Map([["本机3", folder]]) });
-    const { state } = fixtureState();
-    await here.library.create({ id: "本机3", name: "原子", folder: true }, state);
-    const asked = answering(here.dialogs, () => true);
-    await here.open("本机3");
-    await time.advance(200);
-    // A project of this computer only, which nobody is asked about. The file may be what an older
-    // page in another browser goes by: it stays as it is.
-    expect(here.cloud.getSnapshot().kind).toBe("none");
-    expect(asked).toEqual([]);
-    expect(disk.text(`别处/${OLD_CLOUD_FILE}`)).toBe(old);
-    expect(platform.connections).toBe(0);
-    expect(here.cloud.canDisconnect).toBe(false);
-  });
-
-  it("disconnects a folder: the link goes, the folder stays, and the platform keeps the project", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const disk = new MemoryDisk();
-    disk.folder("原子", { quietly: true });
-    disk.chooseNext("原子");
-    const folder = (await memoryFolders(disk).choose()) as LocalFolder;
-    const here = await windowOf(platform, time, { folders: new Map([["本机1", folder]]) });
-    const { state } = fixtureState();
-    await here.library.create({ id: "本机1", name: "原子", folder: true }, state);
-    await here.open("本机1");
-    answering(here.dialogs, () => true);
-    await connectNow(here.cloud);
-    await time.advance(200);
-    const link = await here.browser.links.get("本机1");
-    expect(here.cloud.canDisconnect).toBe(true);
-    await here.cloud.disconnect();
-    expect(await here.browser.links.get("本机1")).toBeUndefined();
-    expect(here.cloud.getSnapshot().kind).toBe("none");
-    expect(platform.projects.has(link?.project ?? "")).toBe(true);
-  });
-
-  it("lets a project whose syncing is stuck go on as a new project of the platform, or here", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const here = await windowOf(platform, time);
-    const { id, state } = fixtureState();
-    await here.library.create({ id, name: "原子" }, state);
-    await here.open(id);
-    let choice = "new";
-    const asked = answering(here.dialogs, (request) => (request.kind === "choice" ? choice : true));
-    await connectNow(here.cloud);
-    await time.advance(200);
-    const first = (await here.browser.links.get(id))?.project;
-    // The platform will not take the next change, ever.
-    platform.faults.rejections.push({ reason: "quota", retry: false });
-    here.session.store?.execute({ type: "file.write", params: { path: "code/a.js", text: "a" } });
-    await time.advance(500);
-    expect(here.cloud.session?.getSnapshot()).toMatchObject({
-      state: "paused",
-      problem: { kind: "rejected", reason: "quota" },
-    });
-    await here.cloud.resolveStuck();
-    await time.advance(500);
-    // Where the platform saves no projects to repositories, there is no dialog to ask for: people
-    // chose a new project, and that is what it becomes.
-    expect(asked.map((request) => request.kind)).toEqual(["choice"]);
-    const second = (await here.browser.links.get(id))?.project;
-    expect(second).toBeDefined();
-    expect(second).not.toBe(first);
-    expect(here.cloud.session?.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
-    expect(platform.workingCopy(second ?? "").getState().files["code/a.js"]).toBe("a");
-    // Or it stays here only.
-    platform.faults.rejections.push({ reason: "quota", retry: false });
-    here.session.store?.execute({ type: "file.write", params: { path: "code/b.js", text: "b" } });
-    await time.advance(500);
-    asked.splice(0);
-    choice = "disconnect";
-    await here.cloud.resolveStuck();
-    expect(asked.map((request) => request.kind)).toEqual(["choice"]);
-    expect(await here.browser.links.get(id)).toBeUndefined();
-    expect(here.cloud.getSnapshot().kind).toBe("none");
-    expect(here.session.store?.getState().files["code/b.js"]).toBe("b");
-  });
-
   it("does not offer to go on from the project as it is where the platform does not have the project", async () => {
     const time = new TestTime();
     const platform = new MemoryPlatform();
@@ -297,13 +83,10 @@ describe("CloudProjects", () => {
     await here.cloud.resolveStuck();
     const question = asked.at(-1) as Extract<DialogRequest, { kind: "choice" }>;
     expect(question.message).toBe(
-      "云端找不到这个项目：它可能已经在别处删掉，或者属于另一个账号（那样的话，换回那个账号登录就能接着同步）。改动都在本机。可以断开云端连接，项目只留在本机；也可以把现在的项目连成一个新的云端项目。",
+      "云端找不到这个项目：它可能已经在别处删掉，或者属于另一个账号（那样的话，换回那个账号登录就能接着同步）。改动都在这个浏览器里，可以先保存到文件夹，再断开，项目只留在这个浏览器里。",
     );
-    // There is nothing there to take what the project has: only letting go, or a new project.
-    expect(question.choices).toEqual([
-      { id: "disconnect", label: "断开" },
-      { id: "new", label: "连成另一个云端项目", kind: "primary" },
-    ]);
+    // There is nothing there to take what the project has: only letting go.
+    expect(question.choices).toEqual([{ id: "disconnect", label: "断开", kind: "primary" }]);
     // Asked for all the same, nothing is taken for sent: the platform took nothing.
     await here.cloud.session?.resyncFromHere();
     await time.advance(2000);
@@ -325,128 +108,6 @@ describe("CloudProjects", () => {
     expect(here.library.summaries.has(project)).toBe(true);
   });
 
-  it("makes a project a new one of the platform in the dialog that does all of it, where there is one", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const repository = new FakeRepositories();
-    repository.platform = platform;
-    const disk = new MemoryDisk();
-    disk.folder("原子", { quietly: true });
-    disk.chooseNext("原子");
-    const folder = (await memoryFolders(disk).choose()) as LocalFolder;
-    const folders = new Map([["本机1", folder]]);
-    const here = await windowOf(platform, time, { repository, folders });
-    const { state } = fixtureState();
-    await here.library.create({ id: "本机1", name: "原子", folder: true }, state);
-    await here.open("本机1");
-    let choice = "new";
-    const asked = answering(here.dialogs, (request) =>
-      request.kind === "choice" ? choice : request.kind !== "repository",
-    );
-    await connectNow(here.cloud);
-    await time.advance(200);
-    const first = (await here.browser.links.get("本机1"))?.project;
-    expect(platform.projects.has(first ?? "")).toBe(true);
-    // Syncing stops at something the platform will never take, and people say: a new project.
-    platform.faults.rejections.push({ reason: "quota", retry: false });
-    here.session.store?.execute(write("code/a.js", "a"));
-    await time.advance(500);
-    asked.splice(0);
-    // The dialog it asks for is the one that connects the project in one go.
-    here.world.showConnect = async () => {
-      // The old link is gone by then.
-      expect(await here.browser.links.get("本机1")).toBeUndefined();
-      expect(here.cloud.getSnapshot().kind).toBe("none");
-      const connect = here.cloud.beginConnect();
-      await time.advance(100);
-      const done = connect?.submit();
-      await time.advance(500);
-      await done;
-      connect?.close();
-    };
-    await here.cloud.resolveStuck();
-    // Not the question from before every project of the platform had a repository, which could
-    // be put off: the link is gone, and the dialog that does all of it is asked for.
-    expect(asked[0]?.kind).toBe("choice");
-    expect(here.world.shown).toBe(1);
-    const second = (await here.browser.links.get("本机1"))?.project;
-    expect(second).toBeDefined();
-    expect(second).not.toBe(first);
-    expect(repository.calls).toContain(`link ${second}`);
-    expect(here.cloud.session?.getSnapshot().state).toBe("online");
-  });
-
-  it("keeps the link a project has, however soon after it opened connecting is asked for", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const here = await windowOf(platform, time);
-    const { id, state } = fixtureState();
-    await here.library.create({ id, name: "原子" }, state);
-    await here.open(id);
-    answering(here.dialogs, () => true);
-    await connectNow(here.cloud);
-    await time.advance(200);
-    const before = await here.browser.links.get(id);
-    expect(before?.creating).toBeUndefined();
-    await here.cloud.close();
-    await here.session.close();
-    // The page loads again, and connecting is asked for before the link of the project is read.
-    const again = await windowOf(platform, time, { browser: here.browser, library: here.library });
-    await again.session.open(id);
-    const looking = again.cloud.follow();
-    const begun = await again.cloud.beginLink();
-    await looking;
-    await time.advance(500);
-    expect(begun).toMatchObject({ link: { project: before?.project }, isNew: false });
-    expect((await again.browser.links.get(id))?.project).toBe(before?.project);
-    expect(platform.projects.size).toBe(1);
-    expect(again.cloud.session?.getSnapshot().state).toBe("online");
-  });
-
-  it("does not take a link it cannot read for none", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const disk = new MemoryDisk();
-    disk.folder("原子", { quietly: true });
-    disk.chooseNext("原子");
-    const folder = (await memoryFolders(disk).choose()) as LocalFolder;
-    const here = await windowOf(platform, time, { folders: new Map([["本机1", folder]]) });
-    const { state } = fixtureState();
-    await here.library.create({ id: "本机1", name: "原子", folder: true }, state);
-    await here.open("本机1");
-    const asked = answering(here.dialogs, () => true);
-    await connectNow(here.cloud);
-    await time.advance(200);
-    const before = await here.browser.links.get("本机1");
-    await here.cloud.close();
-    await here.session.close();
-    asked.splice(0);
-
-    // The page loads again, and what the browser keeps about links cannot be read just then.
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    here.browser.links.failing = true;
-    await here.open("本机1");
-    await time.advance(200);
-    // Nothing is known: neither that it syncs, nor that its folder is one from somewhere else,
-    // which people would be asked about.
-    expect(here.cloud.getSnapshot().kind).toBe("none");
-    expect(asked).toEqual([]);
-    // Connecting it now would make a second project of the platform of it: it does not begin.
-    expect(await here.cloud.beginLink()).toBe("failed");
-    expect(platform.projects.size).toBe(1);
-    // Once the links can be read, the next look finds the one the project has.
-    here.browser.links.failing = false;
-    await here.cloud.follow();
-    await time.advance(200);
-    warn.mockRestore();
-    expect(here.cloud.getSnapshot()).toMatchObject({
-      kind: "linked",
-      link: { project: before?.project },
-    });
-    expect(here.cloud.session?.getSnapshot().state).toBe("online");
-    expect(disk.has(`原子/${OLD_CLOUD_FILE}`)).toBe(false);
-  });
-
   it("opens a project of the platform in another browser, which then syncs both ways", async () => {
     const time = new TestTime();
     const platform = new MemoryPlatform();
@@ -466,7 +127,7 @@ describe("CloudProjects", () => {
     // Kept by its id on the platform, which is its own: the id in the project is not.
     expect(second.session.key).toBe(project);
     expect(second.session.store?.getState().manifest.id).toBe(id);
-    expect(second.cloud.getSnapshot()).toMatchObject({ kind: "linked", local: "browser" });
+    expect(second.cloud.getSnapshot()).toMatchObject({ kind: "linked" });
     expect(second.cloud.session?.getSnapshot().state).toBe("online");
 
     const write = (text: string) => ({ type: "file.write", params: { path: "code/x.js", text } });
@@ -476,73 +137,6 @@ describe("CloudProjects", () => {
     second.session.store?.execute(write("from the second"));
     await time.advance(200);
     expect(first.session.store?.getState().files["code/x.js"]).toBe("from the second");
-  });
-
-  it("lets another window of the browser that has the project open know it is connected now (R4)", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const browser = new TestCloudBrowser(platform, "ada");
-    const library = new MemoryLibrary();
-    const { id, state } = fixtureState();
-    await library.create({ id, name: "原子" }, state);
-    const make = (name: string) => {
-      const session = new ProjectSession(library, memoryAddress(), MESSAGES, { window: name });
-      const dialogs = new Dialogs();
-      answering(dialogs, () => true);
-      const page = { alive: true, isAlive: () => page.alive, asleep: false };
-      const cloud = new CloudProjects({
-        cloud: browser.access(page),
-        session,
-        projects: library,
-        folderOf: () => undefined,
-        isFolder: () => false,
-        account: account(),
-        dialogs,
-        notifications: new Notifications(),
-        t: t.t,
-        window: name,
-        editor: "test",
-        signIn: vi.fn(async () => {}),
-        openProject: async () => {},
-        environment: time,
-        timing: { scanMs: 5, noteMs: 20, answerMs: 20 },
-      });
-      session.subscribe(() => void cloud.follow());
-      track({ cloud, session });
-      return { session, cloud, page };
-    };
-    const a = make("a");
-    const b = make("b");
-    await a.session.open(id);
-    await b.session.open(id);
-    await time.advance(10);
-    expect(b.cloud.getSnapshot().kind).toBe("none");
-    await connectNow(a.cloud);
-    await time.advance(500);
-    // The other window heard of it, and shows what the window that syncs says.
-    expect(b.cloud.getSnapshot().kind).toBe("linked");
-    expect(b.cloud.session?.getSnapshot()).toMatchObject({ here: false, state: "online" });
-    const project = [...platform.projects.values()][0];
-    if (!project) throw new Error("not on the platform");
-    const has = (path: string) => platform.workingCopy(project.id).getState().files[path];
-    b.session.store?.execute({ type: "file.write", params: { path: "code/b1.js", text: "1" } });
-    await time.advance(500);
-    expect(has("code/b1.js")).toBe("1");
-    // The window that synced goes: the other one takes over.
-    await a.cloud.close();
-    await a.session.close();
-    a.page.alive = false;
-    browser.writers.sweep();
-    b.session.store?.execute({ type: "file.write", params: { path: "code/b2.js", text: "2" } });
-    await time.advance(5000);
-    expect(b.cloud.session?.getSnapshot()).toMatchObject({ here: true, state: "online" });
-    expect(has("code/b2.js")).toBe("2");
-    // A project in the browser has nowhere to stay without the platform: it does not disconnect,
-    // it is taken out of the browser, see `removeFromBrowser`.
-    expect(b.cloud.canDisconnect).toBe(false);
-    await b.cloud.disconnect();
-    expect(b.cloud.getSnapshot().kind).toBe("linked");
-    expect(await browser.links.get(id)).toBeDefined();
   });
 
   it("goes on syncing once people signed in again", async () => {
@@ -790,52 +384,6 @@ describe("projects of the platform without a folder", () => {
     expect(here.cloud.session?.getSnapshot().problem).toEqual({ kind: "signed-out" });
   });
 
-  it("opens the folder that is connected to a project, and a copy from before by the key it has", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const { project, id } = await onPlatform(platform, time);
-    const disk = new MemoryDisk();
-    disk.folder("原子", { quietly: true });
-    disk.chooseNext("原子");
-    const folder = (await memoryFolders(disk).choose()) as LocalFolder;
-    const here = await windowOf(platform, time, { folders: new Map([["本机1", folder]]) });
-    const { state } = fixtureState();
-    await here.library.create({ id: "本机1", name: "原子", folder: true }, state);
-    await here.browser.links.put({
-      key: "本机1",
-      platform: "https://platform.test",
-      project,
-      seq: 0,
-      pushed: 0,
-      linkedAt: 1,
-    });
-    const connections = platform.connections;
-    expect(await here.cloud.openCloudProject(project)).toBe(true);
-    expect(here.session.key).toBe("本机1");
-    expect(here.cloud.getSnapshot()).toMatchObject({ kind: "linked", local: "folder" });
-    // No second copy in the browser.
-    expect([...here.library.summaries.keys()]).toEqual(["本机1"]);
-    await time.advance(200);
-    expect(platform.connections).toBe(connections + 1);
-
-    // A copy that an editor from before kept by the id of the project goes on as it is.
-    const before = await windowOf(platform, time);
-    await before.library.create({ id, name: "原子" }, platform.workingCopy(project).encodeState());
-    await before.browser.links.put({
-      key: id,
-      platform: "https://platform.test",
-      project,
-      seq: platform.projects.get(project)?.head ?? 0,
-      pushed: 1,
-      linkedAt: 1,
-    });
-    expect(await before.cloud.openCloudProject(project)).toBe(true);
-    expect(before.session.key).toBe(id);
-    expect([...before.library.summaries.keys()]).toEqual([id]);
-    await time.advance(200);
-    expect(before.cloud.session?.getSnapshot().state).toBe("online");
-  });
-
   it("gives the copy a number of its own where this browser keeps another project by that id", async () => {
     const time = new TestTime();
     const platform = new MemoryPlatform();
@@ -895,42 +443,10 @@ describe("projects of the platform without a folder", () => {
     expect(await opening).toBe(true);
     expect(here.session.key).toBe(project);
   });
-
-  it("opens a folder that names a project this browser has a copy of as a project of this computer", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const { project } = await onPlatform(platform, time);
-    const disk = new MemoryDisk();
-    const old = JSON.stringify({ platform: "https://platform.test", project });
-    disk.write(`别处/${OLD_CLOUD_FILE}`, old, { quietly: true });
-    disk.chooseNext("别处");
-    const folder = (await memoryFolders(disk).choose()) as LocalFolder;
-    const folders = new Map<string, LocalFolder>();
-    const here = await windowOf(platform, time, { folders });
-    await here.cloud.openCloudProject(project);
-    await time.advance(200);
-    // A copy that is only in this browser has nowhere to stay without the platform.
-    expect(here.cloud.getSnapshot()).toMatchObject({ kind: "linked", local: "browser" });
-    expect(here.cloud.canDisconnect).toBe(false);
-
-    // People open a folder of the same project of the platform in this browser.
-    folders.set("本机5", folder);
-    const { state } = fixtureState();
-    await here.library.create({ id: "本机5", name: "原子", folder: true }, state);
-    const asked = answering(here.dialogs, () => undefined);
-    await here.open("本机5");
-    await time.advance(50);
-    expect(here.cloud.getSnapshot()).toEqual({ kind: "none" });
-    expect(asked).toEqual([]);
-    // Nothing of the folder went to the platform, and the copy is as it was.
-    expect(disk.text(`别处/${OLD_CLOUD_FILE}`)).toBe(old);
-    expect(await here.browser.links.get("本机5")).toBeUndefined();
-    expect((await here.browser.links.get(project))?.project).toBe(project);
-  });
 });
 
 describe("taking the copy of a project out of this browser", () => {
-  it("says where the platform has changes GitHub does not, which go a week after it was last opened", async () => {
+  it("says where the platform has changes GitHub does not, ", async () => {
     const time = new TestTime();
     const platform = new MemoryPlatform();
     const { project } = await onPlatform(platform, time);
@@ -956,7 +472,7 @@ describe("taking the copy of a project out of this browser", () => {
     expect(asked[0]).toMatchObject({
       kind: "confirm",
       warning:
-        "这个项目还有改动没存进 GitHub（有 2 处冲突）。平台上的临时内容 7 天没打开会清掉；把这个浏览器里的副本也移除以后，这些改动最多再留 7 天，之后就没了。建议先处理好再移除。",
+        "这个项目还有改动没存进 GitHub（有 2 处冲突）。把这个浏览器里的副本移除以后，这些改动只在平台上。建议先处理好再移除。",
       cancel: "先不移除",
       confirm: "仍然移除",
       keep: true,
@@ -1136,7 +652,7 @@ describe("taking the copy of a project out of this browser", () => {
     expect(await here.cloud.removeFromBrowser(project)).toBe(false);
     expect(asked.map((request) => request.kind)).toEqual(["choice"]);
     expect((asked[0] as { message: string }).message).toBe(
-      "有 1 个素材文件只在这个浏览器里，别处下载不到：assets/新素材.mp4。现在移除，这些内容就没有了。素材文件可以先用“关联文件夹…”留一份。",
+      "有 1 个素材文件只在这个浏览器里，别处下载不到：assets/新素材.mp4。现在移除，这些内容就没有了。",
     );
     expect(here.library.files.size).toBe(1);
     expect(here.library.summaries.has(project)).toBe(true);
@@ -1282,31 +798,6 @@ describe("taking the copy of a project out of this browser", () => {
     });
     expect(here.library.summaries.has(project)).toBe(true);
     expect(platform.projects.has(project)).toBe(true);
-  });
-
-  it("does not say that the platform has a project that never got there, once it goes all the same", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const here = await windowOf(platform, time);
-    const { id, state } = fixtureState();
-    await here.library.create({ id, name: "原子" }, state);
-    platform.faults.silent = true;
-    await here.open(id);
-    expect(typeof (await here.cloud.beginLink())).toBe("object");
-    await time.advance(200);
-    expect((await here.browser.links.get(id))?.creating).toBe(true);
-    await here.cloud.close();
-    await here.session.close();
-    const asked = answering(here.dialogs, (request) =>
-      request.kind === "choice" ? "remove" : true,
-    );
-    expect(await here.cloud.removeFromBrowser(id)).toBe(true);
-    expect(asked.map((request) => request.kind)).toEqual(["choice"]);
-    expect((asked[0] as { message: string }).message).toBe(
-      "这个项目还没传到云端。现在移除，这些内容就没有了。",
-    );
-    expect(here.library.summaries.has(id)).toBe(false);
-    expect(messagesOf(here.notifications)).toEqual(["已从这个浏览器移除“原子”。"]);
   });
 
   it("reads all of it again right before anything goes, whichever window had the project open meanwhile", async () => {
@@ -1606,11 +1097,9 @@ describe("taking the copy of a project out of this browser", () => {
     here.browser.links.links.set("coming", { ...left, key: "coming", linkedAt: Date.now() });
     await here.library.create({ id, name: "原子" }, state);
     here.browser.links.links.set(id, { ...left, key: id, linkedAt: 1 });
-    here.folders.set("a-folder", {} as LocalFolder);
-    here.browser.links.links.set("a-folder", { ...left, key: "a-folder", linkedAt: 1 });
     await here.cloud.tidy();
     expect([...here.browser.links.links.keys()].toSorted()).toEqual(
-      ["a-folder", "coming", id, project].toSorted(),
+      ["coming", id, project].toSorted(),
     );
   });
 
@@ -1630,205 +1119,6 @@ describe("taking the copy of a project out of this browser", () => {
     });
     expect(here.library.summaries.has(project)).toBe(true);
     expect(await here.browser.links.get(project)).toBeDefined();
-  });
-
-  it("does not take away a copy that another window has open, or a folder", async () => {
-    const { project, here, leave } = await withCopy();
-    await leave();
-    here.world.others.set(project, 1);
-    const asked = answering(here.dialogs, () => true);
-    expect(await here.cloud.removeFromBrowser(project)).toBe(false);
-    expect(asked[0]).toMatchObject({
-      kind: "confirm",
-      noticeOnly: true,
-      message: "这个浏览器的其他窗口还开着这个项目。先关掉那些窗口，再移除。",
-    });
-    expect(here.library.summaries.has(project)).toBe(true);
-
-    // A folder is the project itself: it goes off the list of folders, never like this.
-    here.world.others.clear();
-    here.folders.set(project, {} as LocalFolder);
-    asked.splice(0);
-    expect(await here.cloud.removeFromBrowser(project)).toBe(false);
-    expect(asked).toEqual([]);
-    expect(here.library.summaries.has(project)).toBe(true);
-    // And a project that is not connected is not one of these.
-    expect(await here.cloud.removeFromBrowser("nothing")).toBe(false);
-  });
-});
-
-describe("downloading a project of the platform into a folder", () => {
-  it("opens the project, and moves it into a folder that people choose", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const { project } = await onPlatform(platform, time);
-    const here = await windowOf(platform, time);
-    here.world.move = async () => true;
-    expect(await here.cloud.linkFolder(project)).toBe(true);
-    expect(here.session.key).toBe(project);
-    expect(here.world.moved).toEqual([project]);
-    expect(here.dialogs.getSnapshot()).toBeUndefined();
-  });
-
-  it("asks before it asks for the folder where the project took a while to come", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const { project } = await onPlatform(platform, time);
-    const here = await windowOf(platform, time);
-    here.world.move = async () => true;
-    // The browser lets a page ask for a folder only right after people did something.
-    here.world.active = false;
-    let go = false;
-    const asked = answering(here.dialogs, () => go);
-    expect(await here.cloud.linkFolder(project)).toBe(false);
-    expect(asked[0]).toMatchObject({
-      kind: "confirm",
-      title: "把“原子是什么”放进文件夹",
-      confirm: "选文件夹…",
-      cancel: "先不放",
-    });
-    // Put off: it is open as a project of the platform without a folder, which is fine.
-    expect(here.world.moved).toEqual([]);
-    expect(here.session.key).toBe(project);
-    expect(here.cloud.getSnapshot()).toMatchObject({ kind: "linked", local: "browser" });
-
-    // Again, from the open project: no second copy, and the click is what lets the browser ask.
-    go = true;
-    expect(await here.cloud.linkFolder(project)).toBe(true);
-    expect(here.world.moved).toEqual([project]);
-    expect(here.library.summaries.size).toBe(1);
-  });
-
-  it("goes on with the same link once the project moved into a folder, which says nothing of it", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const { project } = await onPlatform(platform, time);
-    const disk = new MemoryDisk();
-    disk.folder("下载", { quietly: true });
-    disk.chooseNext("下载");
-    const folder = (await memoryFolders(disk).choose()) as LocalFolder;
-    const here = await windowOf(platform, time);
-    // As `FolderMove` leaves it: the same key, a folder from now on, and the project stays open.
-    here.world.move = async (key) => {
-      await here.library.toFolder(key);
-      here.folders.set(key, folder);
-      await here.cloud.follow();
-      return true;
-    };
-    expect(await here.cloud.linkFolder(project)).toBe(true);
-    await time.advance(200);
-    expect(disk.has(`下载/${OLD_CLOUD_FILE}`)).toBe(false);
-    expect(here.cloud.getSnapshot()).toMatchObject({ kind: "linked", local: "folder" });
-    // The same link goes on: nothing was connected again.
-    expect(here.cloud.session?.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
-    here.session.store?.execute(write("code/in-folder.js", "f"));
-    await time.advance(200);
-    expect(filesOn(platform, project)["code/in-folder.js"]).toBe("f");
-
-    // From now on the project is that folder: downloading again opens it, and moves nothing.
-    // People hear which folder it is, and open it.
-    here.world.moved.splice(0);
-    await here.cloud.close();
-    await here.session.close();
-    const asked = answering(here.dialogs, () => true);
-    expect(await here.cloud.linkFolder(project)).toBe(true);
-    expect(here.world.moved).toEqual([]);
-    expect(asked).toMatchObject([
-      {
-        kind: "confirm",
-        title: expect.stringMatching(/已经关联着文件夹$/),
-        message:
-          "这个浏览器里，文件夹“下载”已经关联着这个云端项目。一个云端项目在一个浏览器里只关联一个文件夹。",
-        confirm: "打开它",
-      },
-    ]);
-  });
-});
-
-describe("a project the platform would not make", () => {
-  /** A project whose first version is on its way to the platform, which cannot be reached. */
-  async function onItsWay() {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const here = await windowOf(platform, time);
-    const { id, state } = fixtureState();
-    await here.library.create({ id, name: "原子" }, state);
-    await here.open(id);
-    here.session.store?.execute(write("code/mine.js", "在这台电脑上写的"));
-    platform.faults.silent = true;
-    const begun = await here.cloud.beginLink();
-    if (typeof begun === "string") throw new Error(begun);
-    await time.advance(200);
-    expect(here.cloud.session?.getSnapshot().state).toBe("connecting");
-    /** The platform is there again, and the window says hello once more. */
-    const back = async () => {
-      platform.faults.silent = false;
-      time.wake();
-      await time.advance(40_000);
-    };
-    return { time, platform, here, id, project: begun.link.project, back };
-  }
-
-  it("is one of this computer only again, with a word about it, as connecting it was given up on", async () => {
-    const { platform, here, id, project, back } = await onItsWay();
-    // The platform was asked to take the project away, as where giving up on connecting got no
-    // answer back, or another window gave up on it: it makes none under that id again.
-    platform.deleted.add(project);
-    await back();
-    expect(platform.projects.size).toBe(0);
-    // People are not left with "the platform does not have this project" to choose about.
-    expect(here.cloud.getSnapshot().kind).toBe("none");
-    expect(await here.browser.links.get(id)).toBeUndefined();
-    expect(messagesOf(here.notifications)).toEqual([
-      "云端的项目没有建成：这次连接已经取消。项目还在这台电脑上，内容没有动，可以重新连接到云端。",
-    ]);
-    // The project is as it was, to the last change.
-    expect(here.session.key).toBe(id);
-    expect(here.library.summaries.has(id)).toBe(true);
-    expect(here.session.store?.getState().files["code/mine.js"]).toBe("在这台电脑上写的");
-    // And it connects anew, as another project of the platform.
-    const again = await here.cloud.beginLink();
-    if (typeof again === "string") throw new Error(again);
-    await here.time.advance(500);
-    expect(again.link.project).not.toBe(project);
-    expect(platform.projects.has(again.link.project)).toBe(true);
-    expect(filesOn(platform, again.link.project)["code/mine.js"]).toBe("在这台电脑上写的");
-  });
-
-  it("keeps its link where somebody else is signed in than whoever began to connect it", async () => {
-    const { platform, here, id, project, back } = await onItsWay();
-    platform.deleted.add(project);
-    expect((await here.browser.links.get(id))?.owner).toBe("user-ada");
-    here.who.set({ status: "signedIn", id: "user-bob", name: "bob", appInstalled: true });
-    await back();
-    // The platform says the same of a project of somebody else: nothing says this one is gone.
-    expect(here.cloud.getSnapshot().kind).toBe("linked");
-    expect(here.cloud.session?.getSnapshot()).toMatchObject({
-      state: "paused",
-      problem: { kind: "missing", unmade: true },
-    });
-    expect((await here.browser.links.get(id))?.project).toBe(project);
-    expect(messagesOf(here.notifications)).toEqual([]);
-  });
-
-  it("is something for people to look at where it was on the platform, and is not any more", async () => {
-    const { platform, here, id, project, back } = await onItsWay();
-    await back();
-    expect(platform.projects.has(project)).toBe(true);
-    expect((await here.browser.links.get(id))?.creating).toBeUndefined();
-    // Taken away there, on another computer: the copy here was of a project that was there. As a
-    // platform says it that does not tell editors that it was deleted yet.
-    platform.knowsDeleted = false;
-    expect(platform.remove("ada", project)).toBe("removed");
-    await here.time.advance(40_000);
-    expect(here.cloud.getSnapshot().kind).toBe("linked");
-    expect(here.cloud.session?.getSnapshot()).toMatchObject({
-      state: "paused",
-      problem: { kind: "missing" },
-    });
-    expect(here.cloud.session?.getSnapshot().problem).not.toHaveProperty("unmade");
-    expect((await here.browser.links.get(id))?.project).toBe(project);
-    expect(messagesOf(here.notifications)).toEqual([]);
   });
 });
 
@@ -1895,35 +1185,6 @@ describe("what a link remembers for lists", () => {
 });
 
 describe("a project only in this browser, without the platform (the design of the start page, 7)", () => {
-  it("is told apart from a folder, and people hear once that it is not safe", async () => {
-    const time = new TestTime();
-    const platform = new MemoryPlatform();
-    const here = await windowOf(platform, time);
-    here.world.tellOnlyHere = true;
-    const { id, state } = fixtureState();
-    await here.library.create({ id, name: "原子" }, state);
-    await here.open(id);
-    expect(here.cloud.getSnapshot()).toEqual({ kind: "none", local: "browser" });
-    expect(
-      messagesOf(here.notifications).filter((text) => text.includes("只在这个浏览器里")),
-    ).toHaveLength(1);
-    await here.cloud.close();
-    await here.session.close();
-    await here.open(id);
-    expect(
-      messagesOf(here.notifications).filter((text) => text.includes("只在这个浏览器里")),
-    ).toHaveLength(1);
-    // Once it is connected, it is not only here any more.
-    const link = await connectNow(here.cloud);
-    expect(here.cloud.getSnapshot().kind).toBe("linked");
-    // ...and it is again once connecting is given up on.
-    await time.advance(100);
-    const outcome = here.cloud.abandonConnect(link);
-    await time.advance(5000);
-    expect(await outcome).toBe("cancelled");
-    expect(here.cloud.getSnapshot()).toEqual({ kind: "none", local: "browser" });
-  });
-
   it("says nothing about one that was made there on purpose, as tests do", async () => {
     const time = new TestTime();
     const here = await windowOf(new MemoryPlatform(), time);
@@ -1933,21 +1194,6 @@ describe("a project only in this browser, without the platform (the design of th
     here.cloud.noteToldOnlyHere(id);
     await here.open(id);
     expect(here.cloud.getSnapshot()).toEqual({ kind: "none", local: "browser" });
-    expect(messagesOf(here.notifications)).toEqual([]);
-  });
-
-  it("is no such project where it is a folder", async () => {
-    const disk = new MemoryDisk();
-    disk.folder("atom", { quietly: true });
-    disk.chooseNext("atom");
-    const folder = (await memoryFolders(disk).choose()) as LocalFolder;
-    const here = await windowOf(new MemoryPlatform(), new TestTime(), {
-      folders: new Map([["本机1", folder]]),
-    });
-    const { state } = fixtureState();
-    await here.library.create({ id: "本机1", name: "原子", folder: true }, state);
-    await here.open("本机1");
-    expect(here.cloud.getSnapshot()).toEqual({ kind: "none" });
     expect(messagesOf(here.notifications)).toEqual([]);
   });
 });

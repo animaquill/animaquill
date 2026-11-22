@@ -14,7 +14,7 @@ import type { FolderBases, LocalFolders } from "@animaquill/host";
 import { memoryFolders } from "@animaquill/host/memory";
 import {
   FAST,
-  answer,
+  fillNew,
   browserOf,
   closeWindows,
   folderOf,
@@ -118,7 +118,7 @@ async function newFolderProject() {
   const workbench = windowOf(browser, memoryFolders(browser.disk, FAST), undefined, maker);
   browser.disk.chooseNext(ROOT);
   const creating = workbench.newProject();
-  await answer(workbench, "片子");
+  await fillNew(workbench, "片子");
   await creating;
   await written(workbench);
   const store = workbench.session.store as ProjectStore;

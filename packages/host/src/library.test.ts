@@ -42,7 +42,8 @@ function browser(locks: Locks | undefined = new Locks()) {
     get(target, name) {
       if (name !== "open") return Reflect.get(target, name) as unknown;
       return (database: string, version?: number) => {
-        if (state.trialsBroken && database === "animaquill-trials") throw new Error("broken");
+        if (state.trialsBroken && database === "aq-offline-animaquill-trials")
+          throw new Error("broken");
         return target.open(database, version);
       };
     },
@@ -63,7 +64,10 @@ function browser(locks: Locks | undefined = new Locks()) {
       () => locks as unknown as LockManager | undefined,
     );
   const window = () => host().projects;
-  const raw = async <T>(work: (database: IDBDatabase) => Promise<T>, name = "animaquill") => {
+  const raw = async <T>(
+    work: (database: IDBDatabase) => Promise<T>,
+    name = "aq-offline-animaquill",
+  ) => {
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
       const open = real.open(name);
       open.addEventListener("success", () => resolve(open.result));
@@ -103,7 +107,7 @@ function browser(locks: Locks | undefined = new Locks()) {
           const request = database.transaction("trials").objectStore("trials").getAll();
           request.addEventListener("success", () => resolve(request.result));
         }),
-      "animaquill-trials",
+      "aq-offline-animaquill-trials",
     );
   const addTrialRecord = (record: object) =>
     raw(
@@ -113,7 +117,7 @@ function browser(locks: Locks | undefined = new Locks()) {
           transaction.objectStore("trials").put(record);
           transaction.addEventListener("complete", () => resolve());
         }),
-      "animaquill-trials",
+      "aq-offline-animaquill-trials",
     );
   return {
     library: window(),
@@ -425,7 +429,7 @@ async function goneAfterWrite<T>(run: () => Promise<T>) {
 
 const allUpdates = (setup: ReturnType<typeof browser>) =>
   new Promise<Record<string, unknown>[]>((resolve, reject) => {
-    const opening = setup.factory.open("animaquill");
+    const opening = setup.factory.open("aq-offline-animaquill");
     opening.addEventListener("error", () => reject(opening.error));
     opening.addEventListener("success", () => {
       const request = opening.result.transaction("updates").objectStore("updates").getAll();
@@ -857,7 +861,7 @@ describe("what is being tried out", () => {
   it("stays out of the database of the projects, so that pages still open there go on", async () => {
     const { factory, library, trials, records } = await setup();
     const old = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = factory.open("animaquill");
+      const request = factory.open("aq-offline-animaquill");
       request.addEventListener("success", () => resolve(request.result));
       request.addEventListener("error", () => reject(request.error));
     });
@@ -867,7 +871,7 @@ describe("what is being tried out", () => {
     await place.save("试改");
     expect(await place.load()).toBe("试改");
     expect(told).not.toHaveBeenCalled();
-    expect(old.version).toBe(2);
+    expect(old.version).toBe(1);
     expect([...old.objectStoreNames]).toEqual(["media", "projects", "updates"]);
     old.close();
     expect((await library.list()).map(({ id }) => id)).toEqual([PROJECT.id]);
@@ -1193,7 +1197,7 @@ describe("a log that starts anew on another copy of the project", () => {
     const { library, factory } = await renewed();
     await library.remove(PROJECT.id);
     const left = await new Promise<unknown[]>((resolve) => {
-      const request = factory.open("animaquill");
+      const request = factory.open("aq-offline-animaquill");
       request.addEventListener("success", () => {
         const all = request.result.transaction("updates").objectStore("updates").getAll();
         all.addEventListener("success", () => {

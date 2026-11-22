@@ -1,3 +1,4 @@
+import { scoped } from "./scope.ts";
 import type {
   AccountChanges,
   AccountGroup,
@@ -26,7 +27,7 @@ export {
  */
 const DATABASE = "animaquill-organizer";
 /** 2: the account that was last signed in (`META`). */
-const VERSION = 2;
+const VERSION = 1;
 const MARKS = "marks";
 const GROUPS = "groups";
 const META = "meta";
@@ -327,14 +328,12 @@ const committed = (transaction: IDBTransaction) =>
   });
 
 function open(factory: IDBFactory): Promise<IDBDatabase> {
-  const request = factory.open(DATABASE, VERSION);
-  request.addEventListener("upgradeneeded", (event) => {
+  const request = factory.open(scoped(DATABASE), VERSION);
+  request.addEventListener("upgradeneeded", () => {
     const database = request.result;
-    if (event.oldVersion < 1) {
-      database.createObjectStore(MARKS, { keyPath: "project" });
-      database.createObjectStore(GROUPS, { keyPath: "id" });
-    }
-    if (event.oldVersion < 2) database.createObjectStore(META);
+    database.createObjectStore(MARKS, { keyPath: "project" });
+    database.createObjectStore(GROUPS, { keyPath: "id" });
+    database.createObjectStore(META);
   });
   return resultOf(request);
 }
@@ -347,7 +346,7 @@ export interface OrganizerChannel {
 
 function broadcastChannel(): OrganizerChannel | undefined {
   if (typeof BroadcastChannel === "undefined") return undefined;
-  const channel = new BroadcastChannel(CHANNEL);
+  const channel = new BroadcastChannel(scoped(CHANNEL));
   return {
     // oxlint-disable-next-line unicorn/require-post-message-target-origin -- not a window
     post: () => channel.postMessage("changed"),

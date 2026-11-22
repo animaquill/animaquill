@@ -76,11 +76,6 @@
   color: var(--aq-cloud);
 }
 
-.placeIcon[data-place="cloudFolder"] {
-  --place-folder: var(--aq-local);
-  --place-cloud: var(--aq-cloud);
-}
-
 /* Saving into GitHub went wrong: it stands out, whatever the width. */
 .alert,
 .alert .saveLabel,

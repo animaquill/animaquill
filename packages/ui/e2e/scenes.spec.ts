@@ -22,7 +22,7 @@ import {
   test,
   type Color,
 } from "./scene-support.ts";
-import { createProject, resourcesIn } from "./support.ts";
+import { createProject, resourcesIn, waitSaved } from "./support.ts";
 
 const clips = (page: Page) => content(page, "timeline").getByRole("option");
 const items = (page: Page) => resourcesIn(page, "assets");
@@ -716,7 +716,7 @@ test.describe("a new scene", () => {
 
   test("stays after a reload", async ({ page }) => {
     await newScene(page);
-    await expect(page.getByText("已保存")).toBeVisible();
+    await waitSaved(page);
     await page.reload();
     await tab(page, "timeline").click();
     await expect(clips(page)).toHaveCount(1);

@@ -5,7 +5,7 @@ import {
   Clock,
   Cloud,
   Ellipsis,
-  Folder,
+  FolderInput,
   FolderOpen,
   HardDrive,
   Layers,
@@ -51,7 +51,6 @@ import {
 } from "../start/cards.ts";
 import {
   DEFAULT_HABITS,
-  filtersOf,
   groupOfView,
   isWelcome,
   remoteCards,
@@ -61,7 +60,6 @@ import {
   viewCards,
   viewThere,
   type Display,
-  type Filter,
   type StartSection,
   type ViewId,
 } from "../start/views.ts";
@@ -72,13 +70,14 @@ import type { ProjectFoldersSnapshot, WaitingFolder } from "../workbench/project
 import type { Workbench } from "../workbench/workbench.ts";
 import { useWorkbench } from "./context.ts";
 import { Menu, PopupMenu, type MenuItem } from "./Menu.tsx";
+import { OnlineOnly } from "./OnlineOnly.tsx";
 import { PlaceIcon } from "./PlaceIcon.tsx";
 import styles from "./StartPage.module.css";
 import { agoText, durationText } from "./start-view.ts";
 import { unusableFix, unusableLine } from "../cloud/unusable.ts";
 
 const noSubscription = () => () => {};
-const NO_FOLDERS: ProjectFoldersSnapshot = { open: undefined, waiting: undefined, moves: 0 };
+const NO_FOLDERS: ProjectFoldersSnapshot = { open: undefined, waiting: undefined };
 const noFolders = () => NO_FOLDERS;
 const noAccount = () => undefined;
 /** How often the times on the page move on. */
@@ -88,14 +87,16 @@ const CARD_TYPE = "application/x-animaquill-card";
 
 const plain = { interpolation: { escapeValue: false } } as const;
 
-/** What the page knows of where it runs, which decides what it offers, see the design, 6.5. */
+/**
+ * What the page knows of where it runs, which decides what it offers (docs/design/
+ * online-offline.md of AnimaQuill Cloud, 1.2 and 1.3).
+ */
 interface Situation {
-  /** The editor is hosted on a platform. */
-  readonly hasPlatform: boolean;
+  readonly mode: "online" | "offline";
   /** This browser can write folders. */
   readonly canFolders: boolean;
-  /** Somebody is signed in on the platform; undefined where that is not known yet. */
-  readonly signedIn: boolean | undefined;
+  /** Offline: there is an online mode to sign in to, see `Host.goOnline`. */
+  readonly canGoOnline: boolean;
 }
 
 /** What exports that stopped halfway take on this device, which people can clear, see 6.1. */
@@ -507,7 +508,7 @@ function Sidebar({
         )}
       </div>
       <div className={styles.foot}>
-        {situation.hasPlatform && (
+        {situation.mode === "online" ? (
           <button
             type="button"
             className={styles.navButton}
@@ -518,6 +519,13 @@ function Sidebar({
             <HardDrive size={15} className={styles.navIcon} aria-hidden="true" />
             <span className={styles.navName}>{t("storage.uploads.space.nav")}</span>
           </button>
+        ) : (
+          situation.canGoOnline && (
+            <OnlineOnly className={styles.navButton}>
+              <HardDrive size={15} className={styles.navIcon} aria-hidden="true" />
+              <span className={styles.navName}>{t("storage.uploads.space.nav")}</span>
+            </OnlineOnly>
+          )
         )}
         <Account situation={situation} />
         <SettingsButton />
@@ -543,7 +551,10 @@ function SettingsButton() {
   );
 }
 
-/** Who is signed in, at the bottom of the side bar, where there is a platform, see 6.1. */
+/**
+ * Who is signed in, at the bottom of the side bar, with the way to the offline mode and out of the
+ * account; offline, the way to sign in, see the design of the modes, 1.4.
+ */
 function Account({ situation }: { situation: Situation }) {
   const workbench = useWorkbench();
   const { account } = workbench;
@@ -552,39 +563,59 @@ function Account({ situation }: { situation: Situation }) {
     account?.subscribe ?? noSubscription,
     account?.getSnapshot ?? noAccount,
   );
-  if (!account || !who) return null;
-  if (who.status !== "signedIn") {
+  if (situation.mode === "offline") {
+    if (!situation.canGoOnline) return null;
     return (
-      <div className={styles.account}>
+      <div className={styles.account} data-testid="start-offline">
         <span className={styles.accountWords}>
-          <span className={styles.muted}>
-            {t(who.status === "unknown" ? "start.account.unknown" : "start.account.signedOut")}
-          </span>
+          <span className={styles.accountName}>{t("start.account.offline")}</span>
         </span>
-        {who.status === "signedOut" && (
-          <button
-            type="button"
-            className={styles.secondary}
-            onClick={() => void workbench.signIn()}
-          >
-            {t("start.signIn")}
-          </button>
-        )}
+        <button type="button" className={styles.secondary} onClick={() => workbench.goOnline()}>
+          {t("start.signIn")}
+        </button>
       </div>
     );
   }
+  if (!account || !who) return null;
+  const name = who.status === "signedIn" ? who.name : t("start.account.unknown");
   return (
-    <div className={styles.account}>
-      <span className={styles.avatar} aria-hidden="true">
-        {initialOf(who.name)}
-      </span>
-      <span className={styles.accountWords}>
-        <span className={styles.accountName}>{who.name}</span>
-        <span className={styles.accountState}>
-          {t(situation.canFolders ? "start.account.ready" : "start.account.cloudOnly")}
-        </span>
-      </span>
-    </div>
+    <Menu
+      label={t("account.menu", { name, ...plain })}
+      triggerClassName={`${styles.account} ${styles.accountButton}`}
+      trigger={
+        <>
+          <span className={styles.avatar} aria-hidden="true">
+            {initialOf(name)}
+          </span>
+          <span className={styles.accountWords}>
+            <span className={styles.accountName}>{name}</span>
+            <span className={styles.accountState}>
+              {t(who.status === "signedOut" ? "start.account.signedOut" : "start.account.online")}
+            </span>
+          </span>
+          <ChevronDown size={14} aria-hidden="true" />
+        </>
+      }
+      groups={() => [
+        [
+          ...(who.status === "signedOut"
+            ? [{ id: "signIn", label: t("start.signIn"), run: () => void workbench.signIn() }]
+            : []),
+          ...(workbench.canGoOffline
+            ? [
+                {
+                  id: "offline",
+                  label: t("account.goOffline"),
+                  run: () => void workbench.goOffline(),
+                },
+              ]
+            : []),
+        ],
+        ...(who.status === "signedIn"
+          ? [[{ id: "signOut", label: t("account.signOut"), run: () => void workbench.signOut() }]]
+          : []),
+      ]}
+    />
   );
 }
 
@@ -597,29 +628,16 @@ function NewCards({
 }: {
   situation: Situation;
   large: boolean;
-  onNew: (kind: "cloud" | "local" | "open") => void;
+  onNew: (kind: NewKind) => void;
 }) {
   const { t } = useTranslation();
-  const { hasPlatform, canFolders } = situation;
-  const unsupported = canFolders ? undefined : t("start.new.unsupported");
-  const card = (
-    kind: "cloud" | "local" | "open",
-    Icon: typeof Cloud,
-    title: string,
-    about: string,
-    disabledBy?: string,
-  ) => (
-    <button
-      type="button"
-      className={styles.newCard}
-      data-new={kind}
-      disabled={disabledBy !== undefined}
-      onClick={() => onNew(kind)}
-    >
+  const { mode, canFolders } = situation;
+  const card = (kind: NewKind, Icon: typeof Cloud, title: string, about: string) => (
+    <button type="button" className={styles.newCard} data-new={kind} onClick={() => onNew(kind)}>
       <Icon size={large ? 32 : 26} className={styles.newIcon} aria-hidden="true" />
       <span className={styles.newWords}>
         <span className={styles.newTitle}>{title}</span>
-        <span className={styles.newAbout}>{disabledBy ?? about}</span>
+        <span className={styles.newAbout}>{about}</span>
       </span>
     </button>
   );
@@ -629,12 +647,28 @@ function NewCards({
       data-large={large || undefined}
       aria-label={t("start.new.label")}
     >
-      {hasPlatform && card("cloud", Cloud, t("start.new.cloud"), t("start.new.cloudAbout"))}
-      {card("local", Folder, t("start.new.local"), t("start.new.localAbout"), unsupported)}
-      {card("open", FolderOpen, t("start.new.open"), t("start.new.openAbout"), unsupported)}
+      {mode === "online" ? (
+        <>
+          {card("new", Plus, t("start.new.project"), t("start.new.onlineAbout"))}
+          {card("import", FolderInput, t("start.new.import"), t("start.new.importAbout"))}
+        </>
+      ) : canFolders ? (
+        <>
+          {card("new", Plus, t("start.new.project"), t("start.new.localAbout"))}
+          {card("open", FolderOpen, t("start.new.open"), t("start.new.openAbout"))}
+        </>
+      ) : (
+        <>
+          {card("new", Plus, t("start.new.project"), t("start.new.browserAbout"))}
+          {card("import", FolderInput, t("start.new.importHere"), t("start.new.importHereAbout"))}
+        </>
+      )}
     </section>
   );
 }
+
+/** What a card of the new ones does: a new project, one opened from a folder, or one imported. */
+type NewKind = "new" | "open" | "import";
 
 // ---- the projects
 
@@ -723,8 +757,6 @@ function CardItem({
   const href = card.key === undefined ? undefined : workbench.linkTo(card.key);
   const isRenaming = actions.renaming === card.id;
   const groups = cardActions(card, {
-    hasPlatform: situation.hasPlatform,
-    canFolders: situation.canFolders,
     folder,
     copies: card.key === undefined ? 0 : (copies.get(card.key) ?? 0),
     covers: workbench.canChooseCovers,
@@ -803,12 +835,15 @@ function CardItem({
   );
   const statusLine = (
     <span className={styles.status} data-tone={status.tone} title={status.hint}>
-      <PlaceIcon
-        place={status.place}
-        size={14}
-        className={styles.placeIcon}
-        label={t(`saveStatus.place.${status.place}`)}
-      />
+      {/* Online every project is of the platform: only offline do the two kinds need a sign. */}
+      {situation.mode === "offline" && (
+        <PlaceIcon
+          place={status.place}
+          size={14}
+          className={styles.placeIcon}
+          label={t(`saveStatus.place.${status.place}`)}
+        />
+      )}
       <span
         className={styles.statusText}
         data-mark={status.tone === "warning" ? card.kind : undefined}
@@ -816,8 +851,7 @@ function CardItem({
       >
         {status.text}
       </span>
-      {/* What stands out with a way out under it has the line to itself. */}
-      {display === "cards" && when !== undefined && status.way === undefined && (
+      {display === "cards" && when !== undefined && (
         <>
           <span aria-hidden="true">·</span>
           <span className={styles.when}>{when}</span>
@@ -906,18 +940,6 @@ function CardItem({
           {inside}
         </button>
       )}
-      {status.way !== undefined && display === "cards" && (
-        // Not in the link of the card, which opens it: what helps, right under what is wrong.
-        <button
-          type="button"
-          className={styles.way}
-          data-card-way={status.way}
-          disabled={busy}
-          onClick={() => actions.run(card, "chooseRepository", null)}
-        >
-          {t("start.card.chooseRepository")}
-        </button>
-      )}
       {card.marksKey !== undefined && (
         <button
           type="button"
@@ -950,12 +972,11 @@ function CardItem({
  */
 function coverTargetOf(
   card: ProjectCard,
-  hasPlatform: boolean,
   covers: ReadonlyMap<string, CardCover>,
 ): CoverTarget | undefined {
   const key = card.key ?? (card.project === undefined ? undefined : cloudMarksKey(card.project));
   if (key === undefined || card.marksKey === undefined) return undefined;
-  const isCloud = hasPlatform && isCloudKind(card.kind) && card.project !== undefined;
+  const isCloud = isCloudKind(card.kind) && card.project !== undefined;
   return {
     key,
     project: isCloud ? card.project : undefined,
@@ -969,14 +990,6 @@ const durationOf = (card: ProjectCard, covers: ReadonlyMap<string, CardCover>) =
 
 // ---- the page
 
-/** What the right side says where there is nothing it can do here, see 6.5. */
-function noticeOf(situation: Situation): "signInOrSwitch" | "localUnsupported" | undefined {
-  const { hasPlatform, canFolders, signedIn } = situation;
-  if (canFolders) return undefined;
-  if (!hasPlatform) return "localUnsupported";
-  return signedIn === false ? "signInOrSwitch" : undefined;
-}
-
 /**
  * What a card whose project cannot be edited says when people click it, in place of opening it:
  * why, until when, and what helps, see the design of the start page of AnimaQuill Cloud, 5.1.
@@ -989,14 +1002,9 @@ async function explainUnusable(
 ): Promise<void> {
   const { t } = workbench;
   const { source } = card;
-  const unusable = source.kind === "browser" ? undefined : source.row.unusable;
+  const unusable = source.kind === "cloud" ? source.row.unusable : undefined;
   if (!unusable) return;
-  const choices = unusableChoices(card, {
-    hasPlatform: workbench.cloud !== undefined,
-    canFolders: workbench.projectFolders !== undefined,
-    folder: undefined,
-    copies: 0,
-  });
+  const choices = unusableChoices(card, { folder: undefined, copies: 0 });
   const words = { name: card.name, interpolation: { escapeValue: false } };
   const answer = await workbench.dialogs.choose({
     title: t("cloud.unusable.aboutTitle", words),
@@ -1004,7 +1012,6 @@ async function explainUnusable(
       `${unusableLine(unusable, Date.now(), t)}。`,
       unusableFix(unusable, t),
       t("cloud.unusable.ways"),
-      ...(card.kind === "cloudFolder" ? [t("cloud.unusable.waysFolder")] : []),
     ].join(""),
     choices: choices.map((action) => ({
       id: action,
@@ -1079,19 +1086,15 @@ function useCardActions(
       const { cloud, projectFolders } = workbench;
       const { source } = card;
       const record = source.kind === "local" ? source.row.record : undefined;
-      const about =
-        source.kind === "cloud" ? { name: card.name, copy: source.row.copy } : { name: card.name };
-      const target = coverTargetOf(card, cloud !== undefined, covers);
+      const target = coverTargetOf(card, covers);
       switch (action) {
         case "open":
           actions.open(card);
           return;
-        case "saveAsLocal":
-          // A folder is the project itself: it is open as one for its files to be copied.
-          if (card.project === undefined) return;
-          if (card.kind === "cloudFolder")
-            thenOpen(card, () => workbench.saveAsLocal(card.project, card.name));
-          else run(() => workbench.saveAsLocal(card.project, card.name));
+        case "saveToFolder":
+          // Right in the click: the browser lets the editor ask for a folder only then.
+          if (card.project !== undefined)
+            run(() => workbench.saveToFolder(card.project, card.name));
           return;
         case "recheck":
           if (card.project !== undefined && cloud) run(() => cloud.recheck(card.project));
@@ -1117,25 +1120,8 @@ function useCardActions(
           setPicking({ card, x: box ? box.right - 220 : 0, y: box ? box.bottom + 4 : 0 });
           return;
         }
-        case "connect":
-          thenOpen(card, () => workbench.connectToCloud());
-          return;
-        case "chooseRepository":
-          run(async () => {
-            await open(card);
-            if (workbench.session.store) workbench.runCloudAction("chooseRepository");
-          });
-          return;
-        case "disconnect":
-          thenOpen(card, () => cloud?.disconnect() ?? Promise.resolve());
-          return;
         case "saveCopy":
           thenOpen(card, () => workbench.exportProject());
-          return;
-        case "linkFolder":
-          // Right in the click: the browser lets the editor ask for a folder only then.
-          if (card.project !== undefined && cloud)
-            run(() => cloud.linkFolder(card.project as string, about));
           return;
         case "removeHere":
           if (card.key !== undefined && cloud)
@@ -1161,10 +1147,6 @@ function useCardActions(
           return;
         case "removeFromList":
           if (record && projectFolders) run(() => projectFolders.remove(record));
-          return;
-        case "moveToFolder":
-          if (card.key !== undefined && projectFolders)
-            run(() => projectFolders.moveToFolder(card.key as string));
           return;
         case "delete":
           if (source.kind === "browser") run(() => workbench.removeProject(source.summary));
@@ -1200,14 +1182,9 @@ export function StartPage() {
     projectFolders?.subscribe ?? noSubscription,
     projectFolders?.getSnapshot ?? noFolders,
   );
-  const who = useSyncExternalStore(
-    workbench.account?.subscribe ?? noSubscription,
-    workbench.account?.getSnapshot ?? noAccount,
-  );
   const [now, setNow] = useState(() => Date.now());
   const [askedForCloud] = useState(() => workbench.cloudColumn.getSnapshot());
   const [view, setView] = useState<ViewId>(askedForCloud ? "all" : "recent");
-  const [filter, setFilter] = useState<Filter>(askedForCloud ? "cloud" : "all");
   const [search, setSearch] = useState("");
   const [renaming, setRenaming] = useState<string | undefined>();
   const [picking, setPicking] = useState<{ card: ProjectCard; x: number; y: number }>();
@@ -1218,8 +1195,8 @@ export function StartPage() {
   const refresh = useCallback(() => void start.refresh(), [start]);
   const readExports = useCallback(() => void videos.unfinished().then(setExports), [videos]);
 
-  // A project that moved into a folder in another window is listed as a folder from then on.
-  useEffect(refresh, [refresh, folders.waiting, folders.moves]);
+  // A folder that people let the editor at again is listed as it is now.
+  useEffect(refresh, [refresh, folders.waiting]);
   useEffect(readExports, [readExports]);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), TICK_MS);
@@ -1251,9 +1228,9 @@ export function StartPage() {
   }, [projectFolders, lists.local]);
 
   const situation: Situation = {
-    hasPlatform: cloud !== undefined,
-    canFolders: projectFolders !== undefined,
-    signedIn: who === undefined || who.status === "unknown" ? undefined : who.status === "signedIn",
+    mode: workbench.mode,
+    canFolders: workbench.canFolders,
+    canGoOnline: workbench.canGoOnline,
   };
   const cards = useMemo(() => composeCards(lists, organized), [lists, organized]);
   const sections = sectionsOf({
@@ -1262,15 +1239,12 @@ export function StartPage() {
     unfinishedExports: exports.length,
   });
   const current = viewThere(view, sections);
-  const filters = filtersOf(situation);
-  const shownFilter = filters.includes(filter) ? filter : "all";
   const habit = habits.get(current) ?? DEFAULT_HABITS;
   const sort = sortOfView(current, habit.sort);
-  const listed = viewCards(cards, { view: current, filter: shownFilter, search, sort });
-  const notice = noticeOf(situation);
+  const listed = viewCards(cards, { view: current, search, sort });
   const { loading, failed, cloudState } = lists;
   const isUnread = failed.projects || failed.folders;
-  const welcome = !loading && !isUnread && notice === undefined && isWelcome(cards, current);
+  const welcome = !loading && !isUnread && isWelcome(cards, current);
   const group = groupOfView(current);
   const title =
     sections.find((section) => section.id === current)?.label ??
@@ -1323,7 +1297,6 @@ export function StartPage() {
       cloudColumn.set(false);
       if (!isFirst) {
         setView("all");
-        setFilter("cloud");
         setSearch("");
       }
       refresh();
@@ -1333,16 +1306,16 @@ export function StartPage() {
     return cloudColumn.subscribe(() => take(false));
   }, [workbench, refresh]);
 
-  const newProject = (kind?: "cloud" | "local" | "open") => {
+  const newProject = (kind: NewKind = "new") => {
     // Made from a group, it goes into that group.
     const into = group;
     const before = workbench.session.key;
     const work =
       kind === "open"
         ? workbench.openFolder()
-        : kind === "local" && !situation.hasPlatform
-          ? (projectFolders?.create() ?? Promise.resolve())
-          : workbench.newProject(kind);
+        : kind === "import"
+          ? workbench.importProject()
+          : workbench.newProject();
     void work.then(async () => {
       const key = workbench.session.key;
       if (into !== undefined && key !== undefined && key !== before && kind !== "open") {
@@ -1426,7 +1399,6 @@ export function StartPage() {
   /** What the view says where it lists nothing, see 6.2. */
   const emptyText = (): string => {
     if (search.trim() !== "") return t("start.empty.search", { search: search.trim(), ...plain });
-    if (cardsOfViewCount(cards, current) > 0) return t("start.empty.filter");
     if (current === "starred") return t("start.empty.starred");
     if (group !== undefined) return t("start.empty.group");
     return t("start.empty.view");
@@ -1434,8 +1406,7 @@ export function StartPage() {
 
   /** What is said about the projects of the platform where those are what people look at. */
   const cloudNote = (): ReactNode => {
-    const looksAtCloud = shownFilter === "cloud" || (filters.length === 0 && situation.hasPlatform);
-    if (!looksAtCloud || isPage(current) || notice !== undefined) return null;
+    if (situation.mode !== "online" || isPage(current)) return null;
     if (cloudState === "signedOut")
       return (
         <p className={styles.note} data-cloud-list={cloudState}>
@@ -1490,100 +1461,76 @@ export function StartPage() {
                 ? t(title.key as "start.view.all")
                 : title.text}
           </h1>
-          {!loading &&
-            !welcome &&
-            !isPage(current) &&
-            !(notice !== undefined && cards.length === 0) && (
-              <div className={styles.tools}>
-                {filters.length > 0 && (
-                  <div className={styles.filters} role="group" aria-label={t("start.filter.label")}>
-                    {filters.map((each) => (
-                      <button
-                        key={each}
-                        type="button"
-                        aria-pressed={shownFilter === each}
-                        onClick={() => setFilter(each)}
-                      >
-                        {t(`start.filter.${each}`)}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <label className={styles.search}>
-                  <Search size={15} aria-hidden="true" />
-                  <input
-                    type="search"
-                    placeholder={t("start.search")}
-                    aria-label={t("start.search")}
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                  />
-                </label>
-                {current !== "recent" && (
-                  <Menu
-                    label={t("start.sort.label", { sort: t(`start.sort.${sort}`) })}
-                    trigger={
-                      <>
-                        {t(`start.sort.${sort}`)}
-                        <ChevronDown size={14} aria-hidden="true" />
-                      </>
-                    }
-                    triggerClassName={styles.sort}
-                    align="end"
-                    groups={() => [
-                      SORTS.map((each) => ({
-                        id: each,
-                        label: t(`start.sort.${each}`),
-                        selected: each === sort,
-                        run: () => startHabits.set(current, { sort: each }),
-                      })),
-                    ]}
-                  />
-                )}
-                <div className={styles.display} role="group" aria-label={t("start.display.label")}>
-                  <button
-                    type="button"
-                    aria-pressed={habit.display === "cards"}
-                    aria-label={t("start.display.cards")}
-                    title={t("start.display.cards")}
-                    onClick={() => startHabits.set(current, { display: "cards" })}
-                  >
-                    <LayoutGrid size={16} aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={habit.display === "list"}
-                    aria-label={t("start.display.list")}
-                    title={t("start.display.list")}
-                    onClick={() => startHabits.set(current, { display: "list" })}
-                  >
-                    <List size={16} aria-hidden="true" />
-                  </button>
-                </div>
+          {!loading && !welcome && !isPage(current) && (
+            <div className={styles.tools}>
+              <label className={styles.search}>
+                <Search size={15} aria-hidden="true" />
+                <input
+                  type="search"
+                  placeholder={t("start.search")}
+                  aria-label={t("start.search")}
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                />
+              </label>
+              {current !== "recent" && (
+                <Menu
+                  label={t("start.sort.label", { sort: t(`start.sort.${sort}`) })}
+                  trigger={
+                    <>
+                      {t(`start.sort.${sort}`)}
+                      <ChevronDown size={14} aria-hidden="true" />
+                    </>
+                  }
+                  triggerClassName={styles.sort}
+                  align="end"
+                  groups={() => [
+                    SORTS.map((each) => ({
+                      id: each,
+                      label: t(`start.sort.${each}`),
+                      selected: each === sort,
+                      run: () => startHabits.set(current, { sort: each }),
+                    })),
+                  ]}
+                />
+              )}
+              <div className={styles.display} role="group" aria-label={t("start.display.label")}>
+                <button
+                  type="button"
+                  aria-pressed={habit.display === "cards"}
+                  aria-label={t("start.display.cards")}
+                  title={t("start.display.cards")}
+                  onClick={() => startHabits.set(current, { display: "cards" })}
+                >
+                  <LayoutGrid size={16} aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={habit.display === "list"}
+                  aria-label={t("start.display.list")}
+                  title={t("start.display.list")}
+                  onClick={() => startHabits.set(current, { display: "list" })}
+                >
+                  <List size={16} aria-hidden="true" />
+                </button>
               </div>
-            )}
+            </div>
+          )}
         </div>
 
         {/* Nothing until what this computer has is read: the page does not jump from one to
             the other as it comes, which people would see, and what they drop would miss. */}
-        {loading ? null : notice !== undefined ? (
-          <section className={styles.notice} aria-label={t(`start.notice.${notice}`)}>
-            <p>{t(`start.notice.${notice}`)}</p>
-            {notice === "signInOrSwitch" && (
-              <button
-                type="button"
-                className={styles.primary}
-                onClick={() => void workbench.signIn()}
-              >
-                {t("start.signIn")}
-              </button>
-            )}
-          </section>
-        ) : welcome ? (
+        {loading ? null : welcome ? (
           <section className={styles.welcome} aria-label={t("start.welcome")}>
             <h2>{t("start.welcome")}</h2>
             <p className={styles.muted}>
-              {t(situation.canFolders ? "start.welcomeAbout" : "start.welcomeCloudOnly")}
+              {t(
+                situation.mode === "online"
+                  ? "start.welcomeOnline"
+                  : situation.canFolders
+                    ? "start.welcomeAbout"
+                    : "start.welcomeBrowser",
+              )}
             </p>
             <NewCards situation={situation} large onNew={newProject} />
           </section>
@@ -1626,10 +1573,7 @@ export function StartPage() {
             {...cardsProps}
           />
         ) : (
-          !loading &&
-          !(notice !== undefined && cards.length === 0) && (
-            <p className={styles.empty}>{emptyText()}</p>
-          )
+          !loading && !isUnread && <p className={styles.empty}>{emptyText()}</p>
         )}
       </main>
       {picking && picking.card.marksKey !== undefined && (
@@ -1696,9 +1640,4 @@ function DropHint() {
       <p>{t("start.dropHintAbout")}</p>
     </div>
   );
-}
-
-/** How many cards a view has before filtering and searching. */
-function cardsOfViewCount(cards: readonly ProjectCard[], view: ViewId): number {
-  return viewCards(cards, { view, filter: "all", search: "", sort: "updated" }).length;
 }

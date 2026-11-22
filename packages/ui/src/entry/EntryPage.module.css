@@ -1,0 +1,118 @@
+/* The entry page: the name of the editor and the two ways in, in the middle of the window. */
+
+.page {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  padding: 32px 16px;
+  color: var(--aq-text);
+  background: var(--aq-bg-chrome);
+  font-family: var(--aq-font);
+  font-size: var(--aq-font-14);
+  line-height: 1.5;
+}
+
+.box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: min(360px, 100%);
+  text-align: center;
+}
+
+.mark {
+  color: var(--aq-accent);
+}
+
+.name {
+  margin: 16px 0 4px;
+  color: var(--aq-text-strong);
+  font-size: calc(28px * var(--aq-font-scale));
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.tagline {
+  margin: 0;
+  color: var(--aq-text-muted);
+}
+
+.problem {
+  margin: 20px 0 0;
+  padding: 8px 12px;
+  color: var(--aq-warning-text);
+  background: var(--aq-warning-soft);
+  border: 1px solid var(--aq-warning-line);
+  border-radius: 6px;
+}
+
+.inline {
+  margin-left: 8px;
+  padding: 0;
+  color: var(--aq-link);
+  font: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.inline:hover {
+  text-decoration: underline;
+}
+
+.ways {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  margin-top: 32px;
+}
+
+.primary,
+.secondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: calc(44px * var(--aq-size-scale));
+  padding: 0 16px;
+  font: inherit;
+  font-weight: 600;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.primary {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+  border: 0;
+}
+
+.primary:hover {
+  filter: brightness(1.1);
+}
+
+.secondary {
+  color: var(--aq-text-strong);
+  background: transparent;
+  border: 1px solid var(--aq-text-muted);
+}
+
+.secondary:hover {
+  background: var(--aq-bg-hover);
+}
+
+.note {
+  margin: -4px 0 0;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-12);
+}
+
+.secondary[data-refused] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.secondary[data-refused]:hover {
+  background: transparent;
+}

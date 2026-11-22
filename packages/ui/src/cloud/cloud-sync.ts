@@ -19,7 +19,7 @@ import { Emitter } from "../workbench/emitter.ts";
  */
 
 /** A feature that a switch here is of; "ai" is turned on and off by `AiSync`. */
-export type CloudFeature = "ai" | "organizer" | "chats" | "newProjectsInCloud";
+export type CloudFeature = "ai" | "organizer" | "chats";
 
 /** What the switches are, of this device. */
 export type SwitchValues = Readonly<Record<CloudFeature, boolean>>;
@@ -28,7 +28,6 @@ export const DEFAULT_SWITCHES: SwitchValues = {
   ai: true,
   organizer: true,
   chats: true,
-  newProjectsInCloud: true,
 };
 
 /** The welcome, as it shows, see `CloudSync`. */
@@ -149,11 +148,6 @@ export class CloudSync {
     if (!available) return true;
     if (account === undefined || account !== this.#snapshot.account || !welcomed) return false;
     return switches?.[feature] ?? true;
-  }
-
-  /** Whether new projects are of the platform by default, as people said on this device. */
-  get newProjectsInCloud(): boolean {
-    return this.#snapshot.switches?.newProjectsInCloud ?? true;
   }
 
   /** Resolves once who is signed in now is followed: whether they answered the welcome is known. */

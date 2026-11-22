@@ -1,18 +1,22 @@
 /**
- * Projects of the platform as people go through the workbench: opened without a folder, downloaded
- * into a folder, and taken out of the browser. See `CloudProjects` for what each of them does, and
- * `FolderMove` for the move into a folder, which is the real one here.
+ * Projects of the online mode as people go through the workbench: opened, saved to a folder as a
+ * copy (`SaveToFolder`), and taken out of the browser. See `CloudProjects` for what each does.
  */
-import { memoryOrganizer } from "@animaquill/host";
-import type { FolderAccess, Host, ProjectSummary } from "@animaquill/host";
+import { memoryOrganizer, newSyncId } from "@animaquill/host";
+import type {
+  FolderAccess,
+  Host,
+  LocalFolder,
+  ProjectSummary,
+  SavedFolders,
+} from "@animaquill/host";
 import { MemoryDisk, memoryFolders } from "@animaquill/host/memory";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MemoryPlatform, TestCloudBrowser } from "../cloud/cloud-support.ts";
-import { OLD_CLOUD_FILE } from "../cloud/projects.ts";
 import { account } from "../cloud/projects-support.ts";
 import { filesOf } from "../folder/folder-support.ts";
 import type { DialogRequest } from "./dialogs.ts";
-import { FAST, folderOf, notices, written } from "./folder-windows.ts";
+import { FAST, notices } from "./folder-windows.ts";
 import { layouts } from "./layouts.ts";
 import {
   MemoryExports,
@@ -53,8 +57,17 @@ function browserOn(platform: MemoryPlatform, { folders = true } = {}) {
   // What windows keep on projects is the browser's: one window finds what another left.
   const trials = new MemoryTrials();
   const drafts = new MemoryTrials();
+  // Where projects were saved to, for the whole browser.
+  const kept = new Map<string, LocalFolder>();
+  const savedFolders: SavedFolders = {
+    get: async (project) => kept.get(project),
+    put: async (project, folder) => void kept.set(project, folder),
+    forget: async (project) => void kept.delete(project),
+  };
   const window = () => {
     const host: Host = {
+      mode: "online",
+      savedFolders,
       projects: library,
       address: memoryAddress(),
       windowMemory: memoryWindow(),
@@ -116,75 +129,100 @@ async function onPlatform(platform: MemoryPlatform) {
   const there = first.window();
   expect(await there.session.create("片子")).toBe(true);
   there.session.store?.execute(write("code/动画.js", "const a = 1;\n"));
-  // As the first step of the dialog that connects it does.
-  expect(await there.cloud?.beginLink()).toMatchObject({ isNew: true });
-  await online(there);
+  expect(await there.session.trySave()).toBe(true);
+  // A link that the first connection makes the project with, as the sync protocol does.
   const key = there.session.key as string;
-  const project = (await first.links.get(key))?.project as string;
+  const project = newSyncId();
+  await first.links.put({
+    key,
+    platform: there.cloud?.platform ?? "",
+    project,
+    seq: 0,
+    pushed: (await there.session.journal.entries())?.at(-1)?.mark ?? 0,
+    linkedAt: Date.now(),
+    creating: true,
+  });
+  await there.cloud?.close();
+  await there.cloud?.follow();
+  await online(there);
   expect(platform.projects.has(project)).toBe(true);
   return { there, project };
 }
 
-describe("a project of the platform, downloaded into a folder", () => {
-  it("opens, moves into the folder people choose, and syncs on as that folder", async () => {
-    const platform = new MemoryPlatform();
-    const { there, project } = await onPlatform(platform);
-    const browser = browserOn(platform);
-    const workbench = browser.window();
-
-    browser.disk.chooseNext("文档/下载");
-    const downloading = workbench.cloud?.linkFolder(project);
-    // It has no files of assets in the browser to tell people about: only that it moved.
-    const said = await answerNext(workbench, "confirm", true);
-    expect(said).toMatchObject({ title: "folder.move.movedTitle", noticeOnly: true });
-    expect(await downloading).toBe(true);
-
-    // The folder is the project now, under the number the copy had: its id on the platform.
-    expect(workbench.session.key).toBe(project);
-    expect(folderOf(workbench)?.record).toMatchObject({ id: project, name: "片子" });
-    await written(workbench);
-    const onDisk = filesOf(browser.disk, "文档/下载");
-    expect(onDisk.get("code/动画.js")).toBe("const a = 1;\n");
-    expect(onDisk.has("animaquill.json")).toBe(true);
-    // The same link goes on, and the folder says nothing of it.
-    await vi.waitFor(() =>
-      expect(workbench.cloud?.getSnapshot()).toMatchObject({ kind: "linked", local: "folder" }),
-    );
-    expect(browser.disk.has(`文档/下载/${OLD_CLOUD_FILE}`)).toBe(false);
-    expect((await browser.links.get(project))?.project).toBe(project);
-    expect([...browser.library.summaries.keys()]).toEqual([project]);
-    await online(workbench);
-
-    // Both ways, and into the folder.
-    there.session.store?.execute(write("code/动画.js", "const a = 2;\n"));
-    await vi.waitFor(() =>
-      expect(filesOf(browser.disk, "文档/下载").get("code/动画.js")).toBe("const a = 2;\n"),
-    );
-    workbench.session.store?.execute(write("code/新的.js", "new\n"));
-    await vi.waitFor(() =>
-      expect(there.session.store?.getState().files["code/新的.js"]).toBe("new\n"),
-    );
-
-    // Opening it from the platform again opens the folder, and makes no copy.
-    await workbench.closeProject();
-    expect(await workbench.cloud?.openCloudProject(project)).toBe(true);
-    expect(folderOf(workbench)?.record.id).toBe(project);
-    expect([...browser.library.summaries.keys()]).toEqual([project]);
-  });
-
-  it("stays a project of the platform without a folder where people choose none", async () => {
+describe("a project of the online mode, saved to a folder (docs/design/online-offline.md, 1.2)", () => {
+  it("writes a copy that nothing links, and the next time replaces only the files of the project", async () => {
     const platform = new MemoryPlatform();
     const { project } = await onPlatform(platform);
     const browser = browserOn(platform);
     const workbench = browser.window();
-    // They close the browser's question about the folder.
-    expect(await workbench.cloud?.linkFolder(project)).toBe(false);
-    expect(workbench.session.key).toBe(project);
-    expect(folderOf(workbench)).toBeUndefined();
-    expect(workbench.cloud?.getSnapshot()).toMatchObject({ kind: "linked", local: "browser" });
+    expect(await workbench.cloud?.openCloudProject(project)).toBe(true);
     await online(workbench);
-    // It can move later, as any project of the browser can.
-    expect(workbench.actions.get("project.moveToFolder")?.enabled?.()).toBe(true);
+
+    browser.disk.folder("文档/副本", { quietly: true });
+    browser.disk.chooseNext("文档/副本");
+    const saving = workbench.saveToFolder();
+    const done = await answerNext(workbench, "choice", "ok");
+    expect(done).toMatchObject({ title: expect.stringContaining("saveToFolder.done.title") });
+    await saving;
+    let onDisk = filesOf(browser.disk, "文档/副本");
+    expect(onDisk.get("code/动画.js")).toBe("const a = 1;\n");
+    expect(onDisk.has("animaquill.json")).toBe(true);
+    // A copy: the project is still the copy of the platform in this browser, and nothing else.
+    expect(workbench.cloud?.getSnapshot().kind).toBe("linked");
+    expect(workbench.projectFolders).toBeUndefined();
+
+    // Changed since, with a file of the format gone and one of people's own in the folder.
+    workbench.session.store?.execute(write("code/动画.js", "const a = 2;\n"));
+    workbench.session.store?.execute({
+      type: "file.write",
+      params: { path: "code/新.js", text: "1\n" },
+    });
+    browser.disk.write("文档/副本/笔记.txt", "people's own", { quietly: true });
+    browser.disk.write("文档/副本/code/旧的.js", "from before\n", { quietly: true });
+    const again = workbench.saveToFolder();
+    // The folder of the last save first: replacing what is there of the project.
+    const asked = await answerNext(workbench, "choice", "replace");
+    expect(asked).toMatchObject({ message: expect.stringContaining("saveToFolder.again.message") });
+    await answerNext(workbench, "choice", "ok");
+    await again;
+    onDisk = filesOf(browser.disk, "文档/副本");
+    expect(onDisk.get("code/动画.js")).toBe("const a = 2;\n");
+    expect(onDisk.get("code/新.js")).toBe("1\n");
+    // What the project does not have any more goes; what is not of the format stays.
+    expect(onDisk.has("code/旧的.js")).toBe(false);
+    expect(onDisk.get("笔记.txt")).toBe("people's own");
+  });
+
+  it("goes into a folder of its own where the folder people chose has other things", async () => {
+    const platform = new MemoryPlatform();
+    const { project } = await onPlatform(platform);
+    const browser = browserOn(platform);
+    const workbench = browser.window();
+    expect(await workbench.cloud?.openCloudProject(project)).toBe(true);
+    browser.disk.write("文档/杂物/别的.txt", "x", { quietly: true });
+    browser.disk.chooseNext("文档/杂物");
+    const saving = workbench.saveToFolder();
+    await answerNext(workbench, "choice", "ok");
+    await saving;
+    expect(filesOf(browser.disk, "文档/杂物/片子").has("animaquill.json")).toBe(true);
+    expect(filesOf(browser.disk, "文档/杂物").get("别的.txt")).toBe("x");
+  });
+
+  it("does not write into a folder that holds another project", async () => {
+    const platform = new MemoryPlatform();
+    const { project } = await onPlatform(platform);
+    const browser = browserOn(platform);
+    const workbench = browser.window();
+    expect(await workbench.cloud?.openCloudProject(project)).toBe(true);
+    browser.disk.write("文档/别的项目/animaquill.json", JSON.stringify({ id: "other" }), {
+      quietly: true,
+    });
+    browser.disk.chooseNext("文档/别的项目");
+    const saving = workbench.saveToFolder();
+    const said = await answerNext(workbench, "confirm", true);
+    expect(said).toMatchObject({ noticeOnly: true });
+    await saving;
+    expect(filesOf(browser.disk, "文档/别的项目").size).toBe(1);
   });
 });
 

@@ -1,6 +1,5 @@
 import type { RepositoryConflict } from "@animaquill/host";
 import type { ConflictList } from "../cloud/conflicts.ts";
-import type { CloudConnect } from "../cloud/connect.ts";
 import type { CloudCreate } from "../cloud/create.ts";
 import type { RepositoryPicker } from "../cloud/repository-picker.ts";
 import { Emitter } from "./emitter.ts";
@@ -104,13 +103,6 @@ export interface RepositoryDialogOptions {
   readonly picker: RepositoryPicker;
   /** Leaves the page to install the GitHub App, where it is not on the account. */
   readonly installApp?: () => void;
-}
-
-/** Connecting the open project to the platform in one dialog, see `CloudConnect`. */
-export interface ConnectDialogOptions {
-  /** What it is called as it opens: the dialog says the same, and follows what it finds out. */
-  readonly title: string;
-  readonly connect: CloudConnect;
 }
 
 /** Making a new project: of this computer, or of the platform, see `CloudCreate`. */
@@ -217,7 +209,6 @@ export type DialogRequest =
   | ({ readonly kind: "choice"; readonly id: number } & ChoiceOptions)
   | ({ readonly kind: "form"; readonly id: number } & FormOptions)
   | ({ readonly kind: "repository"; readonly id: number } & RepositoryDialogOptions)
-  | ({ readonly kind: "connect"; readonly id: number } & ConnectDialogOptions)
   | ({ readonly kind: "create"; readonly id: number } & CreateDialogOptions)
   | ({ readonly kind: "reconcile"; readonly id: number } & ReconcileDialogOptions)
   | ({ readonly kind: "places"; readonly id: number } & PlacesDialogOptions)
@@ -284,15 +275,6 @@ export class Dialogs {
    */
   async repository(options: RepositoryDialogOptions): Promise<boolean> {
     return (await this.#ask({ kind: "repository", id: this.#nextId++, ...options })) === true;
-  }
-
-  /**
-   * Stays until the dialog answers, which it does once connecting is over or given up, see
-   * `CloudConnect.cancel`. Another dialog that takes its place ends it too: whoever asked looks at
-   * what the connection came to then.
-   */
-  async connect(options: ConnectDialogOptions): Promise<void> {
-    await this.#ask({ kind: "connect", id: this.#nextId++, ...options });
   }
 
   /**

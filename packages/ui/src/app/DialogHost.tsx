@@ -2,7 +2,6 @@ import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardE
 import { useTranslation } from "react-i18next";
 import type { DialogRequest, FormAnswer, ProgressRequest } from "../workbench/dialogs.ts";
 import { useWorkbench } from "./context.ts";
-import { ConnectDialog } from "./ConnectDialog.tsx";
 import { NewProjectDialog } from "./NewProjectDialog.tsx";
 import { ConflictsDialog } from "./ConflictsDialog.tsx";
 import { ReconcileDialog } from "./ReconcileDialog.tsx";
@@ -315,7 +314,6 @@ export function DialogHost() {
   if (request.kind === "progress") return <Progress key={request.id} request={request} />;
   if (request.kind === "form") return <Form key={request.id} request={request} />;
   if (request.kind === "repository") return <RepositoryDialog key={request.id} request={request} />;
-  if (request.kind === "connect") return <ConnectDialog key={request.id} request={request} />;
   if (request.kind === "create") return <NewProjectDialog key={request.id} request={request} />;
   if (request.kind === "reconcile") return <ReconcileDialog key={request.id} request={request} />;
   if (request.kind === "places") return <PlacesDialog key={request.id} request={request} />;

@@ -3,7 +3,6 @@ import {
   type AccountAccess,
   type CloudAccess,
   type IncomingProject,
-  type LocalFolder,
   type MakingNotes,
   type MediaStore,
   type RepositoryAccess,
@@ -19,7 +18,7 @@ import {
   type ConnectNeed,
   type ConnectProblem,
   type ConnectStepState,
-} from "./connect.ts";
+} from "./steps.ts";
 import type { Downloaded } from "./download.ts";
 import type { CloudProjectsSnapshot } from "./projects.ts";
 import { RepositoryPicker, type PickerMode } from "./repository-picker.ts";
@@ -29,19 +28,15 @@ import type { RepositoryWatch } from "./repository-watch.ts";
 import { UploadFailed, upload, type Upload } from "./upload.ts";
 
 /**
- * Making a new project, see the design of the start page (docs/design/start-and-cloud.md of
- * AnimaQuill Cloud), 3: people choose a project of this computer, which is a folder, or a project
- * of the platform, which always has a repository. There is no project that is only in this browser
- * without the platform any more: the browser can clear what it stores at any time. Only tests can
- * still make one, see `Host.projectsHereForTests`.
+ * Making a new project (docs/design/online-offline.md of AnimaQuill Cloud, 1.2 and 1.3): online a
+ * project of the platform, which always has a repository; offline a folder people choose, or where
+ * the browser cannot write folders, a project in this browser. One kind in each mode.
  *
  * A project of the platform is made platform first, and this computer after, so that wherever it
  * stops, what is left is a whole project of some kind, or nothing:
  *
  * 0. What has to be there first: someone signed in, the GitHub App on the account. Both leave the
  *    page; what the dialog was at goes into what the window remembers, see `takeCreateIntent`.
- *    Where people want a folder too, it is chosen in the press that goes on: the browser only asks
- *    then. Choosing none is changing one's mind: nothing is made.
  * 1. "upload": an imported project comes into this browser first, unseen, with the files of its
  *    assets, see `CloudCreateOptions.receive`: where there is no room for them, nothing is made.
  *    Then the project, made in memory, goes to the platform in one connection, see `upload`. Its
@@ -51,7 +46,7 @@ import { UploadFailed, upload, type Upload } from "./upload.ts";
  *    and nothing else does. A project that is gone from the platform meanwhile is made anew.
  * 2. "repository": as the dialog that connects a project, see `RepositoryPicker`.
  * 3. "place": the project is whole now, and comes into this browser as a copy that syncs, see
- *    `CloudProjects.keepUploaded`, and into the folder where people chose one. Nothing is taken
+ *    `CloudProjects.keepUploaded`. Nothing is taken
  *    back from here on: what does not work out says so, and the project is there to open.
  * 4. "archive": the first archive, which the platform does by itself, as for connecting.
  *
@@ -77,31 +72,12 @@ export type CreateStepId = "upload" | "repository" | "place" | "archive";
 export type NewFormat = NonNullable<NewProject["format"]>;
 export type NewFrameRate = (typeof NEW_FRAME_RATES)[number];
 
-/** Why the folder people chose cannot take the new project. */
-export type FolderRefusal =
-  /** It is a project already. */
-  | "project"
-  /** It is inside a project. */
-  | "inside"
-  /** An export that stopped halfway is in it. */
-  | "incomplete"
-  /** It could not be read. */
-  | "failed";
-
-/** A folder people chose for the new project, and where in it the project goes. */
-export interface FolderChoice {
-  readonly folder: LocalFolder;
-  /** A folder of its own inside it, by name, for a folder that has other things in it. */
-  readonly inside: string | undefined;
-}
-
 export type CreateProblem =
   | ConnectProblem
-  | { readonly step: "folder"; readonly code: FolderRefusal }
   | {
       readonly step: "place";
-      /** "browser": it could not come into this browser. "folder": not into the folder. */
-      readonly code: "browser" | "folder";
+      /** "browser": it could not come into this browser. */
+      readonly code: "browser";
     }
   | { readonly step: "name" }
   | {
@@ -117,8 +93,6 @@ export interface CreateSnapshot {
   readonly kind: CreateKind;
   /** What the project is called. */
   readonly name: string;
-  /** Whether a copy goes into a folder on this computer as well, for a project of the platform. */
-  readonly withFolder: boolean;
   /** The shape it is made in, and for "custom" the size people typed, as they typed it. */
   readonly shape: FormatShape;
   readonly width: string;
@@ -144,15 +118,12 @@ export interface CreateSnapshot {
   readonly linked: RepositoryStatus | undefined;
   /** What this browser keeps the new project by, once it is here. */
   readonly key: string | undefined;
-  /** The folder it went into, by name, once it did. */
-  readonly folder: string | undefined;
 }
 
 /** What the dialog was at when the page left, to sign in or to install the App, see `takeCreateIntent`. */
 export interface CreateIntent {
   readonly at: number;
   readonly name: string;
-  readonly withFolder: boolean;
   readonly shape?: FormatShape;
   readonly width?: string;
   readonly height?: string;
@@ -179,7 +150,6 @@ const isIntent = (value: unknown): value is CreateIntent => {
     intent !== null &&
     typeof intent.at === "number" &&
     typeof intent.name === "string" &&
-    typeof intent.withFolder === "boolean" &&
     (intent.mode === "create" || intent.mode === "existing") &&
     typeof intent.repository === "string" &&
     typeof intent.touched === "boolean" &&
@@ -268,11 +238,6 @@ export interface CloudCreateOptions {
   readonly cloud?: CloudAccess;
   readonly access?: RepositoryAccess;
   readonly account?: AccountAccess;
-  /**
-   * Whether a new project is of the platform by default where people are signed in, as they said
-   * for their account, see `CloudSync.newProjectsInCloud`. Yes where it is not given.
-   */
-  readonly preferCloud?: () => boolean;
   /** What the project is called at first. */
   readonly name: string;
   /**
@@ -283,22 +248,17 @@ export interface CloudCreateOptions {
   /** The project is imported: only a project of the platform, see `CreateSnapshot.kind`. */
   readonly imported?: boolean;
   /**
-   * Makes a project of this computer in a folder people choose, which has to be called right in
-   * the press: see `ProjectFolders.createNamed`. Missing where the browser cannot write folders.
+   * Offline: makes a project in a folder people choose, which has to be called right in the press:
+   * see `ProjectFolders.createNamed`. Missing online, and where the browser cannot write folders.
    */
   readonly createLocal?: (name: string, format: NewFormat) => Promise<void>;
-  /** For tests only, see `Host.projectsHereForTests`: a project in this browser. */
+  /** Offline where the browser cannot write folders: a project in this browser. */
   readonly createHere?: (name: string, format: NewFormat) => Promise<void>;
   /**
    * What turns Chinese into pinyin, for the name of a new repository, see `repositoryNameOf`:
    * loaded once the dialog is there. Without it Chinese counts as anything else.
    */
   readonly pinyin?: () => Promise<ToPinyin>;
-  /**
-   * Asks people for a folder, right in the press, and where in it the project goes, see
-   * `ProjectFolders.chooseForNew`. Undefined where they changed their mind.
-   */
-  readonly chooseFolder?: (name: string) => Promise<FolderChoice | FolderRefusal | undefined>;
   /**
    * Keeps what the platform has of the new project as a copy in this browser that syncs, see
    * `CloudProjects.keepUploaded`, in what `receive` began where it did. Resolves to its key, or to
@@ -318,14 +278,8 @@ export interface CloudCreateOptions {
   readonly bring?: (media: MediaStore) => Promise<void>;
   /** The projects of the platform that windows of this browser are making, see `tidyCreated`. */
   readonly making?: MakingNotes;
-  /**
-   * Opens the copy, and moves it into the folder people chose, where they did. Resolves to whether
-   * it is open, and whether it is in the folder.
-   */
-  readonly open: (
-    key: string,
-    folder: FolderChoice | undefined,
-  ) => Promise<{ readonly opened: boolean; readonly inFolder: boolean }>;
+  /** Opens the copy. Resolves to whether it is open. */
+  readonly open: (key: string) => Promise<boolean>;
   /** How the open project syncs, to follow its first archive. */
   readonly projects?: {
     subscribe(listener: () => void): () => void;
@@ -334,7 +288,7 @@ export interface CloudCreateOptions {
   };
   readonly signIn?: () => Promise<void> | void;
   readonly installApp?: () => Promise<void> | void;
-  /** Whether the page is going away now, after `signIn` or `installApp`, see `CloudConnect`. */
+  /** Whether the page is going away now, after `signIn` or `installApp`, as for signing in. */
   readonly leaving?: () => boolean;
   readonly memory?: WindowMemory;
   readonly intent?: CreateIntent;
@@ -402,8 +356,6 @@ export class CloudCreate {
   #upload: { readonly upload: Upload; readonly stop: AbortController } | undefined;
   #uploading: Promise<unknown> | undefined;
   #linking: Promise<unknown> | undefined;
-  /** The folder people chose, once they did: choosing again only after a problem with it. */
-  #folder: FolderChoice | undefined;
   /** The steps run, until they stop: see `whenIdle`. */
   #working: Promise<void> | undefined;
   #stopArchive: (() => void) | undefined;
@@ -416,8 +368,9 @@ export class CloudCreate {
     this.#options = options;
     this.#env = options.environment ?? pageClock();
     const { access, account, intent } = options;
+    // One kind in each mode: of the platform online, a folder or this browser offline.
     this.kinds = [
-      ...(options.createLocal || options.chooseFolder ? (["local"] as const) : []),
+      ...(options.createLocal ? (["local"] as const) : []),
       ...(options.cloud && access && account ? (["cloud"] as const) : []),
       ...(options.createHere && !options.imported ? (["browser"] as const) : []),
     ];
@@ -443,7 +396,6 @@ export class CloudCreate {
     this.#snapshot = {
       kind,
       name: intent?.name ?? options.name,
-      withFolder: intent?.withFolder === true && options.chooseFolder !== undefined,
       shape: intent?.shape ?? "landscape",
       width: intent?.width ?? "1920",
       height: intent?.height ?? "1080",
@@ -457,7 +409,6 @@ export class CloudCreate {
       unconfirmed: false,
       linked: undefined,
       key: undefined,
-      folder: undefined,
     };
     this.#snapshot = { ...this.#snapshot, need: this.#needOf() };
     if (intent && this.picker) {
@@ -483,24 +434,9 @@ export class CloudCreate {
   }
 
   #toPinyin: ToPinyin | undefined;
-  /** People chose the kind themselves: what the account says does not change it any more. */
-  #kindChosen = false;
-
-  /**
-   * What a new project is by default, see the design, 3: a project of the platform where someone
-   * is signed in, unless they said otherwise for their account (`preferCloud`), and one of this
-   * computer where not; only what can be made here; and in a browser that tests run in, one in the
-   * browser.
-   */
+  /** What a new project is: the one kind that can be made here, see `kinds`. */
   #defaultKind(): CreateKind {
-    const { kinds } = this;
-    if (kinds.includes("browser")) return "browser";
-    if (!kinds.includes("local")) return kinds[0] ?? "cloud";
-    if (!kinds.includes("cloud")) return "local";
-    return this.#options.account?.getSnapshot().status === "signedIn" &&
-      (this.#options.preferCloud?.() ?? true)
-      ? "cloud"
-      : "local";
+    return this.kinds[0] ?? "cloud";
   }
 
   /** The repository is called after the project, until people name it themselves. */
@@ -569,12 +505,6 @@ export class CloudCreate {
     const need = this.#needOf();
     this.picker?.setOwner(who?.status === "signedIn" ? who.name : undefined);
     this.#set({ need, account: who?.status === "signedIn" ? who.name : undefined });
-    // Who is signed in decides what a new project is, until people chose.
-    if (!this.#kindChosen && !this.#options.intent && !this.#options.imported) {
-      const kind = this.#defaultKind();
-      if (kind !== this.#snapshot.kind && this.#snapshot.phase === "choosing" && !this.#isBegun())
-        this.#set({ kind, need: this.#needOf() });
-    }
     if (before === undefined || need !== undefined || !this.picker) return;
     const { mode, list } = this.picker.getSnapshot();
     if (mode === "existing" && list.state !== "ready" && list.state !== "loading")
@@ -599,7 +529,6 @@ export class CloudCreate {
   setKind(kind: CreateKind): void {
     if (!this.kinds.includes(kind) || this.#snapshot.phase !== "choosing" || this.#isBegun())
       return;
-    this.#kindChosen = true;
     this.#set({ kind, problem: undefined, need: undefined });
     this.#set({ need: this.#needOf() });
     if (kind === "cloud") this.picker?.recheck();
@@ -609,16 +538,6 @@ export class CloudCreate {
     if (this.#snapshot.phase !== "choosing" || this.#isBegun()) return;
     this.#set({ name, ...(this.#snapshot.problem?.step === "name" && { problem: undefined }) });
     this.#nameRepository();
-  }
-
-  setWithFolder(withFolder: boolean): void {
-    if (!this.#options.chooseFolder || this.#snapshot.phase !== "choosing") return;
-    if (this.#made) return;
-    this.#folder = undefined;
-    this.#set({
-      withFolder,
-      ...(this.#snapshot.problem?.step === "folder" && { problem: undefined }),
-    });
   }
 
   /** The project is on its way to the platform, or there: what it is cannot change any more. */
@@ -665,7 +584,6 @@ export class CloudCreate {
     const intent: CreateIntent = {
       at: this.#env.now(),
       name: this.#snapshot.name,
-      withFolder: this.#snapshot.withFolder,
       shape: this.#snapshot.shape,
       width: this.#snapshot.width,
       height: this.#snapshot.height,
@@ -702,9 +620,9 @@ export class CloudCreate {
   // ---- making it
 
   /**
-   * Goes on with what people chose. Has to be called right in the press: a folder is asked for
-   * first, and the browser only asks then. Where a step stops, the snapshot says why, and this can
-   * be called again.
+   * Goes on with what people chose. Has to be called right in the press: a folder for a project of
+   * the offline mode is asked for first, and the browser only asks then. Where a step stops, the
+   * snapshot says why, and this can be called again.
    */
   submit(): Promise<void> {
     if (!this.canSubmit || this.#working) return Promise.resolve();
@@ -714,12 +632,7 @@ export class CloudCreate {
     if (!format) return Promise.resolve();
     if (kind === "local") return this.#elsewhere(this.#options.createLocal?.(trimmed, format));
     if (kind === "browser") return this.#elsewhere(this.#options.createHere?.(trimmed, format));
-    // Before anything waits: the browser asks for a folder only right after people pressed.
-    const asking =
-      this.#snapshot.withFolder && !this.#folder && !this.#made
-        ? this.#options.chooseFolder?.(trimmed)
-        : undefined;
-    const working = this.#run(trimmed, format, asking).finally(() => {
+    const working = this.#run(trimmed, format).finally(() => {
       this.#working = undefined;
       if (this.#snapshot.phase === "working") this.#set({ phase: "choosing" });
     });
@@ -735,28 +648,8 @@ export class CloudCreate {
     await making;
   }
 
-  async #run(
-    name: string,
-    format: NewFormat,
-    asking: Promise<FolderChoice | FolderRefusal | undefined> | undefined,
-  ): Promise<void> {
+  async #run(name: string, format: NewFormat): Promise<void> {
     this.#set({ phase: "working", problem: undefined, unconfirmed: false });
-    if (asking) {
-      let chosen: FolderChoice | FolderRefusal | undefined;
-      try {
-        chosen = await asking;
-      } catch {
-        chosen = "failed";
-      }
-      if (this.#closed) return;
-      // People changed their mind: nothing is made.
-      if (chosen === undefined) return;
-      if (typeof chosen === "string") {
-        this.#set({ problem: { step: "folder", code: chosen } });
-        return;
-      }
-      this.#folder = chosen;
-    }
     const picker = this.picker;
     if (!picker) return;
     if (!this.#made) {
@@ -832,10 +725,7 @@ export class CloudCreate {
 
   #stopAt(problem: CreateProblem): void {
     if (this.#snapshot.cancelling) return;
-    const step =
-      problem.step === "folder" || problem.step === "name" || problem.step === "files"
-        ? undefined
-        : problem.step;
+    const step = problem.step === "name" || problem.step === "files" ? undefined : problem.step;
     this.#set({
       phase: "choosing",
       problem,
@@ -950,7 +840,7 @@ export class CloudCreate {
     return true;
   }
 
-  /** Into this browser, and into the folder people chose, and open. Nothing is taken back here. */
+  /** Into this browser, and open. Nothing is taken back here. */
   async #place(): Promise<void> {
     const project = this.#project;
     const made = this.#made;
@@ -968,13 +858,10 @@ export class CloudCreate {
       return;
     }
     this.#set({ key });
-    const folder = this.#folder;
-    const { opened, inFolder } = await this.#options.open(key, folder);
-    const isPlaced = opened && (!folder || inFolder);
+    const opened = await this.#options.open(key);
     this.#set({
-      ...(inFolder && folder && { folder: folder.inside ?? folder.folder.name }),
-      ...(!isPlaced && { problem: { step: "place", code: opened ? "folder" : "browser" } }),
-      steps: { ...this.#snapshot.steps, place: isPlaced ? "done" : "failed" },
+      ...(!opened && { problem: { step: "place", code: "browser" } }),
+      steps: { ...this.#snapshot.steps, place: opened ? "done" : "failed" },
     });
     if (!opened) {
       this.#set({ phase: "done" });
@@ -1146,8 +1033,6 @@ const plain = { interpolation: { escapeValue: false } } as const;
 /** Why a step stopped, and what helps, in words. */
 export function createProblemText(problem: CreateProblem, t: TFunction): string {
   switch (problem.step) {
-    case "folder":
-      return t(`newProject.folder.${problem.code}`);
     case "place":
       return t(`newProject.place.${problem.code}`);
     case "name":
@@ -1166,15 +1051,10 @@ export function createProblemText(problem: CreateProblem, t: TFunction): string 
 }
 
 /** What a step is called. */
-export function createStepText(
-  id: CreateStepId,
-  mode: PickerMode,
-  withFolder: boolean,
-  t: TFunction,
-): string {
+export function createStepText(id: CreateStepId, mode: PickerMode, t: TFunction): string {
   if (id === "repository")
     return t(mode === "create" ? "cloud.connect.step.create" : "cloud.connect.step.existing");
-  if (id === "place") return t(withFolder ? "newProject.step.folder" : "newProject.step.browser");
+  if (id === "place") return t("newProject.step.browser");
   if (id === "upload") return t("newProject.step.upload");
   return t("cloud.connect.step.archive");
 }

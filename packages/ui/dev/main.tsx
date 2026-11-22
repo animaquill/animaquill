@@ -1,7 +1,7 @@
-import { createBrowserHost } from "@animaquill/host/browser";
+import type { Host } from "@animaquill/host";
 import { Bug, Frame } from "lucide-react";
 import { useState } from "react";
-import { mountEditor, type PanelDefinition } from "../src/index.ts";
+import { startApp, type PanelDefinition } from "../src/index.ts";
 import { fakeAccount } from "./account.ts";
 
 function CrashTest() {
@@ -77,7 +77,7 @@ const strict = new URLSearchParams(location.search).get("strict") !== "off";
 
 /**
  * Reports go where they go on a site, which the development server does not answer: tests stand in
- * for the server there.
+ * for the server there. Only online: the offline mode asks nothing of a backend.
  */
 const diagnostics = {
   async send(report: unknown): Promise<string> {
@@ -92,31 +92,35 @@ const diagnostics = {
   },
 };
 
-/** An account to sign in to, for the tests of the account menu: the development page has none. */
+/**
+ * A backend to sign in to, for the tests of the online mode (`?account=fake`): the development
+ * page has none, and is only offline without it. `&cloud=fake` adds a platform in this tab to keep
+ * projects, see dev/cloud.ts, made of what the unit tests have: loaded only then.
+ */
 const account =
   new URLSearchParams(location.search).get("account") === "fake" ? fakeAccount() : undefined;
-
-/**
- * A platform in this tab to connect projects to, for the tests of the start page, the dialog that
- * connects a project and the panel of the platform, see dev/cloud.ts: `?cloud=fake`, with the fake
- * account. Loaded only then: it is made of what the unit tests have.
- */
 const fake =
   account && new URLSearchParams(location.search).get("cloud") === "fake"
     ? (await import("./cloud.ts")).fakeCloud(account)
     : undefined;
 if (fake) Object.assign(window, { aqCloud: fake.lab });
 
-const host = {
-  ...createBrowserHost(),
-  diagnostics,
-  ...(account && { account }),
-  ...(fake && { cloud: fake.cloud }),
-};
+/** The host the page got, for the hooks of the tests. */
+let host: Host | undefined;
 const root = document.querySelector<HTMLElement>("#root");
 if (root)
-  await mountEditor(root, {
-    host,
+  await startApp(root, {
+    ...(account && {
+      online: {
+        backend: location.host,
+        account: () => account,
+        parts: () => ({ diagnostics, ...(fake && { cloud: fake.cloud }) }),
+      },
+    }),
+    extend: (made) => {
+      host = made;
+      return made;
+    },
     version: "dev",
     compositorUrl: "/compositor.html",
     sceneOrigins,

@@ -332,7 +332,7 @@ test("the files of a project go with it", async ({ page }) => {
     page.evaluate(
       () =>
         new Promise<number>((resolve) => {
-          const open = indexedDB.open("animaquill");
+          const open = indexedDB.open("aq-offline-animaquill");
           open.onsuccess = () => {
             const request = open.result.transaction("media").objectStore("media").count();
             request.onsuccess = () => {
@@ -358,7 +358,7 @@ test("a project saved before files existed still opens, and takes files", async 
         asked.addEventListener("success", () => resolve(asked.result));
         asked.addEventListener("error", () => reject(asked.error));
       });
-    const current = await read(indexedDB.open("animaquill"));
+    const current = await read(indexedDB.open("aq-offline-animaquill"));
     const transaction = current.transaction(["projects", "updates"]);
     const projects = await read(transaction.objectStore("projects").getAll());
     const updates = await read(transaction.objectStore("updates").getAll());
@@ -366,7 +366,7 @@ test("a project saved before files existed still opens, and takes files", async 
     await read(indexedDB.deleteDatabase("animaquill"));
 
     // The database as the first version made it.
-    const open = indexedDB.open("animaquill", 1);
+    const open = indexedDB.open("aq-offline-animaquill", 1);
     open.onupgradeneeded = () => {
       const database = open.result;
       database.createObjectStore("projects", { keyPath: "id" });

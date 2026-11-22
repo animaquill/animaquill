@@ -86,7 +86,7 @@ async function setUp(options: NonNullable<Parameters<typeof windowOf>[2]> = {}) 
       open: async (key) => {
         await here.open(key);
         opened.push(key);
-        return { opened: here.session.key === key, inFolder: false };
+        return here.session.key === key;
       },
       projects: here.cloud,
       signIn: here.signIn,
@@ -162,7 +162,7 @@ describe("making a project of the platform", () => {
     const link = await here.browser.links.get(project!);
     expect(link).toMatchObject({ project, name: "Atom" });
     expect(link?.creating).toBeUndefined();
-    expect(here.cloud.getSnapshot()).toMatchObject({ kind: "linked", local: "browser" });
+    expect(here.cloud.getSnapshot()).toMatchObject({ kind: "linked" });
     expect(create.getSnapshot()).toMatchObject({ phase: "archiving", problem: undefined });
     expect(stepsOf(create)).toBe("done done done running");
     // Whole: nothing is left to tidy away.
@@ -439,33 +439,9 @@ describe("making a project of the platform", () => {
       phase: "done",
       problem: { step: "place", code: "browser" },
     });
-    expect(createProblemText(create.getSnapshot().problem!, t.t)).toContain("云端项目已经建好");
+    expect(createProblemText(create.getSnapshot().problem!, t.t)).toContain("项目已经建好");
     expect(onPlatform(world)).toHaveLength(1);
     expect(platform.removed).toEqual([]);
-  });
-
-  it("asks for a folder in the press, and makes nothing where people choose none", async () => {
-    const world = await setUp();
-    const { time, createOf } = world;
-    let asked = 0;
-    const create = createOf({
-      chooseFolder: async () => {
-        asked += 1;
-        return asked === 1 ? undefined : "project";
-      },
-    });
-    create.setWithFolder(true);
-    await time.advance(100);
-    const pressed = create.submit();
-    // Right in the press, before anything waits.
-    expect(asked).toBe(1);
-    await time.advance(100);
-    await pressed;
-    expect(create.getSnapshot()).toMatchObject({ phase: "choosing", problem: undefined });
-    expect(onPlatform(world)).toEqual([]);
-    await submit(create, time);
-    expect(create.getSnapshot().problem).toEqual({ step: "folder", code: "project" });
-    expect(onPlatform(world)).toEqual([]);
   });
 
   it("comes back with what people chose after signing in, and goes on", async () => {
@@ -475,7 +451,6 @@ describe("making a project of the platform", () => {
     expect(create.getSnapshot().need).toBe("signIn");
     expect(create.canSubmit).toBe(false);
     create.setName("原子");
-    create.setWithFolder(true);
     create.picker?.setName("atom-film");
     await create.signIn();
     expect(here.signIn).toHaveBeenCalledTimes(1);
@@ -492,12 +467,10 @@ describe("making a project of the platform", () => {
     // Once.
     expect(takeCreateIntent(memory, time.now())).toBeUndefined();
     here.who.set({ status: "signedIn", id: "user-ada", name: "ada", appInstalled: true });
-    const again = createOf({ intent: intent!, chooseFolder: async () => undefined });
+    const again = createOf({ intent: intent! });
     expect(again.getSnapshot()).toMatchObject({ kind: "cloud", name: "原子", need: undefined });
-    // No folder without a way to choose one.
     expect(again.picker?.getSnapshot().name).toBe("atom-film");
     await time.advance(100);
-    again.setWithFolder(false);
     await submit(again, time);
     expect(again.getSnapshot().phase).toBe("archiving");
     expect(world.platform.repositories.get(onPlatform(world)[0]!)).toMatchObject({
@@ -568,18 +541,15 @@ describe("making a project of the platform", () => {
 });
 
 describe("what can be made", () => {
-  it("is a folder, a project of the platform, and one in this browser only for tests", async () => {
+  it("is a folder, a project of the platform, or one in this browser", async () => {
     const world = await setUp();
     const make = world.createOf({
       createLocal: async () => {},
       createHere: async () => {},
     });
     expect(make.kinds).toEqual(["local", "cloud", "browser"]);
-    // Tests make theirs in the browser by default; people never get that kind.
-    expect(make.getSnapshot().kind).toBe("browser");
-    const people = world.createOf({ createLocal: async () => {} });
-    expect(people.kinds).toEqual(["local", "cloud"]);
-    expect(people.getSnapshot().kind).toBe("cloud");
+    // The first of them is what a new project is by default: callers pass one kind per mode.
+    expect(make.getSnapshot().kind).toBe("local");
     const imported = world.createOf({ createHere: async () => {}, imported: true });
     expect(imported.kinds).toEqual(["cloud"]);
   });
@@ -603,34 +573,25 @@ describe("what can be made", () => {
 });
 
 describe("what a new project is like", () => {
-  it("is of the platform where someone is signed in, and of this computer where not", async () => {
-    const world = await setUp({ signedIn: false });
-    const create = world.createOf({ createLocal: async () => {} });
-    expect(create.getSnapshot().kind).toBe("local");
-    // Signing in, as the account says once it knows.
-    world.here.who.set({ status: "signedIn", id: "user-ada", name: "ada", appInstalled: true });
-    expect(create.getSnapshot().kind).toBe("cloud");
-    // What people chose stays, whatever the account says.
-    create.setKind("local");
-    world.here.who.set({ status: "signedOut" });
-    world.here.who.set({ status: "signedIn", id: "user-ada", name: "ada", appInstalled: true });
-    expect(create.getSnapshot().kind).toBe("local");
-    // Without folders there is only the platform, signed in or not.
-    const noFolders = (await setUp({ signedIn: false })).createOf();
-    expect(noFolders.kinds).toEqual(["cloud"]);
-    expect(noFolders.getSnapshot()).toMatchObject({ kind: "cloud", need: "signIn" });
-  });
-
-  it("is of this computer where people said so for their account, until they choose", async () => {
-    const world = await setUp();
-    let cloud = false;
-    const create = world.createOf({ createLocal: async () => {}, preferCloud: () => cloud });
-    expect(create.getSnapshot().kind).toBe("local");
-    // Said otherwise on another device, as the account says once it knows.
-    cloud = true;
-    world.here.who.set({ status: "signedIn", id: "user-ada", name: "ada", appInstalled: false });
-    expect(create.getSnapshot().kind).toBe("cloud");
-    expect(create.kinds).toContain("cloud");
+  it("is of the one kind there is in the mode, whoever is signed in", async () => {
+    const online = (await setUp({ signedIn: false })).createOf();
+    expect(online.kinds).toEqual(["cloud"]);
+    expect(online.getSnapshot()).toMatchObject({ kind: "cloud", need: "signIn" });
+    // Offline: a folder, or where the browser cannot write folders, this browser.
+    const offlineOf = (more: Partial<CloudCreateOptions>) =>
+      new CloudCreate({
+        name: "原子",
+        content: () => ({ state: new Uint8Array(), projectId: "p" }),
+        keep: async () => undefined,
+        open: async () => false,
+        window: "w",
+        editor: "test",
+        ...more,
+      });
+    const offline = offlineOf({ createLocal: async () => {} });
+    expect(offline.kinds).toEqual(["local"]);
+    expect(offline.getSnapshot().kind).toBe("local");
+    expect(offlineOf({ createHere: async () => {} }).kinds).toEqual(["browser"]);
   });
 
   it("is made in the shape and at the frame rate people chose, landscape at 30 by default", async () => {
@@ -642,6 +603,7 @@ describe("what a new project is like", () => {
         local.push(format);
       },
     });
+    create.setKind("cloud");
     expect(create.getSnapshot()).toMatchObject({ shape: "landscape", fps: "30" });
     expect(create.format).toMatchObject({ width: 1920, height: 1080, fps: "30" });
     create.setShape("portrait");
@@ -818,10 +780,8 @@ describe("what the independent review found", () => {
     let loaded: (toPinyin: (text: string) => string[]) => void = () => {};
     const create = world.createOf({
       pinyin: () => new Promise((resolve) => (loaded = resolve)),
-      chooseFolder: () => new Promise(() => {}),
     });
     const before = create.picker?.getSnapshot().name;
-    create.setWithFolder(true);
     await world.time.advance(100);
     void create.submit();
     loaded((text) => [...text].map(() => "zi"));

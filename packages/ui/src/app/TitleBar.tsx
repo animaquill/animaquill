@@ -3,7 +3,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { TrialStatus } from "../properties/TrialStatus.tsx";
 import { formatCombo } from "../workbench/keys.ts";
-import { AccountMenu } from "./AccountMenu.tsx";
+import { AccountMenu, OfflineSignIn } from "./AccountMenu.tsx";
 import { useLayout, useProject, useSession, useWorkbench } from "./context.ts";
 import { Menu } from "./Menu.tsx";
 import styles from "./TitleBar.module.css";
@@ -107,7 +107,11 @@ export function TitleBar() {
         >
           <Settings size={15} />
         </button>
-        {workbench.account && <AccountMenu account={workbench.account} />}
+        {workbench.account ? (
+          <AccountMenu account={workbench.account} />
+        ) : (
+          workbench.canGoOnline && <OfflineSignIn />
+        )}
       </div>
     </header>
   );

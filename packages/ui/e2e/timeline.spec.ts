@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { chooseLayout, content, expect, tab, test } from "./support.ts";
+import { chooseLayout, content, expect, waitSaved, tab, test } from "./support.ts";
 
 const panel = (page: Page) => content(page, "timeline");
 /** The clips, and not the keys that show under them. */
@@ -1404,7 +1404,7 @@ test.describe("as part of the editor", () => {
     await page.getByRole("menuitem", { name: "新建项目" }).click();
     await page.getByRole("textbox", { name: "项目名称" }).fill("另一个");
     await page.keyboard.press("Enter");
-    await expect(page.getByRole("status").filter({ hasText: "已保存" })).toBeVisible();
+    await waitSaved(page);
     await tab(page, "timeline").click();
     await expect(clips(page)).toHaveCount(0);
     await expect(timecode(page)).toHaveText("0:00/00");

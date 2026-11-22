@@ -108,11 +108,13 @@ export async function compositor(page: Page): Promise<Frame> {
  * the hooks of the development page are not there yet. On a busy machine that takes a while.
  */
 export const editorReady = (page: Page) =>
-  expect(page.locator("header").first()).toBeVisible({ timeout: 0 });
+  // Or the entry page, which is what a site with a backend shows before anybody signed in.
+  expect(page.locator("header").first().or(page.getByTestId("entry"))).toBeVisible({ timeout: 0 });
 
 /** Creates a project the way people do. */
 export async function createProject(page: Page, name = "测试项目") {
-  await page.getByRole("button", { name: "新建项目" }).click();
+  // Where there are projects already, the new card has the same name as the button above it.
+  await page.getByRole("button", { name: "新建项目" }).first().click();
   await page.getByRole("textbox", { name: "项目名称" }).fill(name);
   await page.keyboard.press("Enter");
   await expect(tab(page, "preview")).toBeVisible();
@@ -227,6 +229,14 @@ export const test = base.extend<{
           // A scene opened directly has no origin and no storage: its sandbox works.
           try {
             localStorage.setItem("animaquill.projectsInBrowser", "yes");
+            // People heard once that projects of the offline mode stay in this browser.
+            localStorage.setItem("aq-offline-animaquill.offline.browserProjects", "1");
+          } catch {}
+          // The browser has agreed to keep the projects (the notice that it did not is no part of
+          // the other tests; there is none to see in a test browser that has not been asked).
+          try {
+            navigator.storage.persisted = async () => true;
+            navigator.storage.persist = async () => true;
           } catch {}
         });
       }
@@ -235,14 +245,14 @@ export const test = base.extend<{
         await page.addInitScript(() => {
           if (window !== window.top) return;
           try {
-            localStorage.setItem("animaquill.trial", '{"version":1,"enabled":false}');
+            localStorage.setItem("aq-offline-animaquill.trial", '{"version":1,"enabled":false}');
           } catch {}
         });
       }
       if (quality !== "auto") {
         await page.addInitScript((choice) => {
           if (window !== window.top) return;
-          const key = "animaquill.previewQuality";
+          const key = "aq-offline-animaquill.previewQuality";
           try {
             if (localStorage.getItem(key) === null) {
               localStorage.setItem(key, JSON.stringify({ version: 1, choice }));
@@ -254,7 +264,18 @@ export const test = base.extend<{
       }
       await page.goto("/");
       await editorReady(page);
-      if (withProject) await createProject(page);
+      if (withProject) {
+        // On a site with a backend (scripts/e2e-edge) the page asks first: these tests are of the
+        // offline mode, where a project is made without anybody signed in.
+        const offline = page.getByTestId("entry").getByRole("button", {
+          name: "不登录，使用离线模式",
+        });
+        if (await offline.isVisible()) {
+          await offline.click();
+          await editorReady(page);
+        }
+        await createProject(page);
+      }
       await use(problems);
       expect(problems).toEqual([]);
     },
@@ -268,4 +289,49 @@ export const needsDevPage = (what: string) => `only the development page has ${w
 /** Skips the tests around it against the site, for what only the development page has. */
 export function devPageOnly(what: string, when = true): void {
   test.skip(({ devPage }) => when && !devPage, needsDevPage(what));
+}
+
+/**
+ * Waits until what the open project changed is in this browser. A project only in this browser says
+ * nothing of being saved while it is (only the failing is told), so it is the log that is looked at:
+ * its length stays the same for a moment.
+ */
+export async function waitSaved(page: Page) {
+  let last = -1;
+  await expect
+    .poll(
+      async () => {
+        const count = await page.evaluate(async () => {
+          const names = (await indexedDB.databases()).map((one) => one.name ?? "");
+          const name = names.find((one) => /^aq-(offline|online-.*)-animaquill$/.test(one));
+          if (name === undefined) return 0;
+          return new Promise<number>((resolve) => {
+            const open = indexedDB.open(name);
+            open.addEventListener("error", () => resolve(0));
+            open.addEventListener("success", () => {
+              const database = open.result;
+              if (!database.objectStoreNames.contains("updates")) {
+                database.close();
+                resolve(0);
+                return;
+              }
+              const request = database.transaction("updates").objectStore("updates").count();
+              request.addEventListener("success", () => {
+                database.close();
+                resolve(request.result);
+              });
+              request.addEventListener("error", () => {
+                database.close();
+                resolve(0);
+              });
+            });
+          });
+        });
+        const same = count === last;
+        last = count;
+        return same;
+      },
+      { intervals: [400], timeout: 10_000 },
+    )
+    .toBe(true);
 }

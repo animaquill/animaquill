@@ -1,17 +1,25 @@
 import type { Page } from "@playwright/test";
 import { cardMenu, noProjects, projectCard, sidebar } from "./start-support.ts";
-import { content, createProject, expect, layoutMenu, needsDevPage, tab, test } from "./support.ts";
+import {
+  content,
+  createProject,
+  expect,
+  layoutMenu,
+  needsDevPage,
+  waitSaved,
+  tab,
+  test,
+} from "./support.ts";
 
 const statusName = (page: Page, name: string) =>
   page.locator("footer").getByRole("button", { name, exact: true });
-const saved = (page: Page) => expect(page.locator("footer").getByText("已保存")).toBeVisible();
 
 /** How many updates are saved in this browser. */
 const countUpdates = (page: Page) =>
   page.evaluate(
     () =>
       new Promise<number>((resolve) => {
-        const open = indexedDB.open("animaquill");
+        const open = indexedDB.open("aq-offline-animaquill");
         open.onsuccess = () => {
           const database = open.result;
           const request = database.transaction("updates").objectStore("updates").count();
@@ -48,12 +56,13 @@ test.describe("without a project", () => {
   });
 
   test("says where projects are kept", async ({ page, devPage }) => {
-    // On this computer, with no platform: the site asks people to sign in instead, see
-    // deployment-start.spec.ts of AnimaQuill Cloud.
+    // The offline mode of a browser that cannot write folders: in the browser. The site asks
+    // people to sign in or choose the offline mode first, see deployment-start.spec.ts of
+    // AnimaQuill Cloud.
     test.skip(!devPage, needsDevPage("no platform"));
-    await expect(
-      page.getByText("这个浏览器不能打开电脑上的文件夹，本机版请用 Edge 或 Chrome。"),
-    ).toBeVisible();
+    await expect(page.getByRole("button", { name: /^新建项目/ }).last()).toContainText(
+      "项目存在这个浏览器里",
+    );
   });
 
   test("offers only what makes sense", async ({ page }) => {
@@ -74,7 +83,7 @@ test.describe("without a project", () => {
   });
 
   test("says so when the address names a project that is not there", async ({ page }) => {
-    await page.goto("/?from=mail&project=project_missing#top");
+    await page.goto("/offline/p/project_missing?from=mail#top");
     await expect(page.getByText("没有找到这个项目")).toBeVisible();
     await noProjects(page);
     expect(new URL(page.url()).search).toBe("?from=mail");
@@ -96,25 +105,25 @@ test.describe("without a project", () => {
     // Where there is no platform, the name is all a new project needs here. The dialog of the
     // site is tested in deployment-create.spec.ts of AnimaQuill Cloud.
     test.skip(!devPage, needsDevPage("no platform"));
-    await page.getByRole("button", { name: "新建项目" }).click();
+    await page.getByRole("button", { name: "新建项目" }).first().click();
     const input = page.getByRole("textbox", { name: "项目名称" });
     await expect(input).toHaveValue("未命名项目");
     await expect(input).toBeFocused();
     await input.fill("   ");
-    await expect(page.getByRole("button", { name: "创建" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "新建", exact: true })).toBeDisabled();
     await page.keyboard.press("Enter");
     await expect(input).toBeVisible();
   });
 
   test("can cancel creating a project", async ({ page }) => {
-    await page.getByRole("button", { name: "新建项目" }).click();
+    await page.getByRole("button", { name: "新建项目" }).first().click();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await noProjects(page);
   });
 
   test("leaves Enter to the input method during composition", async ({ page }) => {
-    await page.getByRole("button", { name: "新建项目" }).click();
+    await page.getByRole("button", { name: "新建项目" }).first().click();
     const input = page.getByRole("textbox", { name: "项目名称" });
     await input.evaluate((element) => {
       element.dispatchEvent(
@@ -128,7 +137,7 @@ test.describe("without a project", () => {
 test.describe("with a project", () => {
   test("comes back after a reload", async ({ page }) => {
     await renameTo(page, "改过的名字");
-    await saved(page);
+    await waitSaved(page);
     await page.reload();
     await expect(statusName(page, "改过的名字")).toBeVisible();
     await expect(tab(page, "preview")).toBeVisible();
@@ -210,7 +219,7 @@ test.describe("with a project", () => {
     await page.keyboard.press("Control+Shift+KeyP");
     await page.keyboard.press("Control+KeyS");
     expect(await pressed()).toBe(true);
-    await saved(page);
+    await waitSaved(page);
   });
 
   test("renames in the project properties, which the name in the status bar opens", async ({
@@ -297,7 +306,7 @@ test.describe("with a project", () => {
     page,
     context,
   }) => {
-    await saved(page);
+    await waitSaved(page);
     const other = await context.newPage();
     await other.goto(page.url());
     await expect(statusName(other, "测试项目")).toBeVisible();
@@ -331,7 +340,7 @@ test.describe("with a project", () => {
     page,
     context,
   }) => {
-    await saved(page);
+    await waitSaved(page);
     const other = await context.newPage();
     await other.goto("/");
     await expect(other.getByRole("link", { name: /^测试项目/ })).toBeVisible();
@@ -341,7 +350,7 @@ test.describe("with a project", () => {
 
   test("the address says which project is open", async ({ page }) => {
     const opened = page.url();
-    expect(new URL(opened).searchParams.get("project")).toMatch(/^project_/);
+    expect(new URL(opened).pathname).toMatch(/^\/offline\/p\/project_/);
 
     await chooseFrom(page, "文件", "关闭项目");
     await expect(sidebar(page)).toBeVisible();
@@ -356,7 +365,7 @@ test.describe("with a project", () => {
     page,
     context,
   }) => {
-    await saved(page);
+    await waitSaved(page);
     const other = await context.newPage();
     await other.goto("/");
     await cardMenu(other, "测试项目", "删除…");
@@ -370,7 +379,7 @@ test.describe("with a project", () => {
   });
 
   test("shows changes from another window of the same project", async ({ page, context }) => {
-    await saved(page);
+    await waitSaved(page);
     const other = await context.newPage();
     await other.goto(page.url());
     await expect(statusName(other, "测试项目")).toBeVisible();
@@ -384,13 +393,13 @@ test.describe("with a project", () => {
 
   test("merges a long log on the next visit, with nothing lost", async ({ page }) => {
     await renameTo(page, "第二个名字");
-    await saved(page);
+    await waitSaved(page);
     // How many writes a burst of changes takes depends on the disk, so the log is built by hand.
     // An update that arrives twice does no harm.
     await page.evaluate(
       () =>
         new Promise<void>((resolve) => {
-          const open = indexedDB.open("animaquill");
+          const open = indexedDB.open("aq-offline-animaquill");
           open.onsuccess = () => {
             const database = open.result;
             const transaction = database.transaction("updates", "readwrite");
@@ -440,7 +449,7 @@ test.describe("when saving fails", () => {
   }
 
   test("says so, keeps the change, and recovers on its own", async ({ page }) => {
-    await saved(page);
+    await waitSaved(page);
     await breakStorage(page);
     await renameWithoutSaving(page);
     await expect(page.getByText("改动无法保存到这个浏览器")).toBeVisible();
@@ -449,14 +458,15 @@ test.describe("when saving fails", () => {
     await page.evaluate(() => {
       (window as unknown as { restoreStorage: () => void }).restoreStorage();
     });
-    await expect(page.locator("footer").getByText("已保存")).toBeVisible({ timeout: 8000 });
+    // Saved again: offline, a project only in this browser says nothing more about it.
+    await expect(page.locator("footer").getByText("没有保存")).toHaveCount(0, { timeout: 8000 });
     await expect(page.getByText("改动已经保存好了")).toBeVisible();
     await page.reload();
     await expect(statusName(page, "没保存上")).toBeVisible();
   });
 
   test("asks before leaving the project, and stays when told to", async ({ page }) => {
-    await saved(page);
+    await waitSaved(page);
     await breakStorage(page);
     await renameWithoutSaving(page);
     await chooseFrom(page, "文件", "关闭项目");
@@ -472,7 +482,7 @@ test.describe("when saving fails", () => {
   });
 
   test("warns before leaving the page", async ({ page }) => {
-    await saved(page);
+    await waitSaved(page);
     await breakStorage(page);
     await renameWithoutSaving(page);
     const seen = new Promise<string>((resolve) => {
@@ -556,11 +566,11 @@ test.describe("when the data is out of reach", () => {
   });
 
   test("steps aside for a newer version that upgrades the data", async ({ page }) => {
-    await saved(page);
+    await waitSaved(page);
     const upgraded = await page.evaluate(
       () =>
         new Promise<string>((resolve) => {
-          const request = indexedDB.open("animaquill", 3);
+          const request = indexedDB.open("aq-offline-animaquill", 2);
           request.onsuccess = () => {
             request.result.close();
             resolve("upgraded");
@@ -574,7 +584,7 @@ test.describe("when the data is out of reach", () => {
   });
 
   test("does not write on when another window removed the project", async ({ page, context }) => {
-    await saved(page);
+    await waitSaved(page);
     const other = await context.newPage();
     await other.goto("/");
     await cardMenu(other, "测试项目", "删除…");
@@ -590,11 +600,11 @@ test.describe("when the data is out of reach", () => {
 
 test.describe("damaged saved data", () => {
   test("still opens what it can, and says so", async ({ page }) => {
-    await saved(page);
+    await waitSaved(page);
     await page.evaluate(
       () =>
         new Promise<void>((resolve) => {
-          const open = indexedDB.open("animaquill");
+          const open = indexedDB.open("aq-offline-animaquill");
           open.onsuccess = () => {
             const transaction = open.result.transaction(["updates", "projects"], "readwrite");
             const read = transaction.objectStore("projects").getAll();

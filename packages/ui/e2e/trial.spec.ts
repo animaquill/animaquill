@@ -737,7 +737,7 @@ const keptRecords = (page: Page) =>
   page.evaluate(
     () =>
       new Promise<unknown[]>((resolve, reject) => {
-        const opening = indexedDB.open("animaquill-trials");
+        const opening = indexedDB.open("aq-offline-animaquill-trials");
         opening.addEventListener("error", () => reject(opening.error));
         opening.addEventListener("success", () => {
           const reading = opening.result.transaction("trials").objectStore("trials").getAll();
@@ -875,7 +875,7 @@ test("what was kept cannot keep a project from opening", async ({ page }) => {
   await page.evaluate(
     () =>
       new Promise<void>((resolve, reject) => {
-        const opening = indexedDB.open("animaquill-trials");
+        const opening = indexedDB.open("aq-offline-animaquill-trials");
         opening.addEventListener("error", () => reject(opening.error));
         opening.addEventListener("success", () => {
           const transaction = opening.result.transaction("trials", "readwrite");

@@ -1,14 +1,11 @@
 /**
- * What `CloudProjects` needs around taking a copy back (`take-back.ts`) that is about people and the
- * folder: asking them which side files are to be, and keeping what the folder had of the files that
- * change before anything changes them.
+ * What `CloudProjects` needs around taking a copy back (`take-back.ts`) that is about people:
+ * asking them which side files are to be, and why it did not get there.
  */
-import { FolderError, type LocalFolder } from "@animaquill/host";
 import type { Problem } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import { commandFailedText } from "../i18n/failures.ts";
 import type { Dialogs, FormAnswer } from "../workbench/dialogs.ts";
-import { IGNORE_FILE, RECOVERED_FOLDER, stampOf } from "../folder/session.ts";
 import {
   isSettled,
   reconcileItems,
@@ -90,64 +87,6 @@ export const chooseTakeBack =
 /** A problem of a file, the way people read it in a line. */
 const problemText = (t: TFunction, { file, path, message }: Problem): string =>
   t("transfer.problem", { place: path ? `${file} ${path}` : file, message });
-
-const sameBytes = (a: Uint8Array, b: Uint8Array) =>
-  a.length === b.length && a.every((byte, index) => byte === b[index]);
-
-/**
- * Keeps what the folder has of these files in a folder of its own in `RECOVERED_FOLDER`, each read
- * back, before taking a copy back changes them. Resolves to where, or undefined where the folder has
- * none of them; rejects where any could not be kept as it was.
- */
-export async function keepFolderFiles(
-  folder: LocalFolder,
-  paths: readonly string[],
-  now: number,
-): Promise<string | undefined> {
-  const found: { readonly path: string; readonly content: Uint8Array<ArrayBuffer> }[] = [];
-  for (const path of paths) {
-    try {
-      found.push({ path, content: await folder.read(path) });
-    } catch (error) {
-      // Not there is nothing to keep; anything else is no way to go on.
-      if (!(error instanceof FolderError && error.reason === "missing")) throw error;
-    }
-  }
-  if (found.length === 0) return undefined;
-  try {
-    await folder.write(IGNORE_FILE, "*\n", { expected: "absent" });
-  } catch (error) {
-    if (!(
-      error instanceof FolderError &&
-      (error.reason === "changed" || error.reason === "exists")
-    ))
-      throw error;
-  }
-  const stamp = stampOf(now);
-  for (let number = 1; number <= 100; number++) {
-    const place = `${RECOVERED_FOLDER}/${stamp}-rebuilt${number === 1 ? "" : `-${number}`}`;
-    let isFree = true;
-    for (const { path } of found) {
-      if (
-        await folder.file(`${place}/${path}`).then(
-          () => true,
-          () => false,
-        )
-      ) {
-        isFree = false;
-        break;
-      }
-    }
-    if (!isFree) continue;
-    for (const { path, content } of found) {
-      const target = `${place}/${path}`;
-      await folder.write(target, content, { expected: "absent" });
-      if (!sameBytes(await folder.read(target), content)) throw new FolderError("failed", target);
-    }
-    return place;
-  }
-  throw new FolderError("failed", RECOVERED_FOLDER);
-}
 
 /** Why taking a copy back did not get there, in people's words. */
 export function takeBackFailedText(

@@ -1,3 +1,4 @@
+import { scoped } from "./scope.ts";
 import type { WorkCache } from "./index.ts";
 
 /**
@@ -33,7 +34,7 @@ const committed = (transaction: IDBTransaction) =>
   });
 
 function open(factory: IDBFactory): Promise<IDBDatabase> {
-  const request = factory.open(DATABASE, VERSION);
+  const request = factory.open(scoped(DATABASE), VERSION);
   request.addEventListener("upgradeneeded", () => {
     const entries = request.result.createObjectStore(ENTRIES, { keyPath: "key" });
     entries.createIndex(BY_USE, BY_USE);

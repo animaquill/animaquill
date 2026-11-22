@@ -86,7 +86,7 @@ describe("how the open project stands with its repository", () => {
     ).toBe("error unusable 仓库已删除");
   });
 
-  it("says, where it went wrong, why, what helps and that the platform keeps it a week", () => {
+  it("says, where it went wrong, why, what helps", () => {
     const paused = githubOfStatus(
       {
         status: status({ state: "paused", reason: "protected", detail: "Use a pull request." }),
@@ -95,7 +95,7 @@ describe("how the open project stands with its repository", () => {
       t,
     );
     expect(githubAbout(paused, t)).toBe(
-      "存进 GitHub 失败：GitHub 不让存档写进这个仓库（GitHub 的原话：Use a pull request.）。仓库可能设了保护规则，不让直接写入。在 GitHub 上去掉这条规则后点“现在存档”，或者换一个仓库。平台临时存储只保存 7 天，请尽快处理。",
+      "存进 GitHub 失败：GitHub 不让存档写进这个仓库（GitHub 的原话：Use a pull request.）。仓库可能设了保护规则，不让直接写入。在 GitHub 上去掉这条规则后点“现在存档”，或者换一个仓库。",
     );
     expect(githubAbout(githubOfStatus({ status: status({ head: 11 }), now: NOW }, t), t)).toBe(
       "有改动还没存进 GitHub，平台会自动存进去（停手 5 分钟，或连续编辑 30 分钟存一次），不用管。",
@@ -146,53 +146,5 @@ describe("how a project of the list stands with its repository", () => {
         repository: { ...repository, unusable: { reason: "gone", since: NOW, gone: "deleted" } },
       }),
     ).toBe("error unusable 仓库已删除");
-  });
-});
-
-describe("how long what GitHub does not have stays on the platform", () => {
-  const DAY = 24 * 60 * MINUTE;
-  const releaseAt = NOW + 3 * DAY - MINUTE;
-
-  it("says in how many days, for an error with changes GitHub does not have, where the platform says when", () => {
-    const paused = githubOfStatus(
-      { status: status({ state: "paused", reason: "protected", head: 11, releaseAt }), now: NOW },
-      t,
-    );
-    expect(paused.clearsIn).toBe(3);
-    expect(githubAbout(paused, t)).toMatch(
-      /平台临时存储只保存 7 天，请尽快处理。如果一直不打开，平台上的这些改动 3 天后清掉。$/,
-    );
-    // Nothing waits, the platform does not say, or the platform keeps them as it is GitHub's or its
-    // own failure: nothing is said.
-    for (const more of [
-      { state: "paused", reason: "protected", releaseAt },
-      { state: "paused", reason: "protected", head: 11 },
-      { head: 11, failures: 30, failingSince: NOW - FAILING_LONG_MS, releaseAt },
-    ] as const)
-      expect(githubOfStatus({ status: status(more), now: NOW }, t).clearsIn).toBeUndefined();
-    // Nor for something that is no error.
-    expect(githubOfStatus({ status: status({ head: 11, releaseAt }), now: NOW }, t).clearsIn).toBe(
-      undefined,
-    );
-    // The list says the same.
-    const listed = githubOfListed(
-      {
-        attention: "conflicts",
-        archive: { seq: 3, behind: true },
-        releaseAt: NOW + 6 * DAY + MINUTE,
-      },
-      NOW,
-      t,
-    );
-    expect(listed.clearsIn).toBe(7);
-  });
-
-  it("says that a project with no repository goes as a whole, where the platform says when", () => {
-    const none = githubOfStatus({ status: status({ state: "none", releaseAt }), now: NOW }, t);
-    expect(githubText(none, t)).toBe("没有仓库，7 天没打开会被删除");
-    expect(githubAbout(none, t)).toBe(
-      "没有 GitHub 仓库，7 天没打开会被删除。点“选仓库…”选一个仓库，选好以后会自动存进去。",
-    );
-    expect(of({ state: "none" })).toBe("error noRepository 还差一步：选仓库");
   });
 });

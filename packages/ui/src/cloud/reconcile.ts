@@ -280,10 +280,10 @@ export function settle(
 export const isSettled = (outcome: Settled | Unsettled): outcome is Settled => "after" in outcome;
 
 /**
- * Where the texts of a dialog that chooses sides are, by what "here" is: see "folder.adopt", and
- * "cloud.takeBack" for a copy that comes back to a working copy rebuilt from its repository.
+ * Where the texts of a dialog that chooses sides are: "cloud.takeBack", for a copy that comes back
+ * to a working copy rebuilt from its repository.
  */
-export type ReconcileWords = "folder.adopt" | "cloud.takeBack";
+export type ReconcileWords = "cloud.takeBack";
 
 /** When a file changed, the way people say it: the time of day for today, and the day otherwise. */
 export function whenText(time: number, now: number, t: TFunction): string {
@@ -300,8 +300,7 @@ export function whenText(time: number, now: number, t: TFunction): string {
 
 /**
  * The files to choose for, the way people see them: how each side has it, and the choices, with
- * what is chosen now. `words` is where the texts are, as "here" is a folder for one and something
- * else for another: see "folder.adopt" in the texts.
+ * what is chosen now. `words` is where the texts are, see "cloud.takeBack" in the texts.
  */
 export function reconcileItems(
   differences: readonly ReconcileDifference[],

@@ -100,16 +100,15 @@ const group = (id: string, name: string, more: Partial<ProjectGroup> = {}): Proj
   ...more,
 });
 
-/** One of everything: a folder, a connected folder, a copy here, one only there, and an old one. */
+/** One of everything: a folder, a copy here, two only there, and an old one. */
 const EVERYTHING: Partial<StartInput> = {
-  records: [folder("f-local", "课程片头", 50), folder("f-cloud", "旅行 Vlog", 40)],
+  records: [folder("f-local", "课程片头", 50)],
   projects: [
     kept("f-local", "课程片头", { folder: true, updatedAt: 45 }),
-    kept("f-cloud", "旅行 Vlog", { folder: true, updatedAt: 30 }),
     kept("k-here", "产品发布", { updatedAt: 20 }),
     kept("old", "旧项目", { updatedAt: 7 }),
   ],
-  links: [link("f-cloud", "p-vlog"), link("k-here", "p-launch")],
+  links: [link("k-here", "p-launch")],
   listed: [
     listed("p-vlog", "旅行 Vlog", { repository: repository("vlog"), updatedAt: 60 }),
     listed("p-launch", "产品发布", { repository: repository("launch") }),
@@ -123,7 +122,7 @@ const byName = (cards: readonly ProjectCard[], name: string) => {
   return card;
 };
 
-const CONTEXT: CardContext = { hasPlatform: true, canFolders: true, folder: "ready", copies: 0 };
+const CONTEXT: CardContext = { folder: "ready", copies: 0 };
 const DAY = 24 * 3600_000;
 
 describe("the cards of the start page", () => {
@@ -131,7 +130,7 @@ describe("the cards of the start page", () => {
     const cards = composeCards(listsOf(EVERYTHING), { marks: new Map(), groups: [] });
     expect(cards.map((card) => [card.name, card.kind])).toEqual([
       ["课程片头", "local"],
-      ["旅行 Vlog", "cloudFolder"],
+      ["旅行 Vlog", "cloudRemote"],
       ["产品发布", "cloudHere"],
       ["年会开场", "cloudRemote"],
       ["旧项目", "onlyHere"],
@@ -139,7 +138,7 @@ describe("the cards of the start page", () => {
     // A link opens what this browser keeps; one that it has nothing of has no address here.
     expect(cards.map((card) => card.key)).toEqual([
       "f-local",
-      "f-cloud",
+      undefined,
       "k-here",
       undefined,
       "old",
@@ -155,8 +154,8 @@ describe("the cards of the start page", () => {
     expect(cards.map((card) => [card.name, card.openedAt, card.updatedAt])).toEqual([
       // The later of what the folder and what this browser say.
       ["课程片头", 50, 45],
-      // The later of its log and the platform.
-      ["旅行 Vlog", 40, 60],
+      // Never opened here, and the platform's word is what there is.
+      ["旅行 Vlog", undefined, 60],
       ["产品发布", 80, 100],
       // Never opened here: it is not "recent".
       ["年会开场", undefined, 90],
@@ -170,8 +169,6 @@ describe("the cards of the start page", () => {
     const cards = composeCards(listsOf(EVERYTHING), {
       marks: marks({
         "f-local": { starredAt: 3, group: "g-work" },
-        // Organised before it was connected, and again since.
-        "f-cloud": { starredAt: 3, group: "g-work" },
         "cloud:p-vlog": { starredAt: null },
         "cloud:p-remote": { group: "g-gone" },
         old: { starredAt: 9 },
@@ -180,7 +177,7 @@ describe("the cards of the start page", () => {
     });
     expect(cards.map((card) => [card.name, card.starred, card.group, card.marksKey])).toEqual([
       ["课程片头", true, "g-work", "f-local"],
-      ["旅行 Vlog", false, "g-work", "cloud:p-vlog"],
+      ["旅行 Vlog", false, undefined, "cloud:p-vlog"],
       ["产品发布", false, undefined, "cloud:p-launch"],
       // A group that was taken away leads nowhere.
       ["年会开场", false, undefined, "cloud:p-remote"],
@@ -188,41 +185,11 @@ describe("the cards of the start page", () => {
     ]);
   });
 
-  it("keep the star and the group of a folder that was disconnected, as they were last", () => {
-    // Connected, it was starred and moved; both are kept where the folder is kept too.
-    const organized = {
-      marks: new Map([
-        ["cloud:p-vlog", { starredAt: 40, starAt: 40, group: "g-work", groupAt: 41, at: 41 }],
-        ["f-cloud", { starredAt: 40, starAt: 40, group: "g-work", groupAt: 41, at: 41 }],
-        // From before it was connected, which no longer counts.
-        ["f-local", { starredAt: null, starAt: 5, at: 5 }],
-      ]),
-      groups: [group("g-work", "工作")],
-    };
-    const connected = composeCards(listsOf(EVERYTHING), organized);
-    expect(byName(connected, "旅行 Vlog")).toMatchObject({ starred: true, group: "g-work" });
-    const disconnected = composeCards(
-      listsOf({ ...EVERYTHING, links: [link("k-here", "p-launch")] }),
-      organized,
-    );
-    expect(byName(disconnected, "旅行 Vlog")).toMatchObject({
-      kind: "local",
-      starred: true,
-      group: "g-work",
-    });
-    // Whatever was changed last counts, of either.
-    const later = composeCards(listsOf(EVERYTHING), {
-      ...organized,
-      marks: new Map([...organized.marks, ["f-cloud", { starredAt: null, starAt: 50, at: 50 }]]),
-    });
-    expect(byName(later, "旅行 Vlog")).toMatchObject({ starred: false, group: "g-work" });
-  });
-
   it("say where a star goes, with whose project of the platform it is", () => {
     const cards = composeCards(listsOf(EVERYTHING), NOTHING_ORGANIZED);
     expect(cards.map(marksTargetOf)).toEqual([
       { key: "f-local" },
-      { key: "cloud:p-vlog", also: "f-cloud", account: "user-ada" },
+      { key: "cloud:p-vlog", account: "user-ada" },
       { key: "cloud:p-launch", also: "k-here", account: "user-ada" },
       // Never opened here: whose it is, as the list of whoever is signed in has it.
       { key: "cloud:p-remote", account: "user-ada" },
@@ -241,7 +208,7 @@ describe("the cards of the start page", () => {
     );
     expect(cards[0]).toMatchObject({ marksKey: undefined, starred: false });
     expect(cardActions(cards[0] as ProjectCard, CONTEXT).flat()).not.toContain("star");
-    expect(cardStatus(cards[0] as ProjectCard, undefined, t).text).toBe("云端 · 是另一个账号的");
+    expect(cardStatus(cards[0] as ProjectCard, undefined, t).text).toBe("是另一个账号的");
   });
 
   it("show the groups by name, without those taken away", () => {
@@ -262,25 +229,34 @@ describe("what a card says", () => {
     cardStatus(byName(cards, name), folderStatus, t);
 
   it("says where each project is", () => {
+    // A folder says its folder, a project of the platform its repository.
     expect(cards.map((card) => cardStatus(card, "ready", t).text)).toEqual([
-      "本地 · dir-f-local",
-      "云端 · 文件夹也有一份",
-      "云端 · 只在这个浏览器里",
-      "云端 · 这台电脑还没打开过",
+      "dir-f-local",
+      "ada/vlog",
+      "ada/launch",
+      "ada/annual",
       "只在浏览器里",
     ]);
     expect(cards.map((card) => cardStatus(card, "ready", t).place)).toEqual([
       "folder",
-      "cloudFolder",
+      "cloud",
       "cloud",
       "cloud",
       "browser",
     ]);
+    // That it is not on this computer yet is for hovering.
+    expect(cards.map((card) => cardStatus(card, "ready", t).hint)).toEqual([
+      expect.any(String),
+      "这台电脑还没打开过",
+      undefined,
+      "这台电脑还没打开过",
+      expect.any(String),
+    ]);
     expect(cards.map((card) => cardPlace(card, t))).toEqual([
       "本地 · dir-f-local",
-      "云端 · ada/vlog",
-      "云端 · ada/launch",
-      "云端 · ada/annual",
+      "ada/vlog",
+      "ada/launch",
+      "ada/annual",
       "只在浏览器里",
     ]);
   });
@@ -294,19 +270,18 @@ describe("what a card says", () => {
 
   it("says that a folder cannot be found", () => {
     expect(line("课程片头", "gone")).toMatchObject({ text: "找不到文件夹", tone: "warning" });
-    expect(line("旅行 Vlog", "blocked")).toMatchObject({
-      text: "云端 · 浏览器不允许访问",
+    expect(line("课程片头", "blocked")).toMatchObject({
+      text: "浏览器不允许访问",
       tone: "warning",
     });
     // Asking for the folder again is how folders are after a restart of the browser.
-    expect(line("课程片头", "ask")).toMatchObject({ text: "本地 · dir-f-local", tone: "plain" });
+    expect(line("课程片头", "ask")).toMatchObject({ text: "dir-f-local", tone: "plain" });
   });
 
   it("says what needs people, in place of where it is", () => {
     const troubled = composeCards(
       listsOf({
-        records: [folder("f", "原子")],
-        projects: [kept("f", "原子", { folder: true }), kept("k", "改了的"), kept("s", "暂停的")],
+        projects: [kept("f", "原子"), kept("k", "改了的"), kept("s", "暂停的")],
         links: [
           link("f", "p-atom", { pending: 2 }),
           link("k", "p-k", { pending: 1 }),
@@ -332,12 +307,12 @@ describe("what a card says", () => {
         .map((card) => cardStatus(card, "ready", t))
         .map(({ text, tone }) => `${text} ${tone}`),
     ).toEqual([
-      "云端 · 有改动还没同步 warning",
-      "云端 · 有改动还没同步 warning",
+      "有改动还没同步 warning",
+      "有改动还没同步 warning",
       "GitHub 同步失败 warning",
-      "云端 · 还差一步：选仓库 warning",
-      "云端 · 打开时从 GitHub 取回 plain",
-      "云端 · 上次从 GitHub 取回没成功 warning",
+      "还差一步：选仓库 warning",
+      "打开时从 GitHub 取回 plain",
+      "上次从 GitHub 取回没成功 warning",
     ]);
   });
 
@@ -346,17 +321,15 @@ describe("what a card says", () => {
       listsOf({ projects: [kept("k", "产品发布")], links: [link("k", "p")], listed: "signedOut" }),
       { marks: new Map(), groups: [] },
     );
-    expect(cardStatus(signedOut[0] as ProjectCard, undefined, t).text).toBe(
-      "云端 · 登录后继续同步",
-    );
+    expect(cardStatus(signedOut[0] as ProjectCard, undefined, t).text).toBe("登录后继续同步");
   });
 });
 
-describe("what a card says of the platform's copy, which goes a week after it was last opened", () => {
+describe("what a card says of the platform's copy", () => {
   const NOW = Date.UTC(2026, 10, 12, 12);
   const releaseAt = NOW + 3 * DAY;
 
-  it("says a project with no repository goes as a whole, and how to choose one, where the platform says when", () => {
+  it("says a project with no repository yet is one step short, and does not say it goes", () => {
     const cards = composeCards(
       listsOf({
         listed: [
@@ -366,16 +339,12 @@ describe("what a card says of the platform's copy, which goes a week after it wa
       }),
       NOTHING_ORGANIZED,
     );
-    expect(cardStatus(byName(cards, "半截的"), "ready", t, NOW)).toMatchObject({
-      text: "没有 GitHub 仓库，7 天没打开会被删除",
-      tone: "warning",
-      alert: true,
-      way: "chooseRepository",
-    });
-    // Before the platform lets copies go, as it was.
-    const before = cardStatus(byName(cards, "以前的"), "ready", t, NOW);
-    expect(before).toMatchObject({ text: "云端 · 还差一步：选仓库", tone: "warning" });
-    expect(before).not.toHaveProperty("way");
+    for (const name of ["半截的", "以前的"]) {
+      const said = cardStatus(byName(cards, name), "ready", t, NOW);
+      expect(said).toMatchObject({ text: "还差一步：选仓库", tone: "warning" });
+      expect(said).not.toHaveProperty("way");
+      expect(said).not.toHaveProperty("alert");
+    }
   });
 
   it("says when it was last opened, on any computer, on hovering", () => {
@@ -389,9 +358,14 @@ describe("what a card says of the platform's copy, which goes a week after it wa
       }),
       NOTHING_ORGANIZED,
     );
-    expect(cardStatus(byName(cards, "九天前的"), "ready", t, NOW).hint).toBe("上次打开：9 天前");
-    expect(cardStatus(byName(cards, "刚打开的"), "ready", t, NOW).hint).toBe("上次打开：3 分钟前");
-    expect(cardStatus(byName(cards, "没记的"), "ready", t, NOW).hint).toBeUndefined();
+    // None of them was opened on this computer: that comes first.
+    expect(cardStatus(byName(cards, "九天前的"), "ready", t, NOW).hint).toBe(
+      "这台电脑还没打开过\n上次打开：9 天前",
+    );
+    expect(cardStatus(byName(cards, "刚打开的"), "ready", t, NOW).hint).toBe(
+      "这台电脑还没打开过\n上次打开：3 分钟前",
+    );
+    expect(cardStatus(byName(cards, "没记的"), "ready", t, NOW).hint).toBe("这台电脑还没打开过");
   });
 
   it("says that it comes back from GitHub, and why, while it does", () => {
@@ -410,11 +384,9 @@ describe("what a card says of the platform's copy, which goes a week after it wa
     );
     // The line says what goes on, hovering why.
     const coming = cardStatus(byName(cards, "取回中"), "ready", t, NOW);
-    expect(coming.text).toBe("云端 · 正在从 GitHub 取回…");
-    expect(coming.hint).toBe("正在从 GitHub 取回…（平台上的临时内容 7 天没用已清掉）");
-    expect(cardStatus(byName(cards, "恢复中"), "ready", t, NOW).text).toBe(
-      "云端 · 正在从 GitHub 取回…",
-    );
+    expect(coming.text).toBe("正在从 GitHub 取回…");
+    expect(coming.hint).toBe("正在从 GitHub 取回…");
+    expect(cardStatus(byName(cards, "恢复中"), "ready", t, NOW).text).toBe("正在从 GitHub 取回…");
   });
 
   it("says in how many days what GitHub does not have goes, on hovering an error", () => {
@@ -434,7 +406,7 @@ describe("what a card says of the platform's copy, which goes a week after it wa
     const said = cardStatus(byName(cards, "暂停的"), "ready", t, NOW);
     // The line does not change: only what hovering says.
     expect(said.text).toBe("GitHub 同步失败");
-    expect(said.hint).toMatch(/如果一直不打开，平台上的这些改动 3 天后清掉。$/);
+    expect(said.hint).not.toMatch(/天后清掉/);
   });
 });
 
@@ -446,43 +418,29 @@ describe("what the menu of a card offers", () => {
   it("offers only what works now, by kind", () => {
     expect(actions("课程片头")).toEqual([
       ["open", "rename", "star", "moveToGroup"],
-      ["connect"],
       ["removeFromList"],
     ]);
-    expect(actions("旅行 Vlog")).toEqual([
+    expect(actions("课程片头", { copies: 1024 })).toEqual([
       ["open", "rename", "star", "moveToGroup"],
-      ["disconnect", "saveAsLocal", "openOnGitHub"],
-      ["removeFromList", "deleteCloud"],
+      ["releaseCopies"],
+      ["removeFromList"],
     ]);
     expect(actions("产品发布")).toEqual([
       ["open", "rename", "star", "moveToGroup"],
-      ["linkFolder", "saveAsLocal", "openOnGitHub"],
+      ["saveToFolder", "openOnGitHub"],
       ["removeHere", "deleteCloud"],
     ]);
     // It cannot be renamed before the platform can change what it has without an editor on it.
     expect(actions("年会开场")).toEqual([
       ["open", "star", "moveToGroup"],
-      ["linkFolder", "saveAsLocal", "openOnGitHub"],
+      ["saveToFolder", "openOnGitHub"],
       ["deleteCloud"],
     ]);
     expect(actions("旧项目")).toEqual([
       ["open", "rename", "star", "moveToGroup"],
-      ["moveToFolder", "connect", "saveCopy"],
+      ["saveCopy"],
       ["delete"],
     ]);
-  });
-
-  it("has nothing that needs folders where the browser cannot write them", () => {
-    const flat = (name: string) => actions(name, { canFolders: false }).flat();
-    expect(flat("产品发布")).not.toContain("linkFolder");
-    expect(flat("年会开场")).not.toContain("linkFolder");
-    expect(flat("年会开场")).not.toContain("saveAsLocal");
-    expect(flat("旧项目")).not.toContain("moveToFolder");
-  });
-
-  it("has nothing of the platform where the editor is hosted on none", () => {
-    expect(actions("课程片头", { hasPlatform: false }).flat()).not.toContain("connect");
-    expect(actions("旧项目", { hasPlatform: false }).flat()).not.toContain("connect");
   });
 
   it("offers to find a folder again, or to save it elsewhere, where it is gone", () => {
@@ -497,8 +455,7 @@ describe("what the menu of a card offers", () => {
   it("deletes on the platform whatever the platform's list has, with or without a repository", () => {
     const half = composeCards(
       listsOf({
-        records: [folder("f", "半截的文件夹")],
-        projects: [kept("f", "半截的文件夹", { folder: true })],
+        projects: [kept("f", "半截的文件夹")],
         links: [link("f", "p-f")],
         listed: [
           listed("p-f", "半截的文件夹", { attention: "noRepository" }),
@@ -536,8 +493,7 @@ describe("what the menu of a card offers", () => {
     });
     const shown = composeCards(
       listsOf({
-        records: [folder("f", "有文件夹的")],
-        projects: [kept("f", "有文件夹的", { folder: true }), kept("k", "浏览器里的")],
+        projects: [kept("f", "有文件夹的"), kept("k", "浏览器里的")],
         links: [link("f", "p-f"), link("k", "p-k")],
         listed: [
           listed("p-f", "有文件夹的", {
@@ -571,18 +527,18 @@ describe("what the menu of a card offers", () => {
     expect(cardActions(shown[0] as ProjectCard, CONTEXT)).toEqual([
       // Not renamed: it cannot be edited.
       ["open", "star", "moveToGroup"],
-      ["saveAsLocal", "recheck", "switchRepository", "disconnect", "openOnGitHub"],
-      ["removeFromList", "deleteCloud"],
+      ["saveToFolder", "recheck", "switchRepository", "openOnGitHub"],
+      ["removeHere", "deleteCloud"],
     ]);
     expect(cardActions(shown[1] as ProjectCard, CONTEXT)[1]).toEqual([
-      "saveAsLocal",
+      "saveToFolder",
       "reinstall",
       "recheck",
       "switchRepository",
       "openOnGitHub",
     ]);
     expect(cardActions(shown[2] as ProjectCard, CONTEXT)[1]).toEqual([
-      "saveAsLocal",
+      "saveToFolder",
       "switchRepository",
       "recheck",
       "openOnGitHub",
@@ -595,15 +551,14 @@ describe("what the menu of a card offers", () => {
     ]);
     // Clicking it says why, with these ways out, and deleting it last.
     expect(unusableChoices(shown[0] as ProjectCard, CONTEXT)).toEqual([
-      "saveAsLocal",
+      "saveToFolder",
       "recheck",
       "switchRepository",
-      "disconnect",
       "deleteCloud",
     ]);
   });
 
-  it("says only where saving into GitHub went wrong, why, and that the platform keeps it a week", () => {
+  it("says only where saving into GitHub went wrong, why, and what helps", () => {
     const NOW = Date.UTC(2026, 10, 12, 12);
     const HOUR = 3600_000;
     const shown = composeCards(
@@ -639,21 +594,21 @@ describe("what the menu of a card offers", () => {
     const said = shown.map((card) => cardStatus(card, "ready", t, NOW));
     // On their way: plain words, nothing to do.
     expect(said.map(({ text, tone }) => `${text} ${tone}`)).toEqual([
-      "云端 · 待同步 plain",
-      "云端 · 这台电脑还没打开过 plain",
-      "云端 · 待同步 plain",
+      "待同步 plain",
+      "ada/r plain",
+      "待同步 plain",
       "GitHub 同步失败 warning",
       "GitHub 同步失败 warning",
     ]);
     expect(said[0]?.hint).toBe(
       "有改动还没存进 GitHub，平台会自动存进去（停手 5 分钟，或连续编辑 30 分钟存一次），不用管。",
     );
-    // An error says why, what helps, and that the platform keeps it a week only.
+    // An error says why, and what helps.
     expect(said[3]?.hint).toBe(
-      "存进 GitHub 失败：已经连续 3 个多小时没能存进去（GitHub 暂时连不上、限流，或者平台出了错）。平台会一直自动重试；也可以点“现在存档”再试一次，或者换一个仓库。平台临时存储只保存 7 天，请尽快处理。",
+      "存进 GitHub 失败：已经连续 3 个多小时没能存进去（GitHub 暂时连不上、限流，或者平台出了错）。平台会一直自动重试；也可以点“现在存档”再试一次，或者换一个仓库。",
     );
     expect(said[4]?.hint).toBe(
-      "存进 GitHub 失败：仓库在 GitHub 上已归档，只能读。在 GitHub 上取消归档后点“现在存档”，或者换一个仓库。平台临时存储只保存 7 天，请尽快处理。",
+      "存进 GitHub 失败：仓库在 GitHub 上已归档，只能读。在 GitHub 上取消归档后点“现在存档”，或者换一个仓库。",
     );
   });
 

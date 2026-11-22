@@ -61,7 +61,9 @@ describe("the database of folders", () => {
   it("is a database of its own, so that the main one keeps its version", async () => {
     const factory = new IDBFactory();
     await createRecordStore(() => factory).list();
-    expect((await factory.databases()).map(({ name }) => name)).toEqual(["animaquill-folders"]);
+    expect((await factory.databases()).map(({ name }) => name)).toEqual([
+      "aq-offline-animaquill-folders",
+    ]);
   });
 
   it("does not remember that it could not be opened", async () => {

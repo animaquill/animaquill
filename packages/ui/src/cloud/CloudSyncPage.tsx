@@ -159,17 +159,6 @@ export function CloudSyncPage() {
             </FeatureRow>
           );
         })}
-        <FeatureRow
-          id="newProjectsInCloud"
-          name={t("cloudSync.newProjectsInCloud.name")}
-          control={
-            <Switch
-              checked={on("newProjectsInCloud")}
-              disabled={!canChange}
-              onChange={(next) => void toggle("newProjectsInCloud", next)}
-            />
-          }
-        />
       </div>
     </div>
   );

@@ -33,9 +33,13 @@ export function fakeAccount(): AccountAccess {
     snapshot = next;
     for (const listener of listeners) listener();
   };
-  const leaveFor = (state: State) => {
+  const leaveFor = (state: State, returnTo = location.pathname + location.search) => {
     write(state);
-    location.assign(location.pathname + location.search);
+    // Back as the platform brings people back: to where they were, with what else the address
+    // said for the development page.
+    const back = new URL(returnTo, location.href);
+    back.search = location.search;
+    location.assign(back);
   };
   return {
     subscribe(listener) {
@@ -56,7 +60,7 @@ export function fakeAccount(): AccountAccess {
       if (outcome) write(rest);
       return outcome;
     },
-    signIn: () => leaveFor({ ...read(), signedIn: true, outcome: "signedIn" }),
+    signIn: (returnTo) => leaveFor({ ...read(), signedIn: true, outcome: "signedIn" }, returnTo),
     installApp: () => leaveFor({ ...read(), installed: true, outcome: "signedIn" }),
     async signOut() {
       write({ ...read(), signedIn: false });

@@ -113,7 +113,7 @@ describe("working on an export", () => {
       () => locks,
     );
     const release = await exports.claim("a");
-    expect(taken).toContain("animaquill-export-a");
+    expect(taken).toContain("aq-offline-animaquill-export-a");
     expect(await exports.claim("a")).toBeUndefined();
     release?.();
     await vi.waitFor(() => expect(taken.size).toBe(0));

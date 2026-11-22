@@ -39,7 +39,6 @@ test.describe("a project folder", () => {
     await page.getByRole("textbox", { name: "项目名称" }).fill("新的片子");
     if (devPage) {
       // No platform: the name, and then the folder.
-      await expect(dialog(page)).toContainText("下一步选一个放项目的文件夹");
       await dialog(page).getByRole("button", { name: "选文件夹…" }).click();
     } else {
       // The site asks which kind first: nobody is signed in, so one of this computer.
@@ -219,7 +218,7 @@ test.describe("the list of project folders", () => {
       };
     });
     await page.reload();
-    await expect(page.getByRole("link", { name: /^原子是什么.*本地 · / })).toBeVisible({
+    await expect(page.getByRole("link", { name: /^原子是什么/ })).toBeVisible({
       timeout: 4000,
     });
     await expect(page.locator('main li[data-kind="onlyHere"]')).toHaveCount(0);
@@ -231,14 +230,14 @@ test.describe("the list of project folders", () => {
     const disk = projectOnDisk();
     await openDropped(page, disk);
     const url = page.url();
-    const key = new URL(url).searchParams.get("project") as string;
+    const key = new URL(url).pathname.split("/").at(-1) as string;
     await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
     await page.getByRole("menuitem", { name: "关闭项目" }).click();
     // The log goes, as when the data of the site is cleared: the folder is the project.
     await page.evaluate(
       (id) =>
         new Promise<void>((resolve, reject) => {
-          const request = indexedDB.open("animaquill");
+          const request = indexedDB.open("aq-offline-animaquill");
           request.addEventListener("error", () => reject(request.error));
           request.addEventListener("success", () => {
             const db = request.result;

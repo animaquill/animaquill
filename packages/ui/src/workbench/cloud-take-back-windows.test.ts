@@ -6,7 +6,7 @@
  * From the review of P2, 1.
  */
 import { ProjectStore } from "@animaquill/core";
-import { memoryOrganizer } from "@animaquill/host";
+import { memoryOrganizer, newSyncId } from "@animaquill/host";
 import type { FolderAccess, Host } from "@animaquill/host";
 import { MemoryDisk, memoryFolders } from "@animaquill/host/memory";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -94,6 +94,7 @@ function browserOn(
         }) as MemoryLibrary);
   const window = (fails = false) => {
     const host: Host = {
+      mode: "online",
       projects: projectsOf(fails),
       address: memoryAddress(),
       windowMemory: memoryWindow(),
@@ -210,9 +211,21 @@ async function windowsWithAChange({ stay = false } = {}) {
   const there = elsewhere.window();
   expect(await there.session.create("片子")).toBe(true);
   there.session.store?.execute(write(CODE, "const a = 1;\n") as never);
-  expect(await there.cloud?.beginLink()).toMatchObject({ isNew: true });
+  expect(await there.session.trySave()).toBe(true);
+  // A link that the first connection makes the project with, as the sync protocol does.
+  const project = newSyncId();
+  await elsewhere.links.put({
+    key: there.session.key as string,
+    platform: there.cloud?.platform ?? "",
+    project,
+    seq: 0,
+    pushed: (await there.session.journal.entries())?.at(-1)?.mark ?? 0,
+    linkedAt: Date.now(),
+    creating: true,
+  });
+  await there.cloud?.close();
+  await there.cloud?.follow();
   await online(there);
-  const project = (await elsewhere.links.get(there.session.key as string))?.project as string;
   const repository = repositoryOf(platform, project);
   platform.archive(project);
   await leave(there);

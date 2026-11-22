@@ -29,7 +29,9 @@ const ok = (route: Route, text = "OK") =>
 
 /** What the settings keep, as this browser has them. */
 const saved = (page: Page) =>
-  page.evaluate(() => JSON.parse(localStorage.getItem("animaquill.ai") ?? "null")) as Promise<{
+  page.evaluate(() =>
+    JSON.parse(localStorage.getItem("aq-offline-animaquill.ai") ?? "null"),
+  ) as Promise<{
     version?: number;
     services: { id: string; enabled: string[]; model: string }[];
     current?: string;
@@ -292,7 +294,7 @@ test("settings of before come up with their services, models, choices and keys",
 }) => {
   await page.evaluate(async (key) => {
     localStorage.setItem(
-      "animaquill.ai",
+      "aq-offline-animaquill.ai",
       JSON.stringify({
         services: [
           {
@@ -317,7 +319,7 @@ test("settings of before come up with their services, models, choices and keys",
         packFor: { "claude-test": "animaquill/claude-5" },
       }),
     );
-    const open = indexedDB.open("animaquill-keys", 1);
+    const open = indexedDB.open("aq-offline-animaquill-keys", 1);
     open.onupgradeneeded = () => open.result.createObjectStore("keys", { keyPath: "service" });
     const database = await new Promise<IDBDatabase>((resolve) => {
       open.onsuccess = () => resolve(open.result);
@@ -366,7 +368,7 @@ test("settings of before come up with their services, models, choices and keys",
 
 test("settings a newer editor wrote are left alone, and said so", async ({ page }) => {
   const newer = JSON.stringify({ version: 9, services: [{ id: "a", kind: "anthropic" }] });
-  await page.evaluate((value) => localStorage.setItem("animaquill.ai", value), newer);
+  await page.evaluate((value) => localStorage.setItem("aq-offline-animaquill.ai", value), newer);
   await page.reload();
   await expect(tab(page, "preview")).toBeVisible();
   await openSettingsPage(page, "AI 模型");
@@ -376,5 +378,5 @@ test("settings a newer editor wrote are left alone, and said so", async ({ page 
   await settings.screenshot(shot("wide-held.png"));
   await openSettingsPage(page, "AI 聊天");
   await expect(settings.getByRole("textbox", { name: "一次任务最多调用工具" })).toBeDisabled();
-  expect(await page.evaluate(() => localStorage.getItem("animaquill.ai"))).toBe(newer);
+  expect(await page.evaluate(() => localStorage.getItem("aq-offline-animaquill.ai"))).toBe(newer);
 });

@@ -35,15 +35,16 @@ const noFolders: FolderAccess = {
 function setup(
   folders = noFolders,
   more: Partial<Host> = {},
-  { here = true, panels = [] as readonly PanelDefinition[] } = {},
+  { panels = [] as readonly PanelDefinition[] } = {},
 ) {
   const library = new MemoryLibrary();
   const trials = new MemoryTrials();
   const drafts = new MemoryTrials();
-  const values = new Map<string, unknown>();
+  // People heard once that projects stay in this browser, see `Workbench.newProject`.
+  const values = new Map<string, unknown>([["offline.browserProjects", 1]]);
   const host: Host = {
-    // Projects in this browser, as tests make them, see `Host.projectsHereForTests`.
-    ...(here && { projectsHereForTests: true as const }),
+    // Offline, and projects in this browser, as where it cannot write folders.
+    mode: "offline",
     ...more,
     projects: library,
     address: memoryAddress(),
@@ -81,10 +82,13 @@ const dialogOf = async (workbench: Workbench) => {
   return workbench.dialogs.getSnapshot();
 };
 
+/** Makes a project in the dialog that makes one, as people do: offline, in this browser. */
 async function create(workbench: Workbench, name: string) {
   const creating = workbench.newProject();
-  await dialogOf(workbench);
-  workbench.dialogs.answer(name);
+  const asked = await dialogOf(workbench);
+  if (asked?.kind !== "create") throw new Error("No dialog that makes a project");
+  asked.create.setName(name);
+  await asked.create.submit();
   await creating;
 }
 
@@ -121,7 +125,10 @@ async function trying(folders = noFolders, more: Partial<Host> = {}) {
     value,
   });
   const id = store.getState().manifest.id;
+  // What was kept is read first, then what is tried is written: leaving comes after both.
+  await workbench.trials.settle();
   workbench.properties.commit([edit(10)]);
+  await workbench.trials.settle();
   return { ...context, store, saved, edit, id, main };
 }
 
@@ -702,8 +709,10 @@ describe("changing project", () => {
     await create(workbench, "一");
     await failToSave(workbench, library);
     const creating = workbench.newProject();
-    await dialogOf(workbench);
-    workbench.dialogs.answer("二");
+    const asked = await dialogOf(workbench);
+    if (asked?.kind !== "create") throw new Error("No dialog that makes a project");
+    asked.create.setName("二");
+    void asked.create.submit();
     await vi.waitFor(() =>
       expect(workbench.dialogs.getSnapshot()?.title).toBe("project.unsavedTitle"),
     );
@@ -915,6 +924,8 @@ describe("code", () => {
     const { workbench } = context;
     await create(workbench, "项目");
     const store = workbench.session.store as ProjectStore;
+    // What was kept is read first, then what is new is written.
+    await workbench.drafts.settle();
     store.execute({ type: "file.write", params: { path: PATH, text: "one" } });
     workbench.code.open(PATH);
     workbench.code.edit(PATH, "mine");
@@ -1394,6 +1405,7 @@ describe("leaving the page to sign in", () => {
     await create(workbench, "项目");
     const store = workbench.session.store as ProjectStore;
     const id = store.getState().manifest.id;
+    await workbench.drafts.settle();
     store.execute({ type: "file.write", params: { path: "code/a.js", text: "one" } });
     workbench.code.open("code/a.js");
     drafts.duringSave = () => new Promise((done) => setTimeout(done, 30));
@@ -1513,24 +1525,11 @@ describe("a platform to keep projects in step with", () => {
     });
     const without = setup(noFolders, { cloud });
     expect(without.workbench.cloud).toBeUndefined();
-    expect(without.workbench.actions.get("cloud.connect")).toBeUndefined();
+    expect(without.workbench.actions.get("cloud.saveToFolder")).toBeUndefined();
     const { account } = fakeAccount();
-    const withAccount = setup(noFolders, { cloud, account });
+    const withAccount = setup(noFolders, { mode: "online", cloud, account });
     expect(withAccount.workbench.cloud).toBeDefined();
-    expect(withAccount.workbench.actions.get("cloud.connect")).toBeDefined();
-  });
-});
-
-describe("a new project where nothing can keep it (the design of the start page, 3)", () => {
-  it("is none in a browser that cannot open folders, without a platform, outside of tests", async () => {
-    const { workbench, library } = setup(noFolders, {}, { here: false });
-    const making = workbench.newProject();
-    const asked = await dialogOf(workbench);
-    expect(asked).toMatchObject({ kind: "confirm", message: "newProject.unsupported" });
-    workbench.dialogs.answer(true);
-    await making;
-    expect(await library.list()).toEqual([]);
-    expect(workbench.session.store).toBeUndefined();
+    expect(withAccount.workbench.actions.get("cloud.saveToFolder")).toBeDefined();
   });
 });
 

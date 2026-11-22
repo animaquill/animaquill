@@ -203,7 +203,10 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
   // takes, such as assets, it has taken already.
   const open = (dropped: Dropped) => {
     const { projectFolders, dialogs, notifications, t } = workbench;
-    if (!projectFolders) notifications.push(t("folder.droppedNoFolders"));
+    if (!projectFolders)
+      notifications.push(
+        t(workbench.mode === "online" ? "folder.droppedOnline" : "folder.droppedNoFolders"),
+      );
     // A dialog has to be answered first, and a new one would answer it.
     else if (dialogs.getSnapshot()) notifications.push(t("folder.droppedWhileAsking"));
     else projectFolders.dropped(dropped);
@@ -226,11 +229,11 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
   const onBeforeUnload = (event: BeforeUnloadEvent) => {
     // It goes on purpose, with everything kept or people having said so, see `leavePage`.
     if (workbench.leavingPage) return;
-    const { code, session, transfer, trials, videos, projectFolders } = workbench;
+    const { code, session, transfer, trials, videos, saveToFolders } = workbench;
     // An export that stops halfway can go on after a reload, but its sound has to catch up first.
     const exporting = videos.getSnapshot() !== undefined;
-    // A project that is moving into a folder stays in the browser, and the folder has half of it.
-    const moving = projectFolders?.moving === true;
+    // A copy on its way into a folder would be half of one.
+    const moving = saveToFolders?.busy === true;
     // Files of assets on their way stop, and go on once the project is open again: people are
     // asked, as they are when they close it.
     const atRisk =

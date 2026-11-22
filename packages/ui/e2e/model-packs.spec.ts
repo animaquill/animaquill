@@ -916,7 +916,7 @@ test("a pack from this computer is read again, and one installed before the rule
   test.setTimeout(60_000);
   await page.evaluate(() =>
     localStorage.setItem(
-      "animaquill.ai.packs",
+      "aq-offline-animaquill.ai.packs",
       JSON.stringify({
         packs: [
           {
@@ -1007,7 +1007,7 @@ test("settings that had the words to compare with on keep them for their model, 
   });
   await page.evaluate(async (key) => {
     localStorage.setItem(
-      "animaquill.ai",
+      "aq-offline-animaquill.ai",
       JSON.stringify({
         services: [
           {
@@ -1023,7 +1023,7 @@ test("settings that had the words to compare with on keep them for their model, 
         comparisonTexts: true,
       }),
     );
-    const open = indexedDB.open("animaquill-keys", 1);
+    const open = indexedDB.open("aq-offline-animaquill-keys", 1);
     open.onupgradeneeded = () => open.result.createObjectStore("keys", { keyPath: "service" });
     const database = await new Promise<IDBDatabase>((resolve) => {
       open.onsuccess = () => resolve(open.result);

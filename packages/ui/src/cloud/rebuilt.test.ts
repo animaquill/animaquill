@@ -1,6 +1,5 @@
 import { ProjectStore } from "@animaquill/core";
-import { RepositoryRefused, type LocalFolder } from "@animaquill/host";
-import { MemoryDisk, memoryFolders } from "@animaquill/host/memory";
+import { RepositoryRefused } from "@animaquill/host";
 import { afterEach, describe, expect, it } from "vitest";
 import type { DialogRequest } from "../workbench/dialogs.ts";
 import { MemoryPlatform, TestCloudBrowser, TestTime } from "./cloud-support.ts";
@@ -13,7 +12,6 @@ import {
   windowOf,
 } from "./projects-support.ts";
 import { FakeRepositories } from "./repository-support.ts";
-import { keepFolderFiles } from "./take-back-flow.ts";
 
 afterEach(closeWindows);
 
@@ -268,7 +266,7 @@ describe("restoring a repository as a project of the platform", () => {
     const opened = await here.cloud.restoreFromRepository({ id: 7, fullName: "ada/atom" });
     expect(opened).toBe(true);
     expect(here.session.store?.getState().files["code/restored.js"]).toBe("from github");
-    expect(here.cloud.getSnapshot()).toMatchObject({ kind: "linked", local: "browser" });
+    expect(here.cloud.getSnapshot()).toMatchObject({ kind: "linked" });
   });
 
   it("waits for one that takes longer, as the list says", async () => {
@@ -312,26 +310,5 @@ describe("restoring a repository as a project of the platform", () => {
     expect(told.at(-1)).toMatchObject({
       message: "GitHub 或平台暂时出了问题，什么都没留下，可以再试一次。",
     });
-  });
-});
-
-describe("keepFolderFiles", () => {
-  it("keeps what the folder has of the files that change, read back, and nothing of the others", async () => {
-    const disk = new MemoryDisk();
-    disk.write("项目/code/a.js", "mine", { quietly: true });
-    disk.chooseNext("项目");
-    const folder = (await memoryFolders(disk).choose()) as LocalFolder;
-    const kept = await keepFolderFiles(
-      folder,
-      ["code/a.js", "code/none.js"],
-      Date.UTC(2026, 10, 12, 8),
-    );
-    expect(kept).toMatch(/^\.animaquill\/recovered\/.+-rebuilt$/);
-    expect(await folder.readText(`${kept}/code/a.js`)).toBe("mine");
-    await expect(folder.readText(`${kept}/code/none.js`)).rejects.toThrow();
-    // Another time, another place: nothing is written over.
-    const again = await keepFolderFiles(folder, ["code/a.js"], Date.UTC(2026, 10, 12, 8));
-    expect(again).toBe(`${kept}-2`);
-    expect(await keepFolderFiles(folder, ["code/none.js"], 0)).toBeUndefined();
   });
 });

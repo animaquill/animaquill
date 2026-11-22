@@ -344,30 +344,6 @@ describe("what is still to be given to an account", () => {
 });
 
 describe("the organizer of a browser", () => {
-  it("keeps what a page of the version before kept", async () => {
-    const factory = new IDBFactory();
-    const before = factory.open("animaquill-organizer", 1);
-    before.addEventListener("upgradeneeded", () => {
-      const database = before.result;
-      database
-        .createObjectStore("marks", { keyPath: "project" })
-        .put({ project: "a", starredAt: 5, at: 5 });
-      database.createObjectStore("groups", { keyPath: "id" }).put(group("g", "工作"));
-    });
-    await new Promise((resolve) => before.addEventListener("success", resolve));
-    before.result.close();
-    const organizer = browserOrganizer(
-      () => factory,
-      () => undefined,
-    );
-    expect(await organizer.read()).toEqual({
-      marks: new Map([["a", { starredAt: 5, at: 5 }]]),
-      groups: [group("g", "工作")],
-    });
-    await organizer.noteAccount("ada");
-    expect((await organizer.read()).account).toBe("ada");
-  });
-
   it("is the same in every window, and tells the others what one changed", async () => {
     const window = browserOf();
     const one = window();

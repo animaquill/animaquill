@@ -12,7 +12,7 @@ type RepositoryRequest = Extract<DialogRequest, { kind: "repository" }>;
 /**
  * Another repository for a project of the platform ("换一个仓库…"): a new private one, or one
  * people have, see `RepositoryFields`. Nothing goes to GitHub until people press the button. The
- * first repository of a project is chosen where it is connected, see `ConnectDialog`.
+ * first repository of a project is chosen where it is made, see `NewProjectDialog`.
  */
 export function RepositoryDialog({ request }: { request: RepositoryRequest }) {
   const { dialogs, cloud } = useWorkbench();

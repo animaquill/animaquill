@@ -188,48 +188,34 @@
   opacity: 0.6;
 }
 
-/* Which kind of project: two cards side by side. */
-.kinds {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
-  gap: 10px;
-  margin: 16px 0;
+/* New, or from a folder: two tabs over the dialog, as one dialog with two ways in. */
+.ways {
+  display: flex;
+  gap: 4px;
+  margin: 4px 0 16px;
+  border-bottom: 1px solid var(--aq-border);
 }
 
-.kind {
-  gap: 10px;
-  padding: 12px 14px;
-  background: var(--aq-bg-panel);
-  border: 1px solid var(--aq-border);
-  border-radius: 10px;
-  transition:
-    border-color 120ms,
-    background 120ms;
+.ways button {
+  margin-bottom: -1px;
+  padding: 6px 12px;
+  color: var(--aq-text-muted);
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
 }
 
-.kind:hover:not([data-disabled="true"]) {
-  border-color: var(--aq-timeline-tick);
+.ways button:hover {
+  color: var(--aq-text-strong);
 }
 
-.kind[data-checked] {
-  background: var(--aq-bg-raised);
-  border-color: var(--aq-accent);
-}
-
-.kind:has(input:focus-visible) {
-  outline: 2px solid var(--aq-accent);
-  outline-offset: 1px;
-}
-
-.kind input[type="radio"]:focus-visible {
-  outline: 0;
+.ways button[aria-selected="true"] {
+  color: var(--aq-text-strong);
+  border-bottom-color: var(--aq-accent);
 }
 
 .format {
   gap: 10px 18px;
   margin: 0 0 16px;
-}
-
-.withFolder {
-  gap: 10px;
-  margin: 12px 0 16px;
 }

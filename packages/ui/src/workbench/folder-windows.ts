@@ -65,6 +65,7 @@ export function windowOf(
 ) {
   const { values } = browser;
   const host: Host = {
+    mode: "offline",
     projects: browser.library,
     address: browser.address,
     windowMemory: memoryWindow(),
@@ -104,6 +105,19 @@ export async function answer(workbench: Workbench, value: unknown) {
   const asked = workbench.dialogs.getSnapshot();
   workbench.dialogs.answer(value as never);
   return asked;
+}
+
+/**
+ * Makes the project in the dialog that makes one, once it is open: the name, and the press that
+ * asks for the folder, which the disk chose before. What comes after (a question about the folder,
+ * the project coming up) is for `newProject`'s promise to say.
+ */
+export async function fillNew(workbench: Workbench, name: string) {
+  await vi.waitFor(() => expect(workbench.dialogs.getSnapshot()?.kind).toBe("create"));
+  const shown = workbench.dialogs.getSnapshot();
+  if (shown?.kind !== "create") throw new Error("No dialog that makes a project");
+  shown.create.setName(name);
+  void shown.create.submit();
 }
 
 /** Opens a project folder that this browser does not know yet, which has code in it. */

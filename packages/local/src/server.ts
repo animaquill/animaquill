@@ -121,6 +121,10 @@ function answer(
   response.end(text);
 }
 
+/** The editor is one page: the mode and the project are in its path, see `pathOf` of the host. */
+const isEditorPage = (path: string) =>
+  path === "/" || path === "/offline" || /^\/(?:offline\/)?p\/[^/]+$/.test(path);
+
 async function sendFile(
   request: IncomingMessage,
   response: ServerResponse,
@@ -128,7 +132,7 @@ async function sendFile(
   path: string,
   headers: Record<string, string>,
 ) {
-  const file = join(root, path === "/" ? "index.html" : path);
+  const file = join(root, isEditorPage(path) ? "index.html" : path);
   const inside = relative(root, file);
   if (inside.startsWith("..") || isAbsolute(inside) || file.endsWith(".map")) {
     answer(response, 404, "Not found");

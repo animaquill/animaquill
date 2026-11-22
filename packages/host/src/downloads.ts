@@ -1,3 +1,4 @@
+import { scoped } from "./scope.ts";
 import { broadcastLine } from "./cloud.ts";
 import { browserFolderWriter, MemoryWriters, type WriterPage } from "./folder-writer.ts";
 import type { DownloadedPiece, DownloadStore } from "./index.ts";
@@ -34,7 +35,7 @@ const committed = (transaction: IDBTransaction) =>
   });
 
 function open(factory: IDBFactory): Promise<IDBDatabase> {
-  const request = factory.open(DATABASE, VERSION);
+  const request = factory.open(scoped(DATABASE), VERSION);
   request.addEventListener("upgradeneeded", () => {
     const pieces = request.result.createObjectStore(PIECES, { keyPath: ["oid", "start"] });
     pieces.createIndex("oid", "oid");
@@ -58,7 +59,7 @@ interface Changes {
 
 function broadcastChanges(): Changes | undefined {
   if (typeof BroadcastChannel === "undefined") return undefined;
-  const channel = new BroadcastChannel(CHANNEL);
+  const channel = new BroadcastChannel(scoped(CHANNEL));
   return {
     // oxlint-disable-next-line unicorn/require-post-message-target-origin -- not a window
     post: (key) => channel.postMessage(key),
@@ -149,7 +150,9 @@ export function browserDownloads(
       const kept = new Promise<void>((resolve) => {
         release = resolve;
       });
-      void manager.request(`${OBJECT_LOCKS}${oid}`, { mode: "shared" }, () => kept).catch(() => {});
+      void manager
+        .request(scoped(`${OBJECT_LOCKS}${oid}`), { mode: "shared" }, () => kept)
+        .catch(() => {});
       return () => release();
     },
     async dropUnused(oid) {
@@ -159,11 +162,15 @@ export function browserDownloads(
         await this.dropPieces(oid);
         return true;
       }
-      return manager.request(`${OBJECT_LOCKS}${oid}`, { ifAvailable: true }, async (lock) => {
-        if (!lock) return false;
-        await this.dropPieces(oid);
-        return true;
-      });
+      return manager.request(
+        scoped(`${OBJECT_LOCKS}${oid}`),
+        { ifAvailable: true },
+        async (lock) => {
+          if (!lock) return false;
+          await this.dropPieces(oid);
+          return true;
+        },
+      );
     },
     async dropPieces(oid) {
       const transaction = (await database()).transaction([PIECES], "readwrite");

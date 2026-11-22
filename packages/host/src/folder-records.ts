@@ -1,3 +1,4 @@
+import { scoped } from "./scope.ts";
 import type { FolderBases, FolderBasesChange, FolderFileRecord, FolderHash } from "./index.ts";
 import type { RecordStore, StoredRecord } from "./local-folders.ts";
 
@@ -8,7 +9,7 @@ import type { RecordStore, StoredRecord } from "./local-folders.ts";
  */
 const DATABASE = "animaquill-folders";
 /** 2 added what is kept about files. Nothing used the database before that. */
-const VERSION = 3;
+const VERSION = 1;
 const FOLDERS = "folders";
 const BY_PROJECT = "project";
 /** What is kept about each file, by the number of its folder and its path. */
@@ -44,22 +45,16 @@ const committed = (transaction: IDBTransaction) =>
   });
 
 function open(factory: IDBFactory): Promise<IDBDatabase> {
-  const request = factory.open(DATABASE, VERSION);
-  request.addEventListener("upgradeneeded", (event) => {
+  const request = factory.open(scoped(DATABASE), VERSION);
+  request.addEventListener("upgradeneeded", () => {
     const database = request.result;
-    if (event.oldVersion < 1) {
-      const folders = database.createObjectStore(FOLDERS, { keyPath: "id" });
-      folders.createIndex(BY_PROJECT, BY_PROJECT);
-    }
-    if (event.oldVersion < 2) {
-      const files = database.createObjectStore(FILES, { keyPath: [BY_FOLDER, "path"] });
-      files.createIndex(BY_FOLDER, BY_FOLDER);
-      database.createObjectStore(TURNS, { keyPath: BY_FOLDER });
-    }
-    if (event.oldVersion < 3) {
-      const hashes = database.createObjectStore(HASHES, { keyPath: [BY_FOLDER, "path"] });
-      hashes.createIndex(BY_FOLDER, BY_FOLDER);
-    }
+    const folders = database.createObjectStore(FOLDERS, { keyPath: "id" });
+    folders.createIndex(BY_PROJECT, BY_PROJECT);
+    const files = database.createObjectStore(FILES, { keyPath: [BY_FOLDER, "path"] });
+    files.createIndex(BY_FOLDER, BY_FOLDER);
+    database.createObjectStore(TURNS, { keyPath: BY_FOLDER });
+    const hashes = database.createObjectStore(HASHES, { keyPath: [BY_FOLDER, "path"] });
+    hashes.createIndex(BY_FOLDER, BY_FOLDER);
   });
   return resultOf(request);
 }

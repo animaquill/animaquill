@@ -134,7 +134,7 @@ describe("the database of links", () => {
       where: [PLATFORM, "p-old"],
     };
     const database = await new Promise<IDBDatabase>((resolve, reject) => {
-      const request = factory.open("animaquill-cloud", 1);
+      const request = factory.open("aq-offline-animaquill-cloud", 1);
       request.addEventListener("upgradeneeded", () => {
         const links = request.result.createObjectStore("links", { keyPath: "key" });
         links.createIndex("project", "where");
@@ -190,6 +190,8 @@ describe("the database of links", () => {
   it("needs no new version for any of it, so that pages still open are not locked out", async () => {
     const factory = new IDBFactory();
     await browserCloudLinks(() => factory).list();
-    expect(await factory.databases()).toEqual([{ name: "animaquill-cloud", version: 1 }]);
+    expect(await factory.databases()).toEqual([
+      { name: "aq-offline-animaquill-cloud", version: 1 },
+    ]);
   });
 });

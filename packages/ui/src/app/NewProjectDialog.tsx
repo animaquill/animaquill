@@ -1,10 +1,10 @@
 import { Check, Circle, CircleAlert, LoaderCircle } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
-import type { ConnectStepState } from "../cloud/connect.ts";
+import type { ConnectStepState } from "../cloud/steps.ts";
 import type { PickerSnapshot } from "../cloud/repository-picker.ts";
 import type { DialogRequest } from "../workbench/dialogs.ts";
-import styles from "./ConnectDialog.module.css";
+import styles from "./CloudSteps.module.css";
 import { createView } from "./create-view.ts";
 import { useWorkbench } from "./context.ts";
 import host from "./DialogHost.module.css";
@@ -32,7 +32,8 @@ const noPicker = (): PickerSnapshot | undefined => undefined;
  * closes.
  */
 export function NewProjectDialog({ request }: { request: CreateRequest }) {
-  const { dialogs, cloud, projectFolders } = useWorkbench();
+  const workbench = useWorkbench();
+  const { dialogs, cloud } = workbench;
   const { t } = useTranslation();
   const { create } = request;
   const snapshot = useSyncExternalStore(create.subscribe, create.getSnapshot);
@@ -56,8 +57,6 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
   const view = createView(
     {
       snapshot,
-      kinds: create.kinds,
-      canFolders: projectFolders !== undefined,
       mode: picked?.mode,
       canSubmit: create.canSubmit,
       formatValid: create.format !== undefined,
@@ -111,6 +110,37 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
         }}
       >
         <h2>{view.title}</h2>
+        {/* Online a project is new or comes from a folder: two ways to the same dialog. */}
+        {kind === "cloud" && !isLocked && !create.takesBack && (
+          <div className={own.ways} role="tablist" aria-label={t("newProject.waysLabel")}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={!request.imported}
+              onClick={() => {
+                if (!request.imported) return;
+                void giveUp().then((gone) => {
+                  if (gone) void workbench.newProject();
+                });
+              }}
+            >
+              {t("newProject.wayNew")}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={request.imported === true}
+              onClick={() => {
+                if (request.imported) return;
+                // Right in the click: the browser asks for a folder only then.
+                void workbench.importProject();
+                void giveUp();
+              }}
+            >
+              {t("newProject.wayImport")}
+            </button>
+          </div>
+        )}
         {request.imported && <p>{t("newProject.importAbout")}</p>}
 
         <label className={picker.nameLabel}>
@@ -125,35 +155,6 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
             onChange={(event) => create.setName(event.target.value)}
           />
         </label>
-
-        {view.kinds.length > 0 && (
-          <div
-            className={`${styles.kinds} ${own.kinds}`}
-            role="radiogroup"
-            aria-label={t("newProject.kindLabel")}
-          >
-            {view.kinds.map(({ id, label, about, disabled }) => (
-              <label
-                key={id}
-                className={`${styles.kind} ${own.kind}`}
-                data-disabled={disabled}
-                data-checked={kind === id || undefined}
-              >
-                <input
-                  type="radio"
-                  name="project-kind"
-                  checked={kind === id}
-                  disabled={disabled || isLocked || create.takesBack}
-                  onChange={() => create.setKind(id)}
-                />
-                <span className={styles.kindWords}>
-                  <span className={styles.kindLabel}>{label}</span>
-                  <span className={styles.kindAbout}>{about}</span>
-                </span>
-              </label>
-            ))}
-          </div>
-        )}
 
         {view.format && (
           <div className={`${styles.format} ${own.format}`}>
@@ -268,21 +269,6 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
               }
             />
           </fieldset>
-        )}
-
-        {view.withFolder !== undefined && view.body !== "result" && (
-          <label className={`${styles.withFolder} ${own.withFolder}`}>
-            <input
-              type="checkbox"
-              checked={view.withFolder}
-              disabled={isLocked || create.takesBack}
-              onChange={(event) => create.setWithFolder(event.target.checked)}
-            />
-            <span>
-              {t("newProject.withFolder")}
-              <span className={styles.kindAbout}>{t("newProject.withFolderHint")}</span>
-            </span>
-          </label>
         )}
 
         {view.body === "result" && snapshot.linked?.repository && (

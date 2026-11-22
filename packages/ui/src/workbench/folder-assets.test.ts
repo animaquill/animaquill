@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { fixture, putProject } from "../folder/folder-support.ts";
 import {
   answer,
+  fillNew,
   browserOf,
   closeWindows,
   folderOf,
@@ -42,7 +43,7 @@ async function newFolderProject() {
   const workbench = windowOf(browser);
   browser.disk.chooseNext(ROOT);
   const creating = workbench.newProject();
-  await answer(workbench, "片子");
+  await fillNew(workbench, "片子");
   await creating;
   await written(workbench);
   const store = workbench.session.store as ProjectStore;

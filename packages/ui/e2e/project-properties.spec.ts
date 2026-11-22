@@ -1,14 +1,7 @@
 import type { Page } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import {
-  footer,
-  installChosen,
-  nameIn,
-  openDropped,
-  projectOnDisk,
-  text,
-} from "./folder-support.ts";
+import { footer, nameIn, openDropped, projectOnDisk, text } from "./folder-support.ts";
 import { openCard, projectCard } from "./start-support.ts";
 import { content, devPageOnly, editorReady, expect, tab, test } from "./support.ts";
 
@@ -330,49 +323,10 @@ test.describe("the project properties of projects of the platform", () => {
     await editorReady(page);
   }
 
-  test("say where a project in a folder is, and where one only in this browser is", async ({
-    page,
-  }) => {
+  test("say where a project of the platform is", async ({ page }) => {
     test.setTimeout(120_000);
-    await installChosen(page);
     await arrive(page);
-    // A local project first: only the folder.
-    await page.evaluate(() => {
-      window.chosenFolder = "film";
-    });
-    await page.getByRole("button", { name: "新建项目" }).click();
-    await page.getByRole("textbox", { name: "项目名称" }).fill("片子");
-    await page.getByRole("radio", { name: /^本地项目/ }).check();
-    await page.getByRole("button", { name: "新建", exact: true }).click();
-    await expect(tab(page, "preview")).toBeVisible();
-    await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
-    await statusName(page, "片子").click();
-    await goTo(page, "存放和同步");
-    await expect(props(page).getByTestId("project-properties-storage")).toContainText("本地项目");
-    await expect(props(page).getByTestId("project-properties-storage")).toContainText(
-      "本地文件夹 film",
-    );
-    await shot(page, "B-storage-local");
-    // Connected: a project of the platform in a folder.
-    await props(page).getByRole("button", { name: "连接到云端…" }).click();
-    const connecting = page.locator("dialog[data-connect-phase]");
-    await connecting.getByRole("textbox", { name: "仓库名" }).fill("my-film");
-    await connecting.getByRole("button", { name: "连接到云端" }).click();
-    await expect(connecting).toHaveAttribute("data-connect-phase", "done");
-    await connecting.getByRole("button", { name: "完成" }).click();
-    await statusName(page, "片子").click();
-    await goTo(page, "存放和同步");
-    const storage = props(page).getByTestId("project-properties-storage");
-    await expect(storage).toContainText("云端项目 · 文件夹加云同步");
-    await expect(storage).toContainText("本地文件夹 film");
-    await expect(storage).toContainText("平台上的编号");
-    await shot(page, "B-storage-cloud-folder");
-    // The name goes to the platform; the repository keeps its own.
-    await goTo(page, "常规");
-    await expect(props(page).locator('[data-property="name"]')).toContainText("GitHub 仓库名");
-    await page.keyboard.press("Escape");
-
-    // One of the platform that was opened without a folder.
+    // One of the platform, opened.
     await page.evaluate(() => {
       (window as unknown as { aqCloud: { seed(name: string, more: object): string } }).aqCloud.seed(
         "片头动画",
@@ -384,8 +338,12 @@ test.describe("the project properties of projects of the platform", () => {
     await expect(page).toHaveTitle("片头动画 - AnimaQuill");
     await statusName(page, "片头动画").click();
     await goTo(page, "存放和同步");
-    await expect(storage).toContainText("云端项目 · 只在这个浏览器里");
-    await expect(storage).toContainText("没有本地文件夹");
+    const storage = props(page).getByTestId("project-properties-storage");
+    await expect(storage).toContainText("在线项目");
+    await expect(storage).toContainText("octo/opening");
+    await expect(storage).toContainText("保存到文件夹…");
+    // Nothing of a folder that the project could be tied to: that is gone.
+    await expect(storage).not.toContainText("关联");
     await shot(page, "B-storage-cloud-browser");
     // Its description goes to the platform, and comes back with its list on the start page.
     await goTo(page, "常规");

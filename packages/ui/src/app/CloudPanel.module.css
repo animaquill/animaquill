@@ -148,8 +148,3 @@
 .sectionTitle [data-place="cloud"] {
   color: var(--aq-cloud);
 }
-
-.sectionTitle [data-place="cloudFolder"] {
-  --place-folder: var(--aq-local);
-  --place-cloud: var(--aq-cloud);
-}

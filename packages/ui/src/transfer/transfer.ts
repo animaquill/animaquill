@@ -1,5 +1,6 @@
 import type { FolderAccess, ProjectLibrary, SourceFolder, TargetFolder } from "@animaquill/host";
 import type { Problem } from "@animaquill/schema";
+import type { CopySource } from "../folder/copies.ts";
 import type { TFunction } from "i18next";
 import type { DialogDetail, Dialogs, ProgressDialog } from "../workbench/dialogs.ts";
 import { downloadableItems } from "../storage/places.ts";
@@ -169,6 +170,56 @@ export class ProjectTransfer {
         return () => this.#exportStopped(error, target, current, cleaned, signal.aborted);
       } finally {
         progress.close();
+      }
+    });
+    await announce();
+  }
+
+  /**
+   * A copy of a project that `source` brings once people chose where, as a new folder or, where
+   * the browser cannot write folders, a zip file it downloads: "保存到文件夹…" of the online mode
+   * there (docs/design/online-offline.md of AnimaQuill Cloud, 1.2). The project does not change.
+   */
+  async exportCopy(
+    name: string,
+    source: (signal: AbortSignal) => Promise<CopySource | undefined>,
+  ): Promise<void> {
+    const t = this.#t;
+    const target = await this.#choose(t("transfer.exportFailed"), () =>
+      this.#folders.chooseTarget(name),
+    );
+    if (!target) return;
+    const announce = await this.#run(async () => {
+      const progress = this.#dialogs.progress({
+        title: t("transfer.exporting", { name }),
+        cancel: t("dialog.cancel"),
+        stopping: t("transfer.stopping"),
+      });
+      const { signal } = progress;
+      const show = this.#follow(progress);
+      let current = INCOMPLETE_FILE;
+      let got: CopySource | undefined;
+      try {
+        got = await source(signal);
+        if (!got) {
+          await this.#takeBack(target);
+          return () => Promise.resolve();
+        }
+        const report = await exportProject(got.store, got.media, target, {
+          notice: t("transfer.incompleteNotice"),
+          signal,
+          onStep: (step) => {
+            current = step.file;
+            show(step);
+          },
+        });
+        return () => this.#announceExport(target, report);
+      } catch (error) {
+        const cleaned = await this.#takeBack(target);
+        return () => this.#exportStopped(error, target, current, cleaned, signal.aborted);
+      } finally {
+        progress.close();
+        got?.close();
       }
     });
     await announce();

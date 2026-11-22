@@ -10,7 +10,7 @@ import type { Page } from "@playwright/test";
 import { chromeRefuses } from "../../host/src/chrome-names.ts";
 import { folderNameFor } from "../../host/src/paths.ts";
 import { cardMenu, noProjects } from "./start-support.ts";
-import { content, createProject, expect, resourcesIn, tab, test } from "./support.ts";
+import { content, createProject, expect, resourcesIn, waitSaved, tab, test } from "./support.ts";
 
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
@@ -307,10 +307,8 @@ async function buildProject(page: Page) {
   await content(page, "timeline").getByRole("button", { name: "添加轨道" }).click();
   await page.getByRole("menuitem", { name: "字幕轨道" }).click();
   await expect(clips(page)).toHaveCount(3);
-  await saved(page);
+  await waitSaved(page);
 }
-
-const saved = (page: Page) => expect(page.locator("footer").getByText("已保存")).toBeVisible();
 
 async function renameTo(page: Page, name: string) {
   await chooseFrom(page, "文件", "重命名项目");
@@ -356,7 +354,7 @@ const stored = (page: Page) =>
   page.evaluate(
     () =>
       new Promise<{ projects: unknown[]; media: number; updates: number }>((resolve) => {
-        const open = indexedDB.open("animaquill");
+        const open = indexedDB.open("aq-offline-animaquill");
         open.onsuccess = () => {
           const database = open.result;
           const transaction = database.transaction(["projects", "media", "updates"]);
@@ -443,7 +441,7 @@ test.describe("a project that travels", () => {
     await removeProject(page, "测试项目");
     await importFromStart(page, folder);
     await expect(tab(page, "preview")).toBeVisible();
-    await saved(page);
+    await waitSaved(page);
     rmSync(folder, { recursive: true, force: true });
 
     await page.reload();
@@ -463,7 +461,7 @@ test.describe("a project that travels", () => {
     await page.getByRole("textbox", { name: "项目名称" }).fill("原来的项目");
     await page.keyboard.press("Enter");
     await page.keyboard.press("Escape");
-    await saved(page);
+    await waitSaved(page);
     const before = await stored(page);
 
     await importFrom(page, folder);
@@ -580,7 +578,7 @@ test.describe("a project that travels", () => {
     await page.evaluate(
       () =>
         new Promise<void>((resolve) => {
-          const open = indexedDB.open("animaquill");
+          const open = indexedDB.open("aq-offline-animaquill");
           open.onsuccess = () => {
             const database = open.result;
             const transaction = database.transaction(["projects", "media"], "readwrite");
@@ -627,7 +625,7 @@ test.describe("a project that travels", () => {
     await exportProject(page);
     const folder = await toDisk(page, "chosen/测试项目");
     await renameTo(page, "备份之后改过");
-    await saved(page);
+    await waitSaved(page);
 
     const other = await context.newPage();
     await other.goto("/");
@@ -784,7 +782,7 @@ test.describe("a folder with something wrong with it", () => {
 
   /** Whatever went missing, the project goes out and comes back without a question. */
   async function comesBackWhole(page: Page) {
-    await saved(page);
+    await waitSaved(page);
     await exportProject(page);
     const again = await toDisk(page, "chosen/测试项目（副本）");
     await importFrom(page, again);
@@ -1363,7 +1361,7 @@ test.describe("a project brought into a window that keeps nothing on the disk", 
   const keptFiles = (page: Page) =>
     page.evaluate(async () => {
       const database = await new Promise<IDBDatabase>((resolve, reject) => {
-        const open = indexedDB.open("animaquill");
+        const open = indexedDB.open("aq-offline-animaquill");
         open.onsuccess = () => resolve(open.result);
         open.addEventListener("error", () => reject(open.error));
       });
@@ -1421,7 +1419,7 @@ test.describe("a project brought into a window that keeps nothing on the disk", 
       (hash) =>
         new Promise<void>((resolve, reject) => {
           const file = (document.querySelector("#aq-earlier") as HTMLInputElement).files?.[0];
-          const open = indexedDB.open("animaquill");
+          const open = indexedDB.open("aq-offline-animaquill");
           open.onsuccess = () => {
             const store = open.result.transaction("media", "readwrite").objectStore("media");
             const all = store.getAll();

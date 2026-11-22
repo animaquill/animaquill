@@ -21,7 +21,7 @@ describe("browser settings", () => {
 
   it("rejects when the stored text is not JSON", async () => {
     const storage = memoryStorage();
-    storage.setItem("animaquill.layout", "{oops");
+    storage.setItem("aq-offline-animaquill.layout", "{oops");
     await expect(createBrowserHost(() => storage).settings.load("layout")).rejects.toThrow();
   });
 
@@ -55,14 +55,14 @@ describe("settings saved in another window", () => {
     const { settings } = createBrowserHost(() => memoryStorage());
     const listener = vi.fn<(value: unknown) => void>();
     settings.listen("layout", listener);
-    write("animaquill.layout", '{"a":1}');
+    write("aq-offline-animaquill.layout", '{"a":1}');
     expect(listener).toHaveBeenCalledExactlyOnceWith({ a: 1 });
   });
 
   it.each([
     ["another key", "animaquill.other", "{}"],
     ["a key of another site part", "layout", "{}"],
-    ["a removed value", "animaquill.layout", null],
+    ["a removed value", "aq-offline-animaquill.layout", null],
     ["everything cleared", null, null],
   ])("stays quiet on %s", (_, key, value) => {
     const write = listenWith();
@@ -79,7 +79,7 @@ describe("settings saved in another window", () => {
     const { settings } = createBrowserHost(() => memoryStorage());
     const listener = vi.fn<(value: unknown) => void>();
     settings.listen("layout", listener);
-    expect(() => write("animaquill.layout", "{oops")).not.toThrow();
+    expect(() => write("aq-offline-animaquill.layout", "{oops")).not.toThrow();
     expect(listener).not.toHaveBeenCalled();
   });
 
@@ -88,7 +88,7 @@ describe("settings saved in another window", () => {
     const { settings } = createBrowserHost(() => memoryStorage());
     const listener = vi.fn<(value: unknown) => void>();
     settings.listen("layout", listener)();
-    write("animaquill.layout", "{}");
+    write("aq-offline-animaquill.layout", "{}");
     expect(listener).not.toHaveBeenCalled();
   });
 });

@@ -105,7 +105,7 @@ interface Stored {
 const storedSounds = (page: Page) =>
   page.evaluate(async (): Promise<Stored[]> => {
     const records = await new Promise<{ hash: string; file: Blob }[]>((resolve, reject) => {
-      const open = indexedDB.open("animaquill");
+      const open = indexedDB.open("aq-offline-animaquill");
       open.addEventListener("error", () => reject(open.error));
       open.addEventListener("success", () => {
         const read = open.result.transaction("media").objectStore("media").getAll();
@@ -129,7 +129,7 @@ const forget = (page: Page) =>
   page.evaluate(
     () =>
       new Promise<void>((resolve, reject) => {
-        const open = indexedDB.open("animaquill");
+        const open = indexedDB.open("aq-offline-animaquill");
         open.addEventListener("error", () => reject(open.error));
         open.addEventListener("success", () => {
           const transaction = open.result.transaction("media", "readwrite");
@@ -668,7 +668,7 @@ const plant = (page: Page, name: string, bytes: number, usedAt?: number) =>
   page.evaluate(
     ([hash, size, used]) =>
       new Promise<void>((resolve, reject) => {
-        const open = indexedDB.open("animaquill");
+        const open = indexedDB.open("aq-offline-animaquill");
         open.addEventListener("error", () => reject(open.error));
         open.addEventListener("success", () => {
           const transaction = open.result.transaction("media", "readwrite");
@@ -698,7 +698,7 @@ const allStored = (page: Page) =>
   page.evaluate(
     () =>
       new Promise<string[]>((resolve) => {
-        const open = indexedDB.open("animaquill");
+        const open = indexedDB.open("aq-offline-animaquill");
         open.addEventListener("success", () => {
           const read = open.result.transaction("media").objectStore("media").getAllKeys();
           read.addEventListener("success", () => {

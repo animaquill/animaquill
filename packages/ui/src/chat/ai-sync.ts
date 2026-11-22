@@ -36,6 +36,7 @@ import {
   type SecretTimes,
   type ServiceSecret,
   type SettingsStore,
+  scoped,
 } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
 
@@ -415,7 +416,7 @@ export class AiSync {
     this.#base.listen(SCOPE, () => void account.refresh());
     this.#lead();
     if (typeof BroadcastChannel === "function") {
-      this.#channel = new BroadcastChannel(CHANNEL);
+      this.#channel = new BroadcastChannel(scoped(CHANNEL));
       this.#channel.addEventListener("message", () => {
         if (this.#leader) void this.sync();
       });
@@ -441,7 +442,7 @@ export class AiSync {
       return;
     }
     void locks
-      .request(LEADER, () => {
+      .request(scoped(LEADER), () => {
         this.#leader = true;
         void this.sync();
         // Held for as long as the page is there.
@@ -785,7 +786,7 @@ export class AiSync {
 
   async #lock<T>(account: string, work: () => Promise<T>): Promise<T> {
     const locks = (this.#options.locks ?? (() => globalThis.navigator?.locks))();
-    const name = `animaquill.ai-sync@${account}`;
+    const name = scoped(`animaquill.ai-sync@${account}`);
     if (!locks) return (await this.#pageLock(name, work)) as T;
     return (await locks.request(name, work)) as T;
   }

@@ -59,6 +59,15 @@ export function AccountMenu({ account }: { readonly account: AccountAccess }) {
             label: t("settings.accountMenu"),
             run: () => workbench.openSettings({ group: "account", depth: 1 }),
           },
+          ...(workbench.canGoOffline
+            ? [
+                {
+                  id: "account.offline",
+                  label: t("account.goOffline"),
+                  run: () => void workbench.goOffline(),
+                },
+              ]
+            : []),
         ],
         [
           {
@@ -96,5 +105,22 @@ function Picture({
       referrerPolicy="no-referrer"
       onError={() => setFailed(address)}
     />
+  );
+}
+
+/** Offline, in the title bar: the way to the online mode, which signs in. */
+export function OfflineSignIn() {
+  const workbench = useWorkbench();
+  const { t } = useTranslation();
+  return (
+    <button
+      type="button"
+      className={styles.signIn}
+      title={t("account.offlineHint")}
+      onClick={() => void workbench.goOnline()}
+    >
+      <LogIn size={14} />
+      <span>{t("account.signIn")}</span>
+    </button>
   );
 }

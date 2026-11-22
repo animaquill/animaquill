@@ -58,7 +58,7 @@ import {
   type DownloadStore,
   type ProjectSummary,
 } from "@animaquill/host";
-import type { ConnectTiming } from "../cloud/connect.ts";
+import { SaveToFolder } from "../cloud/save-to-folder.ts";
 import {
   CloudCreate,
   takeCreateIntent,
@@ -151,7 +151,7 @@ import { ResourcePages } from "../resources/pages.ts";
 import { parseProjectResourceId, projectResourceId } from "../resources/project-resources.ts";
 import { MissingFileWatch } from "../resources/missing-files.ts";
 import type { FolderTiming } from "../folder/session.ts";
-import { ProjectFolders, type FolderLinking, type PlacedFiles } from "./project-folders.ts";
+import { ProjectFolders, type PlacedFiles } from "./project-folders.ts";
 import { ProjectSession, projectKeyOf } from "./session.ts";
 import type { RepositoryWatch } from "../cloud/repository-watch.ts";
 import { LfsAccountState } from "../storage/lfs-account.ts";
@@ -197,6 +197,9 @@ import { CloudSync } from "../cloud/cloud-sync.ts";
 import { renameUnopened, type RenameOutcome } from "../start/rename.ts";
 import { PanelRegistry, type PanelDefinition } from "./panels.ts";
 
+/** Where people noted that projects of the offline mode stay in this browser, see `#createHere`. */
+const BROWSER_PROJECTS_KEY = "offline.browserProjects";
+
 export interface WorkbenchOptions {
   readonly host: Host;
   readonly t: TFunction;
@@ -216,8 +219,6 @@ export interface WorkbenchOptions {
   readonly cloudEnvironment?: CloudEnvironment;
   /** For tests: how long opening a project waits for the platform, see `OpeningTiming`. */
   readonly openingTiming?: Partial<OpeningTiming>;
-  /** For tests: how long the dialog that connects a project waits, see `ConnectTiming`. */
-  readonly connectTiming?: Partial<ConnectTiming>;
   /** What finds out hashes of files in project folders, in a worker where the page has one. */
   readonly hasher?: Hasher;
   /**
@@ -319,6 +320,14 @@ export class Workbench {
    */
   readonly projectFolders: ProjectFolders | undefined;
   /**
+   * "保存到文件夹…" of the online mode, where the browser can write folders, see `saveToFolder`.
+   * Undefined offline, where projects are folders already.
+   */
+  readonly saveToFolders: SaveToFolder | undefined;
+  /** Which of the two modes the editor is in, see `Host.mode`. */
+  readonly mode: Host["mode"];
+  readonly #host: Host;
+  /**
    * Smaller copies of large videos in a project folder, which the preview plays unless its quality
    * is full. Only where projects are folders, see the decision of 2026-11-09.
    */
@@ -384,7 +393,10 @@ export class Workbench {
   readonly #hasher: Hasher | undefined;
   /** Where this browser keeps the pieces of files that come, see `DownloadStore`. */
   readonly #downloadStore: DownloadStore | undefined;
-  /** For tests only: new projects can stay in this browser, see `Host.projectsHereForTests`. */
+  /**
+   * The offline mode where the browser cannot write folders: new projects stay in this browser,
+   * see `Host.mode`.
+   */
   readonly #projectsHere: boolean;
   readonly #memory: WindowMemory;
   readonly #settings: Host["settings"];
@@ -622,7 +634,9 @@ export class Workbench {
     this.#hasher = options.hasher;
     this.#downloadStore = options.host.downloads;
     this.persistence = host.persistence;
-    this.#projectsHere = host.projectsHereForTests === true;
+    this.#projectsHere = host.mode === "offline" && !host.localFolders;
+    this.mode = host.mode;
+    this.#host = host;
     this.#memory = host.windowMemory;
     this.#settings = host.settings;
     this.#making = host.making;
@@ -942,46 +956,59 @@ export class Workbench {
     void this.videos.cleanUp();
     this.looks = this.#frameLooks(host.chatImages);
     this.listens = this.#soundListens();
+    // Folders are projects only in the offline mode: online they are copies people save to.
     this.projectFolders =
-      host.localFolders &&
-      new ProjectFolders({
-        downloading: () => this.#downloading,
-        folders: host.localFolders,
-        projects: host.projects,
-        session: this.session,
-        address: host.address,
-        dialogs: this.dialogs,
-        notifications: this.notifications,
-        problems: this.problems,
-        t,
-        tools: this.tools,
-        takeBack: (origin, direction) => this.undo.takeBack(origin, direction),
-        startingFiles: () => this.startingFiles(),
-        changeProject: (next) => this.#changeProject(next),
-        warnAboutCode: (report) => this.transfer.warnAboutCode(report),
-        noteArrival: (report) => this.#noteImport(report),
-        letGo: async (id) => {
-          await this.videos.letGoOfProject(id);
-          await this.cloud?.forget(id);
-        },
-        showProblems: () => this.layout.openPanel("problems"),
-        here: () => this.here(),
-        assetFiles: {
-          useNewFile: (asset) => this.media.useNewFile(asset),
-          usePlace: (asset, path) => this.media.usePlace(asset, path),
-          filesChanged: (paths) => this.media.filesChanged(paths),
-        },
-        ...(options.hasher && { hasher: options.hasher }),
-        ...(options.folderTiming && { timing: options.folderTiming }),
-        ...(host.presence && { presence: host.presence }),
-        // What closed windows left on a folder, which goes with what this browser kept of it.
-        leftBehind: async (key: string) => [
-          ...((await host.trials.holds?.(key)) ? ["trial"] : []),
-          ...((await host.drafts.holds?.(key)) ? ["drafts"] : []),
-        ],
-        ...(host.organizer && { organizer: host.organizer }),
-        opening: this.opening,
-      });
+      host.mode === "offline" && host.localFolders
+        ? new ProjectFolders({
+            downloading: () => this.#downloading,
+            folders: host.localFolders,
+            projects: host.projects,
+            session: this.session,
+            address: host.address,
+            dialogs: this.dialogs,
+            notifications: this.notifications,
+            problems: this.problems,
+            t,
+            tools: this.tools,
+            takeBack: (origin, direction) => this.undo.takeBack(origin, direction),
+            startingFiles: () => this.startingFiles(),
+            changeProject: (next) => this.#changeProject(next),
+            warnAboutCode: (report) => this.transfer.warnAboutCode(report),
+            noteArrival: (report) => this.#noteImport(report),
+            letGo: async (id) => {
+              await this.videos.letGoOfProject(id);
+              await this.cloud?.forget(id);
+            },
+            showProblems: () => this.layout.openPanel("problems"),
+            here: () => this.here(),
+            assetFiles: {
+              useNewFile: (asset) => this.media.useNewFile(asset),
+              usePlace: (asset, path) => this.media.usePlace(asset, path),
+              filesChanged: (paths) => this.media.filesChanged(paths),
+            },
+            ...(options.hasher && { hasher: options.hasher }),
+            ...(options.folderTiming && { timing: options.folderTiming }),
+            ...(host.presence && { presence: host.presence }),
+            // What closed windows left on a folder, which goes with what this browser kept of it.
+            leftBehind: async (key: string) => [
+              ...((await host.trials.holds?.(key)) ? ["trial"] : []),
+              ...((await host.drafts.holds?.(key)) ? ["drafts"] : []),
+            ],
+            ...(host.organizer && { organizer: host.organizer }),
+            opening: this.opening,
+          })
+        : undefined;
+    this.saveToFolders =
+      host.mode === "online" && host.localFolders
+        ? new SaveToFolder({
+            folders: host.localFolders,
+            ...(host.savedFolders && { saved: host.savedFolders }),
+            dialogs: this.dialogs,
+            notifications: this.notifications,
+            t,
+            ...(host.openOffline && { openOffline: host.openOffline }),
+          })
+        : undefined;
     this.session.subscribe(() => this.projectFolders?.followSession());
     this.session.subscribe(() => this.tools.follow(this.session.getSnapshot().store));
     this.cloud =
@@ -990,8 +1017,6 @@ export class Workbench {
         cloud,
         session: this.session,
         projects: host.projects,
-        folderOf: (key) => this.#folderOf(key),
-        isFolder: (key) => this.projectFolders?.holds(key) === true,
         account: host.account,
         dialogs: this.dialogs,
         notifications: this.notifications,
@@ -1002,11 +1027,8 @@ export class Workbench {
         // As a promise, like signing in: whoever asked hears when leaving is over, and whether
         // people stayed after all.
         installApp: () => this.installApp(),
-        // "连成另一个云端项目" is the dialog that connects a project in one go, see `connectToCloud`.
-        showConnect: () => this.connectToCloud(),
         openProject: (id) => this.openProject(id),
         reopenProject: (key) => this.#reopenProject(key),
-        ...(host.localFolders && { records: host.localFolders.records }),
         ...(host.presence && {
           others: async (key: string) => (await host.presence?.others(key)) ?? 0,
         }),
@@ -1024,20 +1046,15 @@ export class Workbench {
           ...((await host.trials.holds?.(key)) ? (["trial"] as const) : []),
           ...((await host.drafts.holds?.(key)) ? (["drafts"] as const) : []),
         ],
-        ...(this.projectFolders && {
-          moveToFolder: (key: string, linking?: FolderLinking) =>
-            this.projectFolders?.moveToFolder(key, undefined, linking) ?? Promise.resolve(false),
-        }),
         memory: host.windowMemory,
         ...(host.persistence && { persistence: host.persistence }),
         leaving: () => this.leavingPage,
         ...(options.cloudTiming && { timing: options.cloudTiming }),
         ...(options.cloudEnvironment && { environment: options.cloudEnvironment }),
-        ...(options.connectTiming && { connectTiming: options.connectTiming }),
       });
     this.start = new StartList({
       projects: host.projects,
-      ...(host.localFolders && { records: host.localFolders.records }),
+      ...(this.projectFolders && host.localFolders && { records: host.localFolders.records }),
       ...(cloud && { cloud }),
       ...(host.account && { account: host.account }),
     });
@@ -1608,12 +1625,6 @@ export class Workbench {
     this.localAiGuide.set(true);
   }
 
-  /** Gives the open project a folder: links a cloud project to one, or moves it into one. */
-  linkFolder(): void {
-    if (this.cloud) this.runCloudAction("linkFolder");
-    else void this.moveToFolder();
-  }
-
   /** Adds AGENTS.md to the open project, as a new project has it. */
   addInstructions(): boolean {
     return (
@@ -1944,8 +1955,10 @@ export class Workbench {
       this.packs.load(),
     ]);
     this.tools.start();
-    // An address of a project folder opens as one once the page is there, see `resume`.
-    if (!(await this.projectFolders?.restore())) await this.session.restore();
+    // An address of a project folder opens as one once the page is there, see `resume`; and so
+    // does one of a project of the platform that this browser has nothing of yet.
+    if (!(await this.projectFolders?.restore()) && (await this.#hasAddressed()))
+      await this.session.restore();
     // Who is signed in comes when it comes: the editor does not wait for it.
     if (this.account) {
       this.#forgetChatsOnSignOut(this.account);
@@ -2044,7 +2057,7 @@ export class Workbench {
   async leavePage(): Promise<boolean> {
     const { t } = this;
     const exporting = this.videos.getSnapshot() !== undefined;
-    if (this.transfer.running || exporting || this.projectFolders?.moving === true) {
+    if (this.transfer.running || exporting || this.saveToFolders?.busy === true) {
       await this.dialogs.confirm({
         title: t("app.leaveBusyTitle"),
         message: t("app.leaveBusyMessage"),
@@ -2097,6 +2110,56 @@ export class Workbench {
     return true;
   }
 
+  /** Offline: whether there is an online mode to go to, see `Host.goOnline`. */
+  get canGoOnline(): boolean {
+    return this.#host.goOnline !== undefined;
+  }
+
+  /** Online: whether there is an offline mode to go to, see `Host.goOffline`. */
+  get canGoOffline(): boolean {
+    return this.#host.goOffline !== undefined;
+  }
+
+  /** Whether this browser can write folders: projects are folders offline, copies online. */
+  get canFolders(): boolean {
+    return this.#host.localFolders !== undefined;
+  }
+
+  /** Offline: to the online mode, which signs in, once what is not kept is, see `leavePage`. */
+  async goOnline(): Promise<void> {
+    const go = this.#host.goOnline;
+    if (go && (await this.leavePage())) go();
+  }
+
+  /**
+   * What something of the online mode does offline once pressed: says that it needs signing in,
+   * with the way to, where there is an online mode, see `OnlineOnly`.
+   */
+  async askToGoOnline(): Promise<void> {
+    const { t } = this;
+    if (!this.canGoOnline) {
+      await this.dialogs.confirm({
+        title: t("online.needed.title"),
+        message: t("online.needed.none"),
+        confirm: t("dialog.close"),
+        noticeOnly: true,
+      });
+      return;
+    }
+    const answer = await this.dialogs.choose({
+      title: t("online.needed.title"),
+      message: t("online.needed.message"),
+      choices: [{ id: "signIn", label: t("start.signIn"), kind: "primary" }],
+    });
+    if (answer === "signIn") await this.goOnline();
+  }
+
+  /** Online: to the offline mode of this site, staying signed in, see `leavePage`. */
+  async goOffline(): Promise<void> {
+    const go = this.#host.goOffline;
+    if (go && (await this.leavePage())) go();
+  }
+
   /** Signs in where the editor is hosted: the page goes and comes back, see `leavePage`. */
   async signIn(): Promise<void> {
     const { account } = this;
@@ -2130,8 +2193,36 @@ export class Workbench {
    */
   async resume(): Promise<void> {
     await this.projectFolders?.resume();
-    this.#resumeConnect();
+    await this.#openAddressed();
+    await this.#openHandedOver();
     this.#resumeCreate();
+  }
+
+  /**
+   * Whether this browser has the project the address of the page says, or the address says none:
+   * online, one it has nothing of comes from the platform once the page is there, see
+   * `#openAddressed`.
+   */
+  async #hasAddressed(): Promise<boolean> {
+    const id = this.#address.read();
+    if (id === undefined || this.mode === "offline") return true;
+    return (await this.projects.list().catch(() => [])).some((summary) => summary.id === id);
+  }
+
+  /** Online: the project of a link that this browser had nothing of, from the platform. */
+  async #openAddressed(): Promise<void> {
+    const id = this.#address.read();
+    if (id === undefined || this.mode !== "online" || this.session.key !== undefined) return;
+    if (!(await this.cloud?.openCloudProject(id))) this.#address.write(undefined);
+  }
+
+  /** Offline: a folder that a window of the online mode handed over, see `Host.openOffline`. */
+  async #openHandedOver(): Promise<void> {
+    const folder = await this.#host.handedOver?.().catch((error: unknown) => {
+      console.warn("The folder handed over could not be had", error);
+      return undefined;
+    });
+    if (folder) await this.projectFolders?.openGiven(folder);
   }
 
   /**
@@ -2196,32 +2287,31 @@ export class Workbench {
   }
 
   /**
-   * "另存为本地项目…": a copy of a project of the platform, the open one where none is said, as a
-   * project of this computer of its own in a folder, which does not sync, see
-   * `ProjectFolders.saveAsLocal`. Where this window has the project open, the copy is of what it
-   * has; otherwise of what the platform has, read only. The project itself does not change.
+   * "保存到文件夹…" (docs/design/online-offline.md of AnimaQuill Cloud, 1.2): a copy of a project of
+   * the online mode, the open one where none is said, in a folder on this computer, see
+   * `SaveToFolder`; where the browser cannot write folders, as a zip file it downloads. Where this
+   * window has the project open, the copy is of what it has; otherwise of what the platform has,
+   * read only. The project itself does not change.
    */
-  async saveAsLocal(project?: string, name?: string): Promise<void> {
-    const { cloud, projectFolders } = this;
-    if (!cloud || !projectFolders) return;
+  async saveToFolder(project?: string, name?: string): Promise<void> {
+    const { cloud, saveToFolders } = this;
+    if (!cloud) return;
     const open = cloud.getSnapshot();
     const id = project ?? (open.kind === "linked" ? open.link.project : undefined);
     if (id === undefined) return;
     const isOpen = open.kind === "linked" && open.link.project === id;
     const shown = name ?? (isOpen ? this.session.store?.getState().manifest.name : undefined) ?? "";
     const came: string[] = [];
-    await projectFolders.saveAsLocal(shown, async (signal) => {
-      const got = await cloud.copySource(
-        id,
-        signal,
-        (key) => projectFolders.mediaFor(key) ?? this.projects.media(key),
-      );
+    const source = async (signal: AbortSignal) => {
+      const got = await cloud.copySource(id, signal, (key) => this.projects.media(key));
       // The copy does not stay with the platform: whatever can come out of the large file storage
-      // comes first, used or not (4.3 of the design of the start page).
+      // comes first, used or not.
       return (
         got && { ...got, media: this.#downloadingMedia(id, got.store, got.media, signal, came) }
       );
-    });
+    };
+    if (saveToFolders) await saveToFolders.save(id, shown, source);
+    else await this.transfer.exportCopy(shown, source);
     // What came for the copy alone goes: the copy has it. The open project may want it still.
     if (!isOpen)
       for (const oid of came) await this.#downloadStore?.dropUnused(oid).catch(() => false);
@@ -2290,10 +2380,7 @@ export class Workbench {
     return cloud.deleteFromCloud(id, shown);
   }
 
-  /**
-   * "云端…": how the open project stands with the platform. One that is not connected gets the
-   * dialog that connects it; any other the panel, which the status bar shows.
-   */
+  /** "云端…": how the open project stands with the platform, in the panel of the status bar. */
   showCloud(): void {
     void this.#showCloud();
   }
@@ -2301,82 +2388,7 @@ export class Workbench {
   async #showCloud(): Promise<void> {
     const { cloud } = this;
     if (!cloud || !(await this.#followCloud())) return;
-    if (cloud.getSnapshot().kind === "none") await this.connectToCloud();
-    else this.cloudPanel.set(true);
-  }
-
-  /**
-   * Connects the open project to the platform in one dialog, see `CloudConnect`: the project goes
-   * there, gets its repository, and is archived for the first time. For one that is on the
-   * platform without a repository the dialog does what is missing; one that has its repository
-   * gets the panel. `resume`: only where the page left in the middle of it, as to sign in.
-   */
-  async connectToCloud({ resume = false } = {}): Promise<void> {
-    const { cloud } = this;
-    // Not before it is known whether the project is connected: the dialog would connect one
-    // that is, a second time.
-    if (!cloud || !(await this.#followCloud())) return;
-    const snapshot = cloud.getSnapshot();
-    // Whether it has a repository is not known yet: the dialog would ask for one it has.
-    if (snapshot.kind === "linked" && cloud.isOnPlatform && !snapshot.repository?.status)
-      await snapshot.repository?.refresh();
-    const connect = cloud.beginConnect({ resume });
-    if (!connect) {
-      if (resume) return;
-      // Its repository is there: the panel says how it goes. A platform that saves no projects
-      // to repositories has no such dialog, and nothing to connect a project with here.
-      if (cloud.getSnapshot().kind === "linked") this.cloudPanel.set(true);
-      return;
-    }
-    this.cloudPanel.set(false);
-    try {
-      await this.dialogs.connect({
-        title: this.t(
-          connect.getSnapshot().repositoryOnly
-            ? "cloud.connect.repositoryTitle"
-            : "cloud.connect.title",
-          { name: connect.name, interpolation: { escapeValue: false } },
-        ),
-        connect,
-      });
-    } finally {
-      // Over, or another dialog took its place: what it made stays as it is then, for people to
-      // go on with from the panel.
-      connect.close();
-    }
-    // Connected: whether the assets go into the large file storage too, once.
-    const done = connect.getSnapshot().phase;
-    const project = this.#uploadProject();
-    if (
-      (done === "done" || done === "archiving") &&
-      project?.project &&
-      this.uploads.available &&
-      this.#assetCount() > 0
-    )
-      void this.#askOnce(`connected.${project.project}`, "connected");
-  }
-
-  /**
-   * Once the page is back from signing in or installing the App, which the dialog that connects a
-   * project sent it to: the dialog comes back with what people chose, as soon as that project is
-   * open again, which a folder is once people let the browser read it.
-   */
-  #resumeConnect(): void {
-    const { cloud } = this;
-    if (!cloud) return;
-    let stops: (() => void)[] = [];
-    const look = () => {
-      const { key, store } = this.session;
-      if (!key || !store) return;
-      if (this.projectFolders?.holds(key) && !this.#folderOf(key)) return;
-      for (const stop of stops.splice(0)) stop();
-      void this.connectToCloud({ resume: true });
-    };
-    stops = [
-      this.session.subscribe(look),
-      ...(this.projectFolders ? [this.projectFolders.subscribe(look)] : []),
-    ];
-    look();
+    this.cloudPanel.set(true);
   }
 
   /** "打开云端的项目…": the start page, at its projects of the platform. */
@@ -2388,31 +2400,22 @@ export class Workbench {
   /** What people press in the panel of the platform, see `cloudPanel`. */
   runCloudAction(id: PanelActionId): void {
     const { cloud } = this;
+    // A project only in this browser has a panel offline too: its way out is a copy as a file.
+    if (id === "saveCopy") {
+      this.cloudPanel.set(false);
+      void this.exportProject();
+      return;
+    }
     if (!cloud) return;
     // These show how they go in the panel itself; the others ask something, or leave.
     if (id !== "archiveNow" && id !== "retry" && id !== "recheck") this.cloudPanel.set(false);
     switch (id) {
-      case "connect":
-      case "chooseRepository":
-      case "finishConnect":
-        void this.connectToCloud();
-        break;
       case "switchRepository":
         void cloud.switchRepository();
-        break;
-      case "disconnect":
-        void cloud.disconnect();
         break;
       case "removeFromBrowser": {
         const { key } = this.session;
         if (key !== undefined) void cloud.removeFromBrowser(key);
-        break;
-      }
-      case "linkFolder": {
-        // As from the start page: a folder that has the project already is compared with it.
-        const snapshot = cloud.getSnapshot();
-        if (snapshot.kind === "linked") void cloud.linkFolder(snapshot.link.project);
-        else void this.moveToFolder();
         break;
       }
       case "recheck":
@@ -2423,8 +2426,8 @@ export class Workbench {
       case "restoreApp":
         void this.installApp();
         break;
-      case "saveAsLocal":
-        void this.saveAsLocal();
+      case "saveToFolder":
+        void this.saveToFolder();
         break;
       case "deleteCloud":
         void this.deleteFromCloud();
@@ -2462,59 +2465,46 @@ export class Workbench {
       case "reload":
         location.reload();
         break;
-      case "moveToFolder":
-        void this.moveToFolder();
-        break;
-      case "saveCopy":
-        void this.exportProject();
-        break;
     }
   }
 
   /**
-   * A new project, see the design of the start page (docs/design/start-and-cloud.md of AnimaQuill
-   * Cloud), 3: a project of this computer, which is a folder people choose, or a project of the
-   * platform, see `CloudCreate`, in one dialog that asks which. No new project is only in this
-   * browser: the browser can clear it at any time. Where the editor is hosted on no platform there
-   * is only the folder, and a browser that cannot write folders cannot make a project then. Tests
-   * still make projects in this browser, see `Host.projectsHereForTests`.
+   * A new project (docs/design/online-offline.md of AnimaQuill Cloud, 1.2 and 1.3), in one dialog,
+   * see `CloudCreate`: online a project of the platform; offline a folder people choose, or where
+   * the browser cannot write folders, a project in this browser.
    */
-  async newProject(kind?: "local" | "cloud"): Promise<void> {
-    if (this.#platform) {
-      const create = this.#newCreate({});
-      // From "新建云端项目" or "新建本地项目" of the start page: that one is chosen already.
-      if (kind) create.setKind(kind);
-      await this.#showCreate(create);
-      return;
-    }
-    if (this.projectFolders) {
-      await this.projectFolders.create();
-      return;
-    }
-    if (this.#projectsHere) {
-      const { t } = this;
-      const name = await this.dialogs.prompt({
-        title: t("project.nameLabel"),
-        value: t("project.defaultName"),
-        confirm: t("project.create"),
-      });
-      if (name) await this.#createHere(name);
-      return;
-    }
-    await this.dialogs.confirm({
-      title: this.t("project.new"),
-      message: this.t("newProject.unsupported"),
-      confirm: this.t("dialog.close"),
-      noticeOnly: true,
-    });
+  async newProject(): Promise<void> {
+    if (this.mode === "online" && !this.#platform) return;
+    await this.#showCreate(this.#newCreate({}));
   }
 
-  /** For tests only: a project in this browser, see `Host.projectsHereForTests`. */
+  /**
+   * A project in this browser, offline where it cannot write folders: people hear once that the
+   * browser can clear it, and the browser is asked to keep what it stores (R-ST-9).
+   */
   async #createHere(name: string, format?: NewFormat): Promise<void> {
+    const { t } = this;
+    const noted = await this.#settings.load(BROWSER_PROJECTS_KEY).catch(() => undefined);
+    if (noted === undefined) {
+      await this.dialogs.confirm({
+        title: t("newProject.browser.title"),
+        message: t("newProject.browser.message"),
+        confirm: t("newProject.browser.ok"),
+        noticeOnly: true,
+      });
+      await this.#settings.save(BROWSER_PROJECTS_KEY, Date.now()).catch(() => {});
+    }
+    const { persistence } = this;
+    if (persistence && !persistence.wasAsked())
+      void persistence
+        .persisted()
+        .then((kept) => kept || persistence.persist())
+        .then((kept) => {
+          // The settings say so for as long as it is so ("存储和数据"): this is for the first time.
+          if (!kept) this.notifications.push(t("newProject.browser.notKept"));
+        })
+        .catch(() => {});
     await this.#changeProject(() => this.session.create(name, format));
-    // Made here on purpose: nothing is said about it being only here as it opens.
-    const { key } = this.session;
-    if (key !== undefined) this.cloud?.noteToldOnlyHere(key);
   }
 
   /** The dialog that makes a new project, see `CloudCreate`. */
@@ -2545,13 +2535,11 @@ export class Workbench {
       ...(cloud && { cloud }),
       ...(cloud?.repository && { access: cloud.repository }),
       ...(this.account && { account: this.account }),
-      preferCloud: () => this.cloudSync.newProjectsInCloud,
       name: imported?.project.manifest.name ?? t("project.defaultName"),
       content,
       ...(imported && { imported: true }),
       ...(folders && {
         createLocal: (name: string, format: NewFormat) => folders.createNamed(name, format),
-        chooseFolder: (name: string) => folders.chooseForNew(name),
       }),
       ...(this.#projectsHere && {
         createHere: (name: string, format: NewFormat) => this.#createHere(name, format),
@@ -2566,14 +2554,9 @@ export class Workbench {
           bring: (media: MediaStore) => keepFiles(imported, media),
         }),
       ...(this.#making && { making: this.#making }),
-      open: async (key, folder) => {
+      open: async (key) => {
         await this.openProject(key);
-        const opened = this.session.key === key;
-        const inFolder =
-          opened && folder !== undefined && folders !== undefined
-            ? await folders.moveToFolder(key, folder)
-            : false;
-        return { opened, inFolder };
+        return this.session.key === key;
       },
       ...(this.cloud && { projects: this.cloud }),
       signIn: () => this.signIn(),
@@ -2593,6 +2576,19 @@ export class Workbench {
    */
   async #showCreate(create: CloudCreate, imported?: PreparedProject): Promise<void> {
     const { t } = this;
+    // A project of the offline mode is made by whoever makes folders, or in this browser: the
+    // dialog is over as soon as it went on, whatever shows it.
+    const stop = create.subscribe(() => {
+      const { kind, phase } = create.getSnapshot();
+      const shown = this.dialogs.getSnapshot();
+      if (
+        kind !== "cloud" &&
+        phase === "done" &&
+        shown?.kind === "create" &&
+        shown.create === create
+      )
+        this.dialogs.answer(undefined);
+    });
     try {
       for (;;) {
         await this.dialogs.create({
@@ -2608,6 +2604,7 @@ export class Workbench {
         if (phase !== "archiving" && phase !== "done" && phase !== "choosing") break;
       }
     } finally {
+      stop();
       create.close();
     }
     const { key } = create.getSnapshot();
@@ -2637,8 +2634,7 @@ export class Workbench {
   }
 
   /**
-   * Says to the windows of this browser which project this one has open, and goes on as a folder
-   * where another window moved that project into one, see `ProjectFolders.followMove`.
+   * Says to the windows of this browser which project this one has open.
    */
   #keepPresence(host: Host): void {
     const { presence } = host;
@@ -2652,7 +2648,6 @@ export class Workbench {
     };
     this.session.subscribe(follow);
     follow();
-    presence.onMoved((project) => void this.projectFolders?.followMove(project));
   }
 
   /**
@@ -3150,10 +3145,6 @@ export class Workbench {
       case "signedOut":
         await this.signIn();
         return;
-      case "space":
-        // A project only in this browser can go into a folder, where its files take no room of it.
-        if (!this.projectFolders?.assets()) await this.moveToFolder();
-        return;
       default:
         return;
     }
@@ -3274,7 +3265,7 @@ export class Workbench {
       );
     }
     const cloud = this.cloud?.getSnapshot();
-    if (cloud?.kind === "linked" && cloud.local === "browser") {
+    if (cloud?.kind === "linked") {
       this.#noticeOfUploads(t("storage.uploads.notice.browserOnly"), {
         stays: true,
         actions: [put(ids), { label: t("storage.uploads.notice.later"), run: () => {} }],
@@ -3327,15 +3318,6 @@ export class Workbench {
   }
 
   /**
-   * Moves a project of this browser, the open one by default, into a folder on this computer, where
-   * the browser can write folders: see `ProjectFolders.moveToFolder`. Resolves to whether it moved.
-   */
-  async moveToFolder(id = this.session.key): Promise<boolean> {
-    if (!this.projectFolders || id === undefined) return false;
-    return this.projectFolders.moveToFolder(id);
-  }
-
-  /**
    * The open project stays open until the new one is there, so a failure costs nothing. Where the
    * editor is hosted on a platform, what is imported becomes a new project of the platform, see
    * `CloudCreate`: no new project is only in this browser. Only a browser that cannot write folders
@@ -3365,17 +3347,15 @@ export class Workbench {
   async #importToCloud(): Promise<void> {
     const { account, t } = this;
     // Signing in leaves the page, and what was read goes with it: first that, then the folder.
-    if (account) {
-      await account.refresh();
-      if (account.getSnapshot().status !== "signedIn") {
-        const answer = await this.dialogs.choose({
-          title: t("newProject.importTitle"),
-          message: t("newProject.signInToImport"),
-          choices: [{ id: "signIn", label: t("account.signIn"), kind: "primary" }],
-        });
-        if (answer === "signIn") await this.signIn();
-        return;
-      }
+    // Nothing waits before the folder is asked for: the browser asks only right after the click.
+    if (account?.getSnapshot().status === "signedOut") {
+      const answer = await this.dialogs.choose({
+        title: t("newProject.importTitle"),
+        message: t("cloud.signInFirst"),
+        choices: [{ id: "signIn", label: t("account.signIn"), kind: "primary" }],
+      });
+      if (answer === "signIn") await this.signIn();
+      return;
     }
     this.diagnostics.mark("import", { step: "start" });
     const prepared = await this.transfer
@@ -4138,36 +4118,27 @@ export class Workbench {
       enabled: isOpen,
       visible: isOpen,
     });
-    // Where projects are folders, opening one takes the place of bringing one into the browser.
+    // Where projects are folders, opening one takes the place of bringing one into the browser;
+    // online, a folder comes in as a new project of the backend.
     if (!this.projectFolders) {
       this.actions.register({
         id: "project.importFolder",
-        title: (t) => t("transfer.importAction"),
+        title: (t) =>
+          t(this.mode === "online" ? "newProject.importFromFolder" : "transfer.importAction"),
         run: () => void this.importProject(),
         menu: { name: "file", group: "folder" },
       });
-    } else {
-      const folders = this.projectFolders;
-      const canMove = () => isOpen() && !folders.holds(this.session.key);
+    }
+    const cloud = this.cloud;
+    if (this.mode === "offline" || !cloud) {
       this.actions.register({
-        id: "project.moveToFolder",
-        title: (t) => t("folder.move.action"),
-        run: () => void this.moveToFolder(),
+        id: "project.exportFolder",
+        title: (t) => t("transfer.exportAction"),
+        run: () => void this.exportProject(),
         menu: { name: "file", group: "folder" },
-        // Only a project of the browser: a folder is where a project goes already, and the menu
-        // of one does not have this at all.
-        enabled: canMove,
-        visible: canMove,
+        enabled: isOpen,
       });
     }
-    this.actions.register({
-      id: "project.exportFolder",
-      title: (t) => t("transfer.exportAction"),
-      run: () => void this.exportProject(),
-      menu: { name: "file", group: "folder" },
-      enabled: isOpen,
-    });
-    const cloud = this.cloud;
     if (cloud) {
       // The menu has two ways to the platform: its projects, and how the open one stands with it.
       // Everything else is in the panel, and in the command palette by the ids it always had.
@@ -4185,13 +4156,12 @@ export class Workbench {
         enabled: isOpen,
       });
       this.actions.register({
-        id: "cloud.saveAsLocal",
-        title: (t) => t("cloud.saveAsLocalAction"),
-        run: () => void this.saveAsLocal(),
-        menu: { name: "file", group: "cloud" },
-        // A copy of a project of the platform, into a folder.
-        enabled: () => this.projectFolders !== undefined && cloud.isOnPlatform,
-        visible: () => this.projectFolders !== undefined && cloud.getSnapshot().kind === "linked",
+        id: "cloud.saveToFolder",
+        title: (t) => t(this.saveToFolders ? "saveToFolder.action" : "saveToFolder.downloadAction"),
+        run: () => void this.saveToFolder(),
+        menu: { name: "file", group: "folder" },
+        enabled: () => cloud.isOnPlatform,
+        visible: () => cloud.getSnapshot().kind === "linked",
       });
       this.actions.register({
         id: "cloud.delete",
@@ -4205,36 +4175,13 @@ export class Workbench {
         run: () => void cloud.recheck(),
         enabled: () => cloud.unusable !== undefined,
       });
-      this.actions.register({
-        id: "cloud.connect",
-        title: (t) => t("cloud.connectAction"),
-        run: () => void this.connectToCloud(),
-        enabled: () => cloud.canConnect && cloud.savesToGitHub && this.cloudKnown.getSnapshot(),
-      });
-      this.actions.register({
-        id: "cloud.disconnect",
-        title: (t) => t("cloud.disconnectAction"),
-        run: () => void cloud.disconnect(),
-        // A project of the platform that is only in this browser goes out of the browser instead.
-        enabled: () => {
-          const snapshot = cloud.getSnapshot();
-          return snapshot.kind === "linked" && snapshot.local === "folder";
-        },
-      });
-      // Only where the platform saves projects to GitHub: another repository, or the first one
-      // for a project from before every project of the platform had one.
+      // Only where the platform saves projects to GitHub: another repository.
       if (cloud.savesToGitHub)
         this.actions.register({
           id: "cloud.saveToGitHub",
-          title: (t) =>
-            t(
-              cloud.canSwitchRepository
-                ? "cloud.panel.action.switchRepository"
-                : "cloud.panel.action.chooseRepository",
-            ),
-          run: () =>
-            void (cloud.canSwitchRepository ? cloud.switchRepository() : this.connectToCloud()),
-          enabled: () => cloud.canDisconnect,
+          title: (t) => t("cloud.panel.action.switchRepository"),
+          run: () => void cloud.switchRepository(),
+          enabled: () => cloud.canSwitchRepository,
         });
     }
     this.actions.register({

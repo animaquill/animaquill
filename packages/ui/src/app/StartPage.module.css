@@ -634,12 +634,6 @@
   color: var(--aq-local);
 }
 
-/* Both: the folder in the colour of this computer, the small cloud in that of the platform. */
-.placeIcon[data-place="cloudFolder"] {
-  --place-folder: var(--aq-local);
-  --place-cloud: var(--aq-cloud);
-}
-
 .status[data-tone="warning"] .statusText,
 .status[data-tone="warning"] .placeIcon {
   --place-folder: var(--aq-warning);

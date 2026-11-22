@@ -26,9 +26,9 @@ test.describe("a project only in the browser", () => {
       .catch(() => {});
     await content(page, "chat").getByTestId("chat-onboard-local-ai").click();
     await expect(guide(page).getByTestId("local-ai-project")).toContainText(
-      "这个项目只在浏览器里，要先关联一个文件夹",
+      "这个浏览器不能打开电脑上的文件夹，电脑上的 AI 工具改不了这个项目。",
     );
-    await expect(guide(page).getByRole("button", { name: "关联文件夹…" })).toBeVisible();
+    await expect(guide(page).getByRole("button", { name: "关联文件夹…" })).toHaveCount(0);
     await shot(page, "guide-browser");
     await guide(page).getByRole("button", { name: "关闭" }).last().click();
     // The palette has it too.
