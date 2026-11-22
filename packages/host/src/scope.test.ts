@@ -124,15 +124,59 @@ describe("what the editor kept before there were scopes", () => {
     expect(storage.getItem("animaquill.projectsInBrowser")).toBe("yes");
   });
 
-  it("counts the projects whose changes the platform may not have yet, which keep it", async () => {
+  /** The log of before: its updates, by project, as the library of before kept them. */
+  async function logOf(factory: IDBFactory, records: readonly object[]) {
+    const request = factory.open("animaquill", 2);
+    request.addEventListener("upgradeneeded", () => {
+      request.result
+        .createObjectStore("updates", { keyPath: "seq", autoIncrement: true })
+        .createIndex("project", "project");
+    });
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      request.addEventListener("success", () => resolve(request.result));
+      request.addEventListener("error", () => reject(request.error));
+    });
+    const transaction = database.transaction("updates", "readwrite");
+    for (const record of records) transaction.objectStore("updates").put(record);
+    await new Promise((resolve) => transaction.addEventListener("complete", resolve));
+    database.close();
+  }
+
+  it("counts the projects whose changes the platform may not have yet, by their logs", async () => {
     const factory = new IDBFactory();
     await before(factory, "animaquill-cloud", [
-      { key: "a", pending: 2 },
+      // What the log has after what got there, while the hint of the link says nothing yet.
+      { key: "a", pushed: 1, pending: 0 },
       { key: "b", creating: true },
-      { key: "c", pending: 0 },
+      // After what got there only what came from there.
+      { key: "c", pushed: 2, pending: 3 },
+      { key: "d", pushed: 9 },
+    ]);
+    await logOf(factory, [
+      { seq: 1, project: "a", update: new Uint8Array([1]), source: { kind: "window" } },
+      { seq: 2, project: "a", update: new Uint8Array([1]), source: { kind: "window" } },
+      { seq: 3, project: "c", update: new Uint8Array([1]), source: { kind: "cloud" } },
+      { seq: 4, project: "c", update: new Uint8Array([1]), source: { kind: "merged" } },
+      { seq: 5, project: "d", update: new Uint8Array([1]) },
     ]);
     expect(await unscopedUnsent(() => factory)).toBe(2);
     // A browser that never had it has nothing to keep.
     expect(await unscopedUnsent(() => new IDBFactory())).toBe(0);
+  });
+
+  it("takes nothing away while a page of before is open", async () => {
+    const factory = new IDBFactory();
+    await before(factory, "animaquill");
+    const holding = {
+      query: async () => ({ held: [{ name: "animaquill.open.p1", mode: "shared" }], pending: [] }),
+    } as unknown as LockManager;
+    expect(
+      await dropUnscopedData(
+        () => factory,
+        () => memoryStorage(),
+        () => holding,
+      ),
+    ).toEqual([]);
+    expect(await unscopedDatabases(() => factory)).toEqual(["animaquill"]);
   });
 });

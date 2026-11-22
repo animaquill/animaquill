@@ -48,8 +48,10 @@ afterEach(async () => {
 });
 
 /** A browser of somebody who is signed in to the platform, with or without folders it can write. */
-function browserOn(platform: MemoryPlatform, { folders = true } = {}) {
-  const disk = new MemoryDisk();
+function browserOn(
+  platform: MemoryPlatform,
+  { folders = true, disk = new MemoryDisk() }: { folders?: boolean; disk?: MemoryDisk } = {},
+) {
   const library = new MemoryLibrary();
   const presence = new MemoryPresence();
   const cloud = new TestCloudBrowser(platform, "ada");
@@ -219,10 +221,65 @@ describe("a project of the online mode, saved to a folder (docs/design/online-of
     });
     browser.disk.chooseNext("文档/别的项目");
     const saving = workbench.saveToFolder();
+    // Whether it is a copy of this project is known once the copy is there to say its id.
+    const asked = await answerNext(workbench, "confirm", true);
+    expect(asked).toMatchObject({ confirm: "saveToFolder.again.replace" });
     const said = await answerNext(workbench, "confirm", true);
     expect(said).toMatchObject({ noticeOnly: true });
     await saving;
     expect(filesOf(browser.disk, "文档/别的项目").size).toBe(1);
+  });
+
+  it("checks the folder of the last save again, which people may have used for something else", async () => {
+    const platform = new MemoryPlatform();
+    const { project } = await onPlatform(platform);
+    const browser = browserOn(platform);
+    const workbench = browser.window();
+    expect(await workbench.cloud?.openCloudProject(project)).toBe(true);
+    browser.disk.folder("文档/副本", { quietly: true });
+    browser.disk.chooseNext("文档/副本");
+    const saving = workbench.saveToFolder();
+    await answerNext(workbench, "choice", "ok");
+    await saving;
+    // Another project goes there since, with files of the format of its own.
+    for (const path of filesOf(browser.disk, "文档/副本").keys())
+      browser.disk.remove(`文档/副本/${path}`, { quietly: true });
+    browser.disk.write("文档/副本/animaquill.json", JSON.stringify({ id: "other" }), {
+      quietly: true,
+    });
+    browser.disk.write("文档/副本/code/别的.js", "theirs\n", { quietly: true });
+    const again = workbench.saveToFolder();
+    await answerNext(workbench, "choice", "replace");
+    const said = await answerNext(workbench, "confirm", true);
+    expect(said).toMatchObject({ noticeOnly: true });
+    await again;
+    const after = filesOf(browser.disk, "文档/副本");
+    expect(after.get("code/别的.js")).toBe("theirs\n");
+    expect(after.get("animaquill.json")).toBe(JSON.stringify({ id: "other" }));
+    expect(after.size).toBe(2);
+  });
+
+  it("saves into a folder people choose that has a copy of this project, replacing it", async () => {
+    const platform = new MemoryPlatform();
+    const { project } = await onPlatform(platform);
+    const browser = browserOn(platform);
+    const workbench = browser.window();
+    expect(await workbench.cloud?.openCloudProject(project)).toBe(true);
+    browser.disk.folder("文档/副本", { quietly: true });
+    browser.disk.chooseNext("文档/副本");
+    const saving = workbench.saveToFolder();
+    await answerNext(workbench, "choice", "ok");
+    await saving;
+    // Another browser, which has no folder of the last save, chooses the same one.
+    const other = browserOn(platform, { disk: browser.disk }).window();
+    expect(await other.cloud?.openCloudProject(project)).toBe(true);
+    browser.disk.chooseNext("文档/副本");
+    other.session.store?.execute(write("code/动画.js", "const a = 3;\n"));
+    const again = other.saveToFolder();
+    await answerNext(other, "confirm", true);
+    await answerNext(other, "choice", "ok");
+    await again;
+    expect(filesOf(browser.disk, "文档/副本").get("code/动画.js")).toBe("const a = 3;\n");
   });
 });
 

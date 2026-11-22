@@ -13,7 +13,7 @@ import {
   type ModeMemory,
 } from "@animaquill/host/browser";
 import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { createI18n } from "../i18n/i18n.ts";
 import { mountEditor, type EditorOptions } from "../mount.tsx";
 import { EntryPage, type EntryProblem } from "./EntryPage.tsx";
@@ -45,6 +45,8 @@ export interface AppOptions extends Omit<EditorOptions, "host"> {
   readonly memory?: ModeMemory;
 }
 
+/** How long the page waits for the backend before it shows the entry page, saying it waits. */
+const WAIT_SHOWN_MS = 800;
 /** How long the entry waits to hear who is signed in before it goes by what it remembers. */
 const ASK_MS = 15_000;
 
@@ -89,10 +91,27 @@ export async function startApp(element: HTMLElement, options: AppOptions): Promi
   if (modeOfPath(path) === "offline") history.replaceState(history.state, "", goTo("/"));
 
   const account = online.account();
+  const chooseOffline = () => {
+    memory.setPrefersOffline(true);
+    location.assign(goTo(pathOf("offline", undefined)));
+  };
+  // A backend that takes a while to answer gets the entry page meanwhile, saying so: nothing
+  // blank, and both ways in work already.
+  const entry = entryOn(element);
+  const waiting = setTimeout(() => {
+    void entry.show({
+      account,
+      problem: "connecting",
+      offlineRefused,
+      offline: chooseOffline,
+      retry: () => location.reload(),
+    });
+  }, WAIT_SHOWN_MS);
   await Promise.race([
     account.refresh(),
     new Promise<void>((resolve) => setTimeout(resolve, ASK_MS)),
   ]);
+  clearTimeout(waiting);
   const snapshot = account.getSnapshot();
   const known = memory.lastAccount(online.backend);
   if (snapshot.status === "signedOut") memory.setLastAccount(online.backend, undefined);
@@ -111,21 +130,20 @@ export async function startApp(element: HTMLElement, options: AppOptions): Promi
       !offlineRefused &&
       !projectOfPath(path)
     ) {
+      entry.close();
       await offline();
       return;
     }
-    await showEntry(element, {
+    await entry.show({
       account,
       problem: snapshot.status === "unknown" ? "unreachable" : outcomeProblem(account),
       offlineRefused,
-      offline: () => {
-        memory.setPrefersOffline(true);
-        location.assign(goTo(pathOf("offline", undefined)));
-      },
+      offline: chooseOffline,
       retry: () => location.reload(),
     });
     return;
   }
+  entry.close();
   memory.setPrefersOffline(false);
   memory.setLastAccount(online.backend, who);
   const host = createOnlineHost({
@@ -208,18 +226,32 @@ interface EntryOptions {
   readonly retry: () => void;
 }
 
-async function showEntry(element: HTMLElement, options: EntryOptions): Promise<void> {
-  const i18n = await createI18n();
-  createRoot(element).render(
-    <StrictMode>
-      <EntryPage
-        t={i18n.t}
-        problem={options.problem}
-        offlineRefused={options.offlineRefused}
-        signIn={() => options.account.signIn()}
-        offline={options.offline}
-        retry={options.retry}
-      />
-    </StrictMode>,
-  );
+/** The entry page in `element`, shown as often as asked, and gone once the editor comes. */
+function entryOn(element: HTMLElement) {
+  let root: Root | undefined;
+  let closed = false;
+  return {
+    async show(options: EntryOptions): Promise<void> {
+      const i18n = await createI18n();
+      if (closed) return;
+      root ??= createRoot(element);
+      root.render(
+        <StrictMode>
+          <EntryPage
+            t={i18n.t}
+            problem={options.problem}
+            offlineRefused={options.offlineRefused}
+            signIn={() => options.account.signIn()}
+            offline={options.offline}
+            retry={options.retry}
+          />
+        </StrictMode>,
+      );
+    },
+    close(): void {
+      closed = true;
+      root?.unmount();
+      root = undefined;
+    },
+  };
 }

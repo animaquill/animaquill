@@ -5,7 +5,7 @@ import { useState } from "react";
 import styles from "./EntryPage.module.css";
 
 /** Why the entry page has something to say: how a sign-in ended, or a backend out of reach. */
-export type EntryProblem = Exclude<SignInOutcome, "signedIn"> | "unreachable";
+export type EntryProblem = Exclude<SignInOutcome, "signedIn"> | "unreachable" | "connecting";
 
 /** Whether this browser can keep projects in folders on this computer. */
 const canFolders = () =>
@@ -39,7 +39,12 @@ export function EntryPage({
         <Feather className={styles["mark"]} size={40} aria-hidden />
         <h1 className={styles["name"]}>AnimaQuill</h1>
         <p className={styles["tagline"]}>{t("app.tagline")}</p>
-        {problem && (
+        {problem === "connecting" && (
+          <p className={styles["note"]} role="status">
+            {t("entry.connecting")}
+          </p>
+        )}
+        {problem && problem !== "connecting" && (
           <p className={styles["problem"]} role="alert">
             {problem === "unreachable" ? t("entry.unreachable") : t(`account.outcome.${problem}`)}
             {problem === "unreachable" && (

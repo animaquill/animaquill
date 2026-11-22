@@ -947,7 +947,6 @@ export class ProjectFolders {
     folder: LocalFolder,
     name: string,
     open?: (folder: LocalFolder) => Promise<void>,
-    { onlyInside = false }: { readonly onlyInside?: boolean } = {},
   ): Promise<{ readonly inside: string | undefined } | undefined> {
     const { dialogs, t } = this.#options;
     let place: Awaited<ReturnType<FolderProjects["placeFor"]>>;
@@ -986,7 +985,7 @@ export class ProjectFolders {
       case "other": {
         // Files where a project has its own would be taken for its own: then only a folder of its own.
         const choices =
-          place.clashes.length > 0 || onlyInside
+          place.clashes.length > 0
             ? [
                 {
                   id: "inside",
@@ -1004,9 +1003,8 @@ export class ProjectFolders {
               ];
         const answer = await dialogs.choose({
           title: t("folder.notEmptyTitle", { folder: folder.name }),
-          message: onlyInside
-            ? t("folder.saveAs.notEmpty", { inside: place.inside })
-            : place.clashes.length > 0
+          message:
+            place.clashes.length > 0
               ? t("folder.notEmptyClashes", {
                   inside: place.inside,
                   files: place.clashes.slice(0, 5).join("、"),
@@ -1017,8 +1015,7 @@ export class ProjectFolders {
         });
         // Only what was offered: a folder with files where a project has its own gets no "here".
         if (answer === "inside") return { inside: place.inside };
-        if (answer === "here" && place.clashes.length === 0 && !onlyInside)
-          return { inside: undefined };
+        if (answer === "here" && place.clashes.length === 0) return { inside: undefined };
         return undefined;
       }
     }

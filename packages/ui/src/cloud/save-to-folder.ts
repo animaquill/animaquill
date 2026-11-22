@@ -150,11 +150,14 @@ export class SaveToFolder {
       });
       if (answer === "replace") {
         // The press on the button is what lets the browser ask, where it has to.
-        if ((await before.requestAccess()) === "granted") return { folder: before, replaces: true };
-        this.#options.notifications.push(
-          t("saveToFolder.denied", { folder: before.name, ...plain }),
-        );
-        return undefined;
+        if ((await before.requestAccess()) !== "granted") {
+          this.#options.notifications.push(
+            t("saveToFolder.denied", { folder: before.name, ...plain }),
+          );
+          return undefined;
+        }
+        // People may have used the folder for something else since: what is there decides.
+        return this.#placeIn(before, project, name, { asked: true });
       }
       if (answer !== "elsewhere") return undefined;
     }
@@ -175,26 +178,26 @@ export class SaveToFolder {
    * before, which people say yes to replacing; into a new folder in it where it has other things,
    * so that none of those is taken for a file of the project; and not where it holds another one.
    */
-  async #placeIn(chosen: LocalFolder, project: string, name: string): Promise<Place | undefined> {
+  async #placeIn(
+    chosen: LocalFolder,
+    project: string,
+    name: string,
+    { asked = false }: { readonly asked?: boolean } = {},
+  ): Promise<Place | undefined> {
     const { dialogs, t } = this.#options;
     try {
+      // A project, or what a save that stopped halfway left: which project it is, `#write` makes
+      // sure of once the copy is there to say its id. Only that one is replaced.
       const there = await projectIn(chosen);
-      if (there === project || (there === undefined && (await this.#unfinishedOf(chosen)))) {
+      if (there !== undefined || (await this.#unfinishedOf(chosen))) {
+        // People said yes to replacing it already, where it is the folder of the last save.
+        if (asked) return { folder: chosen, replaces: true };
         const go = await dialogs.confirm({
           title: t("saveToFolder.again.title", { name, ...plain }),
-          message: t("saveToFolder.again.message", { folder: chosen.name, ...plain }),
+          message: t("saveToFolder.hasProject", { folder: chosen.name, ...plain }),
           confirm: t("saveToFolder.again.replace"),
         });
         return go ? { folder: chosen, replaces: true } : undefined;
-      }
-      if (there !== undefined) {
-        await dialogs.confirm({
-          title: t("saveToFolder.otherProject.title", { folder: chosen.name, ...plain }),
-          message: t("saveToFolder.otherProject.message"),
-          confirm: t("dialog.close"),
-          noticeOnly: true,
-        });
-        return undefined;
       }
       if (!(await hasAnything(chosen))) return { folder: chosen, replaces: false };
       const inside = await freeName(chosen, folderNameFor(name));
@@ -234,6 +237,21 @@ export class SaveToFolder {
     try {
       got = await source(progress.signal);
       if (!got || progress.signal.aborted) return undefined;
+      // What is to be replaced has to be this project: nothing of another one, or of anything
+      // else people put there since, is written over or taken away.
+      if (replaces) {
+        const there = await projectIn(folder);
+        if (there !== undefined && there !== got.store.getState().manifest.id) {
+          progress.close();
+          await dialogs.confirm({
+            title: t("saveToFolder.otherProject.title", { folder: folder.name, ...plain }),
+            message: t("saveToFolder.otherProject.message"),
+            confirm: t("dialog.close"),
+            noticeOnly: true,
+          });
+          return undefined;
+        }
+      }
       report = await exportProject(got.store, got.media, folderTarget(folder, written), {
         notice: t("transfer.incompleteNotice"),
         signal: progress.signal,

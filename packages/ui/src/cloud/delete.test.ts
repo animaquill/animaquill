@@ -323,7 +323,7 @@ describe("the copy in this browser of a project that was deleted", () => {
     expect(await here.browser.links.get(project)).toBeUndefined();
     expect(here.cloud.getSnapshot()).toEqual({ kind: "none", local: "browser" });
     expect(messagesOf(here.notifications).at(-1)).toBe(
-      "已删除云端项目“原子是什么”。这个浏览器里的那一份留下了（还有没同步的改动、只在这里的素材，或者没保存的试改和代码），现在只在这个浏览器里，可以移到文件夹、连接到云端，或者另存一份。",
+      "已删除云端项目“原子是什么”。这个浏览器里的那一份留下了（还有没同步的改动、只在这里的素材，或者没保存的试改和代码），现在只在这个浏览器里，可以保存到文件夹，或者另存一份。",
     );
     await here.session.trySave();
     await here.open(project);
@@ -397,7 +397,7 @@ describe("the copy in this browser of a project that was deleted", () => {
     expect(platform.projects.has(project)).toBe(false);
     expect(here.library.summaries.has(project)).toBe(true);
     expect(messagesOf(here.notifications).at(-1)).toBe(
-      "已删除云端项目“原子是什么”。这个浏览器里的那一份留下了（删除前没有全部存进 GitHub，它可能有别处没有的改动），现在只在这个浏览器里，可以移到文件夹、连接到云端，或者另存一份。",
+      "已删除云端项目“原子是什么”。这个浏览器里的那一份留下了（删除前没有全部存进 GitHub，它可能有别处没有的改动），现在只在这个浏览器里，可以保存到文件夹，或者另存一份。",
     );
     expect(here.session.store?.getState().files["code/late.js"]).toBe("只在平台和这里");
   });
@@ -423,7 +423,7 @@ describe("the copy in this browser of a project that was deleted", () => {
     expect(await meanwhile(time, here.cloud.deleteFromCloud(project, "原子是什么"))).toBe(true);
     expect(asked[0]).toMatchObject({
       message:
-        "仓库已转到别的账号。平台上的这份和清单里的这一项会删掉，GitHub 那边什么都不动。平台上还有改动没存进 GitHub，删除后平台上的这份就没有了。想留下可以先“另存为本地项目”。这个浏览器里的那一份留下，以后只在这个浏览器里。",
+        "仓库已转到别的账号。平台上的这份和清单里的这一项会删掉，GitHub 那边什么都不动。平台上还有改动没存进 GitHub，删除后平台上的这份就没有了。想留下可以先“保存到文件夹”。这个浏览器里的那一份留下，以后只在这个浏览器里。",
     });
     expect(platform.removals).toEqual([{ id: project, options: {} }]);
     expect(here.library.summaries.has(project)).toBe(true);
@@ -474,7 +474,7 @@ describe("a project that was deleted elsewhere (SYNC_CLOSE.deleted)", () => {
     expect(here.library.summaries.has(project)).toBe(true);
     expect(here.session.store?.getState().files["code/late.js"]).toBe("没来得及同步");
     expect(messagesOf(here.notifications)).toEqual([
-      "“原子是什么”这个云端项目已经在别处删除。这个浏览器里的那一份留着，没有清掉，现在它只在这个浏览器里：浏览器清理数据时会丢，请移到文件夹、另存一份，或者连接到云端。",
+      "“原子是什么”这个项目已经在别处删除。这个浏览器里的那一份留着，现在它只在这个浏览器里：浏览器清理数据时会丢，请保存到文件夹或另存一份。",
     ]);
     // Opened again, it says nothing more, and makes nothing on the platform.
     await here.open(project);

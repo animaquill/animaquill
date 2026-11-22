@@ -102,7 +102,7 @@ test.describe("files of assets into the large file storage", () => {
     await explorer(page);
 
     // A project of the platform: the new assets say that they are only in this browser, and ask.
-    await expect(notice(page, "新素材也只在这个浏览器里")).toBeVisible();
+    await expect(notice(page, "新素材现在只在这个浏览器里")).toBeVisible();
     await shot(page, "connected-prompt");
     await page.getByRole("button", { name: "以后再说" }).click();
 

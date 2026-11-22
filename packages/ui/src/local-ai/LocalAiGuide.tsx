@@ -1,3 +1,4 @@
+import { scoped } from "@animaquill/host";
 import { Check, CircleAlert, ExternalLink, X } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
@@ -35,7 +36,7 @@ const TOOL_KEY = "animaquill.localAi.tool";
 
 function rememberedTool(): GuideTool {
   try {
-    const kept = localStorage.getItem(TOOL_KEY);
+    const kept = localStorage.getItem(scoped(TOOL_KEY));
     return isGuideTool(kept) ? kept : "claudeCode";
   } catch {
     return "claudeCode";
@@ -44,7 +45,7 @@ function rememberedTool(): GuideTool {
 
 function rememberTool(tool: GuideTool): void {
   try {
-    localStorage.setItem(TOOL_KEY, tool);
+    localStorage.setItem(scoped(TOOL_KEY), tool);
   } catch {
     // Not kept: it starts with the first one next time.
   }

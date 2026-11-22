@@ -8,9 +8,9 @@
  * `ProjectStore.mergeFiles`, so that it syncs, and can be taken back as a whole.
  *
  * Nothing here reads or writes anything, or asks people: what to compare comes in, and what each
- * side is to be goes out. Whoever has the files writes them, see `FolderAdopt`. A copy of a project
- * that comes back to a working copy rebuilt from its repository goes through the same choices for
- * what a merge from their common base cannot settle.
+ * side is to be goes out. A copy of a project that comes back to a working copy rebuilt from its
+ * repository goes through these choices for what a merge from their common base cannot settle,
+ * see `TakeBack`.
  */
 import {
   ProjectStore,

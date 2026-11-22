@@ -201,7 +201,7 @@ export function AssetPlace({ asset }: { asset: string }) {
   // Not on this computer, and on its way here out of the large file storage, or to be asked for.
   if (file?.elsewhere === "lfs" && downloads.available && isCloud) {
     if (download && download.phase === "failed") {
-      const fix = downloadFix(download, workbench.projectFolders?.assets() === undefined);
+      const fix = downloadFix(download);
       return frame(
         "failed",
         <>

@@ -31,7 +31,6 @@ export function DownloadsBlock() {
     ({ phase, doneAt }) => phase === "done" && (doneAt ?? 0) >= today,
   ).length;
   if (listed.length === 0 && doneToday === 0 && snapshot.unused.count === 0) return null;
-  const inBrowser = workbench.projectFolders?.assets() === undefined;
   const eta = etaText(
     t,
     totals.bytes - totals.received,
@@ -39,7 +38,7 @@ export function DownloadsBlock() {
   );
 
   const row = (item: DownloadItem) => {
-    const fix = downloadFix(item, inBrowser);
+    const fix = downloadFix(item);
     return (
       <li
         key={item.asset}

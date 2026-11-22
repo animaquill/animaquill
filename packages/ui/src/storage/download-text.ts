@@ -40,8 +40,7 @@ export function downloadPhaseText(t: TFunction, item: DownloadItem): string {
 /** What a failure asks of people, as the button that does it says: undefined for nothing but trying again. */
 export const downloadFix = (
   item: Pick<DownloadItem, "phase" | "problem">,
-  inBrowser: boolean,
-): "quota" | "problems" | "allow" | "signIn" | "folder" | undefined => {
+): "quota" | "problems" | "allow" | "signIn" | undefined => {
   if (item.phase === "access") return "allow";
   if (item.phase !== "failed") return undefined;
   switch (item.problem) {
@@ -51,8 +50,6 @@ export const downloadFix = (
       return "problems";
     case "signedOut":
       return "signIn";
-    case "space":
-      return inBrowser ? "folder" : undefined;
     default:
       return undefined;
   }

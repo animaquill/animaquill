@@ -1603,7 +1603,7 @@ export function browserModeMemory(storage: () => Storage = () => localStorage): 
 const UNSCOPED_PREFIX = "animaquill.";
 const UNSCOPED_KEPT: ReadonlySet<string> = new Set([
   PROJECTS_HERE_KEY,
-  "animaquill.persistAsked",
+  PERSIST_ASKED_KEY,
   "animaquill.appearance",
   MODE_KEY,
   LAST_ACCOUNT_KEY,
@@ -1619,7 +1619,11 @@ const UNSCOPED_KEPT: ReadonlySet<string> = new Set([
 export async function dropUnscopedData(
   factory: () => IDBFactory = () => indexedDB,
   storage: () => Storage = () => localStorage,
+  locks: () => LockManager | undefined = () => globalThis.navigator?.locks,
 ): Promise<readonly string[]> {
+  // A page of before that is still open could change what is there after it was looked at, and
+  // its databases would go only once it closes: nothing goes while one is, see `oldPageOpen`.
+  if (await oldPageOpen(locks)) return [];
   try {
     const keys: string[] = [];
     for (let index = 0; index < storage().length; index += 1) {
@@ -1647,6 +1651,21 @@ export async function dropUnscopedData(
   return gone;
 }
 
+/**
+ * Whether a page of the editor of before the scopes is open in this browser, as the locks it holds
+ * or waits for say: they have no scope. Where the browser cannot say, it is taken to be.
+ */
+async function oldPageOpen(locks: () => LockManager | undefined): Promise<boolean> {
+  const manager = locks();
+  if (!manager) return false;
+  try {
+    const { held = [], pending = [] } = await manager.query();
+    return [...held, ...pending].some(({ name }) => name?.startsWith("animaquill") === true);
+  } catch {
+    return true;
+  }
+}
+
 /** Which databases of before the scopes this browser has, where it can say. */
 export async function unscopedDatabases(
   factory: () => IDBFactory = () => indexedDB,
@@ -1660,42 +1679,67 @@ export async function unscopedDatabases(
   return UNSCOPED_DATABASES.filter((name) => names.has(name));
 }
 
+/** What a database of before the scopes is, opened only where it is there. */
+async function openUnscoped(
+  factory: () => IDBFactory,
+  name: string,
+): Promise<IDBDatabase | undefined> {
+  if (!(await unscopedDatabases(factory)).includes(name)) return undefined;
+  const request = factory().open(name);
+  // Never made here: nothing of it to read.
+  request.addEventListener("upgradeneeded", () => request.transaction?.abort());
+  try {
+    return await resultOf(request);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * How many projects of the platform the editor of before the scopes had changes of here that the
- * platform may not have, as its links say (`CloudLink.pending`, `creating`, `resync`): what
- * `dropUnscopedData` must not take away. Zero where it kept no links.
+ * platform may not have: what `dropUnscopedData` must not take away. As syncing counts them: an
+ * entry of the log after `CloudLink.pushed` that did not come from the platform; and a link that
+ * is not on the platform yet (`creating`), or in the middle of something (`resync`, `renewing`).
+ * Not by `CloudLink.pending`, which is a hint noted a while after the change. Zero where it kept
+ * no links.
  */
 export async function unscopedUnsent(factory: () => IDBFactory = () => indexedDB): Promise<number> {
-  if (!(await unscopedDatabases(factory)).includes("animaquill-cloud")) return 0;
-  const request = factory().open("animaquill-cloud");
-  // Never made here: nothing of it to keep.
-  request.addEventListener("upgradeneeded", () => request.transaction?.abort());
-  let database: IDBDatabase;
+  const cloud = await openUnscoped(factory, "animaquill-cloud");
+  if (!cloud) return 0;
+  let links: {
+    key?: unknown;
+    pushed?: unknown;
+    creating?: unknown;
+    resync?: unknown;
+    renewing?: unknown;
+  }[];
   try {
-    database = await resultOf(request);
-  } catch {
-    return 0;
-  }
-  try {
-    if (!database.objectStoreNames.contains("links")) return 0;
-    const links = await resultOf<unknown[]>(
-      database.transaction("links").objectStore("links").getAll(),
-    );
-    return links.filter((value) => {
-      const link = value as {
-        creating?: unknown;
-        pending?: unknown;
-        resync?: unknown;
-        renewing?: unknown;
-      } | null;
-      return (
-        link?.creating === true ||
-        (typeof link?.pending === "number" && link.pending > 0) ||
-        link?.resync !== undefined ||
-        link?.renewing !== undefined
-      );
-    }).length;
+    if (!cloud.objectStoreNames.contains("links")) return 0;
+    links = await resultOf(cloud.transaction("links").objectStore("links").getAll());
   } finally {
-    database.close();
+    cloud.close();
+  }
+  if (links.length === 0) return 0;
+  const library = await openUnscoped(factory, "animaquill");
+  try {
+    let unsent = 0;
+    for (const link of links) {
+      if (link.creating === true || link.resync !== undefined || link.renewing !== undefined) {
+        unsent += 1;
+        continue;
+      }
+      if (!library || typeof link.key !== "string" || !library.objectStoreNames.contains(UPDATES))
+        continue;
+      const pushed = typeof link.pushed === "number" ? link.pushed : 0;
+      const records = await resultOf<UpdateRecord[]>(
+        library.transaction(UPDATES).objectStore(UPDATES).index(BY_PROJECT).getAll(link.key),
+      );
+      const isHere = (record: UpdateRecord) =>
+        (record.seq ?? 0) > pushed && !["cloud", "merged"].includes(record.source?.kind ?? "other");
+      if (records.some(isHere)) unsent += 1;
+    }
+    return unsent;
+  } finally {
+    library?.close();
   }
 }
