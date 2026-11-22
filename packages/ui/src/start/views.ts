@@ -150,16 +150,16 @@ export function viewCards(cards: readonly ProjectCard[], choice: ViewChoice): Pr
 }
 
 /**
- * Whether the view shows the welcome in place of a grid, see 6.2: nothing was opened here yet, or
- * there is no project at all. Projects of the platform that were not opened here are listed under
- * it then, so that people on another computer see theirs.
+ * Whether the view shows the welcome in place of a grid, see 6.2: nothing was opened yet (online:
+ * on any computer, as the backend keeps when, docs/design/online-offline.md 2.1), or there is no
+ * project at all. Projects of the platform that are not on this computer are listed under it then.
  */
 export function isWelcome(cards: readonly ProjectCard[], view: ViewId): boolean {
   if (view !== "recent" && view !== "all") return false;
   return cardsOfView(cards, view).length === 0;
 }
 
-/** What "你的云端项目" lists under the welcome. */
+/** What "你的在线项目" lists under the welcome. */
 export function remoteCards(cards: readonly ProjectCard[]): ProjectCard[] {
   return sortCards(
     cards.filter((card) => card.kind === "cloudRemote"),

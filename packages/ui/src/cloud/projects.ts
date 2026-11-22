@@ -110,7 +110,7 @@ export interface CloudProjectAbout {
 /** What a closed window can leave on a project, see `CloudProjectsOptions.leftBehind`. */
 export type LeftBehind = "trial" | "drafts";
 
-/** What this browser has of a project that the platform may not have, see `removeFromBrowser`. */
+/** What this browser has of a project that the platform may not have, see `unsavedHere`. */
 interface OnlyHere {
   /**
    * Changes in its log that did not go to the platform: "all" where the project may not be there
@@ -129,9 +129,6 @@ interface OnlyHere {
   readonly cloud: "there" | "gone" | "unknown" | "otherAccount";
 }
 
-/** How bad it is that the platform may not have a project: more is worse. */
-const CLOUD_RANK = { there: 0, unknown: 1, otherAccount: 1, gone: 2 } as const;
-
 /** Whether nothing of a project is only in this browser, as far as could be read. */
 const isAllThere = (found: OnlyHere | undefined): found is OnlyHere =>
   found !== undefined &&
@@ -139,27 +136,6 @@ const isAllThere = (found: OnlyHere | undefined): found is OnlyHere =>
   found.files.length === 0 &&
   found.left.length === 0 &&
   found.cloud === "there";
-
-/** What people are told where nothing could be read: changes that may not have got there. */
-const UNREAD: OnlyHere = { changes: "unknown", files: [], left: [], cloud: "unknown" };
-
-/**
- * Whether people who said yes to losing `agreed` said yes to losing `now` as well: nothing is only
- * here now that they were not told of. What could not be read was said to be changes that may
- * not be on the platform, however many: not that this is the last copy, or that files go.
- */
-function covers(agreed: OnlyHere | undefined, now: OnlyHere | undefined): boolean {
-  if (now === undefined) return agreed === undefined;
-  const said = agreed ?? UNREAD;
-  const amount = (changes: OnlyHere["changes"]) =>
-    typeof changes === "number" ? changes : Number.POSITIVE_INFINITY;
-  return (
-    amount(now.changes) <= amount(said.changes) &&
-    now.files.every((file) => said.files.includes(file)) &&
-    now.left.every((kind) => said.left.includes(kind)) &&
-    CLOUD_RANK[now.cloud] <= CLOUD_RANK[said.cloud]
-  );
-}
 
 export interface CloudProjectsOptions {
   readonly cloud: CloudAccess;
@@ -1752,7 +1728,7 @@ export class CloudProjects {
   }
 
   /**
-   * "从这个仓库恢复成云端项目": a repository of the person's that has a project at its top, which
+   * "从这个仓库恢复成在线项目": a repository of the person's that has a project at its top, which
    * connecting turns away, becomes a new project of the platform, made from the last commit of its
    * branch, see `RepositoryAccess.restore`; then it opens, in this browser only, as one that is
    * opened from the list. People say yes first, and watch it come ("正在从 GitHub 取回…"); where it
@@ -2318,183 +2294,42 @@ export class CloudProjects {
   }
 
   /**
-   * Takes the copy of a project of the platform out of this browser: its log, the files of its
-   * assets that this browser keeps, what closed windows left on it, and its link. Where the
-   * platform has all of it, that is all there is to it: the project stays there, and can be
-   * opened again. Whether it does is found out first, and not taken for granted:
-   *
-   * - the log is read, for changes the platform does not have;
-   * - the files are looked at, for those that can be downloaded from nowhere;
-   * - the platform is asked whether it still has the project, as one that was taken away there,
-   *   on another computer, leaves this copy the last one;
-   * - what closed windows were trying out, or typed and did not save, counts too.
-   *
-   * Where something is only here, or could not be found out, people choose: open the project, so
-   * that it syncs or they can keep what is in it, take it away all the same, or leave it. Whatever
-   * they say, all of it is read again right before anything goes, however long they took and
-   * whichever window had the project open meanwhile, and they are asked again where there is more
-   * to lose than they were told. Resolves to whether it is gone.
+   * Every project of the backend this browser has a copy of whose copy has something the backend
+   * may not have, as for "清掉这台电脑上的数据" (docs/design/online-offline.md of AnimaQuill Cloud,
+   * 2.1): changes that did not go, files that can be downloaded from nowhere else, what closed
+   * windows left on it, or a project the backend does not have any more. With what it is, in
+   * words. What cannot be read counts as such. The project this window has open is not looked at
+   * for what windows left: it is to be closed first. Rejects where the list of the backend could
+   * not be read: without it nothing can be said.
    */
-  async removeFromBrowser(key: string): Promise<boolean> {
-    const { cloud, session, dialogs, notifications, projects, t } = this.#options;
-    let link: CloudLink | undefined;
-    try {
-      link = await this.linkOf(key);
-    } catch (error) {
-      console.warn("What this browser keeps of the project could not be read", error);
-      notifications.push(t("cloud.remove.failed"));
-      return false;
-    }
-    if (!link) return false;
-    const summary = (await projects.list().catch(() => [])).find((each) => each.id === key);
-    const name = summary?.name ?? link.name ?? "";
-    const words = { name, interpolation: { escapeValue: false } };
-    /**
-     * A window that has it open would go on writing a log that is gone. Resolves to whether one
-     * has, or may have where that cannot be told, after saying so.
-     */
-    const isOpenElsewhere = async (): Promise<boolean> => {
-      const others = await this.#othersOf(key);
-      if (others === 0) return false;
-      await dialogs.confirm({
-        title: t("cloud.remove.title", words),
-        message: t(
-          others === undefined ? "cloud.remove.maybeOpenElsewhere" : "cloud.remove.openElsewhere",
-        ),
-        confirm: t("dialog.close"),
-        noticeOnly: true,
-      });
-      return true;
-    };
-    if (await isOpenElsewhere()) return false;
-    const isOpen = () => session.key === key;
-    if (isOpen() && !this.#options.closeProject) return false;
-    /** Asks where something is only here, or may be. Resolves to whether it may go all the same. */
-    const mayGo = async (found: OnlyHere | undefined, warning?: string): Promise<boolean> => {
-      const isGone = found?.cloud === "gone";
-      // Opening it helps where it can sync, or where there is something in it to keep.
-      const syncs = !isGone && (found === undefined || found.changes !== 0);
-      const keeps = found !== undefined && (found.files.length > 0 || found.left.length > 0);
-      const helps = syncs || isGone || keeps;
-      const open = isOpen()
-        ? syncs
-          ? t("cloud.remove.wait")
-          : undefined
-        : t(syncs ? "cloud.remove.open" : "cloud.remove.openIt");
-      const answer = await dialogs.choose({
-        title: this.#onlyHereTitle(found, name),
-        message: this.#onlyHereText(found),
-        ...(warning && { warning }),
-        choices: [
-          ...(helps && open !== undefined ? [{ id: "open", label: open }] : []),
-          { id: "remove", label: t("cloud.remove.anyway"), kind: "danger" as const },
-        ],
-      });
-      if (answer === "open" && !isOpen()) await this.#options.openProject(key);
-      return answer === "remove";
-    };
-    /** Reads what is only here. Undefined: it could not be read, which is as much as "maybe". */
-    const look = async (): Promise<OnlyHere | undefined> => {
+  async unsavedHere(): Promise<readonly { readonly name: string; readonly said: string }[]> {
+    const { cloud, projects, session } = this.#options;
+    const listed = new Set((await this.#within(LIST_WAIT_MS, cloud.list())).map((each) => each.id));
+    const copies = await projects.list();
+    const names = new Map(copies.map((each) => [each.id, each.name]));
+    const links = (await cloud.links.list()).filter(
+      (link) => link.platform === cloud.platform && names.has(link.key),
+    );
+    const found: { name: string; said: string }[] = [];
+    for (const link of links) {
+      let here: OnlyHere | undefined;
       try {
-        const isHere = isOpen();
-        if (isHere) {
-          // What this window still has to write is part of it, and what the platform took of it
-          // just now is not.
-          if (!(await session.trySave())) return undefined;
-          await this.session?.flush();
-        }
-        const now = await cloud.links.get(key);
-        return now ? await this.#onlyHere(key, now, { withLeft: !isHere }) : undefined;
+        const read = await this.#onlyHere(link.key, link, {
+          withLeft: session.key !== link.key,
+          askPlatform: false,
+        });
+        here = {
+          ...read,
+          cloud: listed.has(link.project) ? "there" : this.isOwn(link) ? "gone" : "otherAccount",
+        };
       } catch (error) {
-        console.warn("Whether the platform has all of the project could not be read", error);
-        return undefined;
+        console.warn("What the copy of a project has could not be read", error);
+        here = undefined;
       }
-    };
-    let agreed = await look();
-    // What the platform has that GitHub does not goes a week after it was last opened: once this
-    // copy goes too, nothing is left of it after that (the design, 1).
-    const unsaved = await this.#notInGitHub(link.project);
-    const warning =
-      unsaved &&
-      t("cloud.remove.notInGitHub", {
-        conflicts:
-          unsaved.conflicts > 0 ? t("cloud.remove.conflicts", { count: unsaved.conflicts }) : "",
-      });
-    if (isAllThere(agreed)) {
-      const go = await dialogs.confirm({
-        title: t("cloud.remove.title", words),
-        message: t("cloud.remove.message"),
-        confirm: t("cloud.remove.confirm"),
-        ...(warning && {
-          warning,
-          confirm: t("cloud.remove.anyway"),
-          cancel: t("cloud.remove.keep"),
-          keep: true,
-          danger: true,
-        }),
-      });
-      if (!go) return false;
-    } else if (!(await mayGo(agreed, warning))) return false;
-    if (isOpen()) {
-      if (!(await this.#options.closeProject?.())) return false;
-      if (isOpen()) return false;
+      if (isAllThere(here)) continue;
+      found.push({ name: names.get(link.key) ?? link.name ?? "", said: this.#onlyHereText(here) });
     }
-    // People took their time to answer, and a window may have had the project open meanwhile, and
-    // closed it again; leaving it here can have saved what was being tried, or typed. So all of
-    // it is read again, whatever was found before: what goes now is what is there now.
-    let last: OnlyHere | undefined;
-    for (;;) {
-      if (isOpen()) return false;
-      last = await look();
-      if (covers(agreed, last)) break;
-      if (!(await mayGo(last))) return false;
-      agreed = last;
-    }
-    if (await isOpenElsewhere()) return false;
-    try {
-      await (this.#options.removeLocal ?? ((id: string) => projects.remove(id)))(key);
-    } catch (error) {
-      console.warn("The copy of the project could not be taken out of this browser", error);
-      notifications.push(t("cloud.remove.failed"));
-      return false;
-    }
-    // The link goes last. Should it stay behind, it is a link to nothing, which nothing reads,
-    // and which goes the next time, see `tidy`; a project left without its link would look like
-    // one of this browser only, and stop syncing without a word.
-    if (!(await this.#forgetLink(key)) && !(await this.#forgetLink(key))) {
-      console.warn("The link of a copy that is gone stays until the next time");
-    }
-    // Only what was found out: that the platform has the project, and had it before this began.
-    const isKept = last !== undefined && last.cloud === "there" && last.changes !== "all";
-    notifications.push(t(isKept ? "cloud.remove.done" : "cloud.remove.doneHere", words));
-    return true;
-  }
-
-  /**
-   * Whether the platform has changes of a project that its repository does not, which it lets go of
-   * a week after anybody last opened it, as it says (`releaseAt`, the design, 1), and how many
-   * conflicts of merges from GitHub wait: also all of one with no repository, which goes as a
-   * whole. Undefined where it has none, or keeps them anyway (GitHub or the platform keeps them
-   * out, or they go in within minutes), or that cannot be told now.
-   */
-  async #notInGitHub(project: string): Promise<{ readonly conflicts: number } | undefined> {
-    const repository = this.#options.cloud.repository;
-    if (!repository) return undefined;
-    try {
-      const status = await repository.status(project);
-      if (status.releaseAt === undefined) return undefined;
-      if (status.state === "none") return { conflicts: 0 };
-      if (status.dirtySince === undefined && status.head <= status.archivedSeq) return undefined;
-      if (
-        status.state === "ready" &&
-        (status.failingSince !== undefined || (status.failures ?? 0) === 0)
-      )
-        return undefined;
-      return { conflicts: status.reason === "conflicts" ? (status.conflicts ?? 0) : 0 };
-    } catch (error) {
-      console.warn("Whether GitHub has all of the project could not be read", error);
-      return undefined;
-    }
+    return found;
   }
 
   /** Takes a link away. Resolves to whether it is gone. */
@@ -2533,20 +2368,7 @@ export class CloudProjects {
     }
   }
 
-  /** What the question about a copy that may not be all on the platform is headed, see `removeFromBrowser`. */
-  #onlyHereTitle(found: OnlyHere | undefined, name: string): string {
-    const { t } = this.#options;
-    const words = { name, interpolation: { escapeValue: false } };
-    if (found?.cloud === "gone") return t("cloud.remove.goneTitle", words);
-    const isKnown =
-      found !== undefined &&
-      ((found.changes !== 0 && found.changes !== "unknown") ||
-        found.files.length > 0 ||
-        found.left.length > 0);
-    return t(isKnown ? "cloud.remove.unsyncedTitle" : "cloud.remove.unsureTitle", words);
-  }
-
-  /** What is only here, in words, see `removeFromBrowser`. */
+  /** What is only here, in words, see `unsavedHere`. */
   #onlyHereText(found: OnlyHere | undefined): string {
     const { t } = this.#options;
     const said: string[] = [];
@@ -2575,22 +2397,6 @@ export class CloudProjects {
       if (found.cloud === "unknown") said.push(t("cloud.remove.cloudUnknown"));
       if (found.cloud === "otherAccount") said.push(t("cloud.remove.cloudOtherAccount"));
     }
-    const isLast = found?.cloud === "gone";
-    const isOnlyDoubt =
-      found !== undefined &&
-      !isLast &&
-      found.changes === 0 &&
-      found.files.length === 0 &&
-      found.left.length === 0;
-    said.push(
-      t(
-        isLast
-          ? "cloud.remove.lostAll"
-          : isOnlyDoubt
-            ? "cloud.remove.lostMaybe"
-            : "cloud.remove.lost",
-      ),
-    );
     return said.join("");
   }
 
@@ -2966,7 +2772,7 @@ export class CloudProjects {
 
   /**
    * How many changes in the log of a copy of this browser the platform may not have, as for
-   * `removeFromBrowser`: "unknown" where that cannot be told. Never rejects.
+   * `unsavedHere`: "unknown" where that cannot be told. Never rejects.
    */
   async #waitingIn(key: string): Promise<number | "unknown"> {
     try {

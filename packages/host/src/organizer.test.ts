@@ -1,20 +1,27 @@
 import { IDBFactory } from "fake-indexeddb";
 import { describe, expect, it } from "vitest";
-import type { ProjectGroup } from "./index.ts";
+import {
+  CloudOtherAccount,
+  OrganizerOffline,
+  type AccountChanges,
+  type AccountOrganized,
+  type OrganizerAccess,
+  type ProjectGroup,
+  type SettingsStore,
+} from "./index.ts";
 import { cleanGroupName, groupNameOf } from "./organize-rules.ts";
 import {
   browserOrganizer,
   memoryOrganizer,
   mergeMarks,
-  unsentOf,
+  platformOrganizer,
   type OrganizerChannel,
 } from "./organizer.ts";
 
 /** Windows of one browser: what one posts, the others hear. */
-function browserOf() {
-  const factory = new IDBFactory();
+function channels() {
   const windows = new Set<() => void>();
-  const channel = (): OrganizerChannel => {
+  return (): OrganizerChannel => {
     let own: (() => void) | undefined;
     return {
       post: () => {
@@ -27,95 +34,43 @@ function browserOf() {
       },
     };
   };
+}
+
+function browserOf() {
+  const factory = new IDBFactory();
+  const channel = channels();
   return () => browserOrganizer(() => factory, channel);
 }
 
 const group = (id: string, name: string, more: Partial<ProjectGroup> = {}): ProjectGroup => ({
   id,
   name,
-  scope: "browser",
   at: 1,
   ...more,
 });
 
-describe("merging the marks of a project", () => {
-  it("changes what is given and keeps the rest, each with when it changed", () => {
+describe("the marks of a project", () => {
+  it("change what is given and keep the rest", () => {
     const before = mergeMarks(undefined, { starredAt: 10, group: "g", at: 10 });
     expect(mergeMarks(before, { group: null, at: 20 })).toEqual({
       starredAt: 10,
-      starAt: 10,
       group: null,
-      groupAt: 20,
       at: 20,
     });
     expect(mergeMarks(before, { starredAt: null, at: 30 })).toEqual({
       starredAt: null,
-      starAt: 30,
       group: "g",
-      groupAt: 10,
       at: 30,
     });
   });
 
-  it("keeps a star or a group changed later than the change, each on its own", () => {
-    // Starred at 30 elsewhere; this window takes it out of its group at 20, with a star from 10.
-    const starred = mergeMarks(mergeMarks(undefined, { starredAt: null, at: 10 }), {
-      starredAt: 30,
-      at: 30,
-    });
-    const moved = mergeMarks(starred, { group: null, starredAt: null, at: 20 });
-    expect(moved).toMatchObject({ starredAt: 30, starAt: 30, group: null, groupAt: 20, at: 30 });
-    // What was kept with one time for both counts as changed then.
-    expect(mergeMarks({ starredAt: 5, group: "g", at: 50 }, { group: null, at: 40 })).toEqual({
-      starredAt: 5,
-      group: "g",
-      at: 50,
-    });
-  });
-
-  it("remembers whose project of the platform it is", () => {
-    const marks = mergeMarks(undefined, { starredAt: 1, account: "user-ada", at: 1 });
-    expect(mergeMarks(marks, { group: "g", at: 2 })).toMatchObject({ account: "user-ada" });
-  });
-
-  it("has what people do here come after whatever is kept, also a time still to come", () => {
-    const ahead = mergeMarks(undefined, { starredAt: 900, at: 900, group: "g" });
-    // A change of before that time is older; one people made here is not.
-    expect(mergeMarks(ahead, { starredAt: null, at: 100 }).starredAt).toBe(900);
-    expect(mergeMarks(ahead, { starredAt: null, at: 100, mine: true })).toMatchObject({
-      starredAt: null,
-      starAt: 901,
-      group: "g",
-      groupAt: 900,
-    });
-  });
-
-  it("has times kept here that are still to come become now, values as they are", () => {
-    const ahead = mergeMarks(undefined, {
-      starredAt: 900,
-      group: "g",
-      at: 900,
-      sent: { star: 900, group: 50 },
-    });
-    expect(mergeMarks(ahead, { at: 900, notAfter: 200 })).toEqual({
-      starredAt: 900,
-      starAt: 200,
-      group: "g",
-      groupAt: 200,
-      at: 200,
-      sent: { star: 200, group: 50 },
-    });
-  });
-
-  it("does not take opening for organising: the time to merge by stays", () => {
+  it("do not take opening for organising", () => {
     const before = mergeMarks(undefined, { starredAt: 10, at: 10 });
     expect(mergeMarks(before, { openedAt: 50, at: 50 })).toEqual({
-      starredAt: 10,
-      starAt: 10,
       openedAt: 50,
+      starredAt: 10,
       at: 10,
     });
-    expect(mergeMarks(undefined, { openedAt: 50, at: 50 })).toEqual({ openedAt: 50, at: 50 });
   });
 });
 
@@ -128,15 +83,13 @@ describe.each([
     expect(await organizer.read()).toEqual({ marks: new Map(), groups: [] });
     await organizer.mark("a", { starredAt: 5, at: 5 });
     await organizer.mark("a", { group: "g", at: 6 });
-    await organizer.mark("cloud:p", { group: "g", at: 7 });
     await organizer.putGroup(group("g", "工作"));
     await organizer.putGroup(group("g", "频道", { at: 2 }));
     const { marks, groups } = await organizer.read();
-    expect(marks.get("a")).toEqual({ starredAt: 5, starAt: 5, group: "g", groupAt: 6, at: 6 });
-    expect(marks.get("cloud:p")).toEqual({ group: "g", groupAt: 7, at: 7 });
+    expect(marks.get("a")).toEqual({ starredAt: 5, group: "g", at: 6 });
     expect(groups).toEqual([group("g", "频道", { at: 2 })]);
     await organizer.forget("a");
-    expect([...(await organizer.read()).marks.keys()]).toEqual(["cloud:p"]);
+    expect([...(await organizer.read()).marks.keys()]).toEqual([]);
   });
 
   it("keeps the later change of a group, and one name once", async () => {
@@ -158,118 +111,6 @@ describe.each([
     ]);
   });
 
-  it("keeps groups as an account has them, by their time, and what it has of each", async () => {
-    const organizer = make();
-    const theirs = (id: string, name: string, at: number, more: Partial<ProjectGroup> = {}) =>
-      group(id, name, { scope: { account: "ada" }, at, sent: at, ...more });
-    await organizer.putGroup(group("a", "改过", { scope: { account: "ada" }, at: 50, sent: 10 }));
-    await organizer.putGroup(group("b", "旧", { scope: { account: "ada" }, at: 10, sent: 10 }));
-    await organizer.adoptGroups([
-      // Changed here later: stays, still to be given.
-      theirs("a", "那边", 30),
-      // Changed there later: taken.
-      theirs("b", "新", 40),
-      // Taken away there.
-      theirs("c", "删了", 5, { deleted: true }),
-    ]);
-    const { groups } = await organizer.read();
-    expect(groups.toSorted((x, y) => x.id.localeCompare(y.id))).toEqual([
-      group("a", "改过", { scope: { account: "ada" }, at: 50, sent: 30 }),
-      theirs("b", "新", 40),
-      theirs("c", "删了", 5, { deleted: true }),
-    ]);
-    // Without a word on names: the account keeps them apart.
-    await organizer.adoptGroups([theirs("d", "新", 60)]);
-    expect((await organizer.read()).groups).toHaveLength(4);
-  });
-
-  it("takes everything of an account for not given to it, and nothing of another", async () => {
-    const organizer = make();
-    await organizer.putGroup(group("a", "工作", { scope: { account: "ada" }, at: 10, sent: 10 }));
-    await organizer.putGroup(group("b", "别人的", { scope: { account: "bo" }, at: 10, sent: 10 }));
-    await organizer.putGroup(group("c", "本机", { at: 10 }));
-    await organizer.markAll([
-      ["cloud:p", { account: "ada", starredAt: 5, at: 5, sent: { star: 5 } }],
-      ["cloud:q", { account: "bo", starredAt: 5, at: 5, sent: { star: 5 } }],
-    ]);
-    expect(unsentOf(await organizer.read(), "ada")).toMatchObject({ groups: [], marks: [] });
-    await organizer.resend("ada");
-    const content = await organizer.read();
-    expect(content.groups.find((each) => each.id === "a")?.sent).toBeUndefined();
-    expect(content.groups.find((each) => each.id === "b")?.sent).toBe(10);
-    expect(content.marks.get("cloud:p")?.sent).toBeUndefined();
-    expect(content.marks.get("cloud:q")?.sent).toEqual({ star: 5 });
-    const unsent = unsentOf(content, "ada");
-    expect(unsent.groups.map((each) => each.id)).toEqual(["a"]);
-    expect(unsent.marks.map((each) => each.project)).toEqual(["p"]);
-  });
-
-  it("has the groups of this browser become an account's, one name once", async () => {
-    const organizer = make();
-    await organizer.putGroup(group("x", " WORK", { at: 10 }));
-    await organizer.putGroup(group("y", "自己的", { at: 11 }));
-    await organizer.putGroup(group("z", "删掉的", { at: 12, deleted: true }));
-    await organizer.adoptGroups([
-      group("w", "work", { scope: { account: "ada" }, at: 5, sent: 5 }),
-    ]);
-    await organizer.mark("a", { group: "x", at: 20 });
-    await organizer.mark("cloud:p", { group: "x", account: "ada", at: 21, sent: { group: 21 } });
-    await organizer.mark("b", { group: "y", at: 22 });
-    await organizer.claimGroups("ada");
-    const { groups, marks } = await organizer.read();
-    const byId = new Map(groups.map((each) => [each.id, each]));
-    // The one of a name the account has became that one; projects in it are in that one, the time
-    // they went in as it was, and the account is given it again.
-    expect(byId.get("x")).toMatchObject({ deleted: true, into: "w", scope: "browser" });
-    expect(marks.get("a")).toMatchObject({ group: "w", groupAt: 20 });
-    expect(marks.get("cloud:p")).toEqual({ group: "w", groupAt: 21, account: "ada", at: 21 });
-    // The other one is the account's, as it is, still to be given to it.
-    expect(byId.get("y")).toEqual(group("y", "自己的", { scope: { account: "ada" }, at: 11 }));
-    expect(marks.get("b")).toMatchObject({ group: "y" });
-    // One taken away stays as it is.
-    expect(byId.get("z")).toEqual(group("z", "删掉的", { at: 12, deleted: true }));
-    // Again: nothing more changes.
-    await organizer.claimGroups("ada");
-    expect((await organizer.read()).groups).toEqual(groups);
-  });
-
-  it("has a group become another, and gives the account taking away what it had", async () => {
-    const organizer = make();
-    const ada = { scope: { account: "ada" } } as const;
-    await organizer.adoptGroups([group("w", "频道", { ...ada, at: 25, sent: 25 })]);
-    await organizer.adoptGroups([group("x", "频道", { ...ada, at: 30, sent: 10 })]);
-    await organizer.mark("cloud:p", { group: "x", account: "ada", at: 20, sent: { group: 20 } });
-    await organizer.mergeGroup("x", "w");
-    const content = await organizer.read();
-    expect(content.groups.find(({ id }) => id === "x")).toEqual(
-      group("x", "频道", { ...ada, at: 30, sent: 10, deleted: true, into: "w" }),
-    );
-    expect(unsentOf(content, "ada")).toEqual({
-      account: "ada",
-      groups: [{ id: "x", name: "频道", at: 30, deleted: true }],
-      marks: [{ project: "p", group: { id: "w", at: 20 } }],
-    });
-    // The account changed it later than that: it is that one again.
-    await organizer.adoptGroups([group("x", "又改了", { ...ada, at: 40, sent: 40 })]);
-    expect((await organizer.read()).groups.find(({ id }) => id === "x")).toEqual(
-      group("x", "又改了", { ...ada, at: 40, sent: 40 }),
-    );
-  });
-
-  it("shows the groups of this browser with those of the account last signed in: one name once", async () => {
-    const organizer = make();
-    await organizer.noteAccount("ada");
-    expect((await organizer.read()).account).toBe("ada");
-    await organizer.adoptGroups([group("w", "工作", { scope: { account: "ada" }, sent: 1 })]);
-    await organizer.adoptGroups([group("v", "频道", { scope: { account: "bob" }, sent: 1 })]);
-    expect(await organizer.putGroup(group("x", "工作", { at: 5 }))).toEqual({ taken: "w" });
-    // Another account's is not shown with them.
-    expect(await organizer.putGroup(group("y", "频道", { at: 5 }))).toBe("kept");
-    expect(
-      await organizer.putGroup(group("z", "频道", { scope: { account: "bob" }, at: 5 })),
-    ).toEqual({ taken: "v" });
-  });
-
   it("tells its own window what changed", async () => {
     const organizer = make();
     let heard = 0;
@@ -285,61 +126,12 @@ describe.each([
 describe("names of groups", () => {
   it("have no control or format characters, nor separators of lines: those become a space", () => {
     expect(cleanGroupName(" A\tB ")).toBe("A B");
-    expect(cleanGroupName("工作\u200b")).toBe("工作");
-    expect(cleanGroupName("a\u2028b\u2029c\u0085d\u202ee")).toBe("a b c d e");
+    expect(cleanGroupName("工作​")).toBe("工作");
+    expect(cleanGroupName("a b c\u0085d‮e")).toBe("a b c d e");
     expect(groupNameOf(" 工作 ")).toBe("工作");
     expect(groupNameOf("😀".repeat(60))).toBe("😀".repeat(60));
-    for (const no of ["", " ", "A\tB", "工作\u200b", "\u200b", "字".repeat(61), 5, undefined])
+    for (const no of ["", " ", "A\tB", "工作​", "​", "字".repeat(61), 5, undefined])
       expect(groupNameOf(no), JSON.stringify(no)).toBeUndefined();
-  });
-});
-
-describe("what is still to be given to an account", () => {
-  it("is what changed here later than the account has it, of that account", () => {
-    const ada = { scope: { account: "ada" } } as const;
-    const unsent = unsentOf(
-      {
-        groups: [
-          group("new", "新", { ...ada, at: 5 }),
-          group("same", "一样", { ...ada, at: 5, sent: 5 }),
-          group("renamed", "改名", { ...ada, at: 9, sent: 5 }),
-          group("gone", "删了", { ...ada, at: 9, sent: 5, deleted: true }),
-          // Made and taken away before the account heard of it.
-          group("never", "没有", { ...ada, at: 9, deleted: true }),
-          group("bob", "别人", { scope: { account: "bob" }, at: 5 }),
-          group("here", "浏览器", { at: 5 }),
-        ],
-        marks: new Map([
-          [
-            "cloud:p1",
-            { starredAt: 7, starAt: 7, group: "new", groupAt: 3, at: 7, sent: { group: 3 } },
-          ],
-          ["cloud:p2", { starredAt: null, starAt: 4, at: 4, sent: { star: 4 } }],
-          // Of another account, or none known.
-          ["cloud:p3", { starredAt: 7, starAt: 7, at: 7, account: "bob" }],
-          ["cloud:p4", { group: null, groupAt: 8, at: 8 }],
-          // A group that is no group of the account is not given.
-          ["cloud:p5", { group: "here", groupAt: 8, at: 8 }],
-          ["cloud:p6", { group: "bob", groupAt: 8, starredAt: 8, starAt: 8, at: 8 }],
-          // What only this browser keeps.
-          ["local", { starredAt: 7, starAt: 7, at: 7 }],
-          // From before each had a time of its own.
-          ["cloud:old", { starredAt: 2, group: "same", at: 6 }],
-        ]),
-      },
-      "ada",
-    );
-    expect(unsent.groups).toEqual([
-      { id: "new", name: "新", at: 5 },
-      { id: "renamed", name: "改名", at: 9 },
-      { id: "gone", name: "删了", at: 9, deleted: true },
-    ]);
-    expect(unsent.marks).toEqual([
-      { project: "p1", star: { starred: true, at: 7 } },
-      { project: "p4", group: { id: null, at: 8 } },
-      { project: "p6", star: { starred: true, at: 8 } },
-      { project: "old", star: { starred: true, at: 6 }, group: { id: "same", at: 6 } },
-    ]);
   });
 });
 
@@ -352,6 +144,143 @@ describe("the organizer of a browser", () => {
     other.listen(() => (heard += 1));
     await one.mark("a", { starredAt: 1, at: 1 });
     expect(heard).toBe(1);
-    expect((await other.read()).marks.get("a")).toEqual({ starredAt: 1, starAt: 1, at: 1 });
+    expect((await other.read()).marks.get("a")).toEqual({ starredAt: 1, at: 1 });
+  });
+});
+
+/** A backend that keeps how one person organises, the later of each field, as sync/organize.ts. */
+function backendOf(account = "u1") {
+  const state: { groups: AccountOrganized["groups"][number][]; marks: Map<string, any> } = {
+    groups: [],
+    marks: new Map(),
+  };
+  let reachable = true;
+  const changes: AccountChanges[] = [];
+  const now = (): AccountOrganized => ({
+    account,
+    groups: [...state.groups],
+    marks: [...state.marks.values()],
+  });
+  const access: OrganizerAccess = {
+    async read() {
+      if (!reachable) throw new TypeError("Failed to fetch");
+      return now();
+    },
+    async change(given) {
+      if (!reachable) throw new TypeError("Failed to fetch");
+      if (given.account !== account) throw new CloudOtherAccount("Somebody else");
+      changes.push(given);
+      const groups = (given.groups ?? []).map((each) => {
+        const index = state.groups.findIndex(({ id }) => id === each.id);
+        const before = state.groups[index];
+        if (before && before.at > each.at) return "older" as const;
+        if (index >= 0) state.groups[index] = each;
+        else state.groups.push(each);
+        return "kept" as const;
+      });
+      const marks = (given.marks ?? []).map((each) => {
+        const before = state.marks.get(each.project) ?? { project: each.project };
+        const after = { ...before };
+        if (each.star && (before.star?.at ?? -1) <= each.star.at) after.star = each.star;
+        if (each.group && (before.group?.at ?? -1) <= each.group.at) after.group = each.group;
+        if (each.opened && (before.opened ?? -1) < each.opened.at) after.opened = each.opened.at;
+        state.marks.set(each.project, after);
+        return { project: each.project };
+      });
+      return { groups, marks, state: now() };
+    },
+  };
+  return {
+    access,
+    changes,
+    setReachable: (value: boolean) => {
+      reachable = value;
+    },
+  };
+}
+
+function memorySettings(): SettingsStore {
+  const kept = new Map<string, unknown>();
+  return {
+    load: async (key) => structuredClone(kept.get(key)),
+    save: async (key, value) => void kept.set(key, structuredClone(value)),
+    listen: () => () => {},
+  };
+}
+
+describe("the organizer of the online mode, on the backend", () => {
+  it("writes each change to the backend at once: another computer reads the same", async () => {
+    const backend = backendOf();
+    const one = platformOrganizer({ access: backend.access, account: "u1", watch: false });
+    const other = platformOrganizer({ access: backend.access, account: "u1", watch: false });
+    await one.putGroup(group("g", "工作", { at: 5 }));
+    await one.mark("cloud:p1", { starredAt: 10, at: 10 });
+    await other.mark("cloud:p2", { group: "g", at: 11 });
+    await other.mark("cloud:p1", { openedAt: 12, at: 12 });
+    for (const each of [one, other]) {
+      const { marks, groups } = await each.read();
+      expect(groups).toEqual([group("g", "工作", { at: 5 })]);
+      expect(marks.get("cloud:p1")).toEqual({ starredAt: 10, openedAt: 12, at: 10 });
+      expect(marks.get("cloud:p2")).toEqual({ group: "g", at: 11 });
+    }
+    // Opening says when, not a star or a group.
+    expect(backend.changes.at(-1)?.marks).toEqual([{ project: "p1", opened: { at: 12 } }]);
+  });
+
+  it("changes nothing while the backend cannot be reached, and shows what it had last", async () => {
+    const backend = backendOf();
+    const cache = memorySettings();
+    const one = platformOrganizer({
+      access: backend.access,
+      account: "u1",
+      cache,
+      watch: false,
+    });
+    await one.mark("cloud:p1", { starredAt: 10, at: 10 });
+    expect((await one.read()).marks.get("cloud:p1")?.starredAt).toBe(10);
+    backend.setReachable(false);
+    await expect(one.mark("cloud:p1", { starredAt: null, at: 20 })).rejects.toBeInstanceOf(
+      OrganizerOffline,
+    );
+    await expect(one.putGroup(group("g", "工作"))).rejects.toBeInstanceOf(OrganizerOffline);
+    expect((await one.read()).marks.get("cloud:p1")?.starredAt).toBe(10);
+    // A page that starts without the backend: what the browser kept of it.
+    const later = platformOrganizer({ access: backend.access, account: "u1", cache, watch: false });
+    expect((await later.read()).marks.get("cloud:p1")?.starredAt).toBe(10);
+    // Not another account's.
+    const other = platformOrganizer({ access: backend.access, account: "u2", cache, watch: false });
+    await expect(other.read()).rejects.toThrow();
+  });
+
+  it("tells the other windows of this browser what one changed", async () => {
+    const backend = backendOf();
+    const channel = channels();
+    const one = platformOrganizer({ access: backend.access, account: "u1", channel, watch: false });
+    const other = platformOrganizer({
+      access: backend.access,
+      account: "u1",
+      channel,
+      watch: false,
+    });
+    let heard = 0;
+    other.listen(() => (heard += 1));
+    await one.mark("cloud:p1", { starredAt: 1, at: 1 });
+    expect(heard).toBe(1);
+    expect((await other.read()).marks.get("cloud:p1")?.starredAt).toBe(1);
+  });
+
+  it("asks who is signed in again where the session is somebody else's", async () => {
+    const backend = backendOf("u2");
+    let asked = 0;
+    const one = platformOrganizer({
+      access: backend.access,
+      account: "u1",
+      watch: false,
+      signedOut: () => (asked += 1),
+    });
+    await expect(one.mark("cloud:p1", { starredAt: 1, at: 1 })).rejects.toBeInstanceOf(
+      CloudOtherAccount,
+    );
+    expect(asked).toBe(1);
   });
 });

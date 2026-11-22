@@ -81,7 +81,7 @@ const shot = (page: Page, name: string) =>
 
 const githubStatus = (page: Page) => footer(page).locator("[data-github]");
 const cloudStatus = (page: Page) => footer(page).locator("[data-cloud-level]");
-const panel = (page: Page) => page.getByRole("dialog", { name: /^云端 · / });
+const panel = (page: Page) => page.getByRole("dialog", { name: /^在线 · / });
 const row = (page: Page, id: string) => panel(page).locator(`[data-cloud-row="${id}"]`);
 const conflictsDialog = (page: Page) => page.locator("dialog[data-conflicts]");
 const execute = (page: Page, call: object) =>
@@ -113,7 +113,7 @@ async function opened(page: Page, name = "片头动画"): Promise<string> {
   await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
   await page
     .getByRole("menu")
-    .getByRole("menuitem", { name: "打开云端的项目…", exact: true })
+    .getByRole("menuitem", { name: "打开在线项目…", exact: true })
     .click();
   await openCard(page, name);
   await expect(page).toHaveTitle(`${name} - AnimaQuill`);
@@ -680,7 +680,7 @@ test.describe("merges of what changed on GitHub", () => {
     await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
     await page
       .getByRole("menu")
-      .getByRole("menuitem", { name: "打开云端的项目…", exact: true })
+      .getByRole("menuitem", { name: "打开在线项目…", exact: true })
       .click();
     const card = projectCard(page, "有冲突的");
     await expect(card).toContainText("同步失败");
@@ -696,7 +696,7 @@ test.describe("opening a project step by step", () => {
     await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
     await page
       .getByRole("menu")
-      .getByRole("menuitem", { name: "打开云端的项目…", exact: true })
+      .getByRole("menuitem", { name: "打开在线项目…", exact: true })
       .click();
     await openCard(page, "慢的");
     await expect(cloudStatus(page)).toHaveText("已同步");
@@ -716,6 +716,6 @@ test.describe("opening a project step by step", () => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await shot(page, "g4-opening");
     await expect(steps).toHaveCount(0, { timeout: 10_000 });
-    await expect(page.getByText("云端响应慢，先打开了")).toBeVisible();
+    await expect(page.getByText("服务器响应慢，先打开了")).toBeVisible();
   });
 });

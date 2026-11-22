@@ -4,8 +4,8 @@ import { Flag } from "./flag.ts";
 
 /**
  * The groups of the settings, in the order of their list (docs/design/settings-and-properties.md of
- * AnimaQuill Cloud, 4.3). "cloud" only where people are signed in to a platform, "account" only
- * where there is a platform, see `visibleGroups`.
+ * AnimaQuill Cloud, 4.3). "account" only where there is a backend, or an online mode to go to: in
+ * the offline mode it is there, grey, see `visibleGroups`.
  */
 export type SettingsGroup =
   | "general"
@@ -18,7 +18,6 @@ export type SettingsGroup =
   | "chat"
   | "localAi"
   | "account"
-  | "cloud"
   | "storage"
   | "about";
 
@@ -29,7 +28,7 @@ export const SETTINGS_SECTIONS: readonly (readonly [
 ])[] = [
   ["editor", ["general", "editing", "playback", "export", "keys"]],
   ["ai", ["models", "packs", "chat", "localAi"]],
-  ["account", ["account", "cloud"]],
+  ["account", ["account"]],
   ["other", ["storage", "about"]],
 ];
 
@@ -40,18 +39,14 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = SETTINGS_SECTIONS.flatM
 export const isSettingsGroup = (value: unknown): value is SettingsGroup =>
   SETTINGS_GROUPS.includes(value as SettingsGroup);
 
-/** What there is of the platform, which decides whether "account" and "cloud" are there. */
+/** What there is of the backend, which decides whether "account" is there. */
 export interface GroupsShown {
-  /** The host has accounts: the group of the account, signed in or not. */
+  /** The host has accounts, or an online mode to go to: the group of the account. */
   readonly account: boolean;
-  /** People are signed in to a platform that has cloud features. */
-  readonly cloud: boolean;
 }
 
 export const visibleGroups = (shown: GroupsShown): readonly SettingsGroup[] =>
-  SETTINGS_GROUPS.filter(
-    (group) => (group !== "account" || shown.account) && (group !== "cloud" || shown.cloud),
-  );
+  SETTINGS_GROUPS.filter((group) => group !== "account" || shown.account);
 
 /**
  * Where the settings of a window are: which group, and in the group of AI models which service, or

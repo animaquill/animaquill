@@ -164,7 +164,7 @@ test.describe("a project of the platform", () => {
       ).aqCloud.seed("年会视频", { repository: "annual" }),
     );
     await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
-    await page.getByRole("menu").getByRole("menuitem", { name: "打开云端的项目…" }).click();
+    await page.getByRole("menu").getByRole("menuitem", { name: "打开在线项目…" }).click();
     await page.getByText("年会视频").first().click();
     await expect(page.locator("footer [data-cloud]")).toHaveAttribute("data-cloud", "online");
     await aiAdds(page, [[["m1", "一"]]]);

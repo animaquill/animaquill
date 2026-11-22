@@ -77,7 +77,7 @@ describe("a project whose working copy the platform let go of", () => {
     expect(here.cloud.session?.getSnapshot()).toMatchObject({ state: "online", pending: 0 });
     expect(platform.workingCopy(project).getState().files["code/late.js"]).toBe("late");
     expect(messagesOf(here.notifications).at(-1)).toBe(
-      "“原子是什么”已经接回，这台电脑上 1 个文件的改动并回了云端。",
+      "“原子是什么”已经接回，这台电脑上 1 个文件的改动并回了服务器。",
     );
     // What the log had before stays for a while after the platform has what came of it.
     await time.advance(5000);
@@ -128,7 +128,7 @@ describe("a project whose working copy the platform let go of", () => {
     expect(asked).toMatchObject({
       kind: "reconcile",
       title: "接回“原子是什么”",
-      items: [{ path: "code/a.js", status: "这台电脑和云端都改了同一处" }],
+      items: [{ path: "code/a.js", status: "这台电脑和服务器都改了同一处" }],
     });
     // Nothing changed: it waits, and can be looked at only.
     expect(here.cloud.rebuilt).toBe(true);

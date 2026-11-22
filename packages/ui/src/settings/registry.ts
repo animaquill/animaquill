@@ -10,12 +10,11 @@ export type SettingId = {
 }[keyof Items];
 
 /**
- * Where a setting is kept, as the settings show left of it once people are signed in: on this
- * device only, with the account, or with the account where the AI settings go with it on this
- * device ("ai", see `AiSync`), else on this device. The switches of the cloud features are of this
- * device, whatever they are of.
+ * Where a setting is kept, as the settings show left of it in the online mode: on this device only
+ * (the device's preferences, docs/design/online-offline.md of AnimaQuill Cloud, 2.1), or on the
+ * backend (the AI settings).
  */
-export type SettingWhere = "device" | "account" | "ai";
+export type SettingWhere = "device" | "account";
 
 /**
  * One setting, as searching finds it and as the settings go to it: its group, and where it is kept.
@@ -32,7 +31,7 @@ export interface SettingItem {
 /**
  * Every setting there is, in the order of the groups and of each group (docs/design/
  * settings-and-properties.md of AnimaQuill Cloud, 1 and 4.3). The groups that show a page of their
- * own (AI models, model packs, cloud sync) have theirs here too, so that searching finds them.
+ * own (AI models, model packs) have theirs here too, so that searching finds them.
  */
 export const SETTING_ITEMS: readonly SettingItem[] = [
   { id: "general.language", group: "general", where: "device" },
@@ -42,37 +41,38 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
   { id: "playback.proxyOffer", group: "playback", where: "device" },
   { id: "export.hardware", group: "export", where: "device" },
   { id: "keys.bindings", group: "keys", where: "device" },
-  { id: "models.services", group: "models", where: "ai" },
-  { id: "models.default", group: "models", where: "ai" },
-  { id: "models.reasoning", group: "models", where: "ai" },
-  { id: "models.headers", group: "models", where: "ai" },
-  { id: "models.list", group: "models", where: "ai" },
-  { id: "models.details", group: "models", where: "ai" },
-  { id: "packs.installed", group: "packs", where: "ai" },
-  { id: "packs.hidden", group: "packs", where: "ai" },
-  { id: "chat.maxToolCalls", group: "chat", where: "ai" },
-  { id: "chat.askBeforeEdit", group: "chat", where: "ai" },
-  { id: "chat.autoTitle", group: "chat", where: "ai" },
-  { id: "chat.expandThinking", group: "chat", where: "ai" },
-  { id: "chat.sendWith", group: "chat", where: "ai" },
-  { id: "chat.shotSize", group: "chat", where: "ai" },
-  { id: "chat.lookSize", group: "chat", where: "ai" },
-  { id: "chat.lookWaits", group: "chat", where: "ai" },
-  { id: "chat.autoCompact", group: "chat", where: "ai" },
+  { id: "models.services", group: "models", where: "account" },
+  { id: "models.default", group: "models", where: "account" },
+  { id: "models.reasoning", group: "models", where: "account" },
+  { id: "models.headers", group: "models", where: "account" },
+  { id: "models.list", group: "models", where: "account" },
+  { id: "models.details", group: "models", where: "account" },
+  { id: "packs.installed", group: "packs", where: "account" },
+  { id: "packs.hidden", group: "packs", where: "account" },
+  { id: "chat.maxToolCalls", group: "chat", where: "account" },
+  { id: "chat.askBeforeEdit", group: "chat", where: "account" },
+  { id: "chat.autoTitle", group: "chat", where: "account" },
+  { id: "chat.expandThinking", group: "chat", where: "account" },
+  { id: "chat.sendWith", group: "chat", where: "account" },
+  { id: "chat.shotSize", group: "chat", where: "account" },
+  { id: "chat.lookSize", group: "chat", where: "account" },
+  { id: "chat.lookWaits", group: "chat", where: "account" },
+  { id: "chat.autoCompact", group: "chat", where: "account" },
   { id: "localAi.connect", group: "localAi" },
   { id: "localAi.recent", group: "localAi" },
   { id: "localAi.agentsFile", group: "localAi", where: "device" },
   { id: "account.who", group: "account" },
   { id: "account.github", group: "account" },
   { id: "account.space", group: "account" },
-  { id: "cloud.ai", group: "cloud", where: "device" },
-  { id: "cloud.organizer", group: "cloud", where: "device" },
-  { id: "cloud.chats", group: "cloud", where: "device" },
+  { id: "account.server", group: "account" },
+  { id: "account.chatImages", group: "account" },
   { id: "storage.persist", group: "storage", where: "device" },
   { id: "storage.keys", group: "storage", where: "device" },
   { id: "storage.chats", group: "storage", where: "device" },
   { id: "storage.undo", group: "storage", where: "device" },
   { id: "storage.usage", group: "storage", where: "device" },
+  { id: "storage.leftOver", group: "storage", where: "device" },
+  { id: "storage.clear", group: "storage", where: "device" },
   { id: "about.version", group: "about" },
   { id: "about.license", group: "about" },
   { id: "about.feedback", group: "about" },

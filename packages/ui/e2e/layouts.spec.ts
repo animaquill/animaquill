@@ -1,7 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { chooseLayout, content, expect, group, layoutMenu, tab, test } from "./support.ts";
 
-const LAYOUT_KEY = "aq-offline-animaquill.layout";
+const LAYOUT_KEY = "animaquill.layout";
 
 async function box(locator: Locator) {
   const value = await locator.boundingBox();

@@ -123,6 +123,8 @@ export interface ModelPacksSnapshot {
 
 export interface ModelPacksMessages {
   saveFailed(): void;
+  /** Nothing changed, as the backend that has the packs cannot be reached, see `writable`. */
+  readOnly?(): void;
 }
 
 export interface ModelPacksOptions {
@@ -130,6 +132,11 @@ export interface ModelPacksOptions {
   readonly memory?: WindowMemory;
   /** How GitHub is asked; tests give their own. */
   readonly fetcher?: typeof fetch;
+  /**
+   * Whether the packs can change now: not while the backend of the online mode that has them
+   * cannot be reached. Always where it is not given.
+   */
+  readonly writable?: () => boolean;
 }
 
 /** How long what looking for an update found holds: GitHub answers 60 times an hour. */
@@ -401,7 +408,16 @@ export class ModelPacks {
     this.#emitter.emit();
   }
 
+  /** Whether packs can be put in or taken out now, see `ModelPacksOptions.writable`. */
+  get writable(): boolean {
+    return this.#options.writable?.() ?? true;
+  }
+
   #save(installed: readonly InstalledPack[]): void {
+    if (!this.writable) {
+      this.#messages.readOnly?.();
+      return;
+    }
     this.#set(installed);
     const packs = installed.map(({ kept }) => kept);
     this.#settings.save(SETTINGS_KEY, { packs }).catch((error) => {

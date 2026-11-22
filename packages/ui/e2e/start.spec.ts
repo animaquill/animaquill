@@ -99,7 +99,7 @@ test.describe("the start page of the online mode", () => {
       lab.seed("教程：关键帧入门", { repository: "keyframes" });
       lab.seed("旅行 Vlog 第 3 集", { repository: "travel-vlog" });
     });
-    await chooseFrom(page, "文件", "打开云端的项目…");
+    await chooseFrom(page, "文件", "打开在线项目…");
     await showView(page, "全部项目");
     await expect(page.getByRole("group", { name: "筛选" })).toHaveCount(0);
     await openCard(page, "产品发布短片");
@@ -171,7 +171,6 @@ test.describe("the start page of the online mode", () => {
       "设置封面…",
       "保存到文件夹…",
       "在 GitHub 上打开",
-      "从这个浏览器移除…",
       "删除项目…",
     ]);
     await shot(page, "05-menu");
@@ -231,8 +230,8 @@ test.describe("the start page of the online mode", () => {
     const welcome = page.getByRole("region", { name: "欢迎使用 AnimaQuill" });
     await expect(welcome).toBeVisible();
     await expect(welcome.getByRole("button", { name: /^新建项目/ })).toBeEnabled();
-    await expect(welcome.getByRole("button", { name: /^新建云端项目/ })).toHaveCount(0);
-    await expect(welcome.getByRole("button", { name: /^新建本地项目/ })).toHaveCount(0);
+    await expect(welcome.getByRole("button", { name: /^新建在线项目/ })).toHaveCount(0);
+    await expect(welcome.getByRole("button", { name: /^新建离线项目/ })).toHaveCount(0);
     await shot(page, "07-empty");
 
     // Another computer: what is on the platform shows under it, and is no project lost.
@@ -241,11 +240,11 @@ test.describe("the start page of the online mode", () => {
       lab.seed("年会开场", { repository: "annual", ago: 26 * 3_600_000 });
     });
     // As the menu asks for them; the page reads the list again then.
-    await chooseFrom(page, "文件", "打开云端的项目…");
+    await chooseFrom(page, "文件", "打开在线项目…");
     await expect.poll(() => names(page)).toEqual(["产品发布短片", "年会开场"]);
     await showView(page, "最近打开");
     await expect(welcome).toBeVisible();
-    await expect.poll(() => names(page, "你的云端项目")).toEqual(["产品发布短片", "年会开场"]);
+    await expect.poll(() => names(page, "你的在线项目")).toEqual(["产品发布短片", "年会开场"]);
     await shot(page, "08-cloud-not-opened-here");
     await openCard(page, "年会开场");
     await expect(page).toHaveTitle("年会开场 - AnimaQuill");
@@ -258,7 +257,7 @@ test.describe("the start page of the online mode", () => {
       lab.seed("产品发布短片", { repository: "launch" });
       lab.seed("年会开场", { repository: "annual" });
     });
-    await chooseFrom(page, "文件", "打开云端的项目…");
+    await chooseFrom(page, "文件", "打开在线项目…");
     await showView(page, "全部项目");
     await expect(projectCard(page, "年会开场")).toBeVisible();
     const bar = await sidebar(page).boundingBox();
@@ -322,7 +321,7 @@ test.describe("the start page of the offline mode, where the editor runs on this
   test("has only projects of this computer, and no account", async ({ page }) => {
     await installChosen(page);
     await arrive(page, { cloud: false });
-    await expect(page.getByRole("button", { name: /^新建云端项目/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^新建在线项目/ })).toHaveCount(0);
     await shot(page, "12-local-empty");
     await sidebar(page).getByRole("button", { name: "新建项目" }).click();
     await page.getByRole("textbox", { name: "项目名称" }).fill("课程片头");

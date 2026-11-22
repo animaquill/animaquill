@@ -1,7 +1,6 @@
 import {
   ChevronLeft,
   ChevronRight,
-  Cloud,
   Diamond,
   Download,
   HardDrive,
@@ -23,7 +22,7 @@ import { useWorkbench } from "../app/context.ts";
 import { AiModelsPage } from "../chat/AiModelsPage.tsx";
 import { ModelPacksSettings } from "../chat/ModelPacksSettings.tsx";
 import { labelParts, originIn } from "../chat/packText.ts";
-import { CloudSyncPage } from "../cloud/CloudSyncPage.tsx";
+import { OnlineOnly } from "../app/OnlineOnly.tsx";
 import {
   SETTINGS_SECTIONS,
   type SettingsGroup,
@@ -41,7 +40,7 @@ import {
 } from "./groups.tsx";
 import { KeybindingsPage } from "./KeybindingsPage.tsx";
 import { LocalAiGroup } from "../local-ai/LocalAiSettings.tsx";
-import { GroupWhere, useGroups } from "./parts.tsx";
+import { GroupWhere, useGroups, useLockedGroups } from "./parts.tsx";
 import { searchSettings } from "./registry.ts";
 import { DialogFrame, useLevelsInHistory, useNarrow, useNoStepsWhenClosed } from "./shell.tsx";
 import styles from "./Settings.module.css";
@@ -57,7 +56,6 @@ const ICONS: Readonly<Record<SettingsGroup, ComponentType<{ size?: number }>>> =
   chat: MessageSquareText,
   localAi: Laptop,
   account: UserRound,
-  cloud: Cloud,
   storage: HardDrive,
   about: Info,
 };
@@ -85,7 +83,10 @@ function SettingsDialog() {
   // The names of a service and a model in the crumbs follow them as they are renamed.
   useSyncExternalStore(workbench.ai.subscribe, workbench.ai.getSnapshot);
   useSyncExternalStore(workbench.packs.subscribe, workbench.packs.getSnapshot);
-  const groups = useGroups();
+  const shownGroups = useGroups();
+  const locked = useLockedGroups();
+  // What is grey can be seen, not opened or searched.
+  const groups = shownGroups.filter((each) => !locked.has(each));
   const narrow = useNarrow();
   const [query, setQuery] = useState("");
   const pageRef = useRef<HTMLDivElement>(null);
@@ -186,9 +187,9 @@ function SettingsDialog() {
                   {found === undefined ? (
                     <>
                       {"› "}
-                      {/* The AI settings go with the account as a whole, where they do. */}
+                      {/* The AI settings are the backend's as a whole, online. */}
                       {(group === "models" || group === "packs") && (
-                        <GroupWhere where="ai" className={styles.crumbWhere} />
+                        <GroupWhere where="account" className={styles.crumbWhere} />
                       )}
                       {`${title}${opened === undefined ? "" : ` › ${opened}`}${model === undefined ? "" : ` › ${model}`}`}
                     </>
@@ -233,7 +234,7 @@ function SettingsDialog() {
           {showList && (
             <nav className={styles.nav} aria-label={t("settings.pagesLabel")}>
               {SETTINGS_SECTIONS.map(([section, all]) => {
-                const shown = all.filter((each) => groups.includes(each));
+                const shown = all.filter((each) => shownGroups.includes(each));
                 if (shown.length === 0) return null;
                 return (
                   <div key={section} className={styles.section}>
@@ -244,6 +245,17 @@ function SettingsDialog() {
                     )}
                     {shown.map((each) => {
                       const Icon = ICONS[each];
+                      if (locked.has(each))
+                        return (
+                          <OnlineOnly
+                            key={each}
+                            className={styles.navItem}
+                            what={t(`settings.groups.${each}`)}
+                          >
+                            <Icon size={15} aria-hidden />
+                            <span>{t(`settings.groups.${each}`)}</span>
+                          </OnlineOnly>
+                        );
                       return (
                         <button
                           key={each}
@@ -342,12 +354,6 @@ function GroupPage({ group }: { readonly group: SettingsGroup }) {
       return (
         <div className={styles.whole} data-group="packs">
           <ModelPacksSettings />
-        </div>
-      );
-    case "cloud":
-      return (
-        <div className={styles.whole}>
-          <CloudSyncPage />
         </div>
       );
     case "keys":

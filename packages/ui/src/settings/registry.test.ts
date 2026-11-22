@@ -63,6 +63,9 @@ describe("the list", () => {
       "playback.quality",
       "export.quality",
       "cloud.device",
+      "cloud.ai",
+      "cloud.organizer",
+      "cloud.chats",
     ])
       expect(ids, gone).not.toContain(gone);
     // What needs saying under its name: only these.
@@ -80,7 +83,7 @@ describe("the list", () => {
       "storage.keys",
     ])
       expect(said, id).not.toContain(id);
-    for (const id of ["editing.trial", "playback.proxyOffer", "export.hardware", "cloud.ai"])
+    for (const id of ["editing.trial", "playback.proxyOffer", "export.hardware", "account.server"])
       expect(said, id).toContain(id);
   });
 
@@ -95,7 +98,7 @@ describe("searching", () => {
     const ids = found("key");
     expect(ids[0]).toBe("models.services");
     expect(ids).toContain("storage.keys");
-    expect(ids).toContain("cloud.ai");
+    expect(ids).toContain("account.server");
     expect(found("KEY")).toEqual(ids);
   });
 
@@ -115,12 +118,9 @@ describe("searching", () => {
   });
 
   it("only in the groups there are now", () => {
-    const signedOut = visibleGroups({ account: true, cloud: false });
-    expect(signedOut).not.toContain("cloud");
-    expect(found("收藏", signedOut)).toEqual([]);
-    expect(found("收藏")).toContain("cloud.organizer");
-    const noPlatform = visibleGroups({ account: false, cloud: false });
+    const noPlatform = visibleGroups({ account: false });
     expect(noPlatform).not.toContain("account");
     expect(found("额度", noPlatform)).toEqual([]);
+    expect(found("额度", visibleGroups({ account: true }))).toContain("account.space");
   });
 });

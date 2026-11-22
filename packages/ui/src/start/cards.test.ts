@@ -95,7 +95,6 @@ const marks = (entries: Record<string, Omit<ProjectMarks, "at">>): Organized["ma
 const group = (id: string, name: string, more: Partial<ProjectGroup> = {}): ProjectGroup => ({
   id,
   name,
-  scope: "browser",
   at: 1,
   ...more,
 });
@@ -148,17 +147,21 @@ describe("the cards of the start page", () => {
 
   it("know when each was opened here, and when it changed", () => {
     const cards = composeCards(listsOf(EVERYTHING), {
-      marks: marks({ "k-here": { openedAt: 80 }, "f-local": { openedAt: 30 } }),
+      marks: marks({
+        "k-here": { openedAt: 80 },
+        "cloud:p-remote": { openedAt: 85 },
+        "f-local": { openedAt: 30 },
+      }),
       groups: [],
     });
     expect(cards.map((card) => [card.name, card.openedAt, card.updatedAt])).toEqual([
       // The later of what the folder and what this browser say.
       ["课程片头", 50, 45],
-      // Never opened here, and the platform's word is what there is.
+      // Never opened, as the backend says.
       ["旅行 Vlog", undefined, 60],
-      ["产品发布", 80, 100],
-      // Never opened here: it is not "recent".
-      ["年会开场", undefined, 90],
+      // What the backend says, on whichever computer: not what this browser kept by its own key.
+      ["产品发布", undefined, 100],
+      ["年会开场", 85, 90],
       // From before this was noted: when it changed is what there is.
       ["旧项目", 7, 7],
     ]);
@@ -185,14 +188,13 @@ describe("the cards of the start page", () => {
     ]);
   });
 
-  it("say where a star goes, with whose project of the platform it is", () => {
+  it("say where a star goes: the project on the backend, or what this browser keeps it by", () => {
     const cards = composeCards(listsOf(EVERYTHING), NOTHING_ORGANIZED);
     expect(cards.map(marksTargetOf)).toEqual([
       { key: "f-local" },
-      { key: "cloud:p-vlog", account: "user-ada" },
-      { key: "cloud:p-launch", also: "k-here", account: "user-ada" },
-      // Never opened here: whose it is, as the list of whoever is signed in has it.
-      { key: "cloud:p-remote", account: "user-ada" },
+      { key: "cloud:p-vlog" },
+      { key: "cloud:p-launch" },
+      { key: "cloud:p-remote" },
       { key: "old" },
     ]);
   });
@@ -428,7 +430,7 @@ describe("what the menu of a card offers", () => {
     expect(actions("产品发布")).toEqual([
       ["open", "rename", "star", "moveToGroup"],
       ["saveToFolder", "openOnGitHub"],
-      ["removeHere", "deleteCloud"],
+      ["deleteCloud"],
     ]);
     // It cannot be renamed before the platform can change what it has without an editor on it.
     expect(actions("年会开场")).toEqual([
@@ -528,7 +530,7 @@ describe("what the menu of a card offers", () => {
       // Not renamed: it cannot be edited.
       ["open", "star", "moveToGroup"],
       ["saveToFolder", "recheck", "switchRepository", "openOnGitHub"],
-      ["removeHere", "deleteCloud"],
+      ["deleteCloud"],
     ]);
     expect(cardActions(shown[1] as ProjectCard, CONTEXT)[1]).toEqual([
       "saveToFolder",

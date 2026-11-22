@@ -115,9 +115,9 @@ describe("the lists of the start page", () => {
     expect(read(lists)).toEqual({
       local: ["原子是什么", "产品介绍"],
       cloud: [
-        "片头动画 | ada/opening | ☁ 已连云端 · ada/opening",
-        "原子是什么 | ada/atom | ☁ 已连云端 · ada/atom",
-        "年会视频 | ada/annual | ☁ 已连云端 · ada/annual | 在这个浏览器里打开过",
+        "片头动画 | ada/opening | ☁ 在线 · ada/opening",
+        "原子是什么 | ada/atom | ☁ 在线 · ada/atom",
+        "年会视频 | ada/annual | ☁ 在线 · ada/annual | 在这个浏览器里打开过",
       ],
       browser: ["旧项目"],
     });
@@ -146,8 +146,8 @@ describe("the lists of the start page", () => {
       local: [],
       // The copies in this browser, which open without the platform: the most recent first.
       cloud: [
-        "片尾 |  | ☁ 已连云端 | 在这个浏览器里打开过",
-        "年会视频 | ada/annual | ☁ 已连云端 · ada/annual | 在这个浏览器里打开过 | 有改动还没同步",
+        "片尾 |  | ☁ 在线 | 在这个浏览器里打开过",
+        "年会视频 | ada/annual | ☁ 在线 · ada/annual | 在这个浏览器里打开过 | 有改动还没同步",
       ],
       browser: [],
     });
@@ -157,7 +157,7 @@ describe("the lists of the start page", () => {
       stale: true,
     });
     expect(markHint(lists.cloud[1]!.mark, t.t)).toBe(
-      "云端的列表读不出来，这是这个浏览器上次记下的情况。",
+      "服务器的列表读不出来，这是这个浏览器上次记下的情况。",
     );
     expect(lists.cloud.every((row) => !row.listed && !row.needsSignIn && !row.deletable)).toBe(
       true,
@@ -181,7 +181,7 @@ describe("the lists of the start page", () => {
     );
     expect(read(lists)).toEqual({
       local: ["原子是什么"],
-      cloud: ["年会视频 |  | ☁ 已连云端 | 在这个浏览器里打开过 | 有改动还没同步 | 登录后继续同步"],
+      cloud: ["年会视频 |  | ☁ 在线 | 在这个浏览器里打开过 | 有改动还没同步 | 登录后继续同步"],
       browser: [],
     });
     expect(lists.cloud[0]?.needsSignIn).toBe(true);
@@ -197,11 +197,11 @@ describe("the lists of the start page", () => {
       }),
     );
     expect(read(lists).cloud).toEqual([
-      "别人的副本 |  | 是另一个账号的云端项目 | 在这个浏览器里打开过",
+      "别人的副本 |  | 是另一个账号的在线项目 | 在这个浏览器里打开过",
       "不知道是谁的 |  | ☁ 要处理 | 在这个浏览器里打开过",
     ]);
     expect(markHint({ kind: "otherAccount" }, t.t)).toBe(
-      "它连着的云端项目属于另一个账号。换回那个账号登录才能同步，本机的内容照常能编辑。",
+      "它连着的在线项目属于另一个账号。换回那个账号登录才能同步，本机的内容照常能编辑。",
     );
     // Whose it is was never noted down, and the list does not have it: it may be gone there.
     expect(lists.cloud[1]?.mark).toEqual({
@@ -260,12 +260,12 @@ describe("the lists of the start page", () => {
       "连到一半 | 还差一步：选仓库",
     ]);
     expect(lists.cloud.map((row) => markHint(row.mark, t.t))).toEqual([
-      "仓库的存档停下了。打开项目，在云端面板里处理。",
+      "仓库的存档停下了。打开项目，在在线面板里处理。",
       "GitHub 上的改动和项目里的改动冲突了。打开项目处理。",
       "GitHub 上有文件没能并进来。打开项目处理。",
-      "云端有事要处理。打开项目，在云端面板里看。",
-      "这个项目已经在云端，还没选仓库。打开项目接着选。",
-      "这个项目已经在云端，还没选仓库。打开项目接着选。",
+      "服务器有事要处理。打开项目，在在线面板里看。",
+      "这个项目已经在服务器上，还没选仓库。打开项目接着选。",
+      "这个项目已经在服务器上，还没选仓库。打开项目接着选。",
     ]);
     expect(lists.cloud[0]?.mark).toMatchObject({ reason: "repository", repository: "ada/one" });
     // One on its way there has everything of it only here.
@@ -291,8 +291,8 @@ describe("the lists of the start page", () => {
     const lists = composeStartList(input(base));
     expect(read(lists).cloud).toEqual([
       "改版前连的 |  | 还差一步：选仓库",
-      "有仓库的 | ada/six | ☁ 已连云端 · ada/six",
-      "要取回的 | ada/seven | ☁ 已连云端 · ada/seven | 要先从仓库取回",
+      "有仓库的 | ada/six | ☁ 在线 · ada/six",
+      "要取回的 | ada/seven | ☁ 在线 · ada/seven | 要先从仓库取回",
     ]);
     // With a repository too: it is archived first, see `CloudProjects.deleteFromCloud`.
     expect(lists.cloud.map((row) => row.deletable)).toEqual([true, true, true]);
@@ -325,9 +325,9 @@ describe("the lists of the start page", () => {
     expect(read(lists)).toEqual({
       local: [],
       cloud: [
-        "原子是什么 |  | ☁ 已连云端 · ada/atom | 在这个浏览器里打开过",
+        "原子是什么 |  | ☁ 在线 · ada/atom | 在这个浏览器里打开过",
         "旧的 |  | 还差一步：选仓库 | 在这个浏览器里打开过",
-        "年会视频 |  | ☁ 已连云端 | 在这个浏览器里打开过",
+        "年会视频 |  | ☁ 在线 | 在这个浏览器里打开过",
       ],
       browser: [],
     });
@@ -339,27 +339,27 @@ describe("the lists of the start page", () => {
       input({
         projects: [kept("k1", "改了名的"), kept("k2", "这里的旧名字")],
         links: [link("k1", "p1", { pending: 1 }), link("k2", "p2")],
-        listed: [listed("p1", "云端的名字"), listed("p2", "云端的新名字")],
+        listed: [listed("p1", "服务器的名字"), listed("p2", "服务器的新名字")],
       }),
     );
     // Renamed here, as on the start page; renamed elsewhere, which the platform has first.
-    expect(lists.cloud.map((row) => row.name)).toEqual(["改了名的", "云端的新名字"]);
+    expect(lists.cloud.map((row) => row.name)).toEqual(["改了名的", "服务器的新名字"]);
   });
 
   it("says what each project says about itself: as noted here, or as the platform's list says", () => {
     const lists = composeStartList(
       input({
-        records: [folder("f1", "文件夹的"), folder("f2", "连了云端的")],
+        records: [folder("f1", "文件夹的"), folder("f2", "连了服务器的")],
         projects: [
           kept("f1", "文件夹的", { folder: true, description: "本机记下的" }),
-          kept("f2", "连了云端的", { folder: true }),
+          kept("f2", "连了服务器的", { folder: true }),
           kept("b1", "浏览器里的", { description: "浏览器里记下的" }),
           kept("k1", "有改动的", { description: "这里改过的说明" }),
           kept("k2", "没改动的", { description: "这里旧的说明" }),
         ],
         links: [link("f2", "p0"), link("k1", "p1", { pending: 1 }), link("k2", "p2")],
         listed: [
-          listed("p0", "连了云端的", { description: "平台上的" }),
+          listed("p0", "连了服务器的", { description: "平台上的" }),
           listed("p1", "有改动的", { description: "平台上旧的" }),
           listed("p2", "没改动的", { description: "平台上新的" }),
           listed("p3", "只在平台上", { description: "只在平台上的说明" }),
@@ -368,10 +368,10 @@ describe("the lists of the start page", () => {
     );
     expect(lists.local.map((row) => [row.name, row.description])).toEqual([
       ["文件夹的", "本机记下的"],
-      ["连了云端的", undefined],
+      ["连了服务器的", undefined],
     ]);
     expect(Object.fromEntries(lists.cloud.map((row) => [row.name, row.description]))).toEqual({
-      连了云端的: "平台上的",
+      连了服务器的: "平台上的",
       有改动的: "这里改过的说明",
       没改动的: "平台上新的",
       只在平台上: "只在平台上的说明",
@@ -410,9 +410,9 @@ describe("the lists of the start page", () => {
     expect(read(lists)).toEqual({
       local: ["原子是什么"],
       cloud: [
-        "原子是什么 |  | ☁ 已连云端 | 在这个浏览器里打开过",
-        "两份 |  | ☁ 已连云端 | 在这个浏览器里打开过",
-        "没了 |  | ☁ 已连云端",
+        "原子是什么 |  | ☁ 在线 | 在这个浏览器里打开过",
+        "两份 |  | ☁ 在线 | 在这个浏览器里打开过",
+        "没了 |  | ☁ 在线",
       ],
       browser: ["副本乙"],
     });
@@ -432,7 +432,7 @@ describe("the lists of the start page", () => {
     // Nothing says which of them are logs of folders: none shows as a copy, all show as the platform's.
     expect(read(lists)).toEqual({
       local: [],
-      cloud: ["原子 |  | ☁ 已连云端", "副本 |  | ☁ 已连云端", "没在这里开过 |  | ☁ 已连云端"],
+      cloud: ["原子 |  | ☁ 在线", "副本 |  | ☁ 在线", "没在这里开过 |  | ☁ 在线"],
       browser: [],
     });
   });
@@ -525,7 +525,7 @@ function setUp(who = account(ADA)) {
 
 describe("projects only in this browser (the design of the start page, 7)", () => {
   it("are marked as such only where the links of this browser can be read", () => {
-    const projects = [kept("p1", "旧的"), kept("p2", "云端的副本")];
+    const projects = [kept("p1", "旧的"), kept("p2", "服务器的副本")];
     const known = composeStartList(input({ projects, links: [link("p2", "cloud-2")] }));
     expect(known.browser.map(({ id }) => id)).toEqual(["p1"]);
     expect(known.browserKnown).toBe(true);
@@ -561,11 +561,11 @@ describe("StartList", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     // Before the platform answered: the folder and the copy, by what the links remember.
     expect(list.getSnapshot().loading).toBe(false);
-    expect(seen).toEqual(["loading: 原子是什么 / 年会视频 |  | ☁ 已连云端 | 在这个浏览器里打开过"]);
+    expect(seen).toEqual(["loading: 原子是什么 / 年会视频 |  | ☁ 在线 | 在这个浏览器里打开过"]);
     arrive();
     await refreshed;
     expect(seen.at(-1)).toBe(
-      "ready: 原子是什么 / 原子是什么 | ada/atom | ☁ 已连云端 · ada/atom,年会视频 | ada/annual | ☁ 已连云端 · ada/annual | 在这个浏览器里打开过",
+      "ready: 原子是什么 / 原子是什么 | ada/atom | ☁ 在线 · ada/atom,年会视频 | ada/annual | ☁ 在线 · ada/annual | 在这个浏览器里打开过",
     );
     expect(list.getSnapshot().failed).toEqual({ projects: false, folders: false, links: false });
   });
@@ -582,7 +582,7 @@ describe("StartList", () => {
     expect(list.getSnapshot().cloudState).toBe("unreadable");
     expect(read(list.getSnapshot())).toMatchObject({
       local: ["原子是什么"],
-      cloud: ["年会视频 | ada/annual | ☁ 已连云端 · ada/annual | 在这个浏览器里打开过"],
+      cloud: ["年会视频 | ada/annual | ☁ 在线 · ada/annual | 在这个浏览器里打开过"],
     });
     // A repository that is gone on the platform is forgotten here too.
     world.listed = [listed("p-atom", "原子是什么", { attention: "noRepository" })];
@@ -602,7 +602,7 @@ describe("StartList", () => {
     await list.refresh();
     // It is there all the same: whether the platform has a project is what its list is read for.
     expect(read(list.getSnapshot()).cloud).toEqual([
-      "年会视频 | ada/annual | ☁ 已连云端 · ada/annual | 在这个浏览器里打开过",
+      "年会视频 | ada/annual | ☁ 在线 · ada/annual | 在这个浏览器里打开过",
     ]);
     expect((await links.get("p-annual"))?.name).toBe("年会视频");
   });
@@ -615,7 +615,7 @@ describe("StartList", () => {
     expect(world.asked).toBe(0);
     expect(list.getSnapshot().cloudState).toBe("signedOut");
     expect(read(list.getSnapshot()).cloud).toEqual([
-      "年会视频 |  | ☁ 已连云端 | 在这个浏览器里打开过 | 有改动还没同步 | 登录后继续同步",
+      "年会视频 |  | ☁ 在线 | 在这个浏览器里打开过 | 有改动还没同步 | 登录后继续同步",
     ]);
     // Somebody signs in: the list is read without anybody asking for it.
     who.set(ADA);
@@ -624,8 +624,8 @@ describe("StartList", () => {
     expect(list.getSnapshot().cloudState).toBe("ready");
     // No folder here is connected to the first one: it is a project of the platform to open.
     expect(read(list.getSnapshot()).cloud).toEqual([
-      "原子是什么 | ada/atom | ☁ 已连云端 · ada/atom",
-      "年会视频 | ada/annual | ☁ 已连云端 · ada/annual | 在这个浏览器里打开过 | 有改动还没同步",
+      "原子是什么 | ada/atom | ☁ 在线 · ada/atom",
+      "年会视频 | ada/annual | ☁ 在线 · ada/annual | 在这个浏览器里打开过 | 有改动还没同步",
     ]);
     // A session that ended on the platform, whatever the account still says.
     world.listed = new CloudSignedOut("Nobody is signed in");

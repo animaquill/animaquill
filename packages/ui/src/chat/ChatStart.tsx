@@ -108,7 +108,10 @@ export function EmptyStart(props: { readonly onExample: (text: string) => void }
     );
   }
   const service = now.service;
-  if (service && !settings.keyed.has(service.id) && !kindOf(service.kind)?.custom) {
+  // Online keys are the backend's: where it could not be read, there are none here, and the chat
+  // says so over its box.
+  const keysAway = workbench.accountAi?.getSnapshot().keysRead === false;
+  if (service && !keysAway && !settings.keyed.has(service.id) && !kindOf(service.kind)?.custom) {
     return missing(
       t("chat.missing.noKey", { service: service.name }),
       t("chat.missing.fillKey"),

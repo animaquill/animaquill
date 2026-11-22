@@ -18,7 +18,7 @@ import {
  */
 
 const KEY = "sk-ant-test-0123456789abcdefSECRET";
-const LAYOUT_KEY = "aq-offline-animaquill.layout";
+const LAYOUT_KEY = "animaquill.layout";
 /** Where the pictures go besides the output of the test, where it is said. */
 const SHOTS = process.env["AQ_SHOTS"];
 const header = (page: Page) => page.locator("header");
@@ -465,4 +465,43 @@ test.describe("pictures of every group", () => {
     await settingsOf(page).getByTestId("ai-service-item").click();
     await save("390-AI模型-服务");
   });
+});
+
+test("what an editor of before left, as it may have changes, shows and can go", async ({
+  page,
+}) => {
+  // An editor of 0.3.117 left a project of the platform that never got there.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        const request = indexedDB.open("animaquill-cloud", 1);
+        request.addEventListener("upgradeneeded", () =>
+          request.result.createObjectStore("links", { keyPath: "key" }),
+        );
+        request.addEventListener("error", () => reject(request.error));
+        request.addEventListener("success", () => {
+          const transaction = request.result.transaction("links", "readwrite");
+          transaction.objectStore("links").put({ key: "old", creating: true, name: "旧的片子" });
+          transaction.addEventListener("complete", () => {
+            request.result.close();
+            resolve();
+          });
+        });
+      }),
+  );
+  await page.reload();
+  await editorReady(page);
+  await page.keyboard.press("Control+Comma");
+  await goToSettingsGroup(page, "存储和数据");
+  const row = settingsOf(page).locator('[data-setting="storage.leftOver"]');
+  await expect(row.getByTestId("settings-left-over")).toHaveText(/^旧版本留下的数据：占 /);
+  await row.getByRole("button", { name: "删掉…" }).click();
+  const asked = page.getByRole("dialog", { name: "删掉旧版本留下的数据？" });
+  await expect(asked).toContainText("里面有 1 个项目的改动可能还没传到服务器");
+  await asked.getByRole("button", { name: "删掉", exact: true }).click();
+  await expect(page.getByText("已删掉旧版本留下的数据。")).toBeVisible();
+  await expect(row).toHaveCount(0);
+  expect(
+    await page.evaluate(async () => (await indexedDB.databases()).map(({ name }) => name)),
+  ).not.toContain("animaquill-cloud");
 });

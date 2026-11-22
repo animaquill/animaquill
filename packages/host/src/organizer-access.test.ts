@@ -51,7 +51,7 @@ describe("how projects are organised, on a platform over HTTP", () => {
             star: { starred: true, at: 700_000 + AHEAD },
             group: { id: null, at: 800_000 + AHEAD },
           },
-          { project: "q", group: { id: "g", at: 900_000 + AHEAD } },
+          { project: "q", group: { id: "g", at: 900_000 + AHEAD }, opened: 950_000 + AHEAD },
         ],
       }),
     );
@@ -63,7 +63,7 @@ describe("how projects are organised, on a platform over HTTP", () => {
       ],
       marks: [
         { project: "p", star: { starred: true, at: 700_000 }, group: { id: null, at: 800_000 } },
-        { project: "q", group: { id: "g", at: 900_000 } },
+        { project: "q", group: { id: "g", at: 900_000 }, opened: 950_000 },
       ],
     });
   });

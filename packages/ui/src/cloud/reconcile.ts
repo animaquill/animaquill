@@ -238,7 +238,7 @@ export function settle(
   }
   const origin = from;
   const fork = ProjectStore.fromUpdates([store.encodeState()]).store;
-  if (!fork) return { problems: [problem("", "云端的项目读不出来")] };
+  if (!fork) return { problems: [problem("", "服务器的项目读不出来")] };
   try {
     if (changes.length > 0) {
       const merged = fork.mergeFiles(changes, { origin, baseOf: (path) => final.get(path) });
@@ -268,7 +268,7 @@ export function settle(
         return { problems: [problem(path, "这样选会连带改动别的文件，请换一种选法")] };
       }
       if (choices.get(path) === "here") partly.push(path);
-      else return { problems: [problem(path, "云端的这个文件没法原样留下")] };
+      else return { problems: [problem(path, "服务器的这个文件没法原样留下")] };
     }
     return { after, changes, origin, partly };
   } finally {

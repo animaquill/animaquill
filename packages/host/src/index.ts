@@ -4,16 +4,12 @@ import type { AiEntry, AiSyncKey, ServiceSecret } from "./ai-sync-rules.ts";
 import type { ModelCatalog } from "./model-catalog.ts";
 
 export {
-  ACCOUNT_KEYS_DATABASE,
   KEYS_DATABASE,
   MAX_CHATS_PER_PROJECT,
-  memoryAccountKeys,
   memoryChatImages,
   memoryChats,
   memoryKeys,
 } from "./ai.ts";
-import type { AccountKeys } from "./ai.ts";
-export type { AccountKeys };
 export {
   AI_SYNC_BATCH,
   AI_SYNC_BYTES,
@@ -62,16 +58,14 @@ export {
 export { MemoryCloudLinks } from "./cloud.ts";
 export {
   groupNameKey,
-  groupTime,
   cleanGroupName,
   groupNameOf,
   MAX_GROUP_NAME,
   ORGANIZER_BATCH,
-  isUnsentGroup,
   memoryOrganizer,
   mergeMarks,
-  starTime,
-  unsentOf,
+  platformOrganizer,
+  type PlatformOrganizerOptions,
 } from "./organizer.ts";
 export {
   SYNC_CLOSE,
@@ -154,15 +148,11 @@ export interface Host {
   readonly presence?: ProjectPresence;
   /**
    * What is secret of the AI services people set up (their keys, addresses and headers), on this
-   * device only: not in projects, not synced, and never in a report. Without it they last as long
-   * as the page.
+   * device only: not in projects, and never in a report. Without it they last as long as the page,
+   * as in the online mode, where the backend has them (`CloudAccess.aiSync`) and the page keeps
+   * them in its memory only (docs/design/online-offline.md of AnimaQuill Cloud, 2.1).
    */
   readonly keys?: KeyStore;
-  /**
-   * Keys that go with an account, kept on this device by account while it is signed in here, see
-   * `CloudAccess.aiSync`. Without it they last as long as the page.
-   */
-  readonly accountKeys?: AccountKeys;
   /** Conversations with AI in the browser, by project. Without it they last as long as the page. */
   readonly chats?: ChatStore;
   /**
@@ -208,6 +198,22 @@ export interface Host {
    * `setStorageScope`.
    */
   readonly mode: "online" | "offline";
+  /**
+   * Online: whose this page is, for all its life, see `AccountSnapshot.id`: what the browser keeps
+   * is in the scope of this account, and what goes to the backend is of it.
+   */
+  readonly accountId?: string;
+  /**
+   * Online: takes away everything this browser keeps of the account ("清掉这台电脑上的数据"), as
+   * the page loads again, before anything opens it. The editor makes sure first that nothing is
+   * only here, and that no other window of the account is open.
+   */
+  readonly clearHere?: () => void;
+  /**
+   * What an editor of before the modes (0.3.117 and before) left in this browser, and that stayed
+   * as it may have changes no backend has, see `LeftOver`. Missing where the host cannot tell.
+   */
+  readonly leftOver?: LeftOver;
   /**
    * Offline: what takes people to the online mode, which signs in. Missing where the site has no
    * backend, as the editor put on a site as plain files: then there is only the offline mode.
@@ -520,61 +526,25 @@ export interface CoverAccess {
 
 /**
  * How people organise a project on the start page, see the design of the start page
- * (docs/design/start-and-cloud.md of AnimaQuill Cloud), 6.6. Kept by the number this browser keeps a
- * project by (a folder, see `FolderRecord.id`, or a project of the browser), or by `cloud:` and the
- * id of a project of the platform. Each field is the last that was said of it, at `at`: an account
- * that keeps them too can merge them, field by field.
+ * (docs/design/start-and-cloud.md of AnimaQuill Cloud), 6.6. Offline it is kept in this browser, by
+ * the number this browser keeps a project by (a folder, see `FolderRecord.id`, or a project of the
+ * browser); online the backend has it, by `cloud:` and the id of the project there
+ * (docs/design/online-offline.md of AnimaQuill Cloud, 2.1).
  */
 export interface ProjectMarks {
-  /** When it was last opened in this browser: only ever by the number this browser keeps it by. */
+  /** When it was last opened: here offline, on any computer online. */
   readonly openedAt?: number;
   /** When people starred it; null where they took the star away again. */
   readonly starredAt?: number | null;
-  /** When the star was last given or taken away; `at` for what was kept before this was. */
-  readonly starAt?: number;
   /** The id of its group, see `ProjectGroup`; null where people took it out of its group. */
   readonly group?: string | null;
-  /** When it last went into a group or out of one; `at` for what was kept before this was. */
-  readonly groupAt?: number;
-  /**
-   * Whose project of the platform it is, see `AccountSnapshot.id`, for marks kept by `cloud:` and
-   * its id: an account takes over only those of its own projects.
-   */
-  readonly account?: string;
-  /**
-   * When the star or the group was last changed, in milliseconds since 1970. Opening the project
-   * does not move it. Each of the two goes by its own time, see `starAt` and `groupAt`.
-   */
+  /** When the star or the group was last changed, in milliseconds since 1970. */
   readonly at: number;
-  /**
-   * For marks kept by `cloud:` and its id: the times of the star and of the group that the account
-   * of the project is known to have, see `OrganizerAccess`. One changed later here is still to be
-   * given to it (`unsentOf`); one changed later there comes here as it is read.
-   */
-  readonly sent?: { readonly star?: number; readonly group?: number };
 }
 
-/**
- * What changes of the marks of a project, at `at`: what is missing stays as it is, and so does a
- * star or a group that was changed later than `at` already, as by another window.
- */
-export type ProjectMarksChange = Partial<
-  Pick<ProjectMarks, "openedAt" | "starredAt" | "group" | "account" | "starAt" | "groupAt">
-> & {
-  /** When it changed; `starAt` and `groupAt`, where given, say it of the star and the group. */
+/** What changes of the marks of a project, at `at`: what is missing stays as it is. */
+export type ProjectMarksChange = Partial<Pick<ProjectMarks, "openedAt" | "starredAt" | "group">> & {
   readonly at: number;
-  /**
-   * The account has the star or the group as of these times, as it said: they count as given to it,
-   * see `ProjectMarks.sent`. Never moves them back.
-   */
-  readonly sent?: { readonly star?: number; readonly group?: number };
-  /**
-   * People changed it here, by hand: it comes after whatever is kept here, a time that is to come
-   * too, as one a clock that was ahead left.
-   */
-  readonly mine?: true;
-  /** Times kept here later than this become this, as ones a clock that was ahead left. */
-  readonly notAfter?: number;
 };
 
 /**
@@ -585,30 +555,17 @@ export interface ProjectGroup {
   /** Made at random when the group is, and never changes. */
   readonly id: string;
   readonly name: string;
-  /**
-   * Whose it is: a copy of a group of an account, or one of this browser, made while nobody was
-   * signed in, or where there is no account at all.
-   */
-  readonly scope: { readonly account: string } | "browser";
   /** When it was last changed, in milliseconds since 1970. */
   readonly at: number;
-  /** Taken away. It stays, so that a copy elsewhere that has it is not taken for a new one. */
+  /** Taken away. It stays, so that what says it is in it is in none. */
   readonly deleted?: true;
-  /**
-   * For a group of an account: the time of the change the account is known to have, see
-   * `OrganizerAccess`. One changed later here is still to be given to it.
-   */
-  readonly sent?: number;
-  /**
-   * Taken away as it became this other group, of the same name: one made in this browser while
-   * nobody was signed in, or offline, where the account had one of that name already. Projects
-   * that say they are in it are in that one.
-   */
-  readonly into?: string;
 }
 
-/** What came of keeping a group, see `ProjectOrganizer.putGroup`. */
-export type PutGroupOutcome = "kept" | "older" | { readonly taken: string };
+/**
+ * What came of keeping a group, see `ProjectOrganizer.putGroup`. "refused": the backend keeps no
+ * more groups, or no group of that name.
+ */
+export type PutGroupOutcome = "kept" | "older" | "refused" | { readonly taken: string };
 
 /** Everything that is kept about how projects are organised. */
 export interface OrganizerContent {
@@ -616,17 +573,13 @@ export interface OrganizerContent {
   readonly marks: ReadonlyMap<string, ProjectMarks>;
   /** Including those taken away, see `ProjectGroup.deleted`. */
   readonly groups: readonly ProjectGroup[];
-  /**
-   * The account that was last signed in here, see `ProjectOrganizer.noteAccount`: whose groups the
-   * start page shows while nobody is.
-   */
-  readonly account?: string;
 }
 
 /**
- * Where the start page keeps how people organise their projects, in this browser. Shared by every
- * window of it. Rejects where it cannot be read or written: the start page then lists projects as
- * they are, without stars or groups.
+ * Where the start page keeps how people organise their projects: in this browser offline, shared
+ * by every window of it; on the backend online. Rejects where it cannot be read or written: the
+ * start page then lists projects as they are, without stars or groups, or says that nothing
+ * changed (`OrganizerOffline` where the backend cannot be reached).
  */
 export interface ProjectOrganizer {
   read(): Promise<OrganizerContent>;
@@ -639,45 +592,38 @@ export interface ProjectOrganizer {
    * the case or width of its letters, and nothing changes either.
    */
   putGroup(group: ProjectGroup): Promise<PutGroupOutcome>;
-  /** Changes the marks of several projects, in one step, see `mark`. */
-  markAll(
-    changes: readonly (readonly [project: string, change: ProjectMarksChange])[],
-  ): Promise<void>;
-  /**
-   * Keeps groups as an account has them, by their time: each in place of the copy here where it is
-   * as late as that, or later, without looking at names, which the account keeps apart itself. A
-   * copy changed here later stays, still to be given to it. `sent` of each says what the account
-   * has. A group that became another one here (`ProjectGroup.into`) stays so. With `replace`, each
-   * takes the place of the copy here whatever their times: what was changed here is let go of, as
-   * a rename the account did not take.
-   */
-  adoptGroups(
-    groups: readonly ProjectGroup[],
-    options?: { readonly replace?: boolean },
-  ): Promise<void>;
-  /**
-   * Has the groups of this browser (`scope: "browser"`) become groups of `account`, in one step:
-   * each that the account has one of the same name of becomes that one (`into`), and projects in it
-   * move into that one; each other one becomes the account's, with its id, still to be given to it.
-   */
-  claimGroups(account: string): Promise<void>;
-  /**
-   * Has the group `from` become `into`, a group of the same name that is kept here already, in one
-   * step: projects in it move into that one. Where the account would not take it, as it had a group
-   * of that name already.
-   */
-  mergeGroup(from: string, into: string): Promise<void>;
-  /** Notes that `account` is signed in here, see `OrganizerContent.account`. */
-  noteAccount(account: string): Promise<void>;
-  /**
-   * Takes everything of `account` for not given to it yet, in one step (`sent` goes): its copy on
-   * the platform is gone, as people turned it off there, and all of it goes again once it is on.
-   */
-  resend(account: string): Promise<void>;
   /** Forgets the marks of a project, as one that is gone. */
   forget(project: string): Promise<void>;
-  /** What any window changed, also this one. Returns how to stop listening. */
+  /**
+   * What any window changed, also this one, and online what may have changed elsewhere, as the
+   * window comes to the front. Returns how to stop listening.
+   */
   listen(listener: () => void): () => void;
+}
+
+/**
+ * What an editor of before the modes left in this browser: its databases, which the editor takes
+ * away as it starts unless they may have changes no backend has, or a page of before still has
+ * them open (docs/design/online-offline.md of AnimaQuill Cloud, O1). This editor cannot read them,
+ * nor send what is in them: people see them, and can take them away themselves.
+ */
+export interface LeftOver {
+  /** The names of those databases that are there. Nothing where there are none. */
+  databases(): Promise<readonly string[]>;
+  /** About how many bytes they take. */
+  bytes(): Promise<number>;
+  /** How many projects in them may have changes no backend has, see `unscopedUnsent`. */
+  unsent(): Promise<number>;
+  /** Takes them away. Resolves to the names of those still there, as a page of before holds them. */
+  drop(): Promise<readonly string[]>;
+}
+
+/** The backend of the online mode cannot be reached: nothing of how projects are organised changed. */
+export class OrganizerOffline extends Error {
+  override readonly name = "OrganizerOffline";
+  constructor() {
+    super("How projects are organised changes only while the backend can be reached");
+  }
 }
 
 /**
@@ -1154,6 +1100,13 @@ export interface AccountMarks {
   readonly project: string;
   readonly star?: { readonly starred: boolean; readonly at: number };
   readonly group?: { readonly id: string | null; readonly at: number };
+  /** When the person last opened it, on any computer. */
+  readonly opened?: number;
+}
+
+/** A change of `AccountMarks`: opening it is said by when, which the latest of wins. */
+export interface AccountMarksChange extends Omit<AccountMarks, "opened"> {
+  readonly opened?: { readonly at: number };
 }
 
 /** Everything an account keeps of how its projects are organised. */
@@ -1192,6 +1145,7 @@ export interface AccountMarksOutcome {
   readonly missing?: true;
   readonly star?: "kept" | "older";
   readonly group?: "kept" | "older" | "noGroup";
+  readonly opened?: "kept" | "older";
 }
 
 /** Changes given to an account in one go: the groups first, then the marks. */
@@ -1202,7 +1156,7 @@ export interface AccountChanges {
    */
   readonly account: string;
   readonly groups?: readonly AccountGroup[];
-  readonly marks?: readonly AccountMarks[];
+  readonly marks?: readonly AccountMarksChange[];
 }
 
 /** What came of `AccountChanges`, one for each in the same order, and everything as it is then. */
@@ -1215,7 +1169,8 @@ export interface AccountChangesAnswer {
 /**
  * How the person who is signed in organises their projects of the platform, kept by the platform:
  * each change is kept where it is later than what it has of the same field (the star, the group of a
- * project; a group as a whole), see the design of the start page, 6.6. Times are of this computer's
+ * project; a group as a whole), see the design of the start page, 6.6. The online mode reads it
+ * and writes each change here at once (docs/design/online-offline.md of AnimaQuill Cloud, 2.1). Times are of this computer's
  * clock both ways: the host has them agree with the platform's. Rejects where the platform could not
  * say, with a `CloudSignedOut` when nobody is signed in, and with a `CloudOtherAccount` where
  * changes are of another account than the one its session is of.
@@ -1586,7 +1541,7 @@ export interface RepositoryAccess {
    */
   recheck(project: string): Promise<RepositoryStatus>;
   /**
-   * "从这个仓库恢复成云端项目": a repository of the person's that has a project at its top, which
+   * "从这个仓库恢复成在线项目": a repository of the person's that has a project at its top, which
    * linking turns away ("hasProject"), becomes a new project of theirs on the platform, saved to it,
    * made from the last commit of its branch. Resolves once it is there ("live"), or once it is on
    * its way and takes longer ("restoring"): the list says when it is there, or that it could not

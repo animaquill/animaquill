@@ -16,7 +16,7 @@ export async function showView(page: Page, name: string) {
   await expect(item).toHaveAttribute("aria-current", "page");
 }
 
-/** The projects the view lists, or those under "你的云端项目" of the welcome. */
+/** The projects the view lists, or those under "你的在线项目" of the welcome. */
 export const projectList = (page: Page, name = "项目") =>
   page.getByRole("main").getByRole("list", { name, exact: true });
 
@@ -40,10 +40,10 @@ export async function cardMenu(page: Page, name: string, item: string) {
 }
 
 /** Shows the projects of the platform, or the folders, or all of them. */
-export const filterTo = (page: Page, name: "全部" | "云端" | "本地") =>
+export const filterTo = (page: Page, name: "全部" | "服务器" | "本地") =>
   page.getByRole("group", { name: "筛选" }).getByRole("button", { name, exact: true }).click();
 
-/** What the line of a card says, such as "云端 · 只在这个浏览器里". */
+/** What the line of a card says, such as "在线 · 只在这个浏览器里". */
 export const statusOf = (page: Page, name: string) =>
   projectCard(page, name).locator("[data-tone]").first();
 

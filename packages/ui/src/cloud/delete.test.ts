@@ -124,9 +124,9 @@ describe("deleting a project of the platform that is saved to a repository", () 
     // People were told what goes and what stays, once, and nobody typed a name.
     expect(asked.map((request) => request.kind)).toEqual(["confirm"]);
     expect(asked[0]).toMatchObject({
-      title: "删除云端项目“原子是什么”？",
+      title: "删除在线项目“原子是什么”？",
       message:
-        "平台上不再有这个云端项目。GitHub 仓库 ada/atom 留着，里面的存档不动。这个浏览器里的那一份会清掉（还有没同步的改动、只在这里的素材时留下）。删除之前先把最新的改动存进 GitHub。",
+        "平台上不再有这个在线项目。GitHub 仓库 ada/atom 留着，里面的存档不动。这个浏览器里的那一份会清掉（还有没同步的改动、只在这里的素材时留下）。删除之前先把最新的改动存进 GitHub。",
       danger: true,
     });
     // Archived first, and taken away only as of what was archived.
@@ -140,7 +140,7 @@ describe("deleting a project of the platform that is saved to a repository", () 
     expect(here.library.summaries.has(project)).toBe(false);
     expect(await here.browser.links.get(project)).toBeUndefined();
     expect(messagesOf(here.notifications).at(-1)).toBe(
-      "已删除云端项目“原子是什么”。这个浏览器里的那一份已清掉。",
+      "已删除在线项目“原子是什么”。这个浏览器里的那一份已清掉。",
     );
   });
 
@@ -281,7 +281,7 @@ describe("deleting a project of the platform that is saved to a repository", () 
     answering(other.dialogs, () => true);
     expect(await meanwhile(time, other.cloud.deleteFromCloud(project, "原子是什么"))).toBe(false);
     expect(messagesOf(other.notifications)).toContain(
-      "现在读不到云端的项目列表，没有删除。联网后再试。",
+      "现在读不到服务器的项目列表，没有删除。联网后再试。",
     );
     platform.faults.unreachable = false;
     expect(platform.removals).toEqual([]);
@@ -298,7 +298,7 @@ describe("deleting a project of the platform that is saved to a repository", () 
     answering(bob.dialogs, () => true);
     expect(await meanwhile(time, bob.cloud.deleteFromCloud(project, "原子是什么"))).toBe(false);
     expect(messagesOf(bob.notifications)).toContain(
-      "云端的项目列表里没有“原子是什么”，可能已经删除，或者属于另一个账号。这台电脑上的那一份没有动。",
+      "服务器的项目列表里没有“原子是什么”，可能已经删除，或者属于另一个账号。这台电脑上的那一份没有动。",
     );
     expect(platform.removals).toEqual([]);
     expect((await here.browser.links.get(project))?.project).toBe(project);
@@ -323,7 +323,7 @@ describe("the copy in this browser of a project that was deleted", () => {
     expect(await here.browser.links.get(project)).toBeUndefined();
     expect(here.cloud.getSnapshot()).toEqual({ kind: "none", local: "browser" });
     expect(messagesOf(here.notifications).at(-1)).toBe(
-      "已删除云端项目“原子是什么”。这个浏览器里的那一份留下了（还有没同步的改动、只在这里的素材，或者没保存的试改和代码），现在只在这个浏览器里，可以保存到文件夹，或者另存一份。",
+      "已删除在线项目“原子是什么”。这个浏览器里的那一份留下了（还有没同步的改动、只在这里的素材，或者没保存的试改和代码），现在只在这个浏览器里，可以保存到文件夹，或者另存一份。",
     );
     await here.session.trySave();
     await here.open(project);
@@ -397,7 +397,7 @@ describe("the copy in this browser of a project that was deleted", () => {
     expect(platform.projects.has(project)).toBe(false);
     expect(here.library.summaries.has(project)).toBe(true);
     expect(messagesOf(here.notifications).at(-1)).toBe(
-      "已删除云端项目“原子是什么”。这个浏览器里的那一份留下了（删除前没有全部存进 GitHub，它可能有别处没有的改动），现在只在这个浏览器里，可以保存到文件夹，或者另存一份。",
+      "已删除在线项目“原子是什么”。这个浏览器里的那一份留下了（删除前没有全部存进 GitHub，它可能有别处没有的改动），现在只在这个浏览器里，可以保存到文件夹，或者另存一份。",
     );
     expect(here.session.store?.getState().files["code/late.js"]).toBe("只在平台和这里");
   });

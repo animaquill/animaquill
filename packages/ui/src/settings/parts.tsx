@@ -1,7 +1,6 @@
-import { useId, useSyncExternalStore, type ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
-import { useAccount } from "../cloud/CloudParts.tsx";
 import type { SettingId, SettingWhere } from "./registry.ts";
 import { settingItem } from "./registry.ts";
 import { WhereIcon } from "./WhereIcon.tsx";
@@ -9,17 +8,13 @@ import { visibleGroups, type SettingsGroup } from "../workbench/settings-nav.ts"
 import styles from "./Settings.module.css";
 
 /**
- * Where a setting is kept, on this device or with the account, for people who are signed in:
- * before that everything is on this device, and nothing is said (4.2). Settings of AI go with the
- * account while their sync is on here.
+ * Where a setting is kept, on this device or on the backend, in the online mode: offline
+ * everything is on this device, and nothing is said (docs/design/online-offline.md of AnimaQuill
+ * Cloud, 2.1).
  */
 export function useWhere(where: SettingWhere | undefined): "device" | "account" | undefined {
-  const { account, aiSync } = useWorkbench();
-  const signedIn = useAccount(account).status === "signedIn";
-  const ai = useSyncExternalStore(aiSync.subscribe, aiSync.getSnapshot);
-  if (!signedIn || where === undefined) return undefined;
-  if (where === "ai") return ai.status === "off" || ai.account === undefined ? "device" : "account";
-  return where;
+  const { mode } = useWorkbench();
+  return mode === "online" ? where : undefined;
 }
 
 /** Where a whole group is kept, as `WhereIcon`, once people are signed in. */
@@ -182,11 +177,13 @@ export function Button(props: {
   readonly onClick: () => void;
   readonly disabled?: boolean;
   readonly danger?: boolean;
+  readonly testId?: string;
 }) {
   return (
     <button
       type="button"
       className={styles.button}
+      data-testid={props.testId}
       data-danger={props.danger ? "" : undefined}
       disabled={props.disabled}
       onClick={props.onClick}
@@ -196,10 +193,20 @@ export function Button(props: {
   );
 }
 
-/** The groups there are now: the account's only with a platform, cloud sync only signed in. */
+/** The groups there are now: the account's online, and grey offline, see `useLockedGroups`. */
 export function useGroups(): readonly SettingsGroup[] {
-  const { cloudSync, account } = useWorkbench();
-  const { available } = useSyncExternalStore(cloudSync.subscribe, cloudSync.getSnapshot);
-  const signedIn = useAccount(account).status === "signedIn";
-  return visibleGroups({ account: account !== undefined, cloud: available && signedIn });
+  const { account, mode } = useWorkbench();
+  return visibleGroups({ account: account !== undefined || mode === "offline" });
 }
+
+/**
+ * The groups that are there but grey, as of the online mode in the offline one (1.3): hovering
+ * says they need signing in, a click asks to.
+ */
+export function useLockedGroups(): ReadonlySet<SettingsGroup> {
+  const { mode } = useWorkbench();
+  return mode === "offline" ? LOCKED_OFFLINE : NONE_LOCKED;
+}
+
+const LOCKED_OFFLINE: ReadonlySet<SettingsGroup> = new Set(["account"]);
+const NONE_LOCKED: ReadonlySet<SettingsGroup> = new Set();

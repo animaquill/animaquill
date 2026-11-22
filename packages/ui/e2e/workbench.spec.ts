@@ -10,7 +10,7 @@ import {
   test,
 } from "./support.ts";
 
-const LAYOUT_KEY = "aq-offline-animaquill.layout";
+const LAYOUT_KEY = "animaquill.layout";
 
 const groups = (page: Page) => page.locator(".dv-groupview");
 

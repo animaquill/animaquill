@@ -1,7 +1,8 @@
 import "../theme/tokens.css";
-import type { AccountAccess, AccountSnapshot, Host } from "@animaquill/host";
+import { onlineScope, type AccountAccess, type AccountSnapshot, type Host } from "@animaquill/host";
 import {
   browserModeMemory,
+  clearIfAsked,
   createOfflineHost,
   createOnlineHost,
   dropUnscopedData,
@@ -149,6 +150,10 @@ export async function startApp(element: HTMLElement, options: AppOptions): Promi
   entry.close();
   memory.setPrefersOffline(false);
   memory.setLastAccount(online.backend, who);
+  // "清掉这台电脑上的数据" of a page of this account before, before anything opens it.
+  await clearIfAsked(onlineScope(online.backend, who.id)).catch((error: unknown) => {
+    console.warn("What this browser keeps of the account could not be cleared", error);
+  });
   const host = createOnlineHost({
     backend: online.backend,
     account: who.id,

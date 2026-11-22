@@ -333,7 +333,7 @@ test.describe("the project properties of projects of the platform", () => {
         { repository: "opening" },
       );
     });
-    await chooseFrom(page, "文件", "打开云端的项目…");
+    await chooseFrom(page, "文件", "打开在线项目…");
     await openCard(page, "片头动画");
     await expect(page).toHaveTitle("片头动画 - AnimaQuill");
     await statusName(page, "片头动画").click();
@@ -348,12 +348,12 @@ test.describe("the project properties of projects of the platform", () => {
     // Its description goes to the platform, and comes back with its list on the start page.
     await goTo(page, "常规");
     const description = props(page).getByRole("textbox", { name: "说明" });
-    await description.fill("云端项目的说明");
+    await description.fill("在线项目的说明");
     await description.press("Control+Enter");
     await page.keyboard.press("Escape");
     await chooseFrom(page, "文件", "关闭项目");
     const card = projectCard(page, "片头动画");
     await card.hover();
-    await expect(card.locator("[data-card-description]")).toHaveText("云端项目的说明");
+    await expect(card.locator("[data-card-description]")).toHaveText("在线项目的说明");
   });
 });

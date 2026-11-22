@@ -78,10 +78,15 @@ export function AiModelsPage() {
     >
       {snapshot.held && (
         <p className={styles.held} role="alert" data-testid="ai-held">
-          {t(`ai.held.${snapshot.held}`)}{" "}
-          <button type="button" className={styles.link} onClick={() => void reset()}>
-            {t("ai.held.reset")}
-          </button>
+          {t(`ai.held.${snapshot.held}`)}
+          {snapshot.resettable && (
+            <>
+              {" "}
+              <button type="button" className={styles.link} onClick={() => void reset()}>
+                {t("ai.held.reset")}
+              </button>
+            </>
+          )}
         </p>
       )}
       {/* With no service yet, the page is the picker alone. */}

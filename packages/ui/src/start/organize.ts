@@ -2,29 +2,22 @@ import {
   cleanGroupName,
   groupNameKey,
   MAX_GROUP_NAME,
-  type AccountAccess,
-  type OrganizerAccess,
-  type OrganizerContent,
+  OrganizerOffline,
   type ProjectGroup,
-  type ProjectMarks,
   type ProjectMarksChange,
   type ProjectOrganizer,
 } from "@animaquill/host";
 import { Emitter } from "../workbench/emitter.ts";
 import { NOTHING_ORGANIZED, shownGroups, type MarksTarget, type Organized } from "./cards.ts";
-import { OrganizerSync } from "./organize-sync.ts";
 
 export { MAX_GROUP_NAME };
 
 /**
  * How people organise their projects on the start page, see the design of the start page
  * (docs/design/start-and-cloud.md of AnimaQuill Cloud), 6.6: stars, groups of one level with a
- * project in one at most, and when each project was last opened here. All of it is kept in this
- * browser, see `Host.organizer`; where people are signed in to a platform that keeps it too
- * (`CloudAccess.organizer`), the stars and groups of its projects and the groups go with the
- * account, see `OrganizerSync`, and the start page only ever reads what comes out of here: the
- * groups of whoever is signed in, or was last, and those of this browser, which become the
- * account's once it is read.
+ * project in one at most, and when each project was last opened. Where it is kept is the host's,
+ * see `Host.organizer`: in this browser offline, on the backend online, which every change goes to
+ * at once (docs/design/online-offline.md of AnimaQuill Cloud, 2.1). Nothing is merged.
  */
 
 export type GroupNameProblem = "empty" | "tooLong" | "taken";
@@ -55,17 +48,11 @@ export interface OrganizeSnapshot extends Organized {
 
 export interface StartOrganizerOptions {
   readonly organizer: ProjectOrganizer;
-  /** Who is signed in to the platform, where there is one. */
-  readonly account?: AccountAccess | undefined;
-  /** The platform's copy, see `CloudAccess.organizer`. */
-  readonly cloud?: OrganizerAccess | undefined;
   /**
-   * Whether the stars and groups go with the account now, see `CloudSync.allows`: nothing goes
-   * while not. Always where it is not given.
+   * Nothing changed, as the backend cannot be reached (`OrganizerOffline`): people are told so
+   * here, and the change resolves to "offline".
    */
-  readonly allowed?: (account: string) => boolean;
-  /** Only tests: how the account is gone a round with. */
-  readonly sync?: OrganizerSync;
+  readonly offline?: () => void;
   readonly now?: () => number;
   /** A new id for a group. */
   readonly newId?: () => string;
@@ -73,141 +60,51 @@ export interface StartOrganizerOptions {
 
 const NOTHING: OrganizeSnapshot = { ...NOTHING_ORGANIZED, failed: false };
 
-/** The id of a group that `id` became, see `ProjectGroup.into`, or `id`. */
-const finalOf = (id: string, into: ReadonlyMap<string, string>): string => {
-  let at = id;
-  // A few at most: one each time a group of this browser or an offline one met the account.
-  for (let step = 0; step < 8; step += 1) {
-    const next = into.get(at);
-    if (next === undefined) return at;
-    at = next;
-  }
-  return at;
-};
-
-/**
- * What people see of what is kept: the groups of `viewer` and of this browser, and projects in the
- * group that the one they say became.
- */
-function shownOf(content: OrganizerContent, viewer: string | undefined): Organized {
-  const into = new Map(
-    content.groups.flatMap((group) =>
-      group.into === undefined ? [] : [[group.id, group.into] as const],
-    ),
-  );
-  const marks =
-    into.size === 0
-      ? content.marks
-      : new Map(
-          [...content.marks].map(([key, each]): [string, ProjectMarks] =>
-            typeof each.group === "string" && into.has(each.group)
-              ? [key, { ...each, group: finalOf(each.group, into) }]
-              : [key, each],
-          ),
-        );
-  const groups = content.groups.filter(
-    (group) =>
-      group.scope === "browser" || (viewer !== undefined && group.scope.account === viewer),
-  );
-  return { marks, groups: shownGroups(groups) };
-}
+/** A change that did not go as the backend cannot be reached, which people were told. */
+export type Offline = "offline";
 
 export class StartOrganizer {
   readonly #organizer: ProjectOrganizer;
   readonly #now: () => number;
   readonly #newId: () => string;
+  readonly #offline: (() => void) | undefined;
   readonly #emitter = new Emitter();
-  readonly #account: AccountAccess | undefined;
-  readonly #sync: OrganizerSync | undefined;
   #snapshot: OrganizeSnapshot = NOTHING;
   #turn = 0;
   #stop: (() => void) | undefined;
-  #stopAccount: (() => void) | undefined;
-  #signedIn: string | undefined;
 
   constructor({
     organizer,
-    account,
-    cloud,
-    allowed,
-    sync,
+    offline,
     now = Date.now,
     newId = () => crypto.randomUUID(),
   }: StartOrganizerOptions) {
     this.#organizer = organizer;
-    this.#account = account;
+    this.#offline = offline;
     this.#now = now;
     this.#newId = newId;
-    this.#signedIn = this.#whoIsSignedIn();
-    this.#sync =
-      sync ??
-      (cloud && account
-        ? new OrganizerSync({
-            local: organizer,
-            remote: cloud,
-            // Who is signed in now, also where the start page never listened in this window.
-            account: () => {
-              const id = this.#whoIsSignedIn();
-              return id !== undefined && (allowed?.(id) ?? true) ? id : undefined;
-            },
-            otherAccount: () => void account.refresh(),
-          })
-        : undefined);
-  }
-
-  /** Who is signed in to a platform that keeps how projects are organised, by its id. */
-  #whoIsSignedIn(): string | undefined {
-    const snapshot = this.#account?.getSnapshot();
-    return snapshot?.status === "signedIn" ? snapshot.id : undefined;
-  }
-
-  /** Has what changed here go to the account soon, where there is one. */
-  #changed(): void {
-    if (this.#signedIn !== undefined) this.#sync?.soon();
   }
 
   getSnapshot = (): OrganizeSnapshot => this.#snapshot;
 
   /** Reads what is kept the first time somebody listens, and keeps up with every window from then. */
   subscribe = (listener: () => void): (() => void) => {
-    if (!this.#stop) {
-      this.#stop = this.#organizer.listen(() => void this.refresh());
-      this.#stopAccount = this.#account?.subscribe(() => {
-        const now = this.#whoIsSignedIn();
-        if (now === this.#signedIn) return;
-        this.#signedIn = now;
-        void this.refresh();
-        if (now !== undefined) this.#sync?.soon(0);
-      });
-      void this.refresh();
-    }
-    // The start page is open: what changed on other computers comes.
-    if (this.#signedIn !== undefined) this.#sync?.soon(0);
-    return this.#emitter.subscribe(listener);
+    if (!this.#stop) this.#stop = this.#organizer.listen(() => void this.refresh());
+    // The start page came: what changed elsewhere comes too.
+    if (this.#listening === 0) void this.refresh();
+    this.#listening += 1;
+    const stop = this.#emitter.subscribe(listener);
+    return () => {
+      this.#listening -= 1;
+      stop();
+    };
   };
+  #listening = 0;
 
   close(): void {
     this.#stop?.();
     this.#stop = undefined;
-    this.#stopAccount?.();
-    this.#stopAccount = undefined;
-    this.#sync?.close();
     this.#turn += 1;
-  }
-
-  /** How the account's copy stands, where there is one, see `OrganizerSync`. */
-  get sync(): OrganizerSync | undefined {
-    return this.#sync;
-  }
-
-  /** What may go with the account changed: a round goes soon, where it may. */
-  allowedChanged(): void {
-    if (this.#signedIn !== undefined) this.#sync?.soon(0);
-  }
-
-  /** Goes a round with the account now, where somebody is signed in; for tests. */
-  syncNow(): Promise<void> {
-    return this.#sync?.run() ?? Promise.resolve();
   }
 
   /** Reads everything again. Never rejects: what cannot be read is "failed". */
@@ -216,7 +113,11 @@ export class StartOrganizer {
     try {
       const content = await this.#organizer.read();
       if (turn !== this.#turn) return;
-      this.#snapshot = { ...shownOf(content, this.#signedIn ?? content.account), failed: false };
+      this.#snapshot = {
+        marks: content.marks,
+        groups: shownGroups(content.groups),
+        failed: false,
+      };
     } catch (error) {
       if (turn !== this.#turn) return;
       console.warn("How projects are organised could not be read", error);
@@ -225,26 +126,27 @@ export class StartOrganizer {
     this.#emitter.emit();
   }
 
-  /** Resolves to whether it is kept: where it is not, nothing changed. */
-  async #mark(project: string, change: Omit<ProjectMarksChange, "at">): Promise<boolean> {
-    try {
-      const isOrganizing = change.starredAt !== undefined || change.group !== undefined;
-      await this.#organizer.mark(project, {
-        ...change,
-        at: this.#now(),
-        ...(isOrganizing && { mine: true }),
-      });
-      if (change.starredAt !== undefined || change.group !== undefined) this.#changed();
-      return true;
-    } catch (error) {
-      console.warn("How a project is organised could not be kept", error);
-      return false;
+  /** What went wrong, said where the backend could not be reached. */
+  #failed(error: unknown, what: string): Offline | undefined {
+    if (error instanceof OrganizerOffline) {
+      this.#offline?.();
+      return "offline";
     }
+    console.warn(what, error);
+    return undefined;
   }
 
-  /** A project was opened in this window, by what this browser keeps it by. */
-  noteOpened(key: string): Promise<boolean> {
-    return this.#mark(key, { openedAt: this.#now() });
+  /** A project was opened in this window, by where its marks are kept. */
+  async noteOpened(key: string): Promise<boolean> {
+    try {
+      await this.#organizer.mark(key, { openedAt: this.#now(), at: this.#now() });
+      return true;
+    } catch (error) {
+      // Nobody needs to hear of it: the start page goes by when it last changed then.
+      if (!(error instanceof OrganizerOffline))
+        console.warn("When a project was opened could not be kept", error);
+      return false;
+    }
   }
 
   /** Forgets how a project that is gone was organised. */
@@ -258,32 +160,25 @@ export class StartOrganizer {
     );
   }
 
-  /** Kept where `target` says, both places at the same time, see `MarksTarget`. */
   async #markTarget(
     target: MarksTarget,
     change: Pick<ProjectMarksChange, "starredAt" | "group">,
-  ): Promise<boolean> {
-    const at = this.#now();
-    const write = async (key: string, more: Partial<ProjectMarksChange>) => {
-      await this.#organizer.mark(key, { ...change, ...more, at, mine: true });
-    };
+  ): Promise<boolean | Offline> {
     try {
-      await write(target.key, target.account === undefined ? {} : { account: target.account });
-      if (target.also !== undefined) await write(target.also, {});
-      this.#changed();
+      await this.#organizer.mark(target.key, { ...change, at: this.#now() });
       return true;
     } catch (error) {
-      console.warn("How a project is organised could not be kept", error);
-      return false;
+      return this.#failed(error, "How a project is organised could not be kept") ?? false;
     }
   }
 
-  star(target: MarksTarget, starred: boolean): Promise<boolean> {
+  /** Resolves to whether it is kept, or "offline" where people were told it could not be. */
+  star(target: MarksTarget, starred: boolean): Promise<boolean | Offline> {
     return this.#markTarget(target, { starredAt: starred ? this.#now() : null });
   }
 
   /** Into a group by its id, or out of any with undefined. */
-  moveToGroup(target: MarksTarget, group: string | undefined): Promise<boolean> {
+  moveToGroup(target: MarksTarget, group: string | undefined): Promise<boolean | Offline> {
     return this.#markTarget(target, { group: group ?? null });
   }
 
@@ -293,32 +188,26 @@ export class StartOrganizer {
   }
 
   /**
-   * Makes a group, of the account that is signed in, or of this browser while nobody is: an account
-   * takes it over later. Resolves to its id, or to what is wrong with the name; to undefined where
-   * it could not be kept.
+   * Makes a group. Resolves to its id, or to what is wrong with the name; to undefined where it
+   * could not be kept, and to "offline" where people were told it could not be.
    */
   async createGroup(
     name: string,
-  ): Promise<{ readonly id: string } | { readonly problem: GroupNameProblem } | undefined> {
+  ): Promise<
+    { readonly id: string } | { readonly problem: GroupNameProblem } | Offline | undefined
+  > {
     const problem = this.nameProblem(name);
     if (problem) return { problem };
-    const group: ProjectGroup = {
-      id: this.#newId(),
-      name: cleanGroupName(name),
-      scope: this.#signedIn !== undefined && this.#sync ? { account: this.#signedIn } : "browser",
-      at: this.#now(),
-    };
+    const group: ProjectGroup = { id: this.#newId(), name: cleanGroupName(name), at: this.#now() };
     let outcome;
     try {
       outcome = await this.#organizer.putGroup(group);
     } catch (error) {
-      console.warn("A group could not be kept", error);
-      return undefined;
+      return this.#failed(error, "A group could not be kept");
     }
     // Another window made one of that name a moment ago.
     if (typeof outcome === "object") return { problem: "taken" };
     if (outcome !== "kept") return undefined;
-    this.#changed();
     // Shown at once, before every window hears of it.
     this.#snapshot = {
       ...this.#snapshot,
@@ -329,30 +218,29 @@ export class StartOrganizer {
   }
 
   /** Resolves to true once it is kept, or to what is wrong with the name. */
-  async renameGroup(id: string, name: string): Promise<true | GroupNameProblem | undefined> {
+  async renameGroup(
+    id: string,
+    name: string,
+  ): Promise<true | GroupNameProblem | Offline | undefined> {
     const group = this.#snapshot.groups.find((each) => each.id === id);
     if (!group) return undefined;
     const problem = this.nameProblem(name, id);
     if (problem) return problem;
-    const outcome = await this.#putGroup({
-      ...group,
-      name: cleanGroupName(name),
-      at: this.#after(group),
-    });
-    return outcome === "taken" ? "taken" : outcome;
+    return this.#putGroup({ ...group, name: cleanGroupName(name), at: this.#after(group) });
   }
 
   /**
-   * Takes a group away: only the group, see 6.6. Its projects show as in none from then on, as
-   * they would where the group went elsewhere: they keep its id, which leads nowhere.
+   * Takes a group away: only the group, see 6.6. Its projects show as in none from then on: they
+   * keep its id, which leads nowhere.
    */
-  async deleteGroup(id: string): Promise<boolean> {
+  async deleteGroup(id: string): Promise<boolean | Offline> {
     const group = this.#snapshot.groups.find((each) => each.id === id);
     if (!group) return false;
-    return (await this.#putGroup({ ...group, deleted: true, at: this.#after(group) })) === true;
+    const outcome = await this.#putGroup({ ...group, deleted: true, at: this.#after(group) });
+    return outcome === "offline" ? outcome : outcome === true;
   }
 
-  /** When people change `group` here: now, after whatever is kept of it, see `ProjectMarksChange.mine`. */
+  /** When people change `group` here: now, after whatever is kept of it. */
   #after(group: ProjectGroup): number {
     return Math.max(this.#now(), group.at + 1);
   }
@@ -361,16 +249,14 @@ export class StartOrganizer {
    * Resolves to true once it is kept; to "taken" where another window gave a group that name a
    * moment ago, and to undefined where it could not be kept, or another window changed it later.
    */
-  async #putGroup(group: ProjectGroup): Promise<true | "taken" | undefined> {
+  async #putGroup(group: ProjectGroup): Promise<true | "taken" | Offline | undefined> {
     try {
       const outcome = await this.#organizer.putGroup(group);
       if (typeof outcome === "object") return "taken";
       if (outcome !== "kept") return undefined;
-      this.#changed();
       return true;
     } catch (error) {
-      console.warn("A group could not be kept", error);
-      return undefined;
+      return this.#failed(error, "A group could not be kept");
     }
   }
 }

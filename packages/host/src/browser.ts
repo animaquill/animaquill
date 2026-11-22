@@ -4,10 +4,11 @@ import {
   onlineScope,
   scoped,
   setStorageScope,
+  storageScope,
 } from "./scope.ts";
 import { browserDownloads } from "./downloads.ts";
 import { browserUploads } from "./uploads.ts";
-import { browserAccountKeys, browserChatImages, browserChats, browserKeys } from "./ai.ts";
+import { browserChatImages, browserChats, browserKeys } from "./ai.ts";
 import { browserUndo } from "./undo.ts";
 import { createWorkCache } from "./caches.ts";
 import { createExportStore } from "./exports.ts";
@@ -16,11 +17,12 @@ import { dropTarget } from "./growing.ts";
 import { isMadeFile } from "./index.ts";
 import { browserLocalFolders } from "./local-folders.ts";
 import { browserCoverStore } from "./covers.ts";
-import { browserOrganizer } from "./organizer.ts";
+import { browserOrganizer, platformOrganizer } from "./organizer.ts";
 import { browserPresence } from "./presence.ts";
 import type {
   ChangeSource,
   Host,
+  LeftOver,
   LocalFolder,
   LocalFolders,
   SavedFolders,
@@ -1083,10 +1085,18 @@ function browserAddress(mode: "online" | "offline"): ProjectAddress {
 }
 
 /**
- * Settings of the device rather than of a mode or an account, in no scope: how the editor looks,
- * which web/public/boot.js puts on the page before anything knows the mode.
+ * Settings of the device rather than of a mode or an account, in no scope (docs/design/
+ * online-offline.md of AnimaQuill Cloud, 2.1): the screen and the keyboard are this computer's,
+ * whichever mode and account it is in. How the editor looks, which web/public/boot.js puts on the
+ * page before anything knows the mode; the layouts and how panels are placed in them; the keys;
+ * whether a mouse or a trackpad scrolls. None of it goes to a backend.
  */
-const DEVICE_SETTINGS: ReadonlySet<string> = new Set(["appearance"]);
+export const DEVICE_SETTINGS: ReadonlySet<string> = new Set([
+  "appearance",
+  "layout",
+  "keybindings",
+  "input",
+]);
 
 /** Session storage has the lifetime of a tab, and a duplicated tab starts with a copy of it. */
 function createWindowMemory(storage: () => Storage): WindowMemory {
@@ -1118,7 +1128,6 @@ export { browserOrganizer } from "./organizer.ts";
 export { browserCoverAccess, browserCoverStore, memoryCoverStore } from "./covers.ts";
 export { browserOrganizerAccess, OrganizerBusy } from "./organizer-access.ts";
 export { AiSyncBusy, browserAiSyncAccess, browserChatSyncAccess } from "./ai-sync-access.ts";
-export { browserAccountKeys } from "./ai.ts";
 export { browserModelCatalogAccess } from "./model-catalog-access.ts";
 export type { BrowserCoverAccessOptions } from "./covers.ts";
 export type { BrowserCloudOptions } from "./cloud.ts";
@@ -1354,10 +1363,10 @@ export function createBrowserHost(
     caches: createWorkCache(database),
     presence: browserPresence(locks),
     keys: browserKeys(database),
-    accountKeys: browserAccountKeys(database),
     chats,
     chatImages: browserChatImages(database),
     organizer: browserOrganizer(database),
+    leftOver: browserLeftOver(database, storage, locks),
     covers,
     uploads,
     downloads,
@@ -1411,16 +1420,32 @@ export function createOnlineHost({
   offlineAddress,
 }: OnlineHostOptions): Host {
   setStorageScope(onlineScope(backend, account));
-  const host = createBrowserHost();
+  // The keys are the backend's, and only ever in the memory of the page here (2.1).
+  const { keys: _keys, ...host } = createBrowserHost();
   const { localFolders } = host;
   const offline = () => {
     const url = new URL(offlineAddress ?? OFFLINE_PATH, location.href);
     return url;
   };
+  const organizer = parts.cloud?.organizer;
   return {
     ...host,
     ...parts,
     mode: "online",
+    accountId: account,
+    clearHere: () => {
+      clearOnNextStart();
+      location.reload();
+    },
+    // The backend's, never this browser's (2.1).
+    ...(organizer && {
+      organizer: platformOrganizer({
+        access: organizer,
+        account,
+        cache: host.settings,
+        ...(parts.account && { signedOut: () => void parts.account?.refresh() }),
+      }),
+    }),
     address: browserAddress("online"),
     ...(offlineAddress !== undefined && { goOffline: () => location.assign(offline()) }),
     ...(localFolders && { savedFolders: browserSavedFolders(localFolders) }),
@@ -1434,6 +1459,66 @@ export function createOnlineHost({
         },
       }),
   };
+}
+
+// ---- clearing what this browser keeps of an account
+
+/** The scope whose things go the next time a page of it starts, see `clearOnNextStart`. */
+const CLEAR_KEY = "animaquill.clearScope";
+
+/**
+ * Online: has everything this browser keeps of the account of this page go ("清掉这台电脑上的数
+ * 据", docs/design/online-offline.md of AnimaQuill Cloud, 2.1): the next time a page of this scope
+ * starts, before anything opens it, see `clearIfAsked`. The page loads again for it, once nothing
+ * of it is only here, and no other window of it is open.
+ */
+export function clearOnNextStart(storage: () => Storage = () => localStorage): void {
+  storage().setItem(CLEAR_KEY, storageScope());
+}
+
+/**
+ * Takes away what this browser keeps in `scope`, where a page of it asked for that as it went
+ * (`clearOnNextStart`): its databases, and its keys in the local and the session storage. Before
+ * anything of the scope is opened. Resolves to whether it did.
+ */
+export async function clearIfAsked(
+  scope: string,
+  factory: () => IDBFactory = () => indexedDB,
+  storage: () => Storage = () => localStorage,
+  windowStorage: () => Storage = () => sessionStorage,
+): Promise<boolean> {
+  try {
+    if (storage().getItem(CLEAR_KEY) !== scope) return false;
+  } catch {
+    return false;
+  }
+  const all =
+    (await factory()
+      .databases?.()
+      .catch(() => undefined)) ?? [];
+  for (const { name } of all) {
+    if (name === undefined || !name.startsWith(scope)) continue;
+    const request = factory().deleteDatabase(name);
+    await new Promise<void>((resolve) => {
+      request.addEventListener("success", () => resolve());
+      request.addEventListener("error", () => resolve());
+      request.addEventListener("blocked", () => resolve());
+    });
+  }
+  for (const place of [storage, windowStorage]) {
+    try {
+      const keys: string[] = [];
+      for (let index = 0; index < place().length; index += 1) {
+        const key = place().key(index);
+        if (key?.startsWith(scope)) keys.push(key);
+      }
+      for (const key of keys) place().removeItem(key);
+    } catch (error) {
+      console.warn("What this browser kept of the account stays in its storage for now", error);
+    }
+  }
+  storage().removeItem(CLEAR_KEY);
+  return true;
 }
 
 // ---- folders saved to, and handed over to the offline mode
@@ -1604,9 +1689,10 @@ const UNSCOPED_PREFIX = "animaquill.";
 const UNSCOPED_KEPT: ReadonlySet<string> = new Set([
   PROJECTS_HERE_KEY,
   PERSIST_ASKED_KEY,
-  "animaquill.appearance",
+  ...Array.from(DEVICE_SETTINGS, (key) => PREFIX + key),
   MODE_KEY,
   LAST_ACCOUNT_KEY,
+  CLEAR_KEY,
 ]);
 
 /**
@@ -1664,6 +1750,71 @@ async function oldPageOpen(locks: () => LockManager | undefined): Promise<boolea
   } catch {
     return true;
   }
+}
+
+/**
+ * About how many bytes the databases of before the scopes take: what their values hold, files by
+ * their size, text by its length. Zero where there are none, or nothing can be read.
+ */
+export async function unscopedBytes(factory: () => IDBFactory = () => indexedDB): Promise<number> {
+  const sizeOf = (value: unknown, depth = 0): number => {
+    if (depth > 20 || value === null || value === undefined) return 0;
+    if (typeof value === "string") return value.length * 2;
+    if (typeof value === "number" || typeof value === "boolean") return 8;
+    if (value instanceof Blob) return value.size;
+    if (value instanceof ArrayBuffer) return value.byteLength;
+    if (ArrayBuffer.isView(value)) return value.byteLength;
+    if (Array.isArray(value))
+      return value.reduce((sum: number, each) => sum + sizeOf(each, depth + 1), 0);
+    if (typeof value === "object")
+      return Object.entries(value).reduce(
+        (sum, [key, each]) => sum + key.length * 2 + sizeOf(each, depth + 1),
+        0,
+      );
+    return 0;
+  };
+  let total = 0;
+  for (const name of await unscopedDatabases(factory)) {
+    const request = factory().open(name);
+    request.addEventListener("upgradeneeded", () => request.transaction?.abort());
+    let database: IDBDatabase;
+    try {
+      database = await resultOf(request);
+    } catch {
+      continue;
+    }
+    try {
+      for (const store of Array.from(database.objectStoreNames)) {
+        const all = await resultOf<unknown[]>(
+          database.transaction(store).objectStore(store).getAll(),
+        );
+        for (const value of all) total += sizeOf(value);
+      }
+    } catch (error) {
+      console.warn("What the editor kept before could not be measured", error);
+    } finally {
+      database.close();
+    }
+  }
+  return total;
+}
+
+/** What the editor of before the scopes left here, see `LeftOver`. */
+export function browserLeftOver(
+  factory: () => IDBFactory = () => indexedDB,
+  storage: () => Storage = () => localStorage,
+  locks: () => LockManager | undefined = () => globalThis.navigator?.locks,
+): LeftOver {
+  return {
+    databases: () => unscopedDatabases(factory),
+    bytes: () => unscopedBytes(factory),
+    unsent: () => unscopedUnsent(factory),
+    // What may have changes goes too: people said so, knowing it.
+    drop: async () => {
+      await dropUnscopedData(factory, storage, locks);
+      return unscopedDatabases(factory);
+    },
+  };
 }
 
 /** Which databases of before the scopes this browser has, where it can say. */

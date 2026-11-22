@@ -53,9 +53,9 @@ function projectFiles(): Map<string, string> {
           size: size(RED),
         },
         away: {
-          name: "云端.webm",
+          name: "服务器.webm",
           kind: "video",
-          path: "assets/云端.webm",
+          path: "assets/服务器.webm",
           storage: "platform",
           hash: hashOf(RED_BLUE),
           size: size(RED_BLUE),
@@ -120,13 +120,13 @@ async function expectExplorer(page: Page) {
   await expect(missing).toHaveText("缺失的资源（1）", { timeout: 10_000 });
   await node(page, "project.media").click();
   // Not of the platform: nothing downloads it, so it is not there as far as people here go.
-  await expect(item(page, "云端.webm")).toContainText("文件找不到");
+  await expect(item(page, "服务器.webm")).toContainText("文件找不到");
   await expect(item(page, "丢了.webm")).toContainText("文件找不到");
   await expect(item(page, "胶片.webm")).not.toContainText("文件找不到");
 
-  await item(page, "云端.webm").click();
+  await item(page, "服务器.webm").click();
   await expect(details(page).getByRole("note")).toHaveText(
-    "这台电脑上没有这个文件：assets/云端.webm。原片存在云端空间。",
+    "这台电脑上没有这个文件：assets/服务器.webm。原片存在云端空间。",
   );
   await item(page, "胶片.webm").click();
   await expect(details(page).getByRole("note")).toHaveCount(0);
@@ -156,7 +156,7 @@ test.describe("a project folder", () => {
 
     await tab(page, "problems").click();
     const problems = content(page, "problems");
-    const away = problems.getByRole("listitem").filter({ hasText: "assets/云端.webm" }).last();
+    const away = problems.getByRole("listitem").filter({ hasText: "assets/服务器.webm" }).last();
     await expect(away).toContainText("素材文件不在这台电脑上，原片存在云端空间。", {
       timeout: 10_000,
     });
@@ -181,7 +181,7 @@ test.describe("a project in this browser", () => {
       await page.getByRole("menu").getByRole("menuitem", { name: "导入项目文件夹" }).click();
       await (await chooser).setFiles(folder);
       const report = page.getByRole("dialog");
-      await expect(report).toContainText("云端.webm：可以从云端空间下载", { timeout: 120_000 });
+      await expect(report).toContainText("服务器.webm：可以从云端空间下载", { timeout: 120_000 });
       await expect(report.getByText("丢了.webm", { exact: true })).toBeVisible();
       await report.getByRole("button", { name: "关闭" }).click();
       await expect(tab(page, "preview")).toBeVisible();

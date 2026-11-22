@@ -27,8 +27,7 @@ import { unusableFix, unusableKind, unusableLine, unusableWays } from "./unusabl
  *   cannot write folders, or one that the platform took away with changes that did not get there:
  *   "只在浏览器里", as something to do something about, and the panel says why that is not safe
  *   and the way out, a copy as a file.
- * - In step: "☁ 已同步". The copy of a project of the online mode is only in this browser, and the
- *   panel says where the browser may not keep it, with "从这个浏览器移除…".
+ * - In step: "☁ 已同步".
  * - The platform has changes that are not in the repository yet, on the row of archiving: where
  *   they cannot be saved, also why, as something to do something about; where they only wait for
  *   the next archive, as something on its way.
@@ -57,7 +56,6 @@ export type PanelLevel =
 /** What people can do from the panel: whoever shows it runs it, see `CloudProjects`. */
 export type PanelActionId =
   | "switchRepository"
-  | "removeFromBrowser"
   | "archiveNow"
   /** Asks GitHub again whether a repository that cannot be used can be used now. */
   | "recheck"
@@ -611,7 +609,6 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
         : []),
       // A copy in a folder, once: of what is on the platform.
       ...(input.made !== false ? [action("saveToFolder")] : []),
-      action("removeFromBrowser", { kind: "danger" }),
       ...(input.canDelete && input.made !== false
         ? [action("deleteCloud", { kind: "danger" })]
         : []),

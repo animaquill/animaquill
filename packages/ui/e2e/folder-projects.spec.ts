@@ -42,7 +42,7 @@ test.describe("a project folder", () => {
       await dialog(page).getByRole("button", { name: "选文件夹…" }).click();
     } else {
       // The site asks which kind first: nobody is signed in, so one of this computer.
-      await expect(page.getByRole("radio", { name: /^本地项目/ })).toBeChecked();
+      await expect(page.getByRole("radio", { name: /^离线项目/ })).toBeChecked();
       await page.getByRole("button", { name: "新建", exact: true }).click();
     }
     await expect(tab(page, "preview")).toBeVisible();

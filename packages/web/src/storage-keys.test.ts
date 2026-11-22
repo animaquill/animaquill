@@ -30,7 +30,7 @@ function sources(): { readonly file: string; readonly text: string }[] {
 }
 
 /** Keys of the whole device, by the names of their constants: all in `UNSCOPED_KEPT`. */
-const DEVICE_KEYS = new Set(["PERSIST_ASKED_KEY", "PROJECTS_HERE_KEY"]);
+const DEVICE_KEYS = new Set(["PERSIST_ASKED_KEY", "PROJECTS_HERE_KEY", "CLEAR_KEY"]);
 
 describe("the keys of the local storage", () => {
   it("are of the scope of the page, or of the device and kept", () => {

@@ -1,4 +1,9 @@
-import { memoryOrganizer, type ProjectGroup, type ProjectOrganizer } from "@animaquill/host";
+import {
+  memoryOrganizer,
+  OrganizerOffline,
+  type ProjectGroup,
+  type ProjectOrganizer,
+} from "@animaquill/host";
 import { describe, expect, it } from "vitest";
 import { composeStartList } from "../cloud/start-list.ts";
 import { composeCards } from "./cards.ts";
@@ -10,16 +15,16 @@ import { viewCards } from "./views.ts";
 const group = (id: string, name: string, more: Partial<ProjectGroup> = {}): ProjectGroup => ({
   id,
   name,
-  scope: "browser",
   at: 1,
   ...more,
 });
 
-function organizerOf(kept: ProjectOrganizer = memoryOrganizer(), name = "g") {
+function organizerOf(kept: ProjectOrganizer = memoryOrganizer(), name = "g", offline?: () => void) {
   let clock = 100;
   let ids = 0;
   const organizer = new StartOrganizer({
     organizer: kept,
+    ...(offline && { offline }),
     now: () => (clock += 1),
     newId: () => `${name}${(ids += 1)}`,
   });
@@ -91,9 +96,9 @@ describe("organising projects", () => {
     expect(organizer.getSnapshot().groups.map((each) => each.name)).toEqual(["工作", "频道"]);
     const other = organizerOf(kept);
     await settled();
-    expect(other.getSnapshot().groups.map((each) => [each.id, each.name, each.scope])).toEqual([
-      ["g2", "工作", "browser"],
-      ["g1", "频道", "browser"],
+    expect(other.getSnapshot().groups.map((each) => [each.id, each.name])).toEqual([
+      ["g2", "工作"],
+      ["g1", "频道"],
     ]);
   });
 
@@ -134,19 +139,30 @@ describe("organising projects", () => {
     expect(cards.every((card) => card.group === undefined)).toBe(true);
   });
 
-  it("keeps the star of a project of the platform with its account, and where this browser keeps it", async () => {
+  it("keeps the star of a project of the backend by the project there only", async () => {
     const kept = memoryOrganizer();
     const organizer = organizerOf(kept);
-    await organizer.star({ key: "cloud:p", also: "f", account: "user-ada" }, true);
-    await organizer.moveToGroup({ key: "cloud:p", also: "f", account: "user-ada" }, "g");
+    await organizer.star({ key: "cloud:p" }, true);
+    await organizer.moveToGroup({ key: "cloud:p" }, "g");
     const { marks } = await kept.read();
-    expect(marks.get("cloud:p")).toMatchObject({
-      starredAt: expect.any(Number),
-      group: "g",
-      account: "user-ada",
-    });
-    expect(marks.get("f")).toMatchObject({ starredAt: expect.any(Number), group: "g" });
-    expect(marks.get("f")?.account).toBeUndefined();
+    expect([...marks.keys()]).toEqual(["cloud:p"]);
+    expect(marks.get("cloud:p")).toMatchObject({ starredAt: expect.any(Number), group: "g" });
+  });
+
+  it("says once that nothing changed where the backend cannot be reached", async () => {
+    const offline: ProjectOrganizer = {
+      ...memoryOrganizer(),
+      mark: () => Promise.reject(new OrganizerOffline()),
+      putGroup: () => Promise.reject(new OrganizerOffline()),
+    };
+    let told = 0;
+    const organizer = organizerOf(offline, "g", () => (told += 1));
+    expect(await organizer.star({ key: "cloud:p" }, true)).toBe("offline");
+    expect(await organizer.createGroup("工作")).toBe("offline");
+    expect(told).toBe(2);
+    // When it was opened is nothing to tell people about.
+    expect(await organizer.noteOpened("cloud:p")).toBe(false);
+    expect(told).toBe(2);
   });
 
   it("makes one group of a name that two windows make at once", async () => {
@@ -178,12 +194,6 @@ describe("organising projects", () => {
       read: () => Promise.reject(new Error("blocked")),
       mark: () => Promise.reject(new Error("blocked")),
       putGroup: () => Promise.reject(new Error("blocked")),
-      markAll: () => Promise.reject(new Error("blocked")),
-      adoptGroups: () => Promise.reject(new Error("blocked")),
-      claimGroups: () => Promise.reject(new Error("blocked")),
-      mergeGroup: () => Promise.reject(new Error("blocked")),
-      noteAccount: () => Promise.reject(new Error("blocked")),
-      resend: () => Promise.reject(new Error("blocked")),
       forget: () => Promise.reject(new Error("blocked")),
       listen: () => () => {},
     };

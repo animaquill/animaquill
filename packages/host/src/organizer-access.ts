@@ -61,8 +61,10 @@ const marksOf = (value: unknown, clock: Clock): AccountMarks | undefined => {
   const group = isObject(value.group) ? value.group : undefined;
   const groupAt = count(group?.at);
   const groupId = group?.id === null ? null : text(group?.id);
+  const opened = count(value.opened);
   return {
     project,
+    ...(opened !== undefined && { opened: clock(opened) }),
     ...(starAt !== undefined &&
       typeof star?.starred === "boolean" && { star: { starred: star.starred, at: clock(starAt) } }),
     ...(groupAt !== undefined &&
@@ -102,11 +104,13 @@ const marksOutcomeOf = (value: unknown): AccountMarksOutcome | undefined => {
   const project = text(value.project);
   if (project === undefined) return undefined;
   const star = value.star === "kept" || value.star === "older" ? value.star : undefined;
+  const opened = value.opened === "kept" || value.opened === "older" ? value.opened : undefined;
   const group = typeof value.group === "string" && FIELD.has(value.group) ? value.group : undefined;
   return {
     project,
     ...(value.missing === true && { missing: true }),
     ...(star !== undefined && { star }),
+    ...(opened !== undefined && { opened }),
     ...(group !== undefined && { group: group as NonNullable<AccountMarksOutcome["group"]> }),
   };
 };

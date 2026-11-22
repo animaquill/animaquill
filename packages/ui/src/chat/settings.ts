@@ -125,7 +125,12 @@ export type CatalogState =
   | { readonly state: "failed" };
 
 /** Settings this editor cannot take as they are, which it leaves alone, see `readAiSettings`. */
-export type SettingsHeld = "newer" | "broken";
+/**
+ * Settings this editor cannot take as they are, which it leaves alone, see `readAiSettings`; or
+ * that cannot change now, as the backend that has them cannot be reached ("offline"), see
+ * `AiSettingsStore.holdFor`.
+ */
+export type SettingsHeld = "newer" | "broken" | "offline";
 
 export interface AiSettingsSnapshot extends AiSettings {
   /** The services that have a key in this browser. */
@@ -142,6 +147,8 @@ export interface AiSettingsSnapshot extends AiSettings {
   readonly keysWhere: string | undefined;
   /** The settings saved could not be taken, and are left as they are: nothing changes them. */
   readonly held: SettingsHeld | undefined;
+  /** People can start again over what is held, see `reset`: not where the backend holds them. */
+  readonly resettable: boolean;
   /** Tests of services (by id) and of models (by `testKey`), on this page. */
   readonly tests: ReadonlyMap<string, ConnectionTest>;
   /** Tests of pictures of models, by `testKey`, on this page. */
@@ -297,6 +304,7 @@ export class AiSettingsStore {
       known: new Map(),
       keysWhere: this.#keys.where,
       held: undefined,
+      resettable: false,
       tests: new Map(),
       pictureTests: new Map(),
       failing: new Map(),
@@ -357,7 +365,8 @@ export class AiSettingsStore {
           ? recoverOldWrite(this.#joined(before.settings), value)
           : undefined;
       if (recovered) {
-        this.#snapshot = { ...this.#snapshot, held: undefined };
+        this.#own = undefined;
+        this.#snapshot = { ...this.#snapshot, ...this.#heldNow() };
         this.#save(recovered);
         return;
       }
@@ -488,8 +497,28 @@ export class AiSettingsStore {
     });
   }
 
-  #hold(held: SettingsHeld): void {
-    this.#snapshot = { ...this.#snapshot, held };
+  #hold(held: SettingsHeld | undefined): void {
+    this.#own = held;
+    this.#snapshot = { ...this.#snapshot, ...this.#heldNow() };
+    this.#emitter.emit();
+  }
+
+  /** What holds the settings: what was read of them, or what holds them from outside. */
+  #own: SettingsHeld | undefined;
+  #outside: SettingsHeld | undefined;
+  #heldNow(): Pick<AiSettingsSnapshot, "held" | "resettable"> {
+    return { held: this.#own ?? this.#outside, resettable: this.#own !== undefined };
+  }
+
+  /**
+   * Holds the settings from outside, or lets go of them: while the backend that has them cannot be
+   * reached ("offline"), or a newer editor wrote them there ("newer"), nothing changes them here,
+   * keys neither.
+   */
+  holdFor(reason: "offline" | "newer" | undefined): void {
+    if (reason === this.#outside) return;
+    this.#outside = reason;
+    this.#snapshot = { ...this.#snapshot, ...this.#heldNow() };
     this.#emitter.emit();
   }
 
@@ -577,7 +606,8 @@ export class AiSettingsStore {
       kept: _kept,
       ...before
     } = this.#snapshot;
-    this.#snapshot = { ...before, ...settings, held };
+    this.#own = held;
+    this.#snapshot = { ...before, ...settings, ...this.#heldNow() };
     this.#emitter.emit();
   }
 
@@ -705,8 +735,9 @@ export class AiSettingsStore {
    * they are kept apart.
    */
   reset(): void {
-    if (!this.#snapshot.held) return;
-    this.#snapshot = { ...this.#snapshot, held: undefined };
+    if (!this.#own) return;
+    this.#own = undefined;
+    this.#snapshot = { ...this.#snapshot, ...this.#heldNow() };
     this.#save(EMPTY_AI_SETTINGS);
   }
 
@@ -1322,6 +1353,7 @@ export class AiSettingsStore {
   }
 
   async setKey(id: string, key: string): Promise<void> {
+    if (this.#outside) return;
     const trimmed = key.trim();
     if (!trimmed) return this.removeKey(id);
     this.#know(id, trimmed);
@@ -1343,6 +1375,7 @@ export class AiSettingsStore {
   }
 
   async removeKey(id: string): Promise<void> {
+    if (this.#outside) return;
     this.#forgetTests(id);
     this.#forgetListing(id);
     await this.#changeKey(id, undefined);
@@ -1353,6 +1386,7 @@ export class AiSettingsStore {
    * secret of those; services that are keep their addresses and headers.
    */
   async removeAllKeys(): Promise<void> {
+    if (this.#outside) return;
     try {
       await this.#writing;
       const ids = new Set(this.#snapshot.services.map((service) => service.id));

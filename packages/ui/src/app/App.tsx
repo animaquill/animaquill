@@ -9,7 +9,6 @@ import { PlaybackClock } from "../timeline/PlaybackClock.tsx";
 import type { Workbench } from "../workbench/workbench.ts";
 import { CommandPaletteView } from "./CommandPaletteView.tsx";
 import { DialogHost } from "./DialogHost.tsx";
-import { WelcomeHost } from "../cloud/WelcomeDialog.tsx";
 import { SettingsHost } from "../settings/SettingsDialog.tsx";
 import { ProjectPropertiesHost } from "../project/ProjectDialog.tsx";
 import { LocalAiGuideHost } from "../local-ai/LocalAiGuide.tsx";
@@ -108,7 +107,6 @@ export function App({ workbench, i18n }: AppProps) {
             <ProjectPropertiesHost />
             <LocalAiGuideHost />
             <DialogHost />
-            <WelcomeHost />
           </div>
         </WorkbenchContext>
       </I18nextProvider>

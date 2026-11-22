@@ -1,7 +1,5 @@
-import { IDBFactory } from "fake-indexeddb";
 import { describe, expect, it } from "vitest";
 import { AiSyncBusy, browserAiSyncAccess, browserChatSyncAccess } from "./ai-sync-access.ts";
-import { browserAccountKeys } from "./ai.ts";
 import {
   AI_SECRET_BYTES,
   checkAiEntry,
@@ -111,20 +109,6 @@ describe("the AI settings of an account, over HTTP", () => {
     expect(await answering(404, { error: "notFound" }).save("p", chat, null)).toBeUndefined();
     expect(await answering(413, { error: "tooLarge" }).save("p", chat, null)).toBeUndefined();
     expect(await answering(200, { revision: 2 }).save("p", chat, 1)).toBe(2);
-  });
-});
-
-describe("keys of accounts in this browser", () => {
-  it("each account's apart, and gone with it", async () => {
-    const factory = new IDBFactory();
-    const keys = browserAccountKeys(() => factory);
-    await keys.of("u1").write("s1", { key: "sk-1", baseUrl: "https://a.example" });
-    await keys.of("u2").write("s1", { key: "sk-2" });
-    expect(await keys.of("u1").read("s1")).toEqual({ key: "sk-1", baseUrl: "https://a.example" });
-    expect(await keys.of("u2").list()).toEqual(["s1"]);
-    await keys.forget("u1");
-    expect(await keys.of("u1").list()).toEqual([]);
-    expect(await keys.of("u2").read("s1")).toEqual({ key: "sk-2" });
   });
 });
 

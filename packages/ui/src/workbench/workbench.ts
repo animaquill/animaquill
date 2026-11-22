@@ -55,6 +55,7 @@ import {
   memoryChatImages,
   memoryKeys,
   newSyncId,
+  type LeftOver,
   type DownloadStore,
   type ProjectSummary,
 } from "@animaquill/host";
@@ -79,8 +80,8 @@ import { proposedIn } from "../chat/conversations.ts";
 import { parseAddress } from "@animaquill/tools";
 import { ModelPacks } from "../chat/packs.ts";
 import { AiSettingsStore } from "../chat/settings.ts";
-import { AiSync } from "../chat/ai-sync.ts";
-import { CloudChats } from "../chat/cloud-chats.ts";
+import { AccountAi } from "../chat/account-ai.ts";
+import { AccountChats } from "../chat/account-chats.ts";
 import { SETTINGS_GROUPS, SettingsNav, type SettingsPlace } from "./settings-nav.ts";
 import { SwitchSetting } from "./switch-setting.ts";
 import { Appearance } from "./appearance.ts";
@@ -193,9 +194,12 @@ import {
 } from "../start/cover-choice.ts";
 import { StartCovers } from "../start/covers.ts";
 import { StartOrganizer } from "../start/organize.ts";
-import { CloudSync } from "../cloud/cloud-sync.ts";
+import { cloudMarksKey } from "../start/cards.ts";
 import { renameUnopened, type RenameOutcome } from "../start/rename.ts";
 import { PanelRegistry, type PanelDefinition } from "./panels.ts";
+
+/** What every window of the editor is in, as a project, see `Workbench.clearThisComputer`. */
+const THIS_PAGE = "~page";
 
 /** Where people noted that projects of the offline mode stay in this browser, see `#createHere`. */
 const BROWSER_PROJECTS_KEY = "offline.browserProjects";
@@ -427,10 +431,11 @@ export class Workbench {
   readonly drafts: CodeDrafts;
   /** The AI services people set up, with their keys, which only this browser has. */
   readonly ai: AiSettingsStore;
-  /** The AI settings and keys going with the account, where the host has a platform. */
-  readonly aiSync: AiSync;
-  /** Which cloud features go with the account, and the welcome, see `CloudSync`. */
-  readonly cloudSync: CloudSync;
+  /**
+   * The AI settings and keys of the online mode, which the backend has, see `AccountAi`. Offline
+   * they are the browser's, and this is missing.
+   */
+  readonly accountAi: AccountAi | undefined;
   /** The model packs installed in this browser, see `ModelPacks`. */
   readonly packs: ModelPacks;
   /** The chat with AI in the browser, about the open project. */
@@ -462,8 +467,8 @@ export class Workbench {
   #compose: ComposeHandlers | undefined;
   /** The browser was asked in this page whether the chat may tell people. */
   #askedToNotify = false;
-  /** The conversations of projects of the platform, going with the account. */
-  readonly chatSync: CloudChats | undefined;
+  /** The conversations of the online mode, which the backend has, see `AccountChats`. */
+  readonly chatSync: AccountChats | undefined;
   /** Whether the settings are open in this window, and where in them, see `SettingsNav`. */
   readonly settingsNav: SettingsNav;
   /** Where this browser keeps the covers of projects, for the project properties to show one. */
@@ -476,6 +481,8 @@ export class Workbench {
   readonly proxyOffer: SwitchSetting;
   /** The theme and the size of words of the editor. */
   readonly appearance: Appearance;
+  /** What an editor of before the modes left in this browser, see `LeftOver`. */
+  readonly leftOver: LeftOver | undefined;
   /** The conversations this browser keeps, for the settings to say what they take. */
   readonly chatStore: ChatStore | undefined;
   /** Where the pictures of conversations are kept, for what they take and clearing them. */
@@ -508,30 +515,31 @@ export class Workbench {
     this.account = host.account;
     this.repositories = host.account ? host.cloud?.repository : undefined;
     this.diagnostics = new DiagnosticsRecorder(version);
-    this.aiSync = new AiSync({
-      settings: host.settings,
-      keys: host.keys ?? memoryKeys(),
-      ...(host.accountKeys && { accountKeys: host.accountKeys }),
-      ...(host.account &&
-        host.cloud?.aiSync && { access: host.cloud.aiSync, account: host.account }),
-      ask: (question) => this.cloudSync.ask(question),
-    });
-    this.cloudSync = new CloudSync({
-      settings: host.settings,
-      platform: host.cloud?.aiSync !== undefined,
-      account: host.account,
-      aiSync: this.aiSync,
-      changed: () => {
-        this.organizer.allowedChanged();
-        if (this.chatSync) void this.chatSync.retry().then(() => this.chat.reloadList());
-      },
-    });
+    const aiAccess = host.mode === "online" ? host.cloud?.aiSync : undefined;
+    this.accountAi =
+      aiAccess && host.accountId !== undefined
+        ? new AccountAi({
+            access: aiAccess,
+            account: host.accountId,
+            browser: host.settings,
+            signedOut: () => void host.account?.refresh(),
+            tooLarge: () => this.notifications.push(t("ai.tooLarge")),
+          })
+        : undefined;
+    const aiSettings = this.accountAi?.settings ?? host.settings;
     this.ai = new AiSettingsStore(
-      this.aiSync.settings,
-      this.aiSync.keys,
+      aiSettings,
+      this.accountAi?.keys ?? host.keys ?? memoryKeys(),
       {
-        saveFailed: () => this.notifications.push(t("ai.saveFailed")),
-        keyFailed: () => this.notifications.push(t("ai.keyFailed")),
+        // Online, what could not be kept is what the backend could not have.
+        saveFailed: () =>
+          this.notifications.push(
+            t(this.accountAi?.writable === false ? "ai.held.offline" : "ai.saveFailed"),
+          ),
+        keyFailed: () =>
+          this.notifications.push(
+            t(this.accountAi?.writable === false ? "ai.held.offline" : "ai.keyFailed"),
+          ),
         headersLeftOut: () => this.notifications.push(t("ai.headersLeftOut")),
       },
       host.aiRelay,
@@ -550,10 +558,29 @@ export class Workbench {
       },
     );
     this.packs = new ModelPacks(
-      this.aiSync.settings,
-      { saveFailed: () => this.notifications.push(t("ai.packs.saveFailed")) },
-      { memory: host.windowMemory },
+      aiSettings,
+      {
+        saveFailed: () => this.notifications.push(t("ai.packs.saveFailed")),
+        readOnly: () => this.notifications.push(t("ai.held.offline")),
+      },
+      {
+        memory: host.windowMemory,
+        ...(this.accountAi && { writable: () => this.accountAi?.writable ?? true }),
+      },
     );
+    // While the backend cannot be reached, its settings show as last read, and nothing changes
+    // them here (docs/design/online-offline.md of AnimaQuill Cloud, 2.1).
+    const accountAi = this.accountAi;
+    if (accountAi) {
+      const hold = () => {
+        const { status } = accountAi.getSnapshot();
+        this.ai.holdFor(
+          status === "newer" ? "newer" : status === "offline" ? "offline" : undefined,
+        );
+      };
+      accountAi.subscribe(hold);
+      hold();
+    }
     const sink = host.diagnostics;
     this.#sink = sink;
     let names: { state: unknown; keys: ReadonlySet<string>; found: Set<string> } | undefined;
@@ -796,22 +823,25 @@ export class Workbench {
         ).length,
       picture: (state, timeline, seconds) => this.#framePicture(state, timeline, seconds),
     });
-    // Conversations of projects of the platform go with the account.
+    // The conversations of the online mode are the backend's.
     this.chatSync =
-      cloud?.chats && host.account && host.chats
-        ? new CloudChats({
-            local: host.chats,
+      host.mode === "online" && cloud?.chats && host.chats
+        ? new AccountChats({
             remote: cloud.chats,
-            account: host.account,
-            links: cloud.links,
-            platform: cloud.platform,
+            outbox: host.chats,
+            projectOf: async (key) => {
+              const link = await cloud.links.get(key).catch(() => undefined);
+              return link && link.platform === cloud.platform && !link.creating
+                ? link.project
+                : undefined;
+            },
             copied: (title, copy) =>
               this.notifications.push(t("aiSync.chatCopied", { title, copy })),
-            allowed: (account) => this.cloudSync.allows("chats", account),
             ...(host.chatImages && { images: host.chatImages }),
           })
         : undefined;
     this.chatStore = host.chats;
+    this.leftOver = host.leftOver;
     this.chatImages = host.chatImages;
     this.chat = new ChatSession({
       chats: this.chatSync ?? host.chats,
@@ -1133,9 +1163,7 @@ export class Workbench {
     this.#keepPresence(host);
     this.organizer = new StartOrganizer({
       organizer: host.organizer,
-      account: host.account,
-      cloud: cloud?.organizer,
-      allowed: (account) => this.cloudSync.allows("organizer", account),
+      offline: () => this.notifications.push(t("online.readOnly")),
     });
     this.startCovers = new StartCovers({
       ...(host.covers && { covers: host.covers }),
@@ -1937,6 +1965,9 @@ export class Workbench {
   }
 
   async load(): Promise<void> {
+    // The AI settings of the online mode wait for the backend, as the page starts.
+    void this.accountAi?.start();
+    this.#flushChats();
     await Promise.all([
       this.appearance.load(),
       this.layout.load(),
@@ -1960,29 +1991,24 @@ export class Workbench {
     if (!(await this.projectFolders?.restore()) && (await this.#hasAddressed()))
       await this.session.restore();
     // Who is signed in comes when it comes: the editor does not wait for it.
-    if (this.account) {
-      this.#forgetChatsOnSignOut(this.account);
-      void this.#followAccount(this.account);
-    }
-    // Before the AI settings, which ask it about the welcome.
-    this.cloudSync.start();
-    void this.aiSync.start();
+    if (this.account) void this.#followAccount(this.account);
+  }
+
+  /**
+   * Conversations that wait in this browser for the backend go as the page starts, comes to the
+   * front, and the browser goes online, see `AccountChats`.
+   */
+  #flushChats(): void {
+    const chats = this.chatSync;
+    if (!chats) return;
+    void chats.flush();
+    if (typeof addEventListener !== "function") return;
+    const again = () => void chats.flush().then(() => this.chat.reloadList());
+    addEventListener("online", again);
+    addEventListener("focus", again);
   }
 
   /** Asks who is signed in, and says how a sign-in ended when it brought this page here. */
-  /**
-   * As people sign out, here or anywhere else, what this browser keeps of the account's
-   * conversations goes, see `CloudChats.beforeSignOut`.
-   */
-  #forgetChatsOnSignOut(account: AccountAccess): void {
-    let was = account.getSnapshot().status;
-    account.subscribe(() => {
-      const now = account.getSnapshot().status;
-      if (was === "signedIn" && now === "signedOut") void this.chatSync?.beforeSignOut();
-      if (now !== "unknown") was = now;
-    });
-  }
-
   async #followAccount(account: AccountAccess): Promise<void> {
     await account.refresh();
     const outcome = account.takeOutcome();
@@ -2012,13 +2038,6 @@ export class Workbench {
     });
   }
 
-  /** Whether the welcome was answered for whoever is signed in, or there is none. */
-  async #welcomed(): Promise<boolean> {
-    await this.cloudSync.settled();
-    const { available, welcomed } = this.cloudSync.getSnapshot();
-    return !available || welcomed;
-  }
-
   async #tellSignIn(outcome: SignInOutcome, snapshot: AccountSnapshot): Promise<void> {
     const { t } = this;
     if (outcome !== "signedIn") {
@@ -2027,8 +2046,7 @@ export class Workbench {
     }
     if (snapshot.status !== "signedIn") return;
     const words = { name: snapshot.name, interpolation: { escapeValue: false } };
-    // The welcome says it, with a button to install the App: nothing more is pushed at people.
-    if (snapshot.appInstalled || !(await this.#welcomed())) {
+    if (snapshot.appInstalled) {
       this.notifications.push(t("account.signedIn", words));
       return;
     }
@@ -2154,6 +2172,108 @@ export class Workbench {
     if (answer === "signIn") await this.goOnline();
   }
 
+  /** Online: whether this browser's things of the account can be cleared, see `clearThisComputer`. */
+  get canClearHere(): boolean {
+    return this.mode === "online" && this.#host.clearHere !== undefined && this.cloud !== undefined;
+  }
+
+  /**
+   * Online: "清掉这台电脑上的数据" (docs/design/online-offline.md of AnimaQuill Cloud, 2.1): the
+   * copies of the projects, the caches and what the settings keep of the account in this browser
+   * go, and the page loads again; everything is on the backend, and comes again as it is opened.
+   * Only while the backend can be reached, from the only window of the account: what is only here
+   * is looked for first (changes of projects that did not go, files nothing else has, what closed
+   * windows left, conversations and settings on their way), and said, and people choose.
+   */
+  async clearThisComputer(): Promise<void> {
+    const { t, dialogs, notifications, cloud } = this;
+    const clear = this.#host.clearHere;
+    if (!this.canClearHere || !cloud || !clear) return;
+    const notice = (message: string) =>
+      dialogs.confirm({
+        title: t("settings.clear.title"),
+        message,
+        confirm: t("dialog.close"),
+        noticeOnly: true,
+      });
+    if (this.accountAi?.writable === false) {
+      await notice(t("settings.clear.offline"));
+      return;
+    }
+    const others = await this.#host.presence?.others(THIS_PAGE).catch(() => undefined);
+    if (others !== 0) {
+      await notice(t("settings.clear.otherWindows"));
+      return;
+    }
+    if (this.session.key !== undefined) {
+      await this.closeProject();
+      if (this.session.key !== undefined) return;
+    }
+    /** What is only here, in words, or undefined where that could not be found out. */
+    const look = async (): Promise<string[] | undefined> => {
+      await this.accountAi?.flush();
+      await this.chatSync?.flush();
+      try {
+        const projects = await cloud.unsavedHere();
+        const chats = (await this.chatSync?.waiting()) ?? 0;
+        const ai = this.accountAi?.getSnapshot().pending ?? 0;
+        return [
+          ...projects.map(({ name, said }) =>
+            t("settings.clear.project", { name, said, interpolation: { escapeValue: false } }),
+          ),
+          ...(chats > 0 ? [t("settings.clear.chats", { count: chats })] : []),
+          ...(ai > 0 ? [t("settings.clear.ai")] : []),
+        ];
+      } catch (error) {
+        console.warn("What is only on this computer could not be found out", error);
+        return undefined;
+      }
+    };
+    let said = await look();
+    if (said === undefined) {
+      notifications.push(t("settings.clear.failed"));
+      return;
+    }
+    // People take their time to answer: what goes is what is there then, and they are asked again
+    // where there is more than they were told.
+    for (let round = 0; ; round += 1) {
+      const go = await dialogs.confirm(
+        said.length === 0
+          ? {
+              title: t("settings.clear.title"),
+              message: t("settings.clear.message"),
+              confirm: t("settings.clear.confirm"),
+              danger: true,
+            }
+          : {
+              title: t("settings.clear.unsavedTitle"),
+              message: t("settings.clear.unsavedMessage", {
+                list: said.join("\n"),
+                interpolation: { escapeValue: false },
+              }),
+              confirm: t("settings.clear.anyway"),
+              cancel: t("settings.clear.keep"),
+              keep: true,
+              danger: true,
+            },
+      );
+      if (!go) return;
+      const now = await look();
+      if (now === undefined) {
+        notifications.push(t("settings.clear.failed"));
+        return;
+      }
+      if (now.every((line) => said?.includes(line)) || round >= 2) break;
+      said = now;
+    }
+    if ((await this.#host.presence?.others(THIS_PAGE).catch(() => undefined)) !== 0) {
+      await notice(t("settings.clear.otherWindows"));
+      return;
+    }
+    if (!(await this.leavePage())) return;
+    clear();
+  }
+
   /** Online: to the offline mode of this site, staying signed in, see `leavePage`. */
   async goOffline(): Promise<void> {
     const go = this.#host.goOffline;
@@ -2176,9 +2296,9 @@ export class Workbench {
     const { account, t } = this;
     if (!account) return;
     try {
-      // What changed here goes to the account first: the account's copy leaves this browser then.
-      await this.aiSync.beforeSignOut();
-      await this.chatSync?.beforeSignOut();
+      // What changed here goes to the backend first, where it can.
+      await this.accountAi?.flush();
+      await this.chatSync?.flush();
       await account.signOut();
       this.notifications.push(t("account.signedOut"));
     } catch (error) {
@@ -2363,7 +2483,7 @@ export class Workbench {
   }
 
   /**
-   * "删除云端项目…": takes a project of the platform away there, the open one where none is said,
+   * "删除在线项目…": takes a project of the platform away there, the open one where none is said,
    * see `CloudProjects.deleteFromCloud`.
    */
   async deleteFromCloud(project?: string, name?: string): Promise<boolean> {
@@ -2381,7 +2501,7 @@ export class Workbench {
     return cloud.deleteFromCloud(id, shown);
   }
 
-  /** "云端…": how the open project stands with the platform, in the panel of the status bar. */
+  /** "在线…": how the open project stands with the platform, in the panel of the status bar. */
   showCloud(): void {
     void this.#showCloud();
   }
@@ -2392,7 +2512,7 @@ export class Workbench {
     this.cloudPanel.set(true);
   }
 
-  /** "打开云端的项目…": the start page, at its projects of the platform. */
+  /** "打开在线项目…": the start page, at its projects of the platform. */
   async openCloudProjects(): Promise<void> {
     await this.closeProject();
     if (!this.session.store) this.cloudColumn.set(true);
@@ -2414,11 +2534,6 @@ export class Workbench {
       case "switchRepository":
         void cloud.switchRepository();
         break;
-      case "removeFromBrowser": {
-        const { key } = this.session;
-        if (key !== undefined) void cloud.removeFromBrowser(key);
-        break;
-      }
       case "recheck":
         void cloud.recheck();
         break;
@@ -2642,6 +2757,8 @@ export class Workbench {
   #keepPresence(host: Host): void {
     const { presence } = host;
     if (!presence) return;
+    // This window is there, whatever it shows, see `clearThisComputer`.
+    presence.enter(THIS_PAGE);
     let entered: { readonly key: string; readonly leave: () => void } | undefined;
     const follow = () => {
       const { key } = this.session;
@@ -3158,14 +3275,27 @@ export class Workbench {
     await this.#changeProject();
   }
 
-  /** Notes when each project was opened in this browser, for "最近打开" of the start page. */
+  /**
+   * Notes when each project was opened, for "最近打开" of the start page: in this browser offline,
+   * on the backend online, by the project there.
+   */
   #noteOpened(): void {
     let noted: string | undefined;
     const follow = () => {
       const { key } = this.session;
       if (key === noted) return;
       noted = key;
-      if (key !== undefined) void this.organizer.noteOpened(key);
+      if (key === undefined) return;
+      void (async () => {
+        const marks =
+          this.mode === "online"
+            ? await this.#platform?.links
+                .get(key)
+                .then((link) => link && cloudMarksKey(link.project))
+                .catch(() => undefined)
+            : key;
+        if (marks !== undefined) await this.organizer.noteOpened(marks);
+      })();
     };
     this.session.subscribe(follow);
     follow();
@@ -3519,8 +3649,8 @@ export class Workbench {
       return false;
     }
     if (this.cloud) {
-      // The copy of a project of the platform: what did not get there is nowhere else, and that
-      // is looked at first, see `CloudProjects.removeFromBrowser`.
+      // The copy of a project of the backend goes only with everything else of the account here,
+      // once nothing of it is only here, see `clearThisComputer`.
       let isCopy: boolean;
       try {
         isCopy = (await this.cloud.linkOf(project.id)) !== undefined;
@@ -3529,7 +3659,7 @@ export class Workbench {
         this.notifications.push(t("notice.projectRemoveFailed"));
         return false;
       }
-      if (isCopy) return this.cloud.removeFromBrowser(project.id);
+      if (isCopy) return false;
     }
     const confirmed = await this.dialogs.confirm({
       title: t("project.removeTitle", { name: project.name }),
@@ -4317,11 +4447,7 @@ export class Workbench {
 
   /** Whether the settings have a group now: the account's only with a platform, see `visibleGroups`. */
   #hasSettingsGroup(group: string): boolean {
-    if (group === "account") return this.account !== undefined;
-    if (group === "cloud")
-      return (
-        this.cloudSync.getSnapshot().available && this.account?.getSnapshot().status === "signedIn"
-      );
+    if (group === "account") return this.account !== undefined || this.mode === "offline";
     return true;
   }
 

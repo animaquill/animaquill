@@ -21,16 +21,16 @@ describe("browser settings", () => {
 
   it("rejects when the stored text is not JSON", async () => {
     const storage = memoryStorage();
-    storage.setItem("aq-offline-animaquill.layout", "{oops");
-    await expect(createBrowserHost(() => storage).settings.load("layout")).rejects.toThrow();
+    storage.setItem("aq-offline-animaquill.palette", "{oops");
+    await expect(createBrowserHost(() => storage).settings.load("palette")).rejects.toThrow();
   });
 
   it("rejects when the browser blocks storage", async () => {
     const host = createBrowserHost(() => {
       throw new DOMException("denied", "SecurityError");
     });
-    await expect(host.settings.load("layout")).rejects.toThrow("denied");
-    await expect(host.settings.save("layout", 1)).rejects.toThrow("denied");
+    await expect(host.settings.load("palette")).rejects.toThrow("denied");
+    await expect(host.settings.save("palette", 1)).rejects.toThrow("denied");
   });
 });
 
@@ -54,21 +54,21 @@ describe("settings saved in another window", () => {
     const write = listenWith();
     const { settings } = createBrowserHost(() => memoryStorage());
     const listener = vi.fn<(value: unknown) => void>();
-    settings.listen("layout", listener);
-    write("aq-offline-animaquill.layout", '{"a":1}');
+    settings.listen("palette", listener);
+    write("aq-offline-animaquill.palette", '{"a":1}');
     expect(listener).toHaveBeenCalledExactlyOnceWith({ a: 1 });
   });
 
   it.each([
     ["another key", "animaquill.other", "{}"],
-    ["a key of another site part", "layout", "{}"],
-    ["a removed value", "aq-offline-animaquill.layout", null],
+    ["a key of another site part", "palette", "{}"],
+    ["a removed value", "aq-offline-animaquill.palette", null],
     ["everything cleared", null, null],
   ])("stays quiet on %s", (_, key, value) => {
     const write = listenWith();
     const { settings } = createBrowserHost(() => memoryStorage());
     const listener = vi.fn<(value: unknown) => void>();
-    settings.listen("layout", listener);
+    settings.listen("palette", listener);
     write(key, value);
     expect(listener).not.toHaveBeenCalled();
   });

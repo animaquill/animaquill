@@ -1,6 +1,9 @@
 import { IDBFactory } from "fake-indexeddb";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  browserLeftOver,
+  clearIfAsked,
+  clearOnNextStart,
   createBrowserHost,
   dropUnscopedData,
   unscopedDatabases,
@@ -44,12 +47,12 @@ describe("what the browser keeps, by mode and account", () => {
     const storage = memoryStorage();
     const offline = pageIn(OFFLINE_SCOPE, factory, storage);
     await offline.projects.create({ id: "p-offline", name: "离线的" }, new Uint8Array([0]));
-    await offline.settings.save("layout", { offline: true });
+    await offline.settings.save("palette", { offline: true });
     expect((await offline.projects.list()).map(({ id }) => id)).toEqual(["p-offline"]);
 
     const ada = pageIn(onlineScope("app.example", "user-ada"), factory, storage);
     expect(await ada.projects.list()).toEqual([]);
-    expect(await ada.settings.load("layout")).toBeUndefined();
+    expect(await ada.settings.load("palette")).toBeUndefined();
     await ada.projects.create({ id: "p-ada", name: "ada 的" }, new Uint8Array([0]));
 
     // Another account on the same site sees neither.
@@ -59,7 +62,7 @@ describe("what the browser keeps, by mode and account", () => {
     // And the offline mode never sees what an account keeps.
     const back = pageIn(OFFLINE_SCOPE, factory, storage);
     expect((await back.projects.list()).map(({ id }) => id)).toEqual(["p-offline"]);
-    expect(await back.settings.load("layout")).toEqual({ offline: true });
+    expect(await back.settings.load("palette")).toEqual({ offline: true });
   });
 
   it("keeps how the editor looks for the whole device, as the page shows it before any mode", async () => {
@@ -69,6 +72,69 @@ describe("what the browser keeps, by mode and account", () => {
     const online = pageIn(onlineScope("app.example", "user-ada"), factory, storage);
     expect(await online.settings.load("appearance")).toEqual({ theme: "light" });
     expect(storage.getItem("animaquill.appearance")).not.toBeNull();
+    // So are the layouts, the keys and how the pointer scrolls: the screen and the keyboard's.
+    for (const key of ["layout", "keybindings", "input"]) {
+      await pageIn(OFFLINE_SCOPE, factory, storage).settings.save(key, { of: key });
+      const again = pageIn(onlineScope("app.example", "user-ada"), factory, storage);
+      expect(await again.settings.load(key)).toEqual({ of: key });
+    }
+  });
+
+  it("clears what a scope keeps once a page of it asked, before anything opens it", async () => {
+    const factory = new IDBFactory();
+    const storage = memoryStorage();
+    const ada = onlineScope("app.example", "user-ada");
+    const bob = onlineScope("app.example", "user-bob");
+    const page = pageIn(ada, factory, storage);
+    await page.settings.save("palette", { ada: true });
+    await page.organizer.mark("cloud:p", { starredAt: 1, at: 1 });
+    await pageIn(bob, factory, storage).settings.save("palette", { bob: true });
+    await page.settings.save("appearance", { theme: "light" });
+    // Not asked: nothing goes.
+    expect(
+      await clearIfAsked(
+        ada,
+        () => factory,
+        () => storage,
+        () => memoryStorage(),
+      ),
+    ).toBe(false);
+    resetStorageScope();
+    setStorageScope(ada);
+    clearOnNextStart(() => storage);
+    // Another scope starting goes on as it is.
+    expect(
+      await clearIfAsked(
+        bob,
+        () => factory,
+        () => storage,
+        () => memoryStorage(),
+      ),
+    ).toBe(false);
+    expect(
+      await clearIfAsked(
+        ada,
+        () => factory,
+        () => storage,
+        () => memoryStorage(),
+      ),
+    ).toBe(true);
+    const names = (await factory.databases()).map(({ name }) => name ?? "");
+    expect(names.filter((name) => name.startsWith(ada))).toEqual([]);
+    expect(await pageIn(ada, factory, storage).settings.load("palette")).toBeUndefined();
+    expect(await pageIn(bob, factory, storage).settings.load("palette")).toEqual({ bob: true });
+    expect(await pageIn(ada, factory, storage).settings.load("appearance")).toEqual({
+      theme: "light",
+    });
+    // Once.
+    expect(
+      await clearIfAsked(
+        ada,
+        () => factory,
+        () => storage,
+        () => memoryStorage(),
+      ),
+    ).toBe(false);
   });
 
   it("names everything of a scope with it, and takes one scope per page", () => {
@@ -106,7 +172,7 @@ describe("what the editor kept before there were scopes", () => {
     const storage = memoryStorage();
     await before(factory, "animaquill");
     await before(factory, "animaquill-cloud", [{ key: "a", pending: 0 }]);
-    storage.setItem("animaquill.layout", "{}");
+    storage.setItem("animaquill.palette", "{}");
     storage.setItem("animaquill.appearance", "{}");
     storage.setItem("animaquill.projectsInBrowser", "yes");
     expect(await unscopedUnsent(() => factory)).toBe(0);
@@ -119,7 +185,7 @@ describe("what the editor kept before there were scopes", () => {
       () => storage,
     );
     expect(await unscopedDatabases(() => factory)).toEqual([]);
-    expect(storage.getItem("animaquill.layout")).toBeNull();
+    expect(storage.getItem("animaquill.palette")).toBeNull();
     expect(storage.getItem("animaquill.appearance")).toBe("{}");
     expect(storage.getItem("animaquill.projectsInBrowser")).toBe("yes");
   });
@@ -162,6 +228,25 @@ describe("what the editor kept before there were scopes", () => {
     expect(await unscopedUnsent(() => factory)).toBe(2);
     // A browser that never had it has nothing to keep.
     expect(await unscopedUnsent(() => new IDBFactory())).toBe(0);
+  });
+
+  it("says what is left, how much it takes and what may not be on a backend, and lets it go", async () => {
+    const factory = new IDBFactory();
+    const left = browserLeftOver(
+      () => factory,
+      () => memoryStorage(),
+      () => undefined,
+    );
+    expect(await left.databases()).toEqual([]);
+    expect(await left.bytes()).toBe(0);
+    await before(factory, "animaquill");
+    await before(factory, "animaquill-cloud", [{ key: "b", creating: true }]);
+    expect([...(await left.databases())].toSorted()).toEqual(["animaquill", "animaquill-cloud"]);
+    expect(await left.bytes()).toBeGreaterThan(0);
+    // What the editor leaves as it starts, as it may have changes: people may let it go.
+    expect(await left.unsent()).toBe(1);
+    expect(await left.drop()).toEqual([]);
+    expect(await left.databases()).toEqual([]);
   });
 
   it("takes nothing away while a page of before is open", async () => {

@@ -178,12 +178,7 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
   // typed in the settings are theirs too.
   // In the project properties only undo and redo: what they change is a step like any other.
   const onKeyDown = (event: KeyboardEvent) => {
-    if (
-      workbench.dialogs.getSnapshot() ||
-      workbench.cloudSync.getSnapshot().welcome ||
-      workbench.settingsNav.isOpen
-    )
-      return;
+    if (workbench.dialogs.getSnapshot() || workbench.settingsNav.isOpen) return;
     if (workbench.projectNav.isOpen) workbench.keybindings.handle(event, UNDO_ONLY);
     else workbench.keybindings.handle(event);
   };

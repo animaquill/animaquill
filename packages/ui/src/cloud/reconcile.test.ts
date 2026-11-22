@@ -63,7 +63,7 @@ describe("differencesOf", () => {
 
 describe("settle", () => {
   it("makes each file the side chosen for it, and the platform takes in what it lacks as one batch", () => {
-    const { store, files: cloud } = project({ "code/a.js": "云端\n", "code/c.js": "c\n" });
+    const { store, files: cloud } = project({ "code/a.js": "服务器\n", "code/c.js": "c\n" });
     const here = new Map(cloud);
     here.set("code/a.js", "这里\n");
     here.set("code/b.js", "b\n");
@@ -81,16 +81,16 @@ describe("settle", () => {
     expect(settled.after.has("code/b.js")).toBe(false);
     expect(settled.after.has("code/c.js")).toBe(false);
     expect(settled.changes).toEqual([
-      { path: "code/a.js", base: "云端\n", text: "这里\n" },
+      { path: "code/a.js", base: "服务器\n", text: "这里\n" },
       { path: "code/c.js", base: "c\n", text: undefined },
     ]);
     expect(settled.origin).toBe("folder:test");
     // Nothing of the project changed: that is for whoever carries it out.
-    expect(store.getState().files["code/a.js"]).toBe("云端\n");
+    expect(store.getState().files["code/a.js"]).toBe("服务器\n");
   });
 
   it("refuses where a file has no choice, and changes nothing", () => {
-    const { store, files: cloud } = project({ "code/a.js": "云端\n" });
+    const { store, files: cloud } = project({ "code/a.js": "服务器\n" });
     const here = new Map(cloud);
     here.set("code/a.js", "这里\n");
     here.set("code/b.js", "b\n");

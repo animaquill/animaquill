@@ -1,33 +1,19 @@
 import {
   ChatImagesMissing,
-  MemoryCloudLinks,
   memoryChatImages,
   memoryChats,
-  type AccountAccess,
   type ChatImageRef,
   type ChatSyncAccess,
   type SavedChat,
 } from "@animaquill/host";
 import { describe, expect, test } from "vitest";
-import { CloudChats, HELD_RETRY_MS, IMAGES_PER_CHAT } from "./cloud-chats.ts";
+import { AccountChats, HELD_RETRY_MS, IMAGES_PER_CHAT } from "./account-chats.ts";
 
 /**
- * The pictures of conversations of projects of the platform (cloud-chats.ts, and me/chat-images.ts
- * of AnimaQuill Cloud): each goes to the account before the conversation that has it; those that
- * cannot go stay here and say why (`held`); the account's come here as they are read.
+ * The pictures of conversations of the online mode (account-chats.ts, and me/chat-images.ts of
+ * AnimaQuill Cloud): each goes to the backend before the conversation that has it; those that
+ * cannot go stay here and say why (`held`); the backend's come here as they are read.
  */
-
-const PLATFORM = "https://app.example";
-
-const account: AccountAccess = {
-  subscribe: () => () => {},
-  getSnapshot: () => ({ status: "signedIn", id: "u1", name: "u1", appInstalled: true }),
-  refresh: async () => {},
-  takeOutcome: () => undefined,
-  signIn: () => {},
-  installApp: () => {},
-  signOut: async () => {},
-};
 
 /** The platform: conversations, and pictures within `room` bytes, as the API checks them. */
 function platformOf(room = Infinity) {
@@ -68,24 +54,12 @@ function platformOf(room = Infinity) {
 }
 
 async function deviceOf(platform: ReturnType<typeof platformOf>, now = () => 0) {
-  const links = new MemoryCloudLinks();
-  await links.put({
-    key: "local-1",
-    platform: PLATFORM,
-    project: "p1",
-    seq: 0,
-    pushed: 0,
-    linkedAt: 0,
-    owner: "u1",
-  });
   const local = memoryChats();
   const images = memoryChatImages();
-  const chats = new CloudChats({
-    local,
+  const chats = new AccountChats({
     remote: platform.access,
-    account,
-    links,
-    platform: PLATFORM,
+    outbox: local,
+    projectOf: async (key) => (key === "local-1" ? "p1" : undefined),
     images,
     now,
   });
@@ -133,6 +107,8 @@ describe("pictures of conversations of the platform", () => {
     expect(platform.puts).toEqual([one.image]);
     expect(sentImages(platform, "c1").every((image) => image.held === undefined)).toBe(true);
     expect(JSON.stringify(platform.chats.get("p1/c1"))).not.toContain("blob:");
+    // Nothing of them waits here once the backend has them.
+    expect(await device.local.list("local-1")).toEqual([]);
   });
 
   test("no room: the picture stays here, the conversation goes and says so, and it is tried again later", async () => {

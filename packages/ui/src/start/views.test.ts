@@ -39,7 +39,7 @@ const card = (
   ...more,
 });
 
-const group = (id: string, name: string): ProjectGroup => ({ id, name, scope: "browser", at: 1 });
+const group = (id: string, name: string): ProjectGroup => ({ id, name, at: 1 });
 
 const CARDS = [
   card("课程片头", "local", { openedAt: 50, updatedAt: 10, starred: true, group: "work" }),

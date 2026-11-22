@@ -142,7 +142,7 @@ describe("the status of the platform in a project", () => {
       }),
       t,
     );
-    expect(panel.title).toBe("云端 · 原子是什么");
+    expect(panel.title).toBe("在线 · 原子是什么");
     // The platform has changes that its repository does not have yet: on their way, nothing to
     // do, and syncing is in step all the same.
     expect(read(panel)).toEqual({
@@ -154,11 +154,11 @@ describe("the status of the platform in a project", () => {
         "同步  在线，改动都已发送",
         "存档  14:05 存过。有新改动，约 3 分钟后再存 [现在存档]",
       ],
-      actions: ["[换一个仓库…]", "[保存到文件夹…]", "[从这个浏览器移除…]"],
+      actions: ["[换一个仓库…]", "[保存到文件夹…]"],
     });
     expect(rowOf(panel, "archive")).toMatchObject({ tone: "plain" });
     expect(rowOf(panel, "repository").link?.url).toBe("https://github.com/ada/atom");
-    expect(panel.actions.map(({ kind }) => kind)).toEqual([undefined, undefined, "danger"]);
+    expect(panel.actions.map(({ kind }) => kind)).toEqual([undefined, undefined]);
     // Once all of it is in the repository, nothing more is said.
     const inStep = cloudPanel(linked(), t);
     expect(read(inStep)).toMatchObject({ bar: "已同步", level: "ok", github: "synced 已同步" });
@@ -173,7 +173,6 @@ describe("the status of the platform in a project", () => {
     expect(ids(cloudPanel(linked({ canDelete: true }), t)).bottom).toEqual([
       "switchRepository",
       "saveToFolder",
-      "removeFromBrowser",
       "deleteCloud",
     ]);
     // What the page says about itself, for whatever reads it.
@@ -189,7 +188,7 @@ describe("the status of the platform in a project", () => {
     expect(read(offline).rows[1]).toBe("同步  离线，3 个改动待发，联网后自动发送");
     // What did not get to the platform is not in an archive either.
     expect(read(offline).rows[2]).toBe(
-      "存档  14:05 存过 · 还有改动没发到云端，发过去以后才会存。 [现在存档]",
+      "存档  14:05 存过 · 还有改动没发到服务器，发过去以后才会存。 [现在存档]",
     );
     expect(read(cloudPanel(linked({ sync: sync({ state: "offline" }) }), t))).toMatchObject({
       bar: "离线",
@@ -243,11 +242,11 @@ describe("the status of the platform in a project", () => {
         t,
       );
     expect(read(takingBack("running")).rows[1]).toBe(
-      "同步  云端已从 GitHub 重新取回这个项目，正在把这台电脑上的改动接回去…",
+      "同步  服务器已从 GitHub 重新取回这个项目，正在把这台电脑上的改动接回去…",
     );
     expect(ids(takingBack("running")).rows["sync"]).toEqual([]);
     expect(read(takingBack("stopped")).rows[1]).toBe(
-      "同步  云端已从 GitHub 重新取回这个项目，这台电脑上的改动还没接回。接回之前这个项目只能看、不能改。 [接回]",
+      "同步  服务器已从 GitHub 重新取回这个项目，这台电脑上的改动还没接回。接回之前这个项目只能看、不能改。 [接回]",
     );
     expect(ids(takingBack("stopped")).rows["sync"]).toEqual(["takeBack"]);
     // While the platform makes it again, which the window waits for.
@@ -281,7 +280,7 @@ describe("the status of the platform in a project", () => {
       expect(ids(stuck(problem)).rows["sync"]).toEqual(["retry", "resolveStuck"]);
     }
     expect(read(stuck({ kind: "rejected", reason: "too-large" })).rows[1]).toBe(
-      "同步  云端没有接受一个改动（太大），同步已暂停。改动都留在这个浏览器里，可以重试，或者点“处理…”。 [重试] [处理…]",
+      "同步  服务器没有接受一个改动（太大），同步已暂停。改动都留在这个浏览器里，可以重试，或者点“处理…”。 [重试] [处理…]",
     );
     expect(read(stuck({ kind: "rebuilt" })).rows[1]).toContain("已经从 GitHub 重新取回");
     expect(stuck({ kind: "missing" }).sync).toBe("paused");
@@ -303,14 +302,14 @@ describe("the status of the platform in a project", () => {
     expect(diverged.archive).toBe("paused");
     expect(ids(diverged)).toEqual({
       rows: { repository: [], sync: [], archive: ["continueWithEditor"] },
-      bottom: ["switchRepository", "saveToFolder", "removeFromBrowser"],
+      bottom: ["switchRepository", "saveToFolder"],
     });
     expect(ids(paused("gone")).rows["archive"]).toEqual(["archiveNow"]);
     expect(ids(paused("uninstalled")).rows["archive"]).toEqual(["installApp"]);
     // Another repository is all that helps: it is where it always is.
     expect(ids(paused("transferred"))).toMatchObject({
       rows: { archive: [] },
-      bottom: ["switchRepository", "saveToFolder", "removeFromBrowser"],
+      bottom: ["switchRepository", "saveToFolder"],
     });
     // A reason of a newer platform still has a way on.
     expect(ids(paused("somethingNew")).rows["archive"]).toEqual(["archiveNow"]);
@@ -429,7 +428,7 @@ describe("the status of the platform in a project", () => {
       level: "ok",
       github: "error 还差一步：选仓库",
       rows: ["仓库  还差一步：选仓库", "同步  在线，改动都已发送"],
-      actions: ["[保存到文件夹…]", "[从这个浏览器移除…]"],
+      actions: ["[保存到文件夹…]"],
     });
     expect(rowOf(legacy, "repository")).toMatchObject({ tone: "attention" });
     // No project of the platform is without a repository any more: nothing to choose it with.
@@ -444,7 +443,7 @@ describe("the status of the platform in a project", () => {
     );
     expect(read(direct)).toMatchObject({
       github: "error 还差一步：选仓库",
-      actions: ["[保存到文件夹…]", "[从这个浏览器移除…]"],
+      actions: ["[保存到文件夹…]"],
     });
   });
 
@@ -459,7 +458,7 @@ describe("the status of the platform in a project", () => {
     // Deleted: no archive goes there again, so another repository is what helps, right there.
     const deleted = paused("deleted");
     expect(read(deleted).rows[2]).toBe(
-      "存档  存档先停着：仓库在 GitHub 上被删除了 · 换一个仓库，项目会重新存一份进去。云端的项目和本机的内容都还在。 [换一个仓库…]",
+      "存档  存档先停着：仓库在 GitHub 上被删除了 · 换一个仓库，项目会重新存一份进去。服务器的项目和本机的内容都还在。 [换一个仓库…]",
     );
     expect(rowOf(deleted, "archive").actions).toEqual([
       { id: "switchRepository", label: "换一个仓库…", enabled: true, kind: "primary" },
@@ -467,7 +466,7 @@ describe("the status of the platform in a project", () => {
     // Said once: not again at the end of the panel.
     expect(ids(deleted)).toEqual({
       rows: { repository: [], sync: [], archive: ["switchRepository"] },
-      bottom: ["saveToFolder", "removeFromBrowser"],
+      bottom: ["saveToFolder"],
     });
     // Taken out of what the App may reach: putting it back is what helps, and archiving goes on.
     const unauthorized = paused("unauthorized");
@@ -476,14 +475,14 @@ describe("the status of the platform in a project", () => {
     );
     expect(ids(unauthorized)).toEqual({
       rows: { repository: [], sync: [], archive: ["archiveNow"] },
-      bottom: ["switchRepository", "saveToFolder", "removeFromBrowser"],
+      bottom: ["switchRepository", "saveToFolder"],
     });
     // The platform cannot tell: what fits both, as before.
     const either = paused();
     expect(read(either).rows[2]).toBe(
       "存档  存档先停着：仓库不见了，或者 GitHub App 不能再访问它 · 在 GitHub 上把仓库加回 App 的授权范围后点“现在存档”，或者换一个仓库。 [现在存档]",
     );
-    expect(ids(either).bottom).toEqual(["switchRepository", "saveToFolder", "removeFromBrowser"]);
+    expect(ids(either).bottom).toEqual(["switchRepository", "saveToFolder"]);
     for (const panel of [deleted, unauthorized, either]) {
       expect(panel).toMatchObject({ level: "ok", bar: "已同步", archive: "paused" });
       expect(panel.github).toMatchObject({ kind: "error", cause: "paused" });
@@ -520,7 +519,7 @@ describe("the status of the platform in a project", () => {
     const unknown = cloudPanel(linked({ archive: silent() }), t);
     expect(unknown).toMatchObject({ level: "ok", bar: "已同步", archive: undefined });
     expect(unknown.github).toEqual({ kind: "pending", cause: "unknown" });
-    expect(ids(unknown).bottom).toEqual(["saveToFolder", "removeFromBrowser"]);
+    expect(ids(unknown).bottom).toEqual(["saveToFolder"]);
     expect(
       read(
         cloudPanel(
@@ -538,7 +537,7 @@ describe("the status of the platform in a project", () => {
       level: "ok",
       github: undefined,
       rows: ["同步  在线，改动都已发送"],
-      actions: ["[保存到文件夹…]", "[从这个浏览器移除…]"],
+      actions: ["[保存到文件夹…]"],
     });
   });
 
@@ -569,10 +568,10 @@ describe("the status of the platform in a project", () => {
       github: "error 仓库已删除",
       rows: [
         "仓库  仓库已删除，7 天后自动删除 · 在 GitHub 上恢复仓库后点“再检查一次”；也可以换一个仓库。 · 仓库能用之前不能编辑，可以看、播放和导出。出问题之前的改动都留在这台电脑上，仓库修好后接着同步。 · 这期间也可以保存到文件夹，把内容复制出来，或者删除这个项目。 [再检查一次] [换一个仓库…]",
-        "同步  仓库用不了，这个云端项目现在不能编辑。出问题之前的改动都留在本机。",
+        "同步  仓库用不了，这个在线项目现在不能编辑。出问题之前的改动都留在本机。",
         // Nothing about archiving, and no "unsaved changes": the row of the repository says it all.
       ],
-      actions: ["[保存到文件夹…]", "[从这个浏览器移除…]", "[删除项目…]"],
+      actions: ["[保存到文件夹…]", "[删除项目…]"],
     });
     expect(rowOf(deleted, "repository")).toMatchObject({ tone: "attention" });
     // Nothing to retry about syncing: it goes on by itself once the repository can be used.
@@ -605,8 +604,8 @@ describe("the status of the platform in a project", () => {
     ]);
     // A copy only in this browser has no folder to go on with.
     const direct = panelOf(unusable("transferred"), {});
-    expect(ids(direct).bottom).toEqual(["saveToFolder", "removeFromBrowser", "deleteCloud"]);
-    expect(read(direct).rows[0]).not.toContain("有文件夹的也可以断开云端");
+    expect(ids(direct).bottom).toEqual(["saveToFolder", "deleteCloud"]);
+    expect(read(direct).rows[0]).not.toContain("有文件夹的也可以断开服务器");
     // Where the platform does not take such projects away by itself yet: no days.
     const { deleteAt: _, ...forever } = unusable("transferred");
     expect(read(panelOf(forever)).rows[0]).toMatch(/^仓库  仓库已转到别的账号，现在不能编辑/);

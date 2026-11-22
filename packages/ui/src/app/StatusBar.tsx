@@ -575,7 +575,7 @@ const SyncIcon = ({ panel }: { panel: CloudPanel }) =>
 
 /**
  * How the open project is saved, see `cloudPanel` (docs/design/online-offline.md of AnimaQuill
- * Cloud, 1.2 and 1.3). Online, "云同步", whether the platform has the changes, and "GitHub 仓库",
+ * Cloud, 1.2 and 1.3). Online, "同步", whether the platform has the changes, and "GitHub 仓库",
  * whether its repository has them, which stands out only where something is wrong; what this
  * browser keeps says something only where it cannot keep it. Offline, "本地": whether its folder
  * has them, or for a project only in this browser, that it is, which stands out and opens what

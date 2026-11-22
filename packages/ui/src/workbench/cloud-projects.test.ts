@@ -16,7 +16,7 @@ import { MemoryPlatform, TestCloudBrowser } from "../cloud/cloud-support.ts";
 import { account } from "../cloud/projects-support.ts";
 import { filesOf } from "../folder/folder-support.ts";
 import type { DialogRequest } from "./dialogs.ts";
-import { FAST, notices } from "./folder-windows.ts";
+import { FAST } from "./folder-windows.ts";
 import { layouts } from "./layouts.ts";
 import {
   MemoryExports,
@@ -61,6 +61,8 @@ function browserOn(
   const drafts = new MemoryTrials();
   // Where projects were saved to, for the whole browser.
   const kept = new Map<string, LocalFolder>();
+  /** How many times a window asked for this browser's things of the account to go. */
+  const cleared = { count: 0 };
   const savedFolders: SavedFolders = {
     get: async (project) => kept.get(project),
     put: async (project, folder) => void kept.set(project, folder),
@@ -85,6 +87,7 @@ function browserOn(
       drafts,
       exports: new MemoryExports(),
       presence: presence.window(),
+      clearHere: () => void (cleared.count += 1),
       account: account(),
       cloud: cloud.access({ isAlive: () => true, asleep: false }),
     };
@@ -103,7 +106,7 @@ function browserOn(
     opened.push(workbench);
     return workbench;
   };
-  return { disk, library, links: cloud.links, trials, drafts, window };
+  return { disk, library, links: cloud.links, trials, drafts, window, cleared };
 }
 
 /** Waits for a question of this kind, past whatever shows progress, and answers it. */
@@ -305,7 +308,7 @@ describe("a project of the online mode, saved to a folder (docs/design/online-of
 });
 
 describe("the copy of a project of the platform, in the list of projects of the browser", () => {
-  it("goes out of the browser by the rule for copies, not as a project that cannot come back", async () => {
+  it("does not go on its own: it goes with everything of the account here, once all is there", async () => {
     const platform = new MemoryPlatform();
     const { project } = await onPlatform(platform);
     const browser = browserOn(platform, { folders: false });
@@ -316,38 +319,39 @@ describe("the copy of a project of the platform, in the list of projects of the 
     const summary = (await browser.library.list()).find(
       ({ id }) => id === project,
     ) as ProjectSummary;
+    expect(await workbench.removeProject(summary)).toBe(false);
+    expect(browser.library.summaries.has(project)).toBe(true);
 
-    // Something of it is only here: people are asked, and it stays where they leave it.
+    // Something of it is only here: "清掉这台电脑上的数据" says so, and nothing goes unless people say.
     platform.faults.silent = true;
     platform.drop();
     await workbench.openProject(project);
     workbench.session.store?.execute(write("code/离线.js", "only here\n"));
     expect(await workbench.session.trySave()).toBe(true);
     await workbench.closeProject();
-    const removing = workbench.removeProject(summary);
-    const asked = await answerNext(workbench, "choice", undefined);
-    expect(asked).toMatchObject({
-      title: 'cloud.remove.unsyncedTitle {"name":"片子","interpolation":{"escapeValue":false}}',
-    });
-    expect(await removing).toBe(false);
-    expect(browser.library.summaries.has(project)).toBe(true);
-
-    // Once the platform has all of it, it goes, and the platform keeps the project.
     platform.faults.silent = false;
+    const clearing = workbench.clearThisComputer();
+    const asked = await answerNext(workbench, "confirm", false);
+    expect(asked).toMatchObject({ title: "settings.clear.unsavedTitle", danger: true });
+    expect((asked as { message: string }).message).toContain("cloud.remove.unsynced");
+    await clearing;
+    expect(browser.cleared.count).toBe(0);
+
+    // Once the platform has all of it, people are only asked whether they mean it.
     await workbench.openProject(project);
     await online(workbench);
-    const again = workbench.removeProject(summary);
+    const again = workbench.clearThisComputer();
     const confirm = await answerNext(workbench, "confirm", true);
-    expect(confirm).toMatchObject({ confirm: "cloud.remove.confirm" });
-    expect(await again).toBe(true);
+    expect(confirm).toMatchObject({
+      title: "settings.clear.title",
+      confirm: "settings.clear.confirm",
+    });
+    await again;
     expect(workbench.session.store).toBeUndefined();
-    expect(browser.library.summaries.has(project)).toBe(false);
-    expect(await browser.links.get(project)).toBeUndefined();
-    expect(platform.projects.has(project)).toBe(true);
-    expect(notices(workbench).at(-1)).toContain("cloud.remove.done");
+    expect(browser.cleared.count).toBe(1);
   });
 
-  it("says what windows left on the copy that is not saved, which goes with it", async () => {
+  it("says what windows left on a copy that is not saved, which would go with it", async () => {
     const platform = new MemoryPlatform();
     const { project } = await onPlatform(platform);
     const browser = browserOn(platform, { folders: false });
@@ -355,9 +359,6 @@ describe("the copy of a project of the platform, in the list of projects of the 
     expect(await workbench.cloud?.openCloudProject(project)).toBe(true);
     await online(workbench);
     await workbench.closeProject();
-    const summary = (await browser.library.list()).find(
-      ({ id }) => id === project,
-    ) as ProjectSummary;
     // A window that is gone left code that was typed and not saved: only this browser has it.
     browser.drafts.kept.set(
       project,
@@ -365,22 +366,24 @@ describe("the copy of a project of the platform, in the list of projects of the 
         ["left", { version: 1, drafts: [{ path: "code/草稿.js", text: "没保存的", base: null }] }],
       ]),
     );
-    const removing = workbench.removeProject(summary);
-    const asked = await answerNext(workbench, "choice", undefined);
-    expect(asked).toMatchObject({
-      title: 'cloud.remove.unsyncedTitle {"name":"片子","interpolation":{"escapeValue":false}}',
-    });
+    const clearing = workbench.clearThisComputer();
+    const asked = await answerNext(workbench, "confirm", false);
     expect((asked as { message: string }).message).toContain("cloud.remove.leftBehind");
     expect((asked as { message: string }).message).toContain("cloud.remove.left.drafts");
-    expect((asked as { message: string }).message).not.toContain("cloud.remove.left.trial");
-    expect(await removing).toBe(false);
-    expect(browser.library.summaries.has(project)).toBe(true);
+    await clearing;
+    expect(browser.cleared.count).toBe(0);
+  });
 
-    // Opening the project brings it back as a file that is not saved, for people to keep.
-    await workbench.openProject(project);
-    await vi.waitFor(() =>
-      expect(workbench.code.drafts.map(({ path }) => path)).toEqual(["code/草稿.js"]),
-    );
+  it("is not done from a window while another window of the account is open", async () => {
+    const platform = new MemoryPlatform();
+    const browser = browserOn(platform, { folders: false });
+    const one = browser.window();
+    browser.window();
+    const clearing = one.clearThisComputer();
+    const asked = await answerNext(one, "confirm", true);
+    expect(asked).toMatchObject({ message: "settings.clear.otherWindows", noticeOnly: true });
+    await clearing;
+    expect(browser.cleared.count).toBe(0);
   });
 
   it("leaves a project that is not connected to the rule it always had", async () => {

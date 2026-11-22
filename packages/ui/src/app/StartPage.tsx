@@ -236,7 +236,8 @@ function GroupItem({
       confirm: t("start.group.deleteConfirm"),
       danger: true,
     });
-    if (go && !(await organizer.deleteGroup(id))) notifications.push(t("start.group.failed"));
+    if (go && (await organizer.deleteGroup(id)) === false)
+      notifications.push(t("start.group.failed"));
   };
   const items = (): MenuItem[][] => [
     [
@@ -266,7 +267,7 @@ function GroupItem({
           }}
           onCommit={async (next) => {
             const outcome = await organizer.renameGroup(id, next);
-            if (outcome === true) {
+            if (outcome === true || outcome === "offline") {
               setRenaming(false);
               setProblem(undefined);
               return true;
@@ -485,7 +486,7 @@ function Sidebar({
               }}
               onCommit={async (name) => {
                 const made = await organizer.createGroup(name);
-                if (made !== undefined && "problem" in made) {
+                if (made !== undefined && made !== "offline" && "problem" in made) {
                   setProblem(t(`start.group.problem.${made.problem}`));
                   return false;
                 }
@@ -1079,7 +1080,7 @@ function useCardActions(
       const target = marksTargetOf(card);
       if (!target) return;
       void workbench.organizer.star(target, !card.starred).then((done) => {
-        if (!done) workbench.notifications.push(t("start.group.markFailed"));
+        if (done === false) workbench.notifications.push(t("start.group.markFailed"));
       });
     },
     run: (card, action, at) => {
@@ -1122,10 +1123,6 @@ function useCardActions(
         }
         case "saveCopy":
           thenOpen(card, () => workbench.exportProject());
-          return;
-        case "removeHere":
-          if (card.key !== undefined && cloud)
-            run(() => cloud.removeFromBrowser(card.key as string));
           return;
         case "openOnGitHub": {
           const address = gitHubAddress(card);
@@ -1288,7 +1285,7 @@ export function StartPage() {
     startCovers.show(seen, { onlySeen: watch !== undefined, listedAt: lists.listedAt });
   });
 
-  // "打开云端的项目…" of the menu means the projects of the platform, as they are now: asked
+  // "打开在线项目…" of the menu means the projects of the platform, as they are now: asked
   // before the page was there, or while it is.
   useEffect(() => {
     const { cloudColumn } = workbench;
@@ -1320,15 +1317,7 @@ export function StartPage() {
       const key = workbench.session.key;
       if (into !== undefined && key !== undefined && key !== before && kind !== "open") {
         const link = await cloud?.linkOf(key).catch(() => undefined);
-        const signedIn = workbench.account?.getSnapshot();
-        const account = link?.owner ?? (signedIn?.status === "signedIn" ? signedIn.id : undefined);
-        const target: MarksTarget = link
-          ? {
-              key: cloudMarksKey(link.project),
-              also: key,
-              ...(account !== undefined && { account }),
-            }
-          : { key };
+        const target: MarksTarget = link ? { key: cloudMarksKey(link.project) } : { key };
         await organizer.moveToGroup(target, into);
       }
       refresh();
@@ -1339,14 +1328,14 @@ export function StartPage() {
     const target = card && marksTargetOf(card);
     if (!target) return;
     void organizer.moveToGroup(target, into).then((done) => {
-      if (!done) workbench.notifications.push(t("start.group.markFailed"));
+      if (done === false) workbench.notifications.push(t("start.group.markFailed"));
     });
   };
   const pickGroup = (card: ProjectCard): MenuItem[][] => {
     const target = marksTargetOf(card) as MarksTarget;
     const move = (into: string | undefined) =>
       void organizer.moveToGroup(target, into).then((done) => {
-        if (!done) workbench.notifications.push(t("start.group.markFailed"));
+        if (done === false) workbench.notifications.push(t("start.group.markFailed"));
       });
     return [
       organized.groups.map((each) => ({
@@ -1374,6 +1363,7 @@ export function StartPage() {
               if (!name) return;
               const made = await organizer.createGroup(name);
               if (made === undefined) workbench.notifications.push(t("start.group.failed"));
+              else if (made === "offline") return;
               else if ("problem" in made)
                 workbench.notifications.push(t(`start.group.problem.${made.problem}`));
               else move(made.id);

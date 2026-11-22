@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 import { content, expect, layoutMenu, tab, test } from "./support.ts";
 
-const KEYS_SETTING = "aq-offline-animaquill.keybindings";
+const KEYS_SETTING = "animaquill.keybindings";
 
 const palette = (page: Page) => page.getByRole("dialog", { name: "命令面板" });
 const input = (page: Page) => page.getByRole("combobox", { name: "命令面板" });

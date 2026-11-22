@@ -127,7 +127,7 @@ describe("how saving to GitHub reads", () => {
     // Deleted: another repository is the way out, and nothing was lost of the project.
     expect(pauseText(gone("deleted"), t)).toEqual({
       reason: "仓库在 GitHub 上被删除了",
-      fix: "换一个仓库，项目会重新存一份进去。云端的项目和本机的内容都还在。",
+      fix: "换一个仓库，项目会重新存一份进去。服务器的项目和本机的内容都还在。",
     });
     // Out of what the App may reach: putting it back there is, and archiving goes on by itself.
     expect(pauseText(gone("unauthorized"), t)).toEqual({
@@ -201,11 +201,11 @@ describe("how saving to GitHub reads", () => {
   it("says whose repository one is already, and what a project found in one can become", () => {
     const linked = choice({ linked: true, linkedProject: { id: "p9", name: "片头动画" } });
     expect(linkedProjectOf(linked, undefined)).toEqual({ id: "p9", name: "片头动画" });
-    expect(unusableAdvice(linked, "linked", undefined, t)).toBe("已经是云端项目“片头动画”的仓库");
+    expect(unusableAdvice(linked, "linked", undefined, t)).toBe("已经是在线项目“片头动画”的仓库");
     // As the platform said when people tried it.
     const refusal = { code: "linkedElsewhere" as const, project: { id: "p8", name: "年会视频" } };
     expect(linkedProjectOf(choice(), refusal)).toEqual({ id: "p8", name: "年会视频" });
-    expect(unusableAdvice(choice(), "linked", refusal, t)).toBe("已经是云端项目“年会视频”的仓库");
+    expect(unusableAdvice(choice(), "linked", refusal, t)).toBe("已经是在线项目“年会视频”的仓库");
     // Somebody else's project: only that it is taken.
     expect(linkedProjectOf(choice({ linked: true }), undefined)).toBeUndefined();
     expect(unusableAdvice(choice({ linked: true }), "linked", undefined, t)).toBe(
@@ -213,7 +213,7 @@ describe("how saving to GitHub reads", () => {
     );
     expect(
       unusableAdvice(choice(), "hasProject", { code: "hasProject", files: ["animaquill.json"] }, t),
-    ).toBe("根目录已经有项目的文件：animaquill.json。可以从这个仓库恢复成一个新的云端项目");
+    ).toBe("根目录已经有项目的文件：animaquill.json。可以从这个仓库恢复成一个新的在线项目");
     expect(unusableAdvice(choice(), "archived", undefined, t)).toBe("在 GitHub 上已归档，只能读");
     // A repository with other files in it keeps them.
     expect(choiceNote(choice({ empty: false }), t)).toBe("这个仓库里已有的其他文件不会动。");

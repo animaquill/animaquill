@@ -1,6 +1,7 @@
 import type { BrowserContext, Page } from "@playwright/test";
 import { footer } from "./folder-support.ts";
-import { cardMenu, openCard, sidebar, statusOf } from "./start-support.ts";
+import { openCard, sidebar, statusOf } from "./start-support.ts";
+import { closeSettings, openSettingsPage, settingsOf } from "./ai-support.ts";
 import { createProject, devPageOnly, editorReady, expect, test } from "./support.ts";
 
 /**
@@ -70,7 +71,7 @@ const shot = (page: Page, name: string) =>
 const cloudStatus = (page: Page) => footer(page).locator("[data-cloud-level]");
 /** The status of the repository on GitHub: "已同步", "待同步", or what went wrong. */
 const githubStatus = (page: Page) => footer(page).locator("[data-github]");
-const panel = (page: Page) => page.getByRole("dialog", { name: /^云端 · / });
+const panel = (page: Page) => page.getByRole("dialog", { name: /^在线 · / });
 const row = (page: Page, id: string) => panel(page).locator(`[data-cloud-row="${id}"]`);
 /** How the start page has the list of the platform: "ready", "signedOut", "unreadable"… */
 const cloudList = (page: Page) => page.locator("[data-cloud-list]").first();
@@ -88,12 +89,10 @@ async function renameTo(page: Page, name: string) {
 }
 
 test.describe("the start page", () => {
-  test("asks before it takes a copy with changes that are only here out of the browser", async ({
-    page,
-  }) => {
+  test("clears this computer only once people know what is only here", async ({ page }) => {
     await arrive(page);
     await withLab(page, (lab) => lab.seed("年会视频", { repository: "annual" }));
-    await chooseFrom(page, "文件", "打开云端的项目…");
+    await chooseFrom(page, "文件", "打开在线项目…");
     await openCard(page, "年会视频");
     await expect(cloudStatus(page)).toHaveAttribute("data-cloud", "online");
     // The platform stops answering, and people go on.
@@ -104,23 +103,30 @@ test.describe("the start page", () => {
     await renameTo(page, "年会视频 改过");
     await expect(page).toHaveTitle("年会视频 改过 - AnimaQuill");
     await chooseFrom(page, "文件", "关闭项目");
-
     await expect(statusOf(page, "年会视频 改过")).toHaveText(/^有改动还没同步/);
-    await cardMenu(page, "年会视频 改过", "从这个浏览器移除…");
-    const asked = page.getByRole("dialog", { name: /还有内容只在这个浏览器里$/ });
-    await expect(asked).toContainText("有 1 个改动还没同步到云端。现在移除，这些内容就没有了。");
-    await expect(asked.getByRole("button", { name: "打开项目让它同步" })).toBeVisible();
-    await expect(asked.getByRole("button", { name: "仍然移除" })).toBeVisible();
-    await shot(page, "start-remove-unsynced");
-    await asked.getByRole("button", { name: "取消" }).click();
+    // The platform answers again, but the change is still only here: it says so.
+    await withLab(page, ({ platform }) => {
+      platform.faults.silent = false;
+      platform.faults.unreachable = false;
+    });
+    await openSettingsPage(page, "存储和数据");
+    const clear = settingsOf(page).locator('[data-setting="storage.clear"]');
+    await clear.getByRole("button", { name: "清掉这台电脑上的数据…" }).click();
+    const asked = page.getByRole("dialog", { name: "这台电脑上有服务器还没有的东西" });
+    await expect(asked).toContainText("「年会视频 改过」：有 1 个改动还没同步到服务器。");
+    await expect(asked.getByRole("button", { name: "仍然清掉" })).toBeVisible();
+    await shot(page, "clear-unsynced");
+    await asked.getByRole("button", { name: "先不清" }).click();
+    await expect(asked).toBeHidden();
     // It stays, with what is only here.
+    await closeSettings(page);
     await expect(statusOf(page, "年会视频 改过")).toHaveText(/^有改动还没同步/);
   });
 
   test("lists what this browser has where the platform's list cannot be read", async ({ page }) => {
     await arrive(page);
     await withLab(page, (lab) => lab.seed("年会视频", { repository: "annual" }));
-    await chooseFrom(page, "文件", "打开云端的项目…");
+    await chooseFrom(page, "文件", "打开在线项目…");
     await openCard(page, "年会视频");
     await expect(cloudStatus(page)).toHaveAttribute("data-cloud", "online");
     await withLab(page, (lab) => {
@@ -128,7 +134,7 @@ test.describe("the start page", () => {
     });
     await chooseFrom(page, "文件", "关闭项目");
     await expect(cloudList(page)).toHaveAttribute("data-cloud-list", "unreadable");
-    await expect(page.getByText(/云端的项目列表读不出来.*列表不是最新的。/)).toBeVisible();
+    await expect(page.getByText(/服务器的项目列表读不出来.*列表不是最新的。/)).toBeVisible();
     await expect(statusOf(page, "年会视频")).toHaveText(/^octo\/annual/);
     await shot(page, "start-unreadable");
     // It opens without the platform, and reads the list again when asked.
@@ -207,7 +213,7 @@ test.describe("the panel of the platform", () => {
     await expect(cloudStatus(page)).toHaveText("离线");
     await renameTo(page, "离线时的名字");
     await expect(cloudStatus(page)).toHaveText("离线");
-    await expect(footer(page).getByRole("button", { name: "云同步：离线" })).toBeVisible();
+    await expect(footer(page).getByRole("button", { name: "同步：离线" })).toBeVisible();
     await expect(cloudStatus(page)).toHaveAttribute("data-cloud", "offline");
     await cloudStatus(page).click();
     await expect(row(page, "sync")).toContainText("离线，1 个改动待发，联网后自动发送");
@@ -309,13 +315,13 @@ test.describe("the offline mode of a site without a backend", () => {
   test("the start page and the menu say nothing about one", async ({ page }) => {
     await page.goto("/");
     await editorReady(page);
-    await expect(page.getByRole("button", { name: /^新建云端项目/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^新建在线项目/ })).toHaveCount(0);
     await expect(page.getByRole("group", { name: "筛选" })).toHaveCount(0);
     await createProject(page);
     await expect(footer(page).locator(`[data-save-status="sync"]`)).toHaveCount(0);
     await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
-    await expect(page.getByRole("menuitem", { name: "云端…" })).toHaveCount(0);
-    await expect(page.getByRole("menuitem", { name: "打开云端的项目…" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "在线…" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "打开在线项目…" })).toHaveCount(0);
     await page.keyboard.press("Escape");
     await chooseFrom(page, "文件", "关闭项目");
     await expect(sidebar(page)).toBeVisible();

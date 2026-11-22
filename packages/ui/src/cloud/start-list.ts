@@ -350,7 +350,7 @@ export function composeStartList(input: StartInput): StartLists {
 
 const plain = { interpolation: { escapeValue: false } } as const;
 
-/** The mark on the line of a project: "☁ 已连云端 · ada/atom", "☁ 要处理"… */
+/** The mark on the line of a project: "☁ 在线 · ada/atom", "☁ 要处理"… */
 export function markText(mark: CloudMark, t: TFunction): string {
   switch (mark.kind) {
     case "linked":

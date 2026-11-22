@@ -1,6 +1,4 @@
 import {
-  groupTime,
-  starTime,
   type FolderStatus,
   type ProjectGroup,
   type ProjectMarks,
@@ -105,23 +103,11 @@ export const NOTHING_ORGANIZED: Organized = { marks: new Map(), groups: [] };
 /** Where a star or a group of a card is kept, see `StartOrganizer.star`. */
 export interface MarksTarget {
   readonly key: string;
-  /**
-   * What this browser keeps a project of the platform by, which is written too: a folder that is
-   * disconnected later, or a copy that the platform no longer has, keeps how it was organised.
-   */
-  readonly also?: string;
-  /** Whose project of the platform it is. */
-  readonly account?: string;
 }
 
 /** Where the star and the group of a card go, or undefined where it cannot be organised. */
 export function marksTargetOf(card: ProjectCard): MarksTarget | undefined {
-  if (card.marksKey === undefined) return undefined;
-  return {
-    key: card.marksKey,
-    ...(card.key !== undefined && card.key !== card.marksKey && { also: card.key }),
-    ...(card.owner !== undefined && { account: card.owner }),
-  };
+  return card.marksKey === undefined ? undefined : { key: card.marksKey };
 }
 
 /** The groups people see: those not taken away, by name. */
@@ -141,9 +127,8 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
   const { marks } = organized;
   const groups = new Set(organized.groups.filter((group) => !group.deleted).map(({ id }) => id));
   /**
-   * The star and the group, each as it was last changed: kept by the project of the platform, or
-   * by what this browser keeps it by, as for a folder organised before it was connected, or one
-   * that was disconnected since. Both are written while it is connected, see `marksTargetOf`.
+   * The star and the group: kept by the project on the backend online, by what this browser keeps
+   * it by offline (docs/design/online-offline.md of AnimaQuill Cloud, 2.1).
    */
   const organizing = (
     key: string | undefined,
@@ -154,20 +139,14 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
     if (mark?.kind === "otherAccount") {
       return { marksKey: undefined, starred: false, group: undefined, owner: undefined };
     }
-    const own = key === undefined ? undefined : marks.get(key);
-    const cloud = project === undefined ? undefined : marks.get(cloudMarksKey(project));
-    /** Of the two that say something of it, the one that said it last; the platform's at a tie. */
-    const later = <K extends "starredAt" | "group">(
-      field: K,
-      time: (marks: ProjectMarks | undefined) => number,
-    ): ProjectMarks[K] | undefined => {
-      const saying = [cloud, own].filter((each) => each?.[field] !== undefined);
-      const [first, second] = saying;
-      if (!first) return undefined;
-      return (!second || time(first) >= time(second) ? first : second)[field];
-    };
-    const starredAt = later("starredAt", starTime);
-    const group = later("group", groupTime);
+    const kept: ProjectMarks | undefined =
+      project === undefined
+        ? key === undefined
+          ? undefined
+          : marks.get(key)
+        : marks.get(cloudMarksKey(project));
+    const starredAt = kept?.starredAt;
+    const group = kept?.group;
     return {
       marksKey: project === undefined ? key : cloudMarksKey(project),
       starred: starredAt !== undefined && starredAt !== null,
@@ -201,9 +180,8 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
       key: row.key,
       project: row.project,
       ...organizing(row.key, row.project, row.mark, row.owner),
-      // A copy from before this was noted was opened here at some point: when it last changed is
-      // the best there is to go by.
-      openedAt: here ? (openedOf(row.key) ?? row.updatedAt) : undefined,
+      // When the person last opened it, on any computer, as the backend says (2.1).
+      openedAt: marks.get(cloudMarksKey(row.project))?.openedAt,
       updatedAt: row.updatedAt,
       durationMs: row.durationMs,
       cover: row.cover,
@@ -415,7 +393,6 @@ export type CardAction =
   | "star"
   | "unstar"
   | "moveToGroup"
-  | "removeHere"
   | "openOnGitHub"
   | "deleteCloud"
   /** A copy into a folder, once, see `Workbench.saveToFolder`. */
@@ -498,17 +475,13 @@ export function cardActions(card: ProjectCard, context: CardContext): CardAction
       const ways: CardAction[] = unusableWays(unusable, {
         hasContent: platform.copy === "live",
       });
-      return [
-        common,
-        [...savable, ...ways, ...github],
-        [...when(card.kind === "cloudHere", "removeHere"), ...deletable],
-      ];
+      return [common, [...savable, ...ways, ...github], deletable];
     }
     switch (card.kind) {
       case "local":
         return [common, [...folderGone, ...kept], ["removeFromList"]];
       case "cloudHere":
-        return [common, [...savable, ...github], ["removeHere", ...deletable]];
+        return [common, [...savable, ...github], deletable];
       case "cloudRemote":
         return [common, [...savable, ...github], deletable];
       case "onlyHere":
