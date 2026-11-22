@@ -598,7 +598,7 @@ test("says what to do when the service cannot be reached, or refuses the key", a
   // Each task keeps what went wrong in it: the newest is last.
   const failure = chat(page).getByTestId("chat-failure").last();
   await expect(failure).toContainText("连不上服务");
-  await expect(failure).toContainText("平台转发");
+  await expect(failure).toContainText("服务器转发");
 
   refuse = true;
   await send(page, "再试一次");

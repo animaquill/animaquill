@@ -98,7 +98,7 @@ describe("how the open project stands with its repository", () => {
       "存进 GitHub 失败：GitHub 不让存档写进这个仓库（GitHub 的原话：Use a pull request.）。仓库可能设了保护规则，不让直接写入。在 GitHub 上去掉这条规则后点“现在存档”，或者换一个仓库。",
     );
     expect(githubAbout(githubOfStatus({ status: status({ head: 11 }), now: NOW }, t), t)).toBe(
-      "有改动还没存进 GitHub，平台会自动存进去（停手 5 分钟，或连续编辑 30 分钟存一次），不用管。",
+      "有改动还没存进 GitHub，服务器会自动存进去（停手 5 分钟，或连续编辑 30 分钟存一次），不用管。",
     );
     expect(githubAbout(githubOfStatus({ status: status(), now: NOW }, t), t)).toBe(
       "改动都已存进 GitHub 仓库。",

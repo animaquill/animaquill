@@ -629,7 +629,10 @@ export interface LeftOver {
   databases(): Promise<readonly string[]>;
   /** About how many bytes they take. */
   bytes(): Promise<number>;
-  /** What goes with them that is nowhere else, as far as they can be read, see `LeftOverContents`. */
+  /**
+   * What goes with them that is nowhere else, see `LeftOverContents`. Rejects where one of them
+   * cannot be read: anything may be in it then.
+   */
   contents(): Promise<LeftOverContents>;
   /** Takes them away. Resolves to the names of those still there, as a page of before holds them. */
   drop(): Promise<readonly string[]>;

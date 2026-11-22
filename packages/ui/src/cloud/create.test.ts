@@ -216,7 +216,7 @@ describe("making a project of the platform", () => {
         problem: { step: "upload", code: "unreachable" },
       });
       expect(stepsOf(create)).toBe("failed waiting waiting waiting");
-      expect(createProblemText(create.getSnapshot().problem!, t.t)).toContain("连不上平台");
+      expect(createProblemText(create.getSnapshot().problem!, t.t)).toContain("连不上服务器");
       expect(create.takesBack).toBe(true);
       const outcome = create.cancel();
       await time.advance(100);

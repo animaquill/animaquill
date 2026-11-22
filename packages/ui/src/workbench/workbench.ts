@@ -194,6 +194,7 @@ import {
 } from "../start/cover-choice.ts";
 import { StartCovers } from "../start/covers.ts";
 import { StartOrganizer } from "../start/organize.ts";
+import { signOutThen } from "./sign-out.ts";
 import { cloudMarksKey } from "../start/cards.ts";
 import { renameUnopened, type RenameOutcome } from "../start/rename.ts";
 import { PanelRegistry, type PanelDefinition } from "./panels.ts";
@@ -2305,26 +2306,20 @@ export class Workbench {
     const { account, t } = this;
     if (!account) return;
     try {
-      // What changed here goes to the backend first, where it can.
-      await this.accountAi?.flush();
       const chats = this.chatSync;
-      if (chats) {
-        await chats.flush();
-        // Conversations that wait here for the backend go with signing out: nothing of the account
-        // stays in this browser but the copies of projects. People say so first.
-        const waiting = await chats.waiting();
-        if (waiting > 0) {
-          const go = await this.dialogs.confirm({
+      const outcome = await signOutThen({
+        ...(this.accountAi && { flush: () => this.accountAi?.flush() ?? Promise.resolve() }),
+        ...(chats && { chats }),
+        confirm: (count) =>
+          this.dialogs.confirm({
             title: t("account.signOutWaitingTitle"),
-            message: t("account.signOutWaiting", { count: waiting }),
+            message: t("account.signOutWaiting", { count }),
             confirm: t("account.signOut"),
             danger: true,
-          });
-          if (!go) return;
-        }
-        await chats.dropWaiting();
-      }
-      await account.signOut();
+          }),
+        signOut: () => account.signOut(),
+      });
+      if (outcome === "stayed") return;
       this.notifications.push(t("account.signedOut"));
     } catch (error) {
       console.warn("Signing out failed", error);
@@ -2526,7 +2521,7 @@ export class Workbench {
     return cloud.deleteFromCloud(id, shown);
   }
 
-  /** "在线…": how the open project stands with the platform, in the panel of the status bar. */
+  /** "在线面板…": how the open project stands with the platform, in the panel of the status bar. */
   showCloud(): void {
     void this.#showCloud();
   }

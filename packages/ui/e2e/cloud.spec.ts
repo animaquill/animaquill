@@ -320,7 +320,7 @@ test.describe("the offline mode of a site without a backend", () => {
     await createProject(page);
     await expect(footer(page).locator(`[data-save-status="sync"]`)).toHaveCount(0);
     await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
-    await expect(page.getByRole("menuitem", { name: "在线…" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "在线面板…" })).toHaveCount(0);
     await expect(page.getByRole("menuitem", { name: "打开在线项目…" })).toHaveCount(0);
     await page.keyboard.press("Escape");
     await chooseFrom(page, "文件", "关闭项目");

@@ -75,7 +75,7 @@ describe("CloudProjects", () => {
     expect(platform.remove("ada", project)).toBe("removed");
     await time.advance(500);
     expect(here.cloud.session?.getSnapshot().problem).toEqual({ kind: "missing" });
-    here.session.store?.execute(write("code/late.js", "平台从来没有收到过"));
+    here.session.store?.execute(write("code/late.js", "服务器从来没有收到过"));
     await time.advance(500);
     expect(here.cloud.session?.getSnapshot().pending).toBe(1);
     const before = (await here.browser.links.get(project))?.pushed ?? 0;

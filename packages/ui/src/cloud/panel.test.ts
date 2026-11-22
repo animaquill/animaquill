@@ -202,9 +202,9 @@ describe("the status of the platform in a project", () => {
       t,
     );
     expect(read(away).bar).toBe("离线");
-    expect(read(away).rows[1]).toBe("同步  连不上平台，14:09 再试 · 2 个改动待发");
+    expect(read(away).rows[1]).toBe("同步  连不上服务器，14:09 再试 · 2 个改动待发");
     expect(read(cloudPanel(linked({ sync: sync({ state: "reconnecting" }) }), t)).rows[1]).toBe(
-      "同步  连不上平台，正在重试",
+      "同步  连不上服务器，正在重试",
     );
 
     // On its way, with a connection.
@@ -407,7 +407,7 @@ describe("the status of the platform in a project", () => {
     expect(failing).toMatchObject({ bar: "已同步", level: "ok" });
     expect(read(failing).github).toBe("error 同步失败");
     expect(read(failing).rows[2]).toBe(
-      "存档  14:05 存过。上次没存成，14:10 再试 · 已经连续 2 个多小时没能存进去（GitHub 暂时连不上、限流，或者平台出了错）：GitHub is down · 平台会一直自动重试；也可以点“现在存档”再试一次，或者换一个仓库。 [现在存档]",
+      "存档  14:05 存过。上次没存成，14:10 再试 · 已经连续 2 个多小时没能存进去（GitHub 暂时连不上、限流，或者服务器出了错）：GitHub is down · 服务器会一直自动重试；也可以点“现在存档”再试一次，或者换一个仓库。 [现在存档]",
     );
     // "Archive now" was asked for too soon, and goes by itself.
     expect(row(status(), { archiveAt: NOW + 40_000 })).toBe(

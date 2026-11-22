@@ -109,7 +109,16 @@ export async function cleanUpDownloads(
   const root = await scratch();
   const folder = await root.getDirectoryHandle(scratchFolder()).catch(() => undefined);
   if (folder) await cleanUp(folder);
+  // Where editors of before the scopes left theirs: the old files, and then the folder, once empty.
+  const before = await root.getDirectoryHandle(UNSCOPED_SCRATCH).catch(() => undefined);
+  if (before) {
+    await cleanUp(before);
+    await root.removeEntry(UNSCOPED_SCRATCH).catch(() => {});
+  }
 }
+
+/** The folder of before the scopes, see `scratchFolder`. */
+const UNSCOPED_SCRATCH = "exports";
 
 /** Old files of downloads that are surely over. Nothing else gets there. */
 async function cleanUp(folder: FileSystemDirectoryHandle): Promise<void> {

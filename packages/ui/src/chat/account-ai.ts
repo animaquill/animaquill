@@ -509,6 +509,9 @@ export class AccountAi {
   push(): Promise<void> {
     this.#pushing ??= this.#push().finally(() => {
       this.#pushing = undefined;
+      // Changed while it went, after the last round looked: once more, unless it is failing now,
+      // which tries again by itself.
+      if (this.hasUnsent && this.#snapshot.status === "ready" && !this.#closed) void this.push();
     });
     return this.#pushing;
   }

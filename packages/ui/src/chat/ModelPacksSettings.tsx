@@ -23,9 +23,11 @@ type InstallFrom = "github" | "folder" | "file";
  * was picked.
  */
 export function ModelPacksSettings() {
-  const { packs, settingsNav } = useWorkbench();
+  const { packs, settingsNav, ai } = useWorkbench();
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(packs.subscribe, packs.getSnapshot);
+  // While the backend that has them cannot be reached: seen, not changed, as the other pages.
+  const held = useSyncExternalStore(ai.subscribe, ai.getSnapshot).held === "offline";
   const place = useSyncExternalStore(settingsNav.subscribe, settingsNav.getSnapshot);
   const install = usePackInstall({
     onInstalled: (id) => settingsNav.go({ group: "packs", depth: 2, pack: id }),
@@ -93,6 +95,7 @@ export function ModelPacksSettings() {
           className={styles.treeAdd}
           aria-current={adding}
           data-testid="pack-add"
+          disabled={held}
           onClick={() => {
             install.clearFailure();
             settingsNav.go({ group: "packs", depth: 2, adding: true });
@@ -103,11 +106,22 @@ export function ModelPacksSettings() {
       </nav>
       <div className={styles.detail}>
         <div className={styles.detailInner}>
-          {adding ? (
-            <InstallPane install={install} />
-          ) : (
-            picked !== undefined && <PackPage key={picked} pack={picked} install={install} />
+          {held && (
+            <p
+              className={`${styles.held} ${styles.heldInPacks}`}
+              role="alert"
+              data-testid="ai-held"
+            >
+              {t("ai.held.offline")}
+            </p>
           )}
+          <fieldset className={styles.lock} disabled={held}>
+            {adding ? (
+              <InstallPane install={install} />
+            ) : (
+              picked !== undefined && <PackPage key={picked} pack={picked} install={install} />
+            )}
+          </fieldset>
         </div>
       </div>
       {install.element}

@@ -604,7 +604,9 @@ export function StorageGroup() {
 function LeftOverRow() {
   const { leftOver, dialogs, notifications } = useWorkbench();
   const { t } = useTranslation();
-  const [found, setFound] = useState<{ bytes: number; contents: LeftOverContents } | "none">();
+  const [found, setFound] = useState<
+    { bytes: number; contents: LeftOverContents | undefined } | "none"
+  >();
   const [busy, setBusy] = useState(false);
   const read = useCallback(() => {
     if (!leftOver) return;
@@ -614,7 +616,12 @@ function LeftOverRow() {
           setFound("none");
           return;
         }
-        const [bytes, contents] = await Promise.all([leftOver.bytes(), leftOver.contents()]);
+        const bytes = await leftOver.bytes().catch(() => 0);
+        // What cannot be read could have anything in it: said so.
+        const contents = await leftOver.contents().catch((error: unknown) => {
+          console.warn("What the editor kept before could not be read", error);
+          return undefined;
+        });
         setFound({ bytes, contents });
       } catch (error) {
         console.warn("What the editor kept before could not be read", error);
@@ -627,13 +634,16 @@ function LeftOverRow() {
   const remove = async () => {
     const { contents } = found;
     // What goes with it that is nowhere else, each with how many.
-    const lost = (["changes", "projects", "keys", "chats"] as const)
-      .filter((what) => contents[what] > 0)
-      .map((what) => t(`settings.leftOver.lost.${what}`, { count: contents[what] }));
+    const lost = contents
+      ? (["changes", "projects", "keys", "chats"] as const)
+          .filter((what) => contents[what] > 0)
+          .map((what) => t(`settings.leftOver.lost.${what}`, { count: contents[what] }))
+      : [];
     const sure = await dialogs.confirm({
       title: t("settings.leftOver.title"),
-      message:
-        lost.length > 0
+      message: !contents
+        ? t("settings.leftOver.unreadable")
+        : lost.length > 0
           ? t("settings.leftOver.lostMessage", { list: lost.join("、") })
           : t("settings.leftOver.message"),
       confirm: t("settings.leftOver.confirm"),

@@ -1857,6 +1857,12 @@ async function countOf(factory: () => IDBFactory, name: string, store: string): 
 export async function unscopedContents(
   factory: () => IDBFactory = () => indexedDB,
 ): Promise<LeftOverContents> {
+  // One that is there and cannot be read (broken, held) could have anything in it: that is no
+  // zero, and nothing goes by itself.
+  for (const name of await unscopedDatabases(factory)) {
+    if (!(await openUnscoped(factory, name).then((database) => (database?.close(), database))))
+      throw new Error(`What the editor kept before in ${name} cannot be read`);
+  }
   const changes = await unscopedUnsent(factory);
   // Projects without a link to a platform were only ever here.
   let projects = 0;

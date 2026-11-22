@@ -10,7 +10,7 @@ describe("what people read when a service cannot be talked to", () => {
     const said = `401 ${JSON.stringify(relayRefusalBody("signedOut", "sign in to use the relay"))}`;
     const text = failureText(t, failureOf(said), { relayed: true, canRelay: true });
     expect(text.advice).toBe(t("chat.relay.signedOut"));
-    expect(text.detail).toContain("平台的说明");
+    expect(text.detail).toContain("服务器的说明");
     // Not that the service took the key for a wrong one, which a 401 alone would say.
     expect(failureOf(said).kind).toBe("key");
     expect(text.advice).not.toBe(t("chat.failed.key"));

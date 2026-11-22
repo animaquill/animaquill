@@ -1088,3 +1088,17 @@ button.markBar:hover {
   border: 1px solid var(--aq-border);
   border-radius: 8px;
 }
+
+/* The line that the packs cannot change now, over the page of a pack, see `ModelPacksSettings`. */
+.heldInPacks {
+  margin: 0 0 12px;
+}
+
+/* What cannot change while the backend cannot be reached, as a whole: laid out as if not there. */
+.lock {
+  display: contents;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}

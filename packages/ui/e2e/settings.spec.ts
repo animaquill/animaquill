@@ -495,11 +495,11 @@ test("what an editor of before left, as it may have changes, shows and can go", 
   await goToSettingsGroup(page, "存储和数据");
   const row = settingsOf(page).locator('[data-setting="storage.leftOver"]');
   await expect(row.getByTestId("settings-left-over")).toHaveText(/^旧版本留下的数据：占 /);
-  await row.getByRole("button", { name: "删掉…" }).click();
-  const asked = page.getByRole("dialog", { name: "删掉旧版本留下的数据？" });
+  await row.getByRole("button", { name: "清掉…" }).click();
+  const asked = page.getByRole("dialog", { name: "清掉旧版本留下的数据？" });
   await expect(asked).toContainText("里面有 1 个服务器上的项目还没传上去的改动");
-  await asked.getByRole("button", { name: "删掉", exact: true }).click();
-  await expect(page.getByText("已删掉旧版本留下的数据。")).toBeVisible();
+  await asked.getByRole("button", { name: "清掉", exact: true }).click();
+  await expect(page.getByText("已清掉旧版本留下的数据。")).toBeVisible();
   await expect(row).toHaveCount(0);
   expect(
     await page.evaluate(async () => (await indexedDB.databases()).map(({ name }) => name)),

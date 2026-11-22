@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { AiSyncBusy, browserAiSyncAccess, browserChatSyncAccess } from "./ai-sync-access.ts";
+import {
+  AiSyncBusy,
+  browserAiSyncAccess,
+  browserChatSyncAccess,
+  fitsKeepalive,
+} from "./ai-sync-access.ts";
 import {
   AI_SECRET_BYTES,
   checkAiEntry,
@@ -289,5 +294,35 @@ describe("what is secret of a service, changed in two places", () => {
     expect(two.secret).toEqual(one.secret);
     expect(mergeSecret(one, one)).toEqual(one);
     expect(readSecretTimes({ key: 1, other: 2, baseUrl: "x" })).toEqual({ key: 1 });
+  });
+});
+
+describe("changes that may outlive the page", () => {
+  it("go so by their bytes, not their characters: a large Chinese text goes as any other", async () => {
+    expect(fitsKeepalive("a".repeat(59_000))).toBe(true);
+    // 22,000 characters of three bytes each are 66,000 bytes: over what a browser takes.
+    expect(fitsKeepalive("字".repeat(22_000))).toBe(false);
+    const asked: (boolean | undefined)[] = [];
+    const access = browserAiSyncAccess({
+      api: (path) => path,
+      fetch: async (_input, init) => {
+        asked.push(init?.keepalive);
+        return new Response(JSON.stringify({ error: "busy" }), {
+          status: 429,
+          headers: { "retry-after": "1" },
+        });
+      },
+    });
+    const change = (text: string) =>
+      access
+        .change({
+          account: "u",
+          entries: [{ name: "field:prompt", at: 1, value: text }],
+          keys: [],
+        })
+        .catch(() => {});
+    await change("短的提示");
+    await change("字".repeat(22_000));
+    expect(asked).toEqual([true, false]);
   });
 });

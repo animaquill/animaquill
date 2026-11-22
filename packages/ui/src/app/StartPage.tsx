@@ -76,6 +76,8 @@ import styles from "./StartPage.module.css";
 import { agoText, durationText } from "./start-view.ts";
 import { unusableFix, unusableLine } from "../cloud/unusable.ts";
 
+/** Where there is no backend to keep the AI settings: nothing to say of it. */
+const noAccountAi = () => undefined;
 const noSubscription = () => () => {};
 const NO_FOLDERS: ProjectFoldersSnapshot = { open: undefined, waiting: undefined };
 const noFolders = () => NO_FOLDERS;
@@ -564,6 +566,10 @@ function Account({ situation }: { situation: Situation }) {
     account?.subscribe ?? noSubscription,
     account?.getSnapshot ?? noAccount,
   );
+  const unreachable = useSyncExternalStore(
+    workbench.accountAi?.subscribe ?? noSubscription,
+    workbench.accountAi?.getSnapshot ?? noAccountAi,
+  );
   if (situation.mode === "offline") {
     if (!situation.canGoOnline) return null;
     return (
@@ -579,6 +585,8 @@ function Account({ situation }: { situation: Situation }) {
   }
   if (!account || !who) return null;
   const name = who.status === "signedIn" ? who.name : t("start.account.unknown");
+  // The backend cannot be reached now: said where the mode is.
+  const away = unreachable?.status === "offline";
   return (
     <Menu
       label={t("account.menu", { name, ...plain })}
@@ -591,7 +599,13 @@ function Account({ situation }: { situation: Situation }) {
           <span className={styles.accountWords}>
             <span className={styles.accountName}>{name}</span>
             <span className={styles.accountState}>
-              {t(who.status === "signedOut" ? "start.account.signedOut" : "start.account.online")}
+              {t(
+                who.status === "signedOut"
+                  ? "start.account.signedOut"
+                  : away
+                    ? "start.account.onlineAway"
+                    : "start.account.online",
+              )}
             </span>
           </span>
           <ChevronDown size={14} aria-hidden="true" />

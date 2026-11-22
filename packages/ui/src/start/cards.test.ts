@@ -603,11 +603,11 @@ describe("what the menu of a card offers", () => {
       "GitHub 同步失败 warning",
     ]);
     expect(said[0]?.hint).toBe(
-      "有改动还没存进 GitHub，平台会自动存进去（停手 5 分钟，或连续编辑 30 分钟存一次），不用管。",
+      "有改动还没存进 GitHub，服务器会自动存进去（停手 5 分钟，或连续编辑 30 分钟存一次），不用管。",
     );
     // An error says why, and what helps.
     expect(said[3]?.hint).toBe(
-      "存进 GitHub 失败：已经连续 3 个多小时没能存进去（GitHub 暂时连不上、限流，或者平台出了错）。平台会一直自动重试；也可以点“现在存档”再试一次，或者换一个仓库。",
+      "存进 GitHub 失败：已经连续 3 个多小时没能存进去（GitHub 暂时连不上、限流，或者服务器出了错）。服务器会一直自动重试；也可以点“现在存档”再试一次，或者换一个仓库。",
     );
     expect(said[4]?.hint).toBe(
       "存进 GitHub 失败：仓库在 GitHub 上已归档，只能读。在 GitHub 上取消归档后点“现在存档”，或者换一个仓库。",

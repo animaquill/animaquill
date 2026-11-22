@@ -218,7 +218,7 @@ describe("the lists of the start page", () => {
           kept("f1", "存档停了"),
           kept("f2", "有冲突"),
           kept("f3", "有文件没并进来"),
-          kept("f4", "新平台的词"),
+          kept("f4", "新服务器的词"),
           kept("f5", "改版前连的"),
           kept("f6", "连到一半"),
         ],
@@ -238,7 +238,10 @@ describe("the lists of the start page", () => {
           }),
           listed("p2", "有冲突", { repository: repository("two"), attention: "conflicts" }),
           listed("p3", "有文件没并进来", { repository: repository("three"), attention: "blocked" }),
-          listed("p4", "新平台的词", { repository: repository("four"), attention: "somethingNew" }),
+          listed("p4", "新服务器的词", {
+            repository: repository("four"),
+            attention: "somethingNew",
+          }),
           listed("p5", "改版前连的", { attention: "noRepository" }),
         ],
       }),
@@ -255,7 +258,7 @@ describe("the lists of the start page", () => {
       "存档停了 | ☁ 要处理",
       "有冲突 | ☁ 要处理",
       "有文件没并进来 | ☁ 要处理",
-      "新平台的词 | ☁ 要处理",
+      "新服务器的词 | ☁ 要处理",
       "改版前连的 | 还差一步：选仓库",
       "连到一半 | 还差一步：选仓库",
     ]);
@@ -263,7 +266,7 @@ describe("the lists of the start page", () => {
       "仓库的存档停下了。打开项目，在在线面板里处理。",
       "GitHub 上的改动和项目里的改动冲突了。打开项目处理。",
       "GitHub 上有文件没能并进来。打开项目处理。",
-      "服务器有事要处理。打开项目，在在线面板里看。",
+      "有问题要处理。打开项目，在在线面板里看。",
       "这个项目已经在服务器上，还没选仓库。打开项目接着选。",
       "这个项目已经在服务器上，还没选仓库。打开项目接着选。",
     ]);
@@ -359,10 +362,10 @@ describe("the lists of the start page", () => {
         ],
         links: [link("f2", "p0"), link("k1", "p1", { pending: 1 }), link("k2", "p2")],
         listed: [
-          listed("p0", "连了服务器的", { description: "平台上的" }),
-          listed("p1", "有改动的", { description: "平台上旧的" }),
-          listed("p2", "没改动的", { description: "平台上新的" }),
-          listed("p3", "只在平台上", { description: "只在平台上的说明" }),
+          listed("p0", "连了服务器的", { description: "服务器上的" }),
+          listed("p1", "有改动的", { description: "服务器上旧的" }),
+          listed("p2", "没改动的", { description: "服务器上新的" }),
+          listed("p3", "只在服务器上", { description: "只在服务器上的说明" }),
         ],
       }),
     );
@@ -371,10 +374,10 @@ describe("the lists of the start page", () => {
       ["连了服务器的", undefined],
     ]);
     expect(Object.fromEntries(lists.cloud.map((row) => [row.name, row.description]))).toEqual({
-      连了服务器的: "平台上的",
+      连了服务器的: "服务器上的",
       有改动的: "这里改过的说明",
-      没改动的: "平台上新的",
-      只在平台上: "只在平台上的说明",
+      没改动的: "服务器上新的",
+      只在服务器上: "只在服务器上的说明",
     });
     expect(lists.browser.map((summary) => summary.description)).toEqual(["浏览器里记下的"]);
   });

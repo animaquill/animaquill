@@ -288,6 +288,24 @@ describe("what the editor kept before there were scopes", () => {
     expect(await left.databases()).toEqual([]);
   });
 
+  it("takes one that cannot be read for one that may have anything in it", async () => {
+    const factory = new IDBFactory();
+    await before(factory, "animaquill");
+    const left = browserLeftOver(
+      () =>
+        ({
+          databases: () => factory.databases(),
+          // Broken, or held by a page that never lets go.
+          open: () => {
+            throw new DOMException("broken", "UnknownError");
+          },
+        }) as unknown as IDBFactory,
+      () => memoryStorage(),
+      () => undefined,
+    );
+    await expect(left.contents()).rejects.toThrow();
+  });
+
   it("takes nothing away while a page of before is open", async () => {
     const factory = new IDBFactory();
     await before(factory, "animaquill");

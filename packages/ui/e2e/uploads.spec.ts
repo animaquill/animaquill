@@ -228,7 +228,7 @@ test.describe("files of assets into the large file storage", () => {
     });
     await page.getByRole("option", { name: "采访.mp4" }).click();
     await place(page).getByRole("button", { name: "重试" }).click();
-    await expect(place(page)).toContainText(/离线，联网后接着传|平台忙，稍后自动继续/);
+    await expect(place(page)).toContainText(/离线，联网后接着传|服务器忙，稍后自动继续/);
     await shot(page, "offline");
     await expect(place(page)).toContainText("GitHub 大文件存储 ·", { timeout: 30_000 });
   });

@@ -44,8 +44,15 @@ export interface BrowserAiSyncOptions {
   readonly timeoutMs?: number;
 }
 
-/** What a browser lets a request that outlives its page carry, with room to spare: 64 KB. */
-const KEEPALIVE_BYTES = 60_000;
+/** What a browser lets a request that outlives its page carry, with room to spare: 64 KiB. */
+export const KEEPALIVE_BYTES = 60_000;
+
+/**
+ * Whether a body may go as a request that outlives its page: by its bytes in UTF-8, not its
+ * characters. One larger goes without, as any other: a browser refuses the request whole otherwise.
+ */
+export const fitsKeepalive = (body: string): boolean =>
+  new TextEncoder().encode(body).byteLength < KEEPALIVE_BYTES;
 
 /** The platform said it is busy: again after `retryAfterMs`. */
 export class AiSyncBusy extends Error {
@@ -197,7 +204,7 @@ export function browserAiSyncAccess(options: BrowserAiSyncOptions): AiSyncAccess
             headers: { ...options.changeHeaders, "content-type": "application/json" },
             body,
             // A change made right as the page goes still goes, where it is small enough to.
-            keepalive: body.length < KEEPALIVE_BYTES,
+            keepalive: fitsKeepalive(body),
           },
           signal,
         );

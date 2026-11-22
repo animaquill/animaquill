@@ -308,7 +308,7 @@ describe("restoring a repository as a project of the platform", () => {
     repository.refuseRestore = new RepositoryRefused("unavailable");
     expect(await here.cloud.restoreFromRepository({ id: 7, fullName: "ada/atom" })).toBe(false);
     expect(told.at(-1)).toMatchObject({
-      message: "GitHub 或平台暂时出了问题，什么都没留下，可以再试一次。",
+      message: "GitHub 或服务器暂时出了问题，什么都没留下，可以再试一次。",
     });
   });
 });
