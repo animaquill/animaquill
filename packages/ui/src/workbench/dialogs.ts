@@ -48,6 +48,11 @@ export interface ChoiceOptions {
   readonly pictures?: readonly DialogPicture[];
   /** The choices are a sentence each: one under another, with cancelling apart below them. */
   readonly stacked?: boolean;
+  /**
+   * What it says is over, so there is nothing to cancel: no button for it, and closing it is
+   * as the primary choice.
+   */
+  readonly done?: boolean;
 }
 
 export interface DialogPicture {

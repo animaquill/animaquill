@@ -210,7 +210,7 @@
   color: var(--aq-text-strong);
 }
 
-.ways button[aria-selected="true"] {
+.ways button[aria-pressed="true"] {
   color: var(--aq-text-strong);
   border-bottom-color: var(--aq-accent);
 }

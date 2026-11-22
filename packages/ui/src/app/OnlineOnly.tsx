@@ -11,9 +11,12 @@ export function OnlineOnly({
   className,
   children,
   label,
+  what,
 }: {
   readonly className?: string | undefined;
   readonly children: ReactNode;
+  /** What it is, in a few words, for the question that it needs signing in. */
+  readonly what: string;
   /** What it is, for whatever reads the page, where the children do not say it. */
   readonly label?: string;
 }) {
@@ -27,7 +30,7 @@ export function OnlineOnly({
       data-needs-online=""
       title={t("online.needed.hint")}
       {...(label !== undefined && { "aria-label": label })}
-      onClick={() => void workbench.askToGoOnline()}
+      onClick={() => void workbench.askToGoOnline(what)}
     >
       {children}
     </button>

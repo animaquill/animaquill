@@ -521,7 +521,7 @@ function Sidebar({
           </button>
         ) : (
           situation.canGoOnline && (
-            <OnlineOnly className={styles.navButton}>
+            <OnlineOnly className={styles.navButton} what={t("storage.uploads.space.nav")}>
               <HardDrive size={15} className={styles.navIcon} aria-hidden="true" />
               <span className={styles.navName}>{t("storage.uploads.space.nav")}</span>
             </OnlineOnly>
@@ -1585,7 +1585,8 @@ export function StartPage() {
           onClose={() => setPicking(undefined)}
         />
       )}
-      {situation.canFolders && <DropHint />}
+      {/* Only where a dropped folder opens: online it is imported from the new project dialog. */}
+      {projectFolders && <DropHint />}
     </div>
   );
 }

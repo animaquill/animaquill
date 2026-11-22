@@ -103,6 +103,8 @@ function folderTarget(folder: LocalFolder, written: Set<string>): TargetFolder {
 export class SaveToFolder {
   readonly #options: SaveToFolderOptions;
   #busy = false;
+  /** The id in the animaquill.json of the project being saved, where it is known, see `save`. */
+  #own: string | undefined;
 
   constructor(options: SaveToFolderOptions) {
     this.#options = options;
@@ -116,15 +118,19 @@ export class SaveToFolder {
   /**
    * Saves a copy of the project `project` (its id on the backend), as `source` brings it once
    * people chose where. Has to run right in the click: the browser asks for a folder only then.
+   * `own`: the id of the project in its animaquill.json, where it is known before the copy is
+   * there, as for the open project: a folder of another project is refused right away then.
    * Resolves to the folder it went to, or undefined where it did not.
    */
   async save(
     project: string,
     name: string,
     source: (signal: AbortSignal) => Promise<CopySource | undefined>,
+    own?: string,
   ): Promise<LocalFolder | undefined> {
     if (this.#busy) return undefined;
     this.#busy = true;
+    this.#own = own;
     try {
       const place = await this.#placeFor(project, name);
       if (!place) return undefined;
@@ -189,12 +195,19 @@ export class SaveToFolder {
       // A project, or what a save that stopped halfway left: which project it is, `#write` makes
       // sure of once the copy is there to say its id. Only that one is replaced.
       const there = await projectIn(chosen);
+      const own = this.#own;
+      // Another project, as far as can be told now: nothing of it is written over.
+      if (there !== undefined && own !== undefined && there !== own)
+        return await this.#otherProject(chosen, project, name);
       if (there !== undefined || (await this.#unfinishedOf(chosen))) {
         // People said yes to replacing it already, where it is the folder of the last save.
         if (asked) return { folder: chosen, replaces: true };
         const go = await dialogs.confirm({
           title: t("saveToFolder.again.title", { name, ...plain }),
-          message: t("saveToFolder.hasProject", { folder: chosen.name, ...plain }),
+          message: t(own === undefined ? "saveToFolder.hasProject" : "saveToFolder.hasCopy", {
+            folder: chosen.name,
+            ...plain,
+          }),
           confirm: t("saveToFolder.again.replace"),
         });
         return go ? { folder: chosen, replaces: true } : undefined;
@@ -207,6 +220,23 @@ export class SaveToFolder {
       this.#options.notifications.push(t("saveToFolder.failed", { name, ...plain }));
       return undefined;
     }
+  }
+
+  /** A folder of another project: people choose another folder, which the press lets the browser ask. */
+  async #otherProject(
+    folder: LocalFolder,
+    project: string,
+    name: string,
+  ): Promise<Place | undefined> {
+    const { dialogs, t } = this.#options;
+    const answer = await dialogs.choose({
+      title: t("saveToFolder.otherProject.title", { folder: folder.name, ...plain }),
+      message: t("saveToFolder.otherProject.message"),
+      choices: [{ id: "elsewhere", label: t("saveToFolder.again.elsewhere"), kind: "primary" }],
+    });
+    if (answer !== "elsewhere") return undefined;
+    const chosen = await this.#options.folders.choose().catch(() => undefined);
+    return chosen && this.#placeIn(chosen, project, name);
   }
 
   /** Whether a folder has only what a save of this editor that stopped halfway left. */
@@ -299,6 +329,7 @@ export class SaveToFolder {
             ]
           : []),
       ].join(""),
+      done: true,
       choices: [
         ...(openOffline ? [{ id: "offline", label: t("saveToFolder.done.openOffline") }] : []),
         { id: "ok", label: t("saveToFolder.done.ok"), kind: "primary" as const },

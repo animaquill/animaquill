@@ -112,11 +112,10 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
         <h2>{view.title}</h2>
         {/* Online a project is new or comes from a folder: two ways to the same dialog. */}
         {kind === "cloud" && !isLocked && !create.takesBack && (
-          <div className={own.ways} role="tablist" aria-label={t("newProject.waysLabel")}>
+          <div className={own.ways} role="group" aria-label={t("newProject.waysLabel")}>
             <button
               type="button"
-              role="tab"
-              aria-selected={!request.imported}
+              aria-pressed={!request.imported}
               onClick={() => {
                 if (!request.imported) return;
                 void giveUp().then((gone) => {
@@ -128,8 +127,7 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
             </button>
             <button
               type="button"
-              role="tab"
-              aria-selected={request.imported === true}
+              aria-pressed={request.imported === true}
               onClick={() => {
                 if (request.imported) return;
                 // Right in the click: the browser asks for a folder only then.

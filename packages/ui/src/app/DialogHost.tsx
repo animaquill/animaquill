@@ -268,7 +268,7 @@ function Dialog({ request }: { request: QuestionRequest }) {
           </div>
         )}
         <div className={styles.buttons}>
-          {!(isConfirm && request.noticeOnly) && (
+          {!(isConfirm && request.noticeOnly) && !(request.kind === "choice" && request.done) && (
             <button
               ref={cancel}
               type="button"
@@ -284,6 +284,9 @@ function Dialog({ request }: { request: QuestionRequest }) {
                 key={id}
                 type="button"
                 {...(kind ? { className: styles[kind] } : {})}
+                // With nothing to cancel, what people most likely want is where the keys are.
+                // oxlint-disable-next-line jsx-a11y/no-autofocus
+                autoFocus={request.done === true && kind === "primary"}
                 onClick={() => dialogs.answer(id)}
               >
                 {label}

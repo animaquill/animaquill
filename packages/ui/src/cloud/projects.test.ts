@@ -83,10 +83,12 @@ describe("CloudProjects", () => {
     await here.cloud.resolveStuck();
     const question = asked.at(-1) as Extract<DialogRequest, { kind: "choice" }>;
     expect(question.message).toBe(
-      "云端找不到这个项目：它可能已经在别处删掉，或者属于另一个账号（那样的话，换回那个账号登录就能接着同步）。改动都在这个浏览器里，可以先保存到文件夹，再断开，项目只留在这个浏览器里。",
+      "云端找不到这个项目：它可能已经在别处删掉，或者属于另一个账号（那样的话，换回那个账号登录就能接着同步）。改动都在这个浏览器里，可以先保存到文件夹，留一份。",
     );
-    // There is nothing there to take what the project has: only letting go.
-    expect(question.choices).toEqual([{ id: "disconnect", label: "断开", kind: "primary" }]);
+    // There is nothing there to take what the project has: only a copy in a folder.
+    expect(question.choices).toEqual([
+      { id: "saveToFolder", label: "保存到文件夹…", kind: "primary" },
+    ]);
     // Asked for all the same, nothing is taken for sent: the platform took nothing.
     await here.cloud.session?.resyncFromHere();
     await time.advance(2000);

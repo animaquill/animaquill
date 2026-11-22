@@ -19,6 +19,7 @@ const canFolders = () =>
 export function EntryPage({
   t,
   problem,
+  waiting = false,
   offlineRefused,
   signIn,
   offline,
@@ -26,6 +27,8 @@ export function EntryPage({
 }: {
   readonly t: TFunction;
   readonly problem: EntryProblem | undefined;
+  /** The ways in cannot be pressed yet, as while the backend is asked who is signed in. */
+  readonly waiting?: boolean;
   /** Safari: the offline mode is grey, and says why, see `startApp`. */
   readonly offlineRefused: boolean;
   readonly signIn: () => void;
@@ -58,6 +61,7 @@ export function EntryPage({
           <button
             type="button"
             className={styles["primary"]}
+            disabled={waiting}
             onClick={signIn}
             // The first thing people do here.
             // oxlint-disable-next-line jsx-a11y/no-autofocus
@@ -69,6 +73,7 @@ export function EntryPage({
           <button
             type="button"
             className={styles["secondary"]}
+            disabled={waiting}
             {...(offlineRefused
               ? {
                   "aria-disabled": "true",

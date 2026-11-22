@@ -281,7 +281,7 @@ describe("the status of the platform in a project", () => {
       expect(ids(stuck(problem)).rows["sync"]).toEqual(["retry", "resolveStuck"]);
     }
     expect(read(stuck({ kind: "rejected", reason: "too-large" })).rows[1]).toBe(
-      "同步  云端没有接受一个改动（太大），同步已暂停。改动都留在本机，可以重试，或者断开云端连接。 [重试] [处理…]",
+      "同步  云端没有接受一个改动（太大），同步已暂停。改动都留在这个浏览器里，可以重试，或者点“处理…”。 [重试] [处理…]",
     );
     expect(read(stuck({ kind: "rebuilt" })).rows[1]).toContain("已经从 GitHub 重新取回");
     expect(stuck({ kind: "missing" }).sync).toBe("paused");

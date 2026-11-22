@@ -139,7 +139,7 @@ test.describe("the offline mode", () => {
     // Grey as what cannot be used now, and still something to press.
     await storage.click({ force: true });
     const asked = page.getByRole("dialog", { name: "这需要登录" });
-    await expect(asked).toContainText("这需要登录（在线模式）。");
+    await expect(asked).toContainText("“存储空间”要登录后才能用");
     await shot(page, "offline-needs-online");
     await asked.getByRole("button", { name: "登录" }).click();
     await editorReady(page);
@@ -155,7 +155,10 @@ test.describe("the online mode", () => {
   async function newOnline(page: Page, name: string) {
     await page.getByRole("button", { name: "新建项目" }).first().click();
     const box = page.locator("dialog[data-create-phase]");
-    await expect(box.getByRole("tab", { name: "新建" })).toHaveAttribute("aria-selected", "true");
+    await expect(box.getByRole("button", { name: "从头新建" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
     await box.getByRole("textbox", { name: "项目名称" }).fill(name);
     await box.getByRole("button", { name: "新建", exact: true }).click();
     await expect(box).toHaveAttribute("data-create-phase", /archiving|done/);

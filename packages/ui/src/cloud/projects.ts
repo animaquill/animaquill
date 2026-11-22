@@ -1093,7 +1093,7 @@ export class CloudProjects {
     if (this.session !== sync) return;
     // As it is kept now: another window may have taken it away, or found the project there.
     if (!kept || kept.project !== link.project || !kept.creating || !this.isOwn(kept)) return;
-    if (!(await this.#unlink(link.key, { quietly: true }))) return;
+    if (!(await this.#unlink(link.key))) return;
     notifications.push(t("cloud.connectUndone"));
   }
 
@@ -1121,7 +1121,7 @@ export class CloudProjects {
     // Another window let go of it already, or it is linked to another project by now.
     if (!kept || kept.project !== link.project) return;
     const name = session.store?.getState().manifest.name ?? kept.name ?? "";
-    if (!(await this.#unlink(link.key, { quietly: true }))) return;
+    if (!(await this.#unlink(link.key))) return;
     notifications.push(
       t("cloud.deletedElsewhere.browser", {
         name,
@@ -1560,43 +1560,44 @@ export class CloudProjects {
   /**
    * People choose what to do with a project whose syncing stopped at something the platform does
    * not take, or that it does not have: everything stays here either way. A change of its own cannot
-   * stay behind while the rest goes on, as what comes after it in Yjs builds on it. A project the
-   * platform does not have, or not as one of whoever is signed in, cannot go on from here either:
-   * there is nothing there to take what it has.
+   * stay behind while the rest goes on, as what comes after it in Yjs builds on it: the project goes
+   * on from what it is here, or people take a copy of it into a folder. A project the platform does
+   * not have, or not as one of whoever is signed in, cannot go on from here: a copy in a folder is
+   * the way out. Resolves to "saveToFolder" where people want that, which whoever shows the panel
+   * does, right in the press.
    */
-  async resolveStuck(): Promise<void> {
+  async resolveStuck(): Promise<"saveToFolder" | undefined> {
     const { dialogs, t, session } = this.#options;
     const key = session.key;
     const snapshot = this.#snapshot;
-    if (!key || snapshot.kind !== "linked") return;
+    if (!key || snapshot.kind !== "linked") return undefined;
     const isMissing = snapshot.session.getSnapshot().problem?.kind === "missing";
     const answer = await dialogs.choose({
       title: t("cloud.stuckTitle"),
       message: t(isMissing ? "cloud.stuckMissingMessage" : "cloud.stuckMessage"),
       choices: isMissing
-        ? [{ id: "disconnect", label: t("cloud.letGo"), kind: "primary" }]
+        ? [{ id: "saveToFolder", label: t("saveToFolder.action"), kind: "primary" }]
         : [
-            { id: "disconnect", label: t("cloud.letGo") },
+            { id: "saveToFolder", label: t("saveToFolder.action") },
             { id: "resync", label: t("cloud.resync"), kind: "primary" },
           ],
     });
-    if (session.key !== key || !this.#isStill(snapshot)) return;
+    if (session.key !== key || !this.#isStill(snapshot)) return undefined;
     if (answer === "resync") await snapshot.session.resyncFromHere();
-    if (answer === "disconnect") await this.#unlink(key);
+    return answer === "saveToFolder" ? "saveToFolder" : undefined;
   }
 
   /**
    * Stops syncing, and forgets the link: here, and in the other windows. Resolves to whether the
-   * link is gone. `quietly`: whoever asked says what came of it.
+   * link is gone. Whoever asked says what came of it.
    */
-  async #unlink(key: string, { quietly = false } = {}): Promise<boolean> {
-    const { cloud, notifications, t } = this.#options;
+  async #unlink(key: string): Promise<boolean> {
+    const { cloud } = this.#options;
     await this.#stop();
     try {
       await cloud.links.remove(key);
     } catch (error) {
       console.warn("The link to the platform could not be taken away", error);
-      if (!quietly) notifications.push(t("cloud.disconnectFailed"));
       this.#key = undefined;
       this.#store = undefined;
       void this.follow();
@@ -1605,7 +1606,6 @@ export class CloudProjects {
     // The copy in the browser is only there now.
     this.#set(ONLY_HERE);
     this.#tell();
-    if (!quietly) notifications.push(t("cloud.disconnected"));
     return true;
   }
 
@@ -3017,7 +3017,7 @@ export class CloudProjects {
       else if (!(await this.#options.closeProject?.()) || session.key === key) kept = "open";
       if (kept !== undefined) {
         // It stays open, as a project of this browser only.
-        await this.#unlink(key, { quietly: true });
+        await this.#unlink(key);
         return kept;
       }
     }
@@ -3050,7 +3050,7 @@ export class CloudProjects {
    */
   async #keepCopy(link: CloudLink): Promise<"notArchived"> {
     const { key } = link;
-    if (this.#options.session.key === key) await this.#unlink(key, { quietly: true });
+    if (this.#options.session.key === key) await this.#unlink(key);
     else {
       if (!(await this.#forgetLink(key)) && !(await this.#forgetLink(key))) {
         console.warn("The link of a project that was deleted stays until the next time");

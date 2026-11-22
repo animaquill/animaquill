@@ -221,9 +221,27 @@ describe("a project of the online mode, saved to a folder (docs/design/online-of
     });
     browser.disk.chooseNext("文档/别的项目");
     const saving = workbench.saveToFolder();
-    // Whether it is a copy of this project is known once the copy is there to say its id.
-    const asked = await answerNext(workbench, "confirm", true);
-    expect(asked).toMatchObject({ confirm: "saveToFolder.again.replace" });
+    // The open project says which it is: another one is refused right away, with another folder.
+    const said = await answerNext(workbench, "choice", undefined);
+    expect(said).toMatchObject({
+      title: expect.stringContaining("saveToFolder.otherProject.title"),
+    });
+    await saving;
+    expect(filesOf(browser.disk, "文档/别的项目").size).toBe(1);
+  });
+
+  it("checks which project a folder has once the copy says, for a project that is not open", async () => {
+    const platform = new MemoryPlatform();
+    const { project } = await onPlatform(platform);
+    const browser = browserOn(platform);
+    const workbench = browser.window();
+    browser.disk.write("文档/别的项目/animaquill.json", JSON.stringify({ id: "other" }), {
+      quietly: true,
+    });
+    browser.disk.chooseNext("文档/别的项目");
+    // From its card: which project it is, only the copy says.
+    const saving = workbench.saveToFolder(project, "片子");
+    await answerNext(workbench, "confirm", true);
     const said = await answerNext(workbench, "confirm", true);
     expect(said).toMatchObject({ noticeOnly: true });
     await saving;
@@ -250,8 +268,11 @@ describe("a project of the online mode, saved to a folder (docs/design/online-of
     browser.disk.write("文档/副本/code/别的.js", "theirs\n", { quietly: true });
     const again = workbench.saveToFolder();
     await answerNext(workbench, "choice", "replace");
-    const said = await answerNext(workbench, "confirm", true);
-    expect(said).toMatchObject({ noticeOnly: true });
+    // Another project: refused, with another folder to choose.
+    const said = await answerNext(workbench, "choice", undefined);
+    expect(said).toMatchObject({
+      title: expect.stringContaining("saveToFolder.otherProject.title"),
+    });
     await again;
     const after = filesOf(browser.disk, "文档/副本");
     expect(after.get("code/别的.js")).toBe("theirs\n");

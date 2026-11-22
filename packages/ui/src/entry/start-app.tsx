@@ -102,6 +102,9 @@ export async function startApp(element: HTMLElement, options: AppOptions): Promi
     void entry.show({
       account,
       problem: "connecting",
+      // Whoever was signed in here before most likely goes on as that: nothing to press meanwhile,
+      // which would note a mode they did not mean.
+      waiting: memory.lastAccount(online.backend) !== undefined,
       offlineRefused,
       offline: chooseOffline,
       retry: () => location.reload(),
@@ -220,6 +223,8 @@ async function dropOld(): Promise<void> {
 interface EntryOptions {
   readonly account: AccountAccess;
   readonly problem: EntryProblem | undefined;
+  /** The ways in cannot be pressed yet. */
+  readonly waiting?: boolean;
   /** This browser gets no offline mode, see `startApp`. */
   readonly offlineRefused: boolean;
   readonly offline: () => void;
@@ -240,6 +245,7 @@ function entryOn(element: HTMLElement) {
           <EntryPage
             t={i18n.t}
             problem={options.problem}
+            waiting={options.waiting === true}
             offlineRefused={options.offlineRefused}
             signIn={() => options.account.signIn()}
             offline={options.offline}

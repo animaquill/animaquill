@@ -2135,7 +2135,7 @@ export class Workbench {
    * What something of the online mode does offline once pressed: says that it needs signing in,
    * with the way to, where there is an online mode, see `OnlineOnly`.
    */
-  async askToGoOnline(): Promise<void> {
+  async askToGoOnline(what: string): Promise<void> {
     const { t } = this;
     if (!this.canGoOnline) {
       await this.dialogs.confirm({
@@ -2148,7 +2148,7 @@ export class Workbench {
     }
     const answer = await this.dialogs.choose({
       title: t("online.needed.title"),
-      message: t("online.needed.message"),
+      message: t("online.needed.message", { what, interpolation: { escapeValue: false } }),
       choices: [{ id: "signIn", label: t("start.signIn"), kind: "primary" }],
     });
     if (answer === "signIn") await this.goOnline();
@@ -2310,7 +2310,8 @@ export class Workbench {
         got && { ...got, media: this.#downloadingMedia(id, got.store, got.media, signal, came) }
       );
     };
-    if (saveToFolders) await saveToFolders.save(id, shown, source);
+    const own = isOpen ? this.session.store?.getState().manifest.id : undefined;
+    if (saveToFolders) await saveToFolders.save(id, shown, source, own);
     else await this.transfer.exportCopy(shown, source);
     // What came for the copy alone goes: the copy has it. The open project may want it still.
     if (!isOpen)
@@ -2445,7 +2446,9 @@ export class Workbench {
         void this.repoMerges?.blocked();
         break;
       case "resolveStuck":
-        void cloud.resolveStuck();
+        void cloud.resolveStuck().then((next) => {
+          if (next === "saveToFolder") void this.saveToFolder();
+        });
         break;
       case "retry":
         cloud.session?.resume();

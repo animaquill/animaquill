@@ -360,7 +360,9 @@ export function AssetPlace({ asset }: { asset: string }) {
       <p className={styles.note}>{t("storage.uploads.row.hereNote")}</p>
       <Buttons>
         {workbench.mode === "offline" ? (
-          <OnlineOnly className={styles.primary}>{t("storage.uploads.row.put")}</OnlineOnly>
+          <OnlineOnly className={styles.primary} what={t("storage.uploads.row.put")}>
+            {t("storage.uploads.row.put")}
+          </OnlineOnly>
         ) : (
           <button
             type="button"

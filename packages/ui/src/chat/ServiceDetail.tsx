@@ -310,7 +310,7 @@ function RouteField({ service }: { readonly service: ServiceConfig }) {
         </button>
         {/* Where there is none, people who chose it can still see that and change it. */}
         {mode === "offline" && service.route !== "relay" ? (
-          <OnlineOnly>{t("ai.routeRelayShort")}</OnlineOnly>
+          <OnlineOnly what={t("ai.routeRelayShort")}>{t("ai.routeRelayShort")}</OnlineOnly>
         ) : (
           <button
             type="button"
