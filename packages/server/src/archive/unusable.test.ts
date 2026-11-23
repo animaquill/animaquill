@@ -767,7 +767,7 @@ describe.skipIf(!TEST_DATABASE)("a project whose repository cannot be used, on a
     ]);
   });
 
-  describe("after the review (docs: /root/aq-work/p1-review-result.md)", () => {
+  describe("after the review", () => {
     /** Where no project is taken away. */
     let off: SyncHub;
     let q: Platform;

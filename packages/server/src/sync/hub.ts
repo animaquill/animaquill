@@ -158,14 +158,14 @@ import { CURRENT_FORMAT_VERSION } from "@animaquill/schema";
  * 0.3.105 has pictures stretch to their box (`fit` "stretch"), which an older page reads as a
  * project that does not fit the format (an older page of a project on this computer does too, and
  * only a reload helps there); 0.3.106 works springs, presets and noise of keys out and gives keys
- * `presetParams` (keyframes-and-fit.md 2.2, 2.3), which an older page reads as a key that does not
+ * `presetParams`, which an older page reads as a key that does not
  * fit the format, and works out otherwise than the export; 0.3.110 writes the changes of a project
  * in the browser's storage in a transaction of their own, marked with the log they are for (`of`),
  * which an older page carries along when it moves a log, so that after a backup is put back they
  * would no longer count as the project's; 0.3.117 has the master of a timeline take `limit.on` and
- * `limit.ceiling` (its safe limiter, audio-mixing.md 2.5), which an older page reads as a project
+ * `limit.ceiling` (its safe limiter), which an older page reads as a project
  * that does not fit the format, and mixes effects of sound otherwise than the export; 0.3.120 has
- * the manifest take `defaultStorage` (online-offline.md 1.7), which an older page reads as a
+ * the manifest take `defaultStorage`, which an older page reads as a
  * project that does not fit the format, refusing the commands of the project properties. Undefined:
  * every editor. An editor that is not a release ("dev") is as new as the code.
  */
@@ -3106,8 +3106,8 @@ export class SyncHub {
     }
     if (!BROWSER_KINDS.has(message.kind)) return reject("source");
     // Made against the project as it was then, as taking a copy back makes it: where anything came
-    // since, as the same taken back by another computer, it would go in twice (start-and-cloud.md 1,
-    // "同时接回的空隙"). The project is read nowhere else meanwhile: this is its turn, and what
+    // since, as the same taken back by another computer, it would go in twice (two computers taking a
+    // copy back at once). The project is read nowhere else meanwhile: this is its turn, and what
     // another process wrote since fails as `HeadMoved` below.
     const { expect } = message;
     if (expect && (expect.generation !== project.generation || expect.seq !== project.head))

@@ -518,7 +518,7 @@ export const projectMarks = pgTable(
     starAt: moment("star_at"),
     groupId: text("group_id"),
     groupAt: moment("group_at"),
-    /** When the person last opened it, on any computer: "最近打开" (online-offline.md, O2). */
+    /** When the person last opened it, on any computer: "最近打开". */
     openedAt: moment("opened_at"),
     updatedAt: moment("updated_at").notNull().defaultNow(),
   },

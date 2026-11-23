@@ -22,7 +22,7 @@ export const LIBRARY_MODES = ["on", "readonly", "off"] as const;
 export type LibraryMode = (typeof LIBRARY_MODES)[number];
 
 export interface LibraryStorageConfig {
-  /** Where the platform reaches the storage itself, such as http://storage:7070. */
+  /** Where the platform reaches the storage itself, such as http://objects.example:7070. */
   readonly endpoint: string;
   /** Where browsers reach it, which the addresses they get are signed for. */
   readonly publicEndpoint: string;

@@ -3,7 +3,7 @@ import type { LibraryConfig, LibraryStorageConfig } from "./config.ts";
 
 /**
  * The storage of the cloud space, seen from the platform: the same bucket twice, as the platform
- * reaches it itself (`internal`, such as http://storage:7070 on the Docker network) and as browsers
+ * reaches it itself (`internal`, such as http://objects.example:7070 on the Docker network) and as browsers
  * do (`public`, https://objects.example.com): addresses are signed for the host they go to, so
  * those for browsers come from `public`, and the platform's own requests go through `internal`.
  *

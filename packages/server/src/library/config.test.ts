@@ -9,10 +9,10 @@ const files = (entries: Record<string, string>) => (path: string) => entries[pat
 
 /** As the .env of the beta has them. */
 const BETA = {
-  LIBRARY_S3_ENDPOINT: "http://storage:7070",
+  LIBRARY_S3_ENDPOINT: "http://objects.example:7070",
   LIBRARY_S3_PUBLIC_ENDPOINT: "https://objects.example.com",
   LIBRARY_S3_REGION: "us-east-1",
-  LIBRARY_S3_BUCKET: "animaquill-library",
+  LIBRARY_S3_BUCKET: "example-library",
   LIBRARY_S3_PATH_STYLE: "true",
   LIBRARY_S3_PREFIX: "library/",
   LIBRARY_S3_ACCESS_KEY_ID: "aq0123456789abcdef01234567",
@@ -44,10 +44,10 @@ describe("the settings of the cloud space", () => {
     const config = library(BETA);
     expect(config.problems).toEqual([]);
     expect(config.storage).toEqual({
-      endpoint: "http://storage:7070",
+      endpoint: "http://objects.example:7070",
       publicEndpoint: "https://objects.example.com",
       region: "us-east-1",
-      bucket: "animaquill-library",
+      bucket: "example-library",
       pathStyle: true,
       prefix: "library/",
       accessKeyId: "aq0123456789abcdef01234567",
@@ -87,8 +87,11 @@ describe("the settings of the cloud space", () => {
 
   test("that are wrong leave the cloud space off and say which, never their values", () => {
     const cases: [Record<string, string>, RegExp][] = [
-      [{ LIBRARY_S3_ENDPOINT: "storage:7070" }, /LIBRARY_S3_ENDPOINT/],
-      [{ LIBRARY_S3_ENDPOINT: "http://storage:7070/path" }, /LIBRARY_S3_ENDPOINT has to be only/],
+      [{ LIBRARY_S3_ENDPOINT: "objects.example:7070" }, /LIBRARY_S3_ENDPOINT/],
+      [
+        { LIBRARY_S3_ENDPOINT: "http://objects.example:7070/path" },
+        /LIBRARY_S3_ENDPOINT has to be only/,
+      ],
       [{ LIBRARY_S3_PUBLIC_ENDPOINT: "ftp://x" }, /LIBRARY_S3_PUBLIC_ENDPOINT/],
       [{ LIBRARY_S3_BUCKET: "Not_A_Bucket" }, /LIBRARY_S3_BUCKET is not a name/],
       [
@@ -136,10 +139,10 @@ describe("the settings of the cloud space", () => {
     expect(describeConfig(config).library).toEqual({
       mode: "on",
       storage: {
-        endpoint: "http://storage:7070",
+        endpoint: "http://objects.example:7070",
         publicEndpoint: "https://objects.example.com",
         region: "us-east-1",
-        bucket: "animaquill-library",
+        bucket: "example-library",
         pathStyle: true,
         prefix: "library/",
         accessKeyId: "aq0123456789abcdef01234567",
