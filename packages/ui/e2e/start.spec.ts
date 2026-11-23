@@ -9,7 +9,15 @@ import {
   sidebar,
   statusOf,
 } from "./start-support.ts";
-import { createProject, devPageOnly, editorReady, expect, tab, test } from "./support.ts";
+import {
+  chooseFromMenu,
+  createProject,
+  devPageOnly,
+  editorReady,
+  expect,
+  tab,
+  test,
+} from "./support.ts";
 
 /**
  * The start page, "作品墙" (the design of the start page of AnimaQuill Cloud, 6): the views of the
@@ -51,10 +59,7 @@ async function arrive(page: Page, { signedIn = true, cloud = true } = {}) {
 const shot = (page: Page, name: string) =>
   page.screenshot({ path: test.info().outputPath(`${name}.png`) });
 
-async function chooseFrom(page: Page, menu: string, item: string) {
-  await page.locator("header").getByRole("button", { name: menu, exact: true }).click();
-  await page.getByRole("menu").getByRole("menuitem", { name: item, exact: true }).click();
-}
+const chooseFrom = chooseFromMenu;
 
 const close = (page: Page) => chooseFrom(page, "文件", "关闭项目");
 

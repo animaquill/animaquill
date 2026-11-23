@@ -111,6 +111,26 @@ export const editorReady = (page: Page) =>
   // Or the entry page, which is what a site with a backend shows before anybody signed in.
   expect(page.locator("header").first().or(page.getByTestId("entry"))).toBeVisible({ timeout: 0 });
 
+/**
+ * Chooses `item` from the menu `menu` of the title bar, also in a narrow window, where the menus are
+ * in one button, "菜单".
+ */
+export async function chooseFromMenu(page: Page, menu: string, item: string) {
+  const header = page.locator("header");
+  const folded = header.getByRole("button", { name: "菜单", exact: true });
+  if (await folded.isVisible()) {
+    await folded.click();
+    await page.getByRole("menu", { name: "菜单" }).getByRole("menuitem", { name: menu }).click();
+    await page
+      .getByRole("menu", { name: menu })
+      .getByRole("menuitem", { name: item, exact: true })
+      .click();
+    return;
+  }
+  await header.getByRole("button", { name: menu, exact: true }).click();
+  await page.getByRole("menu").getByRole("menuitem", { name: item, exact: true }).click();
+}
+
 /** Creates a project the way people do. */
 export async function createProject(page: Page, name = "测试项目") {
   // Where there are projects already, the new card has the same name as the button above it.

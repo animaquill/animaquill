@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 import { dialog, footer } from "./folder-support.ts";
 import { openCard, projectCard } from "./start-support.ts";
-import { devPageOnly, editorReady, expect, test } from "./support.ts";
+import { chooseFromMenu, devPageOnly, editorReady, expect, test } from "./support.ts";
 
 /**
  * Merging what changed on GitHub, as people see it in the editor (the design of the start page of
@@ -110,11 +110,7 @@ async function opened(page: Page, name = "片头动画"): Promise<string> {
     (lab, called) => lab.seed(called, { repository: "opening" }),
     name,
   );
-  await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
-  await page
-    .getByRole("menu")
-    .getByRole("menuitem", { name: "打开在线项目…", exact: true })
-    .click();
+  await chooseFromMenu(page, "文件", "打开在线项目…");
   await openCard(page, name);
   await expect(page).toHaveTitle(`${name} - AnimaQuill`);
   await expect(cloudStatus(page)).toHaveText("已同步");
