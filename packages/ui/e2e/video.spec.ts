@@ -163,6 +163,25 @@ const savedFile = (page: Page) =>
     })
     .then((base64) => (base64 === undefined ? undefined : Buffer.from(base64, "base64")));
 
+/**
+ * Waits until the export wrote the file of the save dialog again, after the test took the old one
+ * away. The notices of exports go after a while: on a busy site the one of the export before can be
+ * gone when the next is done, so counting them says nothing (2026-11-23). The file is empty until
+ * the export closes it.
+ */
+const fileWritten = (page: Page, timeout = 60_000) =>
+  expect
+    .poll(
+      () =>
+        page.evaluate(async () => {
+          const root = await navigator.storage.getDirectory();
+          const handle = await root.getFileHandle("chosen-video").catch(() => undefined);
+          return handle ? (await handle.getFile()).size : 0;
+        }),
+      { timeout },
+    )
+    .toBeGreaterThan(0);
+
 /** Clicks a clip on the canvas, where the list of clips says it is. */
 async function clickClip(page: Page, index: number): Promise<void> {
   await tab(page, "timeline").click();
@@ -1060,16 +1079,14 @@ test.describe("the effects of sound and the safe limiter in the sound of a video
     const peak = sound.samples.reduce((most, value) => Math.max(most, Math.abs(value)), 0);
     return { rms: decibels(rms * Math.SQRT2), peak: decibels(peak) };
   };
-  /** Exports again, the `count`th time: the file of the one before goes first. */
-  const exportAgain = async (page: Page, count: number) => {
+  /** Exports again: the file of the one before goes first. */
+  const exportAgain = async (page: Page) => {
     await page.evaluate(async () => {
       const root = await navigator.storage.getDirectory();
       await root.removeEntry("chosen-video").catch(() => {});
     });
     await startExport(page);
-    await expect(page.getByRole("status").getByText("已导出“")).toHaveCount(count, {
-      timeout: 60_000,
-    });
+    await fileWritten(page);
   };
 
   test("keeps an old project that would clip under −1 dBTP, where it was over", async ({
@@ -1160,11 +1177,11 @@ test.describe("the effects of sound and the safe limiter in the sound of a video
     const slots = content(page, "mixer").getByRole("listitem");
     await slots.nth(1).dragTo(slots.nth(0), { targetPosition: { x: 10, y: 2 } });
     await expect(slots.nth(0)).toContainText("压缩");
-    await exportAgain(page, 2);
+    await exportAgain(page);
     const moved = (await levelOf(page)).rms;
     await page.keyboard.press("Control+z");
     await expect(slots.nth(0)).toContainText("均衡");
-    await exportAgain(page, 3);
+    await exportAgain(page);
     const back = (await levelOf(page)).rms;
     console.log(
       `equalizer then compressor ${first.toFixed(2)}, the other way ${moved.toFixed(2)}, undone ${back.toFixed(2)} dB`,
@@ -1252,8 +1269,8 @@ test.describe("the volume and the pan of a clip in the sound of a video", () => 
     await dialog(page).getByRole("button", { name: "保存后导出" }).click();
     await expect(dialog(page)).toContainText("导出视频");
     await dialog(page).getByRole("button", { name: "导出", exact: true }).click();
-    // The second notice of an export: the file is the new one.
-    await expect(page.getByRole("status").getByText("已导出“")).toHaveCount(2, { timeout: 60_000 });
+    // The file is written again: it is the new one.
+    await fileWritten(page);
     const left = await levels();
     console.log(`all the way left, left and right at 0.5, 1.5, 2.5 s: ${JSON.stringify(left)}`);
     const up = decibels(Math.SQRT2);
