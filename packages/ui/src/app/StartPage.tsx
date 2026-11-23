@@ -1112,15 +1112,15 @@ function useCardActions(
           ...plain,
         }),
         {
-          ...(outcome !== "missing" &&
-            outcome !== "invalid" && {
-              actions: [
-                {
-                  label: t("start.rename.retry"),
-                  run: () => void renameOnline(project, was, wanted),
-                },
-              ],
-            }),
+          // Only where trying again can help: not for what people have to do something about.
+          ...((outcome === "failed" || outcome === "notBack" || outcome === "offline") && {
+            actions: [
+              {
+                label: t("start.rename.retry"),
+                run: () => void renameOnline(project, was, wanted),
+              },
+            ],
+          }),
         },
       );
     });
