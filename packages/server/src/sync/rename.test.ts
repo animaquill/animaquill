@@ -95,6 +95,7 @@ describe.skipIf(!TEST_DATABASE)("renaming a project from the start page, on a da
     expect((await platformFiles(m)).get("animaquill.json")).toContain('"name": "宣传片"');
     // A window that comes later reads it as any change.
     const later = await Window.open(m.hub, m.who, m.project);
+    later.hear();
     expect(later.store.getState().manifest.name).toBe("宣传片");
 
     // Called so already: nothing is written.
