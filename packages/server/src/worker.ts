@@ -1,7 +1,7 @@
 import { Archiver } from "./archive/archiver.ts";
 import { EXPORT_HEAP_MB, ProjectExporter } from "./archive/exporter.ts";
 import { GitHubRepoHost } from "./archive/github-host.ts";
-import { Rebuilder, startRebuilding } from "./archive/rebuild.ts";
+import { Rebuilder, setUpRebuildQueues, startRebuilding } from "./archive/rebuild.ts";
 import { RepoHosts } from "./archive/repo-host.ts";
 import { STOP_WAIT_MS, enqueueArchive, startArchiving } from "./archive/schedule.ts";
 import type { Config } from "./config.ts";
@@ -148,21 +148,26 @@ export const startWorker = (config: Config, parts: WorkerParts): Worker => {
           providers: hosts.providers,
         });
         const queue = jobs;
-        // Working copies the server let go of, made again from the repository as they are asked for.
-        const rebuilder = new Rebuilder({
-          db: database.db,
-          hosts,
-          exporter: new ProjectExporter({ heapMb: EXPORT_HEAP_MB }),
-          log,
-          // Changes in the repository since the archive the copy is made from: an archive that
-          // looks finds them.
-          lookAgain: (project) => enqueueArchive(queue, { project, kind: "check" }),
-        });
-        await startRebuilding(jobs, {
-          db: database.db,
-          rebuilder: { run: (project) => inTurn(() => rebuilder.run(project)) },
-          log,
-        });
+        // Working copies the server let go of, made again from the repository as they are asked for:
+        // only where a repository can be reached. Without one, what is asked for waits in the queue,
+        // as archives wait: a try would fail, and enough of them would take the project away.
+        if (hosts.providers.length === 0) await setUpRebuildQueues(jobs);
+        else {
+          const rebuilder = new Rebuilder({
+            db: database.db,
+            hosts,
+            exporter: new ProjectExporter({ heapMb: EXPORT_HEAP_MB }),
+            log,
+            // Changes in the repository since the archive the copy is made from: an archive that
+            // looks finds them.
+            lookAgain: (project) => enqueueArchive(queue, { project, kind: "check" }),
+          });
+          await startRebuilding(jobs, {
+            db: database.db,
+            rebuilder: { run: (project) => inTurn(() => rebuilder.run(project)) },
+            log,
+          });
+        }
         log.info({ providers: hosts.providers }, "archiving");
         await pushing(jobs);
         return;
