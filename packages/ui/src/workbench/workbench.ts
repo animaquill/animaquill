@@ -1223,20 +1223,10 @@ export class Workbench {
       organizer: host.organizer,
       offline: () => this.notifications.push(t("online.readOnly")),
     });
-    this.#followPerson(cloud);
+    this.#followPerson(cloud, host.account);
     this.onlineNames = new OnlineNames({
       cloud: () => cloud,
       refresh: () => this.start.refresh(),
-      ...(typeof navigator === "object" &&
-        typeof addEventListener === "function" && {
-          network: {
-            get onLine() {
-              return navigator.onLine;
-            },
-            addEventListener: (type, listener) => addEventListener(type, listener),
-            removeEventListener: (type, listener) => removeEventListener(type, listener),
-          },
-        }),
     });
     this.startCovers = new StartCovers({
       ...(host.covers && { covers: host.covers }),
@@ -2861,26 +2851,43 @@ export class Workbench {
    * What changed of the person's list on any computer, as the platform says it at once
    * (`CloudAccess.events`): the start page reads its list and how projects are organised again.
    * While the platform cannot be heard so, it reads them every minute, and as people come back to
-   * the page.
+   * the page. Only while someone is signed in: nobody else has a list.
    */
-  #followPerson(cloud: CloudAccess | undefined): void {
+  #followPerson(cloud: CloudAccess | undefined, account: AccountAccess | undefined): void {
     const events = cloud?.events;
     if (!events) return;
-    let live = false;
-    const read = () => {
-      void this.start.refresh();
-      void this.organizer.refresh();
+    let stop: (() => void) | undefined;
+    const follow = () => {
+      const signedIn = account ? account.getSnapshot().status === "signedIn" : true;
+      if (!signedIn) {
+        stop?.();
+        stop = undefined;
+        return;
+      }
+      if (stop) return;
+      let live = false;
+      const read = () => {
+        void this.start.refresh();
+        void this.organizer.refresh();
+      };
+      const stopEvents = events.watch(read, (now) => {
+        live = now;
+      });
+      const timer = setInterval(() => {
+        if (!live) read();
+      }, 60_000);
+      const visible = () => {
+        if (!live && globalThis.document?.visibilityState === "visible") read();
+      };
+      globalThis.document?.addEventListener("visibilitychange", visible);
+      stop = () => {
+        stopEvents();
+        clearInterval(timer);
+        globalThis.document?.removeEventListener("visibilitychange", visible);
+      };
     };
-    events.watch(read, (now) => {
-      live = now;
-    });
-    const timer = setInterval(() => {
-      if (!live) read();
-    }, 60_000);
-    (timer as { unref?: () => void }).unref?.();
-    globalThis.document?.addEventListener("visibilitychange", () => {
-      if (!live && globalThis.document?.visibilityState === "visible") read();
-    });
+    account?.subscribe(follow);
+    follow();
   }
 
   #keepPresence(host: Host): void {

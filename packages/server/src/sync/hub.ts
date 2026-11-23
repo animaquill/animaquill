@@ -516,6 +516,25 @@ export type BatchStateOutcome =
   { readonly kind: "missing" } | { readonly kind: "state"; readonly state: BatchState };
 
 /** What came of `SyncHub.takeBack`. */
+export type TakeBackOutcome =
+  | { readonly kind: "missing" }
+  | { readonly kind: "refused"; readonly why: BatchWhy }
+  | {
+      readonly kind: "taken";
+      /** The batch it is, and its update: none where nothing changed. */
+      readonly batch: string;
+      readonly seq: number | undefined;
+      readonly direction: "undo" | "redo";
+      /** Places that went back, and that stayed as they were changed since: the first of them. */
+      readonly back: readonly (readonly string[])[];
+      readonly kept: readonly (readonly string[])[];
+      readonly backCount: number;
+      readonly keptCount: number;
+      readonly obstacle?: "changed" | "inUse";
+      /** What goes the other way again. */
+      readonly next: { readonly batch: string; readonly direction: "undo" | "redo" };
+    };
+
 /** The kind of the batch a rename from the start page is, see `SyncHub.rename`. */
 export const RENAME_BATCH = "rename";
 
@@ -539,25 +558,6 @@ export type RenameOutcome =
   | {
       readonly kind: "refused";
       readonly why: "invalid" | "locked" | "unusable" | "released" | "quota" | "failed";
-    };
-
-export type TakeBackOutcome =
-  | { readonly kind: "missing" }
-  | { readonly kind: "refused"; readonly why: BatchWhy }
-  | {
-      readonly kind: "taken";
-      /** The batch it is, and its update: none where nothing changed. */
-      readonly batch: string;
-      readonly seq: number | undefined;
-      readonly direction: "undo" | "redo";
-      /** Places that went back, and that stayed as they were changed since: the first of them. */
-      readonly back: readonly (readonly string[])[];
-      readonly kept: readonly (readonly string[])[];
-      readonly backCount: number;
-      readonly keptCount: number;
-      readonly obstacle?: "changed" | "inUse";
-      /** What goes the other way again. */
-      readonly next: { readonly batch: string; readonly direction: "undo" | "redo" };
     };
 
 /** How many places `TakeBackOutcome` names at most, each way. */

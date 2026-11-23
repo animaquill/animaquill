@@ -54,6 +54,12 @@ export interface RepoChangesOptions {
 
 const NOTHING: ReadonlySet<string> = new Set();
 
+/**
+ * The name a rename on the start page gave, as its batch says it (`SyncHub.rename` of the server:
+ * "在开始页改名为「…」"): its own, as several can come at once, the project having the last.
+ */
+export const renamedTo = (label: string): string | undefined => /「(.*)」$/s.exec(label)?.[1];
+
 /** What one or more merges changed, for the notice and for looking at. */
 export interface RepoMerge {
   readonly files: number;
@@ -128,8 +134,7 @@ export class RepoChanges {
     // Renamed on the start page: the list says so, as what it is, and the title follows by itself.
     for (const batch of note.batches) {
       if (batch.kind !== "rename") continue;
-      const name = this.#options.store()?.getState().manifest.name ?? "";
-      this.#options.heardRename?.({ batch: batch.batch, name });
+      this.#options.heardRename?.({ batch: batch.batch, name: renamedTo(batch.label) ?? "" });
     }
     // Merges taken back as a whole, or done again: the list says so, nothing else changes. After
     // the merges of the same note, which take the place of "其他窗口" first.

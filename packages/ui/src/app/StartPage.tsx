@@ -781,8 +781,14 @@ function CardItem({
         hint: undefined,
       }
     : cardStatus(card, folder, t, now);
-  // Renamed on the platform: not without a network.
+  // Renamed on the platform: not while it does not answer, as the backend says it (never what the
+  // browser says of its network).
   const renamesOnline = isCloudKind(card.kind) && workbench.onlineNames.available;
+  const backendAway =
+    useSyncExternalStore(
+      workbench.accountAi?.subscribe ?? noSubscription,
+      workbench.accountAi?.getSnapshot ?? noAccountAi,
+    )?.status === "offline";
   const at = time === "opened" ? card.openedAt : card.updatedAt;
   const when = at === undefined ? undefined : agoText(at, now, t);
   const words = { name: shown, ...plain };
@@ -807,7 +813,7 @@ function CardItem({
         ...(busy && action !== "openOnGitHub" && { disabled: true }),
         ...(action === "rename" &&
           renamesOnline &&
-          !names.online && { disabled: true, note: t("start.menu.renameOffline") }),
+          backendAway && { disabled: true, note: t("start.menu.renameOffline") }),
         run: () => actions.run(card, action, more.current),
       })),
     );
@@ -1102,18 +1108,24 @@ function useCardActions(
   const renameOnline = async (project: string, was: string, name: string) => {
     const wanted = name.trim();
     if (wanted === was) return "unchanged" as const;
-    if (!workbench.onlineNames.getSnapshot().online) return "offline" as const;
     void workbench.onlineNames.rename(project, wanted).then((outcome) => {
-      if (outcome === "renamed") return;
+      // A later rename of it says what came of the name.
+      if (outcome === "renamed" || outcome === "superseded") return;
       workbench.notifications.push(
-        t("start.rename.notice", {
-          name: wanted,
-          why: t(`start.rename.${outcome}`),
-          ...plain,
-        }),
+        // Not reached: as everything else that changes something online says it.
+        outcome === "unreachable"
+          ? t("online.readOnly")
+          : t("start.rename.notice", {
+              from: was,
+              name: wanted,
+              why: t(
+                outcome === "failed" ? "start.rename.serverFailed" : `start.rename.${outcome}`,
+              ),
+              ...plain,
+            }),
         {
           // Only where trying again can help: not for what people have to do something about.
-          ...((outcome === "failed" || outcome === "notBack" || outcome === "offline") && {
+          ...((outcome === "failed" || outcome === "notBack" || outcome === "unreachable") && {
             actions: [
               {
                 label: t("start.rename.retry"),

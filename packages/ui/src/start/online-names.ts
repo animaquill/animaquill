@@ -7,8 +7,8 @@ import { Emitter } from "../workbench/emitter.ts";
  * `SyncHub.rename` of the server. Until it answers the card shows the new name (`pending`), and the
  * old one again where it does not take it, which people are told. A project whose working copy the
  * platform let go of comes back from its repository first ("waking"): asked for again until it is
- * there, then renamed. Without a network there is nothing to rename on: people are told so before
- * they try (`online`). No DOM.
+ * there, then renamed. Whether the platform can be reached goes by whether it answers, never by what
+ * the browser says of its network: a backend on this computer answers without one. No DOM.
  */
 
 /** What came of a rename, for the card: "renamed" also where it was called so already. */
@@ -21,8 +21,11 @@ export type OnlineRenameOutcome =
   /** It could not be made again from its repository, or not now. */
   | "notBack"
   | "missing"
-  | "offline"
+  /** The platform did not answer: no network, a gateway that said 502, no answer in time. */
+  | "unreachable"
   | "signedOut"
+  /** Another rename of the project came after it, which says what came of the name. */
+  | "superseded"
   | "failed";
 
 /** A name on its way to the platform. */
@@ -35,8 +38,6 @@ export interface PendingName {
 export interface OnlineNamesSnapshot {
   /** By the id of the project on the platform. */
   readonly pending: ReadonlyMap<string, PendingName>;
-  /** Whether the browser says it has a network: without one, nothing is renamed. */
-  readonly online: boolean;
 }
 
 export interface OnlineNamesOptions {
@@ -48,12 +49,6 @@ export interface OnlineNamesOptions {
   readonly askEveryMs?: number;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly now?: () => number;
-  /** Where the browser says whether it has a network. Without one, it has. */
-  readonly network?: {
-    readonly onLine: boolean;
-    addEventListener(type: "online" | "offline", listener: () => void): void;
-    removeEventListener(type: "online" | "offline", listener: () => void): void;
-  };
 }
 
 const NOTHING: ReadonlyMap<string, PendingName> = new Map();
@@ -65,22 +60,10 @@ export class OnlineNames {
   /** The latest rename of each project: an older one that answers after it changes nothing. */
   readonly #latest = new Map<string, number>();
   #next = 0;
-  readonly #stop: () => void;
 
   constructor(options: OnlineNamesOptions) {
     this.#options = options;
-    const network = options.network;
-    this.#snapshot = { pending: NOTHING, online: network?.onLine ?? true };
-    const changed = () => {
-      const online = network?.onLine ?? true;
-      if (online !== this.#snapshot.online) this.#set({ ...this.#snapshot, online });
-    };
-    network?.addEventListener("online", changed);
-    network?.addEventListener("offline", changed);
-    this.#stop = () => {
-      network?.removeEventListener("online", changed);
-      network?.removeEventListener("offline", changed);
-    };
+    this.#snapshot = { pending: NOTHING };
   }
 
   subscribe = this.#emitter.subscribe;
@@ -97,7 +80,6 @@ export class OnlineNames {
     if (wanted === "") return "invalid";
     const cloud = this.#options.cloud();
     if (!cloud?.rename) return "failed";
-    if (!this.#snapshot.online) return "offline";
     const ticket = ++this.#next;
     this.#latest.set(project, ticket);
     this.#show(project, { name: wanted, state: "saving" });
@@ -105,20 +87,17 @@ export class OnlineNames {
     try {
       outcome = await this.#ask(cloud, project, wanted, ticket);
     } catch (error) {
-      outcome = error instanceof CloudSignedOut ? "signedOut" : this.#offlineOr("failed");
+      // Not what the browser says of its network: whether the platform answered.
+      outcome = error instanceof CloudSignedOut ? "signedOut" : "unreachable";
     }
-    if (this.#latest.get(project) !== ticket) return outcome;
+    // A later rename of it says what came of the name.
+    if (this.#latest.get(project) !== ticket) return "superseded";
     // The list says the new name before the card stops showing it, so that it never flickers back.
     if (outcome === "renamed") await this.#options.refresh().catch(() => {});
-    if (this.#latest.get(project) === ticket) {
-      this.#latest.delete(project);
-      this.#show(project, undefined);
-    }
+    if (this.#latest.get(project) !== ticket) return "superseded";
+    this.#latest.delete(project);
+    this.#show(project, undefined);
     return outcome;
-  }
-
-  stop(): void {
-    this.#stop();
   }
 
   async #ask(
@@ -150,7 +129,8 @@ export class OnlineNames {
       // On its way back from the repository: renamed once it is there.
       this.#show(project, { name, state: "waking" });
       for (;;) {
-        if (now() > until || this.#latest.get(project) !== ticket) return "notBack";
+        if (this.#latest.get(project) !== ticket) return "superseded";
+        if (now() > until) return "notBack";
         await sleep(askEveryMs);
         const woke = await cloud.wake?.(project);
         if (!woke || woke.copy === "released" || woke.copy === "missing")
@@ -158,13 +138,6 @@ export class OnlineNames {
         if (woke.copy === "live") break;
       }
     }
-  }
-
-  /** What a request that got no answer says: the network went, or something else. */
-  #offlineOr(outcome: OnlineRenameOutcome): OnlineRenameOutcome {
-    const online = this.#options.network?.onLine ?? true;
-    if (!online && this.#snapshot.online) this.#set({ ...this.#snapshot, online });
-    return online ? outcome : "offline";
   }
 
   #show(project: string, pending: PendingName | undefined): void {

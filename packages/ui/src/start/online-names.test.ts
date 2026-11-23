@@ -2,22 +2,6 @@ import { CloudSignedOut, type CloudRename, type CloudWake } from "@animaquill/ho
 import { describe, expect, test } from "vitest";
 import { OnlineNames } from "./online-names.ts";
 
-/** A browser that says whether it has a network, and tells as that changes. */
-class Network {
-  onLine = true;
-  readonly #listeners = new Map<string, Set<() => void>>();
-  addEventListener(type: string, listener: () => void) {
-    this.#listeners.set(type, (this.#listeners.get(type) ?? new Set()).add(listener));
-  }
-  removeEventListener(type: string, listener: () => void) {
-    this.#listeners.get(type)?.delete(listener);
-  }
-  go(onLine: boolean) {
-    this.onLine = onLine;
-    for (const listener of this.#listeners.get(onLine ? "online" : "offline") ?? []) listener();
-  }
-}
-
 /** The platform as the start page reaches it: each answer as a test says it. */
 const platformOf = (answers: (CloudRename | Error)[], woken: (CloudWake | Error)[] = []) => {
   const asked: string[] = [];
@@ -40,7 +24,7 @@ const platformOf = (answers: (CloudRename | Error)[], woken: (CloudWake | Error)
   };
 };
 
-const namesWith = (platform: ReturnType<typeof platformOf>, network = new Network()) => {
+const namesWith = (platform: ReturnType<typeof platformOf>) => {
   const refreshed: number[] = [];
   let time = 0;
   const names = new OnlineNames({
@@ -48,7 +32,6 @@ const namesWith = (platform: ReturnType<typeof platformOf>, network = new Networ
     refresh: async () => {
       refreshed.push(time);
     },
-    network,
     sleep: async (ms) => {
       time += ms;
     },
@@ -56,7 +39,7 @@ const namesWith = (platform: ReturnType<typeof platformOf>, network = new Networ
     askEveryMs: 1000,
     wakeMs: 10_000,
   });
-  return { names, refreshed, network };
+  return { names, refreshed };
 };
 
 describe("renaming projects of the platform from the start page", () => {
@@ -81,7 +64,9 @@ describe("renaming projects of the platform from the start page", () => {
       [{ kind: "missing" }, "missing"],
       [{ copy: "released", refused: "noRepository" }, "notBack"],
       [new CloudSignedOut("out"), "signedOut"],
-      [new Error("500"), "failed"],
+      // No answer as the platform's, whatever the browser says of its network.
+      [new Error("Failed to fetch"), "unreachable"],
+      [new Error("The platform answered 502"), "unreachable"],
     ] as const) {
       const { names, refreshed } = namesWith(platformOf([answer as CloudRename | Error]));
       expect(await names.rename("p1", "宣传片"), JSON.stringify(answer)).toBe(outcome);
@@ -119,23 +104,18 @@ describe("renaming projects of the platform from the start page", () => {
     expect(await namesWith(never).names.rename("p1", "宣传片")).toBe("notBack");
   });
 
-  test("without a network nothing is sent, and a request that finds the network gone says so", async () => {
-    const network = new Network();
-    const platform = platformOf([new Error("Failed to fetch")]);
-    const { names } = namesWith(platform, network);
-    const online: boolean[] = [];
-    names.subscribe(() => online.push(names.getSnapshot().online));
-    network.go(false);
-    expect(names.getSnapshot().online).toBe(false);
-    expect(await names.rename("p1", "宣传片")).toBe("offline");
-    expect(platform.asked).toEqual([]);
-    network.go(true);
-    // It went while the request was on its way.
-    const going = names.rename("p1", "宣传片");
-    network.onLine = false;
-    expect(await going).toBe("offline");
-    expect(names.getSnapshot().online).toBe(false);
-    expect(online).toContain(true);
+  test("a rename while the copy comes back takes the place of the one before, which says nothing", async () => {
+    const platform = platformOf(
+      [{ kind: "waking" }],
+      [{ copy: "restoring" }, { copy: "restoring" }, { copy: "live" }],
+    );
+    const { names } = namesWith(platform);
+    const first = names.rename("p1", "一");
+    await Promise.resolve();
+    const second = names.rename("p1", "二");
+    expect(await second).toBe("renamed");
+    expect(await first).toBe("superseded");
+    expect(names.getSnapshot().pending.size).toBe(0);
   });
 
   test("of two renames of a project, the later one is what the card shows", async () => {
@@ -159,7 +139,7 @@ describe("renaming projects of the platform from the start page", () => {
     expect(names.getSnapshot().pending.get("p1")?.name).toBe("二");
     expect(await second).toBe("renamed");
     answerFirst({ kind: "renamed", name: "一" });
-    expect(await first).toBe("renamed");
+    expect(await first).toBe("superseded");
     expect(names.getSnapshot().pending.size).toBe(0);
   });
 });

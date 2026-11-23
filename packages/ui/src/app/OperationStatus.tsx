@@ -155,12 +155,17 @@ export function OperationStatus() {
                   >
                     <span className={styles.name}>{name}</span>
                     <span className={styles.about}>
-                      <span className={styles.source} data-source={operation.source}>
-                        {tool
-                          ? t("localAi.source")
-                          : // What people chose to take out is their doing, not GitHub's.
-                            t(`operations.source.${operation.dropped ? "you" : operation.source}`)}
-                      </span>
+                      {/* A rename on the start page says where it was in its name already. */}
+                      {operation.source !== "rename" && (
+                        <span className={styles.source} data-source={operation.source}>
+                          {tool
+                            ? t("localAi.source")
+                            : // What people chose to take out is their doing, not GitHub's.
+                              t(
+                                `operations.source.${operation.dropped ? "you" : operation.source}`,
+                              )}
+                        </span>
+                      )}
                       {tool ? (
                         <time dateTime={new Date(tool.from).toISOString()}>
                           {clock.format(tool.from) === clock.format(tool.to)
