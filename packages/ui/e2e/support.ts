@@ -127,6 +127,7 @@ export async function createProject(page: Page, name = "测试项目") {
 export const test = base.extend<{
   problems: string[];
   withProject: boolean;
+  offlineFirst: boolean;
   onDisk: boolean;
   trying: boolean;
   quality: "auto" | "full";
@@ -134,6 +135,11 @@ export const test = base.extend<{
   folders: boolean;
 }>({
   withProject: [true, { option: true }],
+  /**
+   * Whether the offline mode is chosen on the entry page also without a project: `scripts/e2e-prod`
+   * turns it on for the tests of this folder, which are all of the offline mode.
+   */
+  offlineFirst: [false, { option: true }],
   /**
    * Whether projects are folders on the disk, as in Chrome and Edge. Off for everything that is not
    * about that: then projects stay in the browser, as in Firefox, because a test cannot answer the
@@ -176,7 +182,7 @@ export const test = base.extend<{
     rmSync(folder, { recursive: true, force: true });
   },
   problems: [
-    async ({ page, withProject, trying, quality, folders }, use) => {
+    async ({ page, withProject, offlineFirst, trying, quality, folders }, use) => {
       const problems: string[] = [];
       page.on("pageerror", (error) => problems.push(error.message));
       page.on("console", (message) => {
@@ -231,13 +237,14 @@ export const test = base.extend<{
       }
       await page.goto("/");
       await editorReady(page);
-      // On a site with a backend (scripts/e2e-edge, scripts/e2e-prod) the page asks first: these
-      // tests are of the offline mode, where nobody is signed in, also those that make their own
-      // project (2026-11-23: on the site they all stopped at the entry page).
+      // On a site with a backend (scripts/e2e-edge, scripts/e2e-prod) the page asks first. A test
+      // with a project is of the offline mode, where nobody is signed in; so is every test of this
+      // folder against the site (`offlineFirst`, 2026-11-23: there they all stopped at the entry
+      // page), while those of the site itself sign in from it.
       const offline = page.getByTestId("entry").getByRole("button", {
         name: "不登录，使用离线模式",
       });
-      if (await offline.isVisible()) {
+      if ((withProject || offlineFirst) && (await offline.isVisible())) {
         await offline.click();
         await expect(page.locator("header").first()).toBeVisible({ timeout: 0 });
       }
