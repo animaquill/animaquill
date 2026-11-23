@@ -243,7 +243,7 @@ const portsOfTest = () => {
 
 const ORIGIN = "https://editor.test";
 
-describe("animaquill mcp", { timeout: 60_000 }, () => {
+describe("animaquill mcp", { timeout: 120_000 }, () => {
   it("serves the tools of the browser to clients of 2026 and of 2025, and says there is no editor", async () => {
     const root = sampleFolder();
     const ports = portsOfTest();
@@ -300,8 +300,9 @@ describe("animaquill mcp", { timeout: 60_000 }, () => {
     // The page says what it has open a moment after it connects, later on a busy computer.
     await waitFor(async () => {
       const result = await first.callTool({ name: "aq_project_status", arguments: {} });
-      return !textOf(result).startsWith("error editor-not-open") || false;
-    }, 30_000);
+      const said = textOf(result);
+      return !(said.startsWith("error editor-not-open") || said.startsWith("error editor-opening"));
+    }, 50_000);
     const status = await call(first, "aq_project_status", {});
     expect(status).toMatch(new RegExp(`^project: "${manifest.name}" \\(offline, the folder `));
     expect(await call(second, "aq_timeline_read", { timeline: "main" })).toMatch(/clip_/);

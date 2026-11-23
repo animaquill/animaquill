@@ -35,7 +35,7 @@ test.describe("a project only in the browser", () => {
     );
     // Not the editor of npx animaquill: what lets the AI tools connect to this site, to copy.
     await expect(guide(page)).toContainText(
-      "npx -y animaquill@latest mcp allow-origin http://localhost:5173",
+      `npx -y animaquill@latest mcp allow-origin ${new URL(page.url()).origin}`,
     );
     await shot(page, "guide-browser");
     await guide(page).getByRole("button", { name: "关闭" }).last().click();
