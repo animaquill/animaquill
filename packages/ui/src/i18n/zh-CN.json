@@ -1603,7 +1603,8 @@
         "setCredits": "改署名",
         "setFormats": "改画幅",
         "setLanguages": "改语言",
-        "setCover": "改封面帧"
+        "setCover": "改封面帧",
+        "setDefaultStorage": "改默认存储空间"
       },
       "asset": {
         "add": "添加素材",
@@ -5047,31 +5048,35 @@
         "seeQuota": "在 GitHub 上看我的额度",
         "kinds": "几种放法有什么区别（只在这台电脑上 / GitHub 大文件存储 / 云端空间 / 我的存储）",
         "kind": {
-          "here": "只在这台电脑上（默认）：不上传，不花钱。换电脑、在别的电脑上直接打开在线项目、云端 AI 都拿不到这个文件；硬盘坏了就没了。",
+          "here": "只在这台电脑上：不上传，不花钱。换电脑、在别的电脑上直接打开在线项目、云端 AI 都拿不到这个文件；硬盘坏了就没了。",
           "lfs": "GitHub 大文件存储：经服务器中转存进你的 GitHub 仓库，和项目放在一起，换一台电脑打开时自动下载。占你 GitHub 账号的大文件额度：免费账号每月 10 GiB 存储、10 GiB 下载流量，以 GitHub 为准；绑了付款方式的账号超出后会被收费，默认没有上限。单个文件最大 2 GB。存进去以后不能单独删掉，只能删整个仓库。要经过服务器中转，比直传慢。",
           "platform": "云端空间（在做）：放在 AnimaQuill 的存储里，换电脑能下载，云端 AI 能直接读。同一个文件在你所有项目里只存一份。内测期由管理员开通，没有备份，本机还留着原片。",
           "remote": "我的存储（在做）：放进你自己设置的存储桶，费用由存储服务收，服务器不收费。浏览器直接上传，不经过服务器。"
         },
-        "auto": "这个项目以后新导入的素材，自动放进 GitHub 大文件存储",
         "acknowledge": "我知道：放进去以后不能单独删掉，只能删整个仓库；用的是我 GitHub 账号的额度。",
         "start": "开始上传（{{count}} 个，{{size}}）",
         "startNone": "开始上传",
         "cancel": "取消",
         "footer": "关掉这个项目会暂停，下次打开接着传。",
         "more": "还有 {{count}} 个小文件（共 {{size}}）· 展开",
-        "failed": "没能开始上传，请再试一次。",
-        "autoFirst": "先勾下面的“我知道…”"
+        "failed": "没能开始上传，请再试一次。"
       },
       "notice": {
         "allDone": "{{count}} 个素材已放进 GitHub 大文件存储",
-        "large": "「{{name}}」有 {{size}}，现在只在这台电脑上。",
-        "browserOnly": "新素材现在只在这个浏览器里，换一台电脑看不到。可以放进 GitHub 大文件存储。",
-        "connected": "要把素材放进 GitHub 大文件存储吗？换电脑才能用。",
-        "firstImport": "要把素材放进 GitHub 大文件存储吗？换电脑才能用。",
-        "put": "放进 GitHub 大文件存储",
-        "choose": "选素材…",
-        "no": "不用",
-        "later": "以后再说"
+        "askOne": "「{{name}}」会放进这个项目的 GitHub 大文件存储，换电脑能自动下载。",
+        "askMany": "新导入的 {{count}} 个素材会放进这个项目的 GitHub 大文件存储，换电脑能自动下载。",
+        "cost": "放进去以后不能单独删掉，只能删整个仓库；用的是你 GitHub 账号的大文件额度。",
+        "askLargeOne": "「{{name}}」有 {{size}}。",
+        "askLargeMany": "其中 {{count}} 个大于 100 MB，共 {{size}}。",
+        "largeOne": "「{{name}}」有 {{size}}，会放进 GitHub 大文件存储，占你 GitHub 账号的大文件额度。",
+        "largeMany": "{{count}} 个大文件（共 {{size}}）会放进 GitHub 大文件存储，占你 GitHub 账号的大文件额度。",
+        "tooLargeOne": "「{{name}}」超过 2 GB，GitHub 大文件存储不收，只在这台电脑上。",
+        "tooLargeMany": "{{count}} 个文件超过 2 GB，GitHub 大文件存储不收，只在这台电脑上。",
+        "agree": "知道了，放进去",
+        "keepHere": "这个项目只放在这台电脑上",
+        "notThis": "这个不放进去",
+        "notThese": "这些不放进去",
+        "ok": "好"
       },
       "leave": {
         "title": "还有 {{count}} 个素材在上传（还剩 {{left}}）",
@@ -5081,12 +5086,19 @@
       },
       "removeNote": "GitHub 大文件存储里的那份不会删掉，GitHub 不能单独删大文件。",
       "properties": {
-        "assets": "素材",
-        "assetsValue": "{{lfs}} 个在 GitHub 大文件存储（{{size}}），{{here}} 个只在这台电脑上",
-        "auto": "新导入的素材自动放进 GitHub 大文件存储",
-        "autoHelp": "在线项目新导入的素材默认只在这台电脑上。经常换电脑的话打开它，以后导入的素材会自动上传。",
-        "autoFailed": "没能保存这个开关，请再试一次。",
-        "agree": "我知道了，打开"
+        "default": "默认存储空间",
+        "lfs": "GitHub 大文件存储",
+        "lfsAt": "GitHub 大文件存储 · {{repo}}",
+        "local": "只在这台电脑上",
+        "signIn": "登录后可用",
+        "unsupported": "这个服务器没有",
+        "noRepository": "项目还没有仓库",
+        "localOnline": "清理浏览器数据时会丢，换电脑、云端 AI 都拿不到。",
+        "localOffline": "素材放在项目文件夹里。",
+        "lfsHelp": "新导入的素材传进这个项目的 GitHub 仓库，换电脑能自动下载。这台电脑上的原片照样留着。",
+        "fellBack": "默认是 GitHub 大文件存储，这里用不了（{{why}}），新素材只在这台电脑上。",
+        "existing": "已有的：{{lfs}} 个在 GitHub 大文件存储（{{size}}），{{here}} 个只在这台电脑上",
+        "moveExisting": "把已有的也换过去…"
       },
       "start": {
         "unfinished": "↑ {{count}} 个素材没传完，打开后接着传"

@@ -117,10 +117,9 @@ export class LabLfs implements LfsAccess {
   }
 }
 
-/** What the person has in the storage, and how they go about it, in this tab. */
+/** What the person has in the storage, and whether they said they know what it means, in this tab. */
 export class LabLfsAccount implements LfsAccountAccess {
   acknowledgedAt: number | undefined;
-  readonly auto = new Set<string>();
   /** What the storage page lists, as a test sets it up. */
   repositories: LfsAccount["repositories"] = [];
   readonly #account: () => string | undefined;
@@ -133,7 +132,6 @@ export class LabLfsAccount implements LfsAccountAccess {
     return {
       account: this.#account() ?? "",
       ...(this.acknowledgedAt !== undefined && { acknowledgedAt: this.acknowledgedAt }),
-      auto: [...this.auto],
       repositories: this.repositories,
     };
   }
@@ -142,18 +140,8 @@ export class LabLfsAccount implements LfsAccountAccess {
     return this.#now();
   }
 
-  async change(
-    _account: string,
-    changes: { acknowledged?: true; auto?: { project: string; on: boolean } },
-  ): Promise<LfsAccount> {
+  async change(_account: string, changes: { acknowledged?: true }): Promise<LfsAccount> {
     if (changes.acknowledged) this.acknowledgedAt ??= Date.now();
-    // As the platform: only for someone who said they know what it means.
-    if (changes.auto?.on && this.acknowledgedAt === undefined)
-      throw new Error("The platform answered 409");
-    if (changes.auto) {
-      if (changes.auto.on) this.auto.add(changes.auto.project);
-      else this.auto.delete(changes.auto.project);
-    }
     return this.#now();
   }
 }

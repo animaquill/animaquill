@@ -160,7 +160,7 @@ clip clip_interview "采访" timeline=main track=track_video 5..17.5
 track track_voice "配音" timeline=main
   id="track_voice" name="配音" kind="audio" role="voice" properties(1)
 project settings
-  formatVersion=1 id="atoms-demo" name="原子是什么" description="一条用到格式每种能力的示例项目。" languages(2) formats(2) timelines(2) fonts(1) cover(2) credits(1)"
+  formatVersion=1 id="atoms-demo" name="原子是什么" description="一条用到格式每种能力的示例项目。" languages(2) formats(2) timelines(2) fonts(1) cover(2) credits(1) defaultStorage(1)"
 `;
 
 exports[`results > of aq_project_status read as they did 1`] = `

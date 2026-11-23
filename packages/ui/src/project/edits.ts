@@ -388,6 +388,11 @@ export class ProjectEdits {
   setCover(cover: Cover | null): boolean {
     return this.#ok({ type: "project.setCover", params: { cover } });
   }
+
+  /** Where new assets go: `null` as the mode has it, see `defaultToWrite`. */
+  setDefaultStorage(defaultStorage: ProjectManifest["defaultStorage"] | null): boolean {
+    return this.#ok({ type: "project.setDefaultStorage", params: { defaultStorage } });
+  }
 }
 
 /** What a command would take along, as a dry run says now. */

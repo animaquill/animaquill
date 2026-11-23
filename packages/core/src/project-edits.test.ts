@@ -159,6 +159,45 @@ describe("each command of the project properties", () => {
   }
 });
 
+describe("project.setDefaultStorage", () => {
+  const set = (defaultStorage: unknown) => ({
+    type: "project.setDefaultStorage",
+    params: { defaultStorage },
+  });
+
+  it("writes where new assets go, takes it away with null, and goes back with undo", () => {
+    const store = open();
+    success(store.execute(set(null)));
+    expect(manifest(store).defaultStorage).toBeUndefined();
+    success(store.execute(set({ kind: "local" })));
+    expect(manifest(store).defaultStorage).toEqual({ kind: "local" });
+    expect(store.exportFiles().problems).toEqual([]);
+    expect(store.exportFiles().files.get("animaquill.json")).toContain(
+      '"defaultStorage": { "kind": "local" }',
+    );
+    const other = twin(store);
+    sync(store, other);
+    expect(manifest(other).defaultStorage).toEqual({ kind: "local" });
+    success(store.execute(set(null)));
+    expect(manifest(store).defaultStorage).toBeUndefined();
+    expect(store.exportFiles().files.get("animaquill.json")).not.toContain("defaultStorage");
+    success(store.undo());
+    expect(manifest(store).defaultStorage).toEqual({ kind: "local" });
+    success(store.undo());
+    expect(manifest(store).defaultStorage).toBeUndefined();
+    success(store.undo());
+    expect(manifest(store).defaultStorage).toEqual({ kind: "local" });
+  });
+
+  it("is for people only, and takes no kind it does not know", () => {
+    const store = open();
+    expect(failure(store.execute(set({ kind: "lfs" }), { origin: AI })).code).toBe("user-only");
+    expect(failure(store.execute(set({ kind: "platform" }))).code).toBe("invalid-params");
+    expect(failure(store.execute(set({ kind: "lfs", store: "a" }))).code).toBe("invalid-params");
+    expect(manifest(store).defaultStorage).toEqual({ kind: "local" });
+  });
+});
+
 describe("project.setDescription", () => {
   it("takes the description away when it is empty", () => {
     const store = open();

@@ -220,6 +220,22 @@ export function setCover(draft: Draft, { cover }: z.output<typeof CoverSet>) {
   draft.set(manifestPath("cover"), cover);
 }
 
+export const DefaultStorageSet = z.strictObject({
+  defaultStorage: ProjectManifest.shape.defaultStorage.unwrap().nullable(),
+});
+
+/**
+ * Where files of assets imported from now on go (docs/design/online-offline.md of AnimaQuill
+ * Cloud, 1.7). `null` takes the field away: the default of the mode, which the editor writes for
+ * what is that default, so a project keeps meaning the same as it goes online or offline.
+ */
+export function setDefaultStorage(
+  draft: Draft,
+  { defaultStorage }: z.output<typeof DefaultStorageSet>,
+) {
+  setField(draft, "defaultStorage", defaultStorage ?? undefined);
+}
+
 export const BackgroundSet = z.strictObject({ timeline: Id, background: Color.nullable() });
 
 /** What shows where nothing covers the picture: black where none is written. */

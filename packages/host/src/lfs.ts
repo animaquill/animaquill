@@ -305,13 +305,11 @@ const repositoryOf = (value: unknown): LfsRepositoryUse | undefined => {
 export const lfsAccountOf = (value: unknown): LfsAccount | undefined => {
   if (!isObject(value)) return undefined;
   const account = text(value.account);
-  if (account === undefined || !Array.isArray(value.auto) || !Array.isArray(value.repositories))
-    return undefined;
+  if (account === undefined || !Array.isArray(value.repositories)) return undefined;
   const acknowledgedAt = count(value.acknowledgedAt);
   return {
     account,
     ...optional("acknowledgedAt", acknowledgedAt),
-    auto: value.auto.filter((id): id is string => typeof id === "string"),
     repositories: value.repositories.flatMap((each) => repositoryOf(each) ?? []),
   };
 };
@@ -320,8 +318,8 @@ export const lfsAccountOf = (value: unknown): LfsAccount | undefined => {
  * What people have in the large file storage through a platform, over its HTTP API, see
  * `LfsAccountAccess`:
  *
- * - `GET <api>/me/lfs`: `{account, acknowledgedAt?, auto, repositories}`.
- * - `POST <api>/me/lfs` `{account, acknowledged?: true, auto?: {project, on}}`: the same.
+ * - `GET <api>/me/lfs`: `{account, acknowledgedAt?, repositories}`.
+ * - `POST <api>/me/lfs` `{account, acknowledged?: true}`: the same.
  */
 export function browserLfsAccount(options: BrowserLfsOptions): LfsAccountAccess {
   const request = options.fetch ?? ((input, init) => fetch(input, init));

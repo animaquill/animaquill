@@ -109,16 +109,16 @@ describe("the large file storage of an account, as the platform says it", () => 
       lfsAccountOf({
         account: "u1",
         acknowledgedAt: 5,
-        auto: ["p1", 3],
+        auto: ["p1"],
         repositories: [repository, { ...repository, url: "javascript:alert(1)" }],
       }),
-    ).toEqual({ account: "u1", acknowledgedAt: 5, auto: ["p1"], repositories: [repository] });
-    expect(lfsAccountOf({ account: "u1", auto: [], repositories: [] })).toEqual({
+    ).toEqual({ account: "u1", acknowledgedAt: 5, repositories: [repository] });
+    // What platforms said before of new assets going by themselves is left out.
+    expect(lfsAccountOf({ account: "u1", repositories: [] })).toEqual({
       account: "u1",
-      auto: [],
       repositories: [],
     });
-    expect(lfsAccountOf({ auto: [], repositories: [] })).toBeUndefined();
+    expect(lfsAccountOf({ repositories: [] })).toBeUndefined();
     expect(lfsAccountOf([])).toBeUndefined();
   });
 });

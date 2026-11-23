@@ -96,6 +96,8 @@ export interface Option<T extends string> {
   readonly label: string;
   /** Not there yet: shown grey, with "在做". */
   readonly later?: boolean;
+  /** Why it cannot be chosen here: shown grey, with this after it. */
+  readonly unavailable?: string;
 }
 
 /** A choice of a few, side by side. */
@@ -144,8 +146,16 @@ export function Choice<T extends string>(props: {
       onChange={(event) => props.onChange(event.target.value as T)}
     >
       {props.options.map((option) => (
-        <option key={option.value} value={option.value} disabled={option.later}>
-          {option.later ? `${option.label}（${t("settings.later")}）` : option.label}
+        <option
+          key={option.value}
+          value={option.value}
+          disabled={option.later === true || option.unavailable !== undefined}
+        >
+          {option.later
+            ? `${option.label}（${t("settings.later")}）`
+            : option.unavailable !== undefined
+              ? `${option.label}（${option.unavailable}）`
+              : option.label}
         </option>
       ))}
     </select>

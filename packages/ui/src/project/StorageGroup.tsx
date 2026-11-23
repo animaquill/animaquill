@@ -9,8 +9,9 @@ import { cloudPanel, panelInputOf, type PanelActionId } from "../cloud/panel.ts"
 import settings from "../settings/Settings.module.css";
 import { formatSize } from "../transfer/transfer.ts";
 import { Facts, Group, Heading, Row, Small, length, moment } from "./parts.tsx";
-import { Segmented, Toggle } from "../settings/parts.tsx";
-import { placeRows, placeSummary } from "../storage/place-choice.ts";
+import { Choice, Segmented } from "../settings/parts.tsx";
+import { lfsUsable, type PlaceUnusable } from "../storage/default-place.ts";
+import { canChoose, placeRows, placeSummary } from "../storage/place-choice.ts";
 import styles from "./Project.module.css";
 
 const noSubscription = () => () => {};
@@ -258,7 +259,7 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
           help={t("projectProps.storage.noFolderBrowser")}
         />
       )}
-      {linked && <AssetRows project={linked.link.project} />}
+      <DefaultStorageRows repo={repository?.status?.repository?.fullName} />
       {panel && linked && (
         <>
           <Heading>{t("projectProps.storage.sync")}</Heading>
@@ -331,68 +332,96 @@ function PreferRow({ prefer }: { readonly prefer: "editor" | "github" | undefine
 }
 
 /**
- * Where the assets of a project of the platform are (docs/design/asset-storage.md of AnimaQuill
- * Cloud, 4.3): how many in the large file storage and how large, how many only here, the dialog to
- * choose, and whether new ones go there by themselves, for all the person's computers.
+ * Where new assets of the project go, "默认存储空间" (docs/design/online-offline.md of AnimaQuill
+ * Cloud, 1.7): the repository's large file storage, or only this computer, as a step of the
+ * project. Under it, where the assets it has are, and a way to put those there too: changing the
+ * default moves nothing. What cannot be chosen here is grey, with why.
  */
-function AssetRows({ project }: { readonly project: string }) {
+function DefaultStorageRows({ repo }: { readonly repo: string | undefined }) {
   const workbench = useWorkbench();
-  const { uploads, lfsAccount, missingFiles } = workbench;
+  const { uploads, missingFiles } = workbench;
   const { t } = useTranslation();
   const { store } = useSession();
   const state = useProject(store);
   const snapshot = useSyncExternalStore(uploads.subscribe, uploads.getSnapshot);
   const missing = useSyncExternalStore(missingFiles.subscribe, missingFiles.getSnapshot);
-  const account = useSyncExternalStore(lfsAccount.subscribe, lfsAccount.getSnapshot);
-  const [auto, setAuto] = useState<boolean>();
-  useEffect(() => {
-    void lfsAccount.refresh();
-  }, [lfsAccount]);
-  const summary = useMemo(
+  const online = workbench.mode === "online";
+  const rows = useMemo(
     () =>
-      placeSummary(
-        state ? placeRows(state, snapshot.items, new Set(missing.keys()), workbench.here()) : [],
-      ),
-    [state, snapshot.items, missing, workbench],
+      state && online && uploads.available
+        ? placeRows(state, snapshot.items, new Set(missing.keys()), workbench.here())
+        : [],
+    [state, online, uploads, snapshot.items, missing, workbench],
   );
-  if (!uploads.available) return null;
-  const isAuto = auto ?? account.account?.auto.includes(project) ?? false;
-  const change = async (on: boolean) => {
-    setAuto(on);
-    if (!(await workbench.setLfsAuto(project, on))) {
-      setAuto(!on);
-      workbench.notifications.push(t("storage.uploads.properties.autoFailed"));
-    }
-  };
+  const place = state ? workbench.defaultPlace() : undefined;
+  if (!state || !place) return null;
+  const why = (unusable: PlaceUnusable | undefined) =>
+    unusable === undefined
+      ? undefined
+      : unusable === "offline"
+        ? t("storage.uploads.properties.signIn")
+        : unusable === "unsupported"
+          ? t("storage.uploads.properties.unsupported")
+          : t("storage.uploads.properties.noRepository");
+  const lfsUnusable = why(lfsUsable(workbench.mode, snapshot.blocked, uploads.available));
+  const chosen = place.chosen === "lfs" ? "lfs" : "local";
+  const help =
+    place.effective !== place.chosen
+      ? t("storage.uploads.properties.fellBack", { why: why(place.unusable) })
+      : chosen === "lfs"
+        ? t("storage.uploads.properties.lfsHelp")
+        : online
+          ? t("storage.uploads.properties.localOnline")
+          : t("storage.uploads.properties.localOffline");
+  const summary = placeSummary(rows);
+  const movable = rows.filter(canChoose).map(({ asset }) => asset);
   return (
-    <>
-      <Row id="assets" name={t("storage.uploads.properties.assets")}>
-        <span className={settings.value} data-testid="project-assets">
-          {t("storage.uploads.properties.assetsValue", {
-            lfs: summary.there,
-            size: formatSize(summary.thereBytes),
-            here: summary.here,
-          })}
-        </span>
-        <Small
-          disabled={snapshot.blocked !== undefined}
-          onClick={() => void workbench.choosePlaces()}
-        >
-          {t("storage.uploads.action.choose")}
-        </Small>
-      </Row>
-      <Row
-        id="assetsAuto"
-        name={t("storage.uploads.properties.auto")}
-        help={t("storage.uploads.properties.autoHelp")}
-      >
-        <Toggle
-          label={t("storage.uploads.properties.auto")}
-          checked={isAuto}
-          disabled={account.status !== "ready"}
-          onChange={(on) => void change(on)}
-        />
-      </Row>
-    </>
+    <Row
+      id="defaultStorage"
+      name={t("storage.uploads.properties.default")}
+      help={help}
+      below={
+        online &&
+        uploads.available && (
+          <div className={styles.listRow}>
+            <span data-testid="project-assets">
+              {t("storage.uploads.properties.existing", {
+                lfs: summary.there,
+                size: formatSize(summary.thereBytes),
+                here: summary.here,
+              })}
+            </span>
+            {place.effective === "lfs" && movable.length > 0 && (
+              <Small onClick={() => void workbench.choosePlaces(movable)}>
+                {t("storage.uploads.properties.moveExisting")}
+              </Small>
+            )}
+          </div>
+        )
+      }
+    >
+      <Choice
+        label={t("storage.uploads.properties.default")}
+        value={chosen}
+        disabled={state.manifest.tags?.some((tag) => tag.locked) === true}
+        options={[
+          {
+            value: "lfs",
+            label:
+              repo === undefined
+                ? t("storage.uploads.properties.lfs")
+                : t("storage.uploads.properties.lfsAt", {
+                    repo,
+                    interpolation: { escapeValue: false },
+                  }),
+            ...(lfsUnusable !== undefined && chosen !== "lfs" && { unavailable: lfsUnusable }),
+          },
+          { value: "local", label: t("storage.uploads.properties.local") },
+        ]}
+        onChange={(kind) => {
+          workbench.setDefaultStorage(kind);
+        }}
+      />
+    </Row>
   );
 }

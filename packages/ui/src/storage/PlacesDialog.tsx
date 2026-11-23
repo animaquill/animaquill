@@ -40,7 +40,7 @@ function KindIcon({ kind }: { kind: string }) {
 /**
  * "素材放在哪" (docs/design/asset-storage.md of AnimaQuill Cloud, 4.3, screen U2): which assets of
  * the open project go into the large file storage of its repository. What can be chosen, the quick
- * choices, what it comes to and what it costs, the switch for new assets, and once for the account
+ * choices, what it comes to and what it costs, and once for the account
  * what people have to know first. Nothing goes until they press the button.
  */
 export function PlacesDialog({ request }: { request: PlacesRequest }) {
@@ -61,7 +61,6 @@ export function PlacesDialog({ request }: { request: PlacesRequest }) {
     repository?.subscribe ?? noSubscription,
     repository?.getSnapshot ?? (() => undefined),
   )?.status;
-  const project = linked.kind === "linked" ? linked.link.project : undefined;
   const dialog = useRef<HTMLDialogElement>(null);
 
   const rows = useMemo(
@@ -82,7 +81,6 @@ export function PlacesDialog({ request }: { request: PlacesRequest }) {
   const [knows, setKnows] = useState(false);
   const [working, setWorking] = useState(false);
   const [failed, setFailed] = useState(false);
-  const [auto, setAuto] = useState<boolean | undefined>(undefined);
 
   useLayoutEffect(() => {
     const element = dialog.current;
@@ -94,7 +92,6 @@ export function PlacesDialog({ request }: { request: PlacesRequest }) {
   const { shown, folded } = unfolded ? { shown: sorted, folded: [] } : foldRows(sorted);
   const { count, bytes } = totalOf(rows, chosen);
   const asks = account.account?.acknowledgedAt === undefined && account.status !== "none";
-  const isAuto = auto ?? (project !== undefined && lfsAccount.isAuto(project));
   const repo = status?.repository?.fullName;
 
   const toggle = (row: PlaceRow) => {
@@ -125,20 +122,6 @@ export function PlacesDialog({ request }: { request: PlacesRequest }) {
       setWorking(false);
     }
   };
-  const switchAuto = async (on: boolean) => {
-    if (!project) return;
-    setAuto(on);
-    // Turned on, it puts files there by itself: only once people said they know what that means.
-    const took =
-      on && asks
-        ? knows && (await lfsAccount.acknowledge()) && (await lfsAccount.setAuto(project, on))
-        : await lfsAccount.setAuto(project, on);
-    if (!took) {
-      setAuto(!on);
-      workbench.notifications.push(t("storage.uploads.properties.autoFailed"));
-    }
-  };
-
   const whereText = (row: PlaceRow) => {
     switch (row.where) {
       case "there":
@@ -291,19 +274,6 @@ export function PlacesDialog({ request }: { request: PlacesRequest }) {
             ))}
           </details>
         </div>
-        {project && (
-          <label className={styles.switch}>
-            <input
-              type="checkbox"
-              role="switch"
-              checked={isAuto}
-              disabled={!isAuto && asks && !knows}
-              title={!isAuto && asks && !knows ? t("storage.uploads.dialog.autoFirst") : undefined}
-              onChange={(event) => void switchAuto(event.target.checked)}
-            />
-            {t("storage.uploads.dialog.auto")}
-          </label>
-        )}
         {asks && (
           <label className={styles.acknowledge}>
             <input

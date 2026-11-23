@@ -154,7 +154,6 @@
   color: var(--aq-text-muted);
 }
 
-.switch,
 .acknowledge {
   display: flex;
   align-items: flex-start;

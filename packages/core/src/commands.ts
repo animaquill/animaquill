@@ -117,6 +117,7 @@ import {
   CoverSet,
   CreditsSet,
   DefaultSet,
+  DefaultStorageSet,
   DescriptionSet,
   FilesRemoved,
   FormatsSet,
@@ -126,6 +127,7 @@ import {
   setCover,
   setCredits,
   setDefault,
+  setDefaultStorage,
   setDescription,
   setFormats,
   setLanguages,
@@ -1022,6 +1024,24 @@ export const OPERATIONS = [
       group: "project",
       result: Nothing,
       failures: ["not-found", "invalid-value"],
+    },
+  ),
+
+  /**
+   * Where files of assets imported from now on go. It is people's to say, as it spends the room
+   * of their GitHub account: no AI tool has it.
+   */
+  define(
+    "project.setDefaultStorage",
+    "设置项目的默认存储空间：以后新导入的素材传到哪里；null 跟着模式（在线是仓库的大文件存储，离线是只在这台电脑上）。已有的素材不动。",
+    DefaultStorageSet,
+    setDefaultStorage,
+    {
+      group: "project",
+      level: "human",
+      ai: { no: "human" },
+      result: Nothing,
+      failures: [],
     },
   ),
 

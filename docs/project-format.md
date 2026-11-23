@@ -82,6 +82,7 @@ assets/                            素材文件
 | `tags` | 项目的标签：`name`，可以写 `color` 和 `locked` |
 | `cover` | 封面：`timeline` 和 `time`，哪条时间轴的哪一刻 |
 | `credits` | 署名：每条有 `role`（做了什么）和 `name` |
+| `defaultStorage` | 默认存储空间：以后新导入的素材传到哪里，`{ "kind": "lfs" }` 或 `{ "kind": "local" }`，见下面 |
 
 语言、画幅和时间轴各自不能重复。
 
@@ -90,6 +91,8 @@ assets/                            素材文件
 `fonts`、语言的 `font` 和 `credits` 现在只是记下来，编辑器还不用它们。场景里的字体放进素材，用 `aq.asset` 取，见[场景和声音](#场景和声音)。母版的 `safeArea` 只在预览里画成参考框，不影响导出。`cover` 是开始页卡片封面用的那一帧，不写或者那一刻已经不在时间轴里时，编辑器自己挑一帧。
 
 带 `locked` 的标签表示项目不可编辑，用户和 AI 都不能改，直到标签被移除。
+
+`defaultStorage` 只管编辑器以后把新导入的素材传到哪里，不改已有的素材，素材自己在哪仍看它的 `storage`（新导入的素材照样先写 `local`，传完才改，见[素材](#素材)）。`kind` 的取值和素材的 `storage` 同名：`lfs` 是项目所在仓库的大文件存储，`local` 是只在这台电脑上（项目是文件夹时就在文件夹里）。不写时跟着编辑器的模式：连着后端的在线项目是 `lfs`，电脑上的离线项目是 `local`；所以编辑器选的值和当时模式的默认一样时不写这个字段，项目在两种模式之间复制时意思不变。写了但在这里用不了（离线时写着 `lfs`、项目没有仓库）时，新素材只在这台电脑上，编辑器写明原因。
 
 **编辑器怎么改这些字段。** 编辑器的“项目属性”和 AI 都通过命令改，每条命令是一步，能撤销（标签只有用户本人能改）：
 
@@ -103,6 +106,7 @@ assets/                            素材文件
 | `project.setFormats` | `formats`，整份，第一个是母版 | 去掉的画幅，它的差异文件（`format.<画幅>.json`、`version.<语言>.<画幅>.json`）同一步删掉，结果里列在 `filesRemoved` |
 | `project.setLanguages` | `languages`，整份，第一种是母版 | 去掉的语言，它的字符串表 `locales/<语言>.json` 和差异文件同一步删掉，结果里列在 `filesRemoved` |
 | `project.setCover` | `cover` | 时间轴要在 `timelines` 里，时刻要在它的结尾之前；`null` 去掉 |
+| `project.setDefaultStorage` | `defaultStorage` | 只有用户本人能用（关系到用户 GitHub 的额度）；`null` 去掉，也就是跟着模式。已有的素材不动 |
 | `timeline.setBackground` | 一条时间轴的 `background` | `null` 去掉，也就是黑色 |
 | `timeline.setDefault` | `timelines` 的顺序 | 这条排到最前面，其余的顺序不变 |
 

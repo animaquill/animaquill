@@ -293,6 +293,27 @@ test.describe("the project properties of a project folder", () => {
 });
 
 test.describe("without a project", () => {
+  test("say where new assets go: only on this computer offline, the repository grey until signed in", async ({
+    page,
+  }) => {
+    await example(page);
+    await statusName(page, "原子是什么").click();
+    await goTo(page, "存放和同步");
+    const choice = props(page).getByRole("combobox", { name: "默认存储空间" });
+    await expect(choice).toHaveValue("local");
+    await expect(choice.locator('option[value="lfs"]')).toBeDisabled();
+    await expect(choice.locator('option[value="lfs"]')).toHaveText(
+      "GitHub 大文件存储（登录后可用）",
+    );
+    await expect(props(page)).toContainText("素材放在项目文件夹里。");
+    // Offline nothing is uploaded: no line of where the assets are.
+    await expect(props(page).getByTestId("project-assets")).toHaveCount(0);
+    for (const scheme of ["dark", "light"] as const) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await shot(page, `default-storage-offline-${scheme}`);
+    }
+  });
+
   test("have no way in", async ({ page }) => {
     await page.keyboard.press("Control+Alt+Comma");
     await expect(props(page)).toHaveCount(0);

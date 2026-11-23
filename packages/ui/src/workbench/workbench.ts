@@ -157,7 +157,15 @@ import { ProjectSession, projectKeyOf } from "./session.ts";
 import type { RepositoryWatch } from "../cloud/repository-watch.ts";
 import { LfsAccountState } from "../storage/lfs-account.ts";
 import {
+  defaultPlaceOf,
+  defaultToWrite,
+  lfsUsable,
+  type DefaultPlace,
+} from "../storage/default-place.ts";
+import { NewAssets } from "../storage/new-assets.ts";
+import {
   AssetUploads,
+  LFS_FILE_MOST,
   type UploadBlock,
   type UploadFiles,
   type UploadProblem,
@@ -297,6 +305,8 @@ export class Workbench {
   readonly lfsAccount: LfsAccountState;
   /** What was said about the files of the open project, which goes with it as it closes. */
   readonly #uploadNotices: number[] = [];
+  /** Assets just imported, into the default storage of the project. */
+  readonly #newAssets: NewAssets;
   readonly dialogs = new Dialogs();
   readonly session: ProjectSession;
   readonly timeline: TimelineEditor;
@@ -1161,6 +1171,33 @@ export class Workbench {
       this.projectFolders?.downloadsChanged();
     });
     this.lfsAccount = new LfsAccountState(cloud?.lfsAccount, host.account);
+    this.#newAssets = new NewAssets({
+      t,
+      project: () => {
+        const key = this.session.key;
+        const place = this.defaultPlace();
+        return key === undefined || !place || this.#uploadProject()?.project === undefined
+          ? undefined
+          : { key, place };
+      },
+      assets: () => this.session.store?.getState().assets ?? {},
+      acknowledged: async () => {
+        if (!this.lfsAccount.acknowledged) await this.lfsAccount.refresh();
+        return this.lfsAccount.acknowledged;
+      },
+      acknowledge: () => this.lfsAccount.acknowledge(),
+      send: (assets) => this.uploads.add(assets),
+      cancel: (asset) => this.uploads.cancel(asset),
+      keepHere: () => void this.setDefaultStorage("local"),
+      notify: (message, said, instead) => {
+        const id = this.notifications.update(instead, message, said);
+        if (!this.#uploadNotices.includes(id)) this.#uploadNotices.push(id);
+        return id;
+      },
+      dismiss: (id) => this.notifications.dismiss(id),
+      failed: (message) => this.notifications.push(message),
+      sizes: { large: LARGE_IMPORT_BYTES, most: LFS_FILE_MOST },
+    });
     this.#followUploads(host);
     this.#keepPresence(host);
     this.organizer = new StartOrganizer({
@@ -2754,6 +2791,13 @@ export class Workbench {
         ...imported.report,
       };
       this.#noteImport(report);
+      // What came with it is new to the backend: where the default storage says, as any import.
+      const assets = this.session.store?.getState().assets ?? {};
+      this.#imported(
+        Object.entries(assets)
+          .filter(([, asset]) => asset?.storage === "local")
+          .map(([id]) => id),
+      );
       await this.transfer.announceImport(report);
     }
   }
@@ -3182,22 +3226,28 @@ export class Workbench {
   }
 
   /**
-   * Turns on or off that new assets of a project go into the large file storage by themselves.
-   * Turned on by someone who never said they know what that means, they are asked first, as the
-   * dialog asks before the first upload. Resolves to whether it took.
+   * The default storage of the open project here (docs/design/online-offline.md of AnimaQuill
+   * Cloud, 1.7): what it says or the mode has, and where new assets go where that cannot be used.
    */
-  async setLfsAuto(project: string, on: boolean): Promise<boolean> {
-    const { t } = this;
-    if (on && !this.lfsAccount.acknowledged) await this.lfsAccount.refresh();
-    if (on && !this.lfsAccount.acknowledged) {
-      const knows = await this.dialogs.confirm({
-        title: t("storage.uploads.properties.auto"),
-        message: t("storage.uploads.dialog.acknowledge"),
-        confirm: t("storage.uploads.properties.agree"),
-      });
-      if (!knows || !(await this.lfsAccount.acknowledge())) return false;
-    }
-    return this.lfsAccount.setAuto(project, on);
+  defaultPlace(): DefaultPlace | undefined {
+    const store = this.session.store;
+    if (!store) return undefined;
+    const mode = this.mode;
+    const blocked = this.#uploadProject()?.blocked;
+    return defaultPlaceOf(store.getState().manifest.defaultStorage, mode, (kind) =>
+      kind === "lfs"
+        ? lfsUsable(mode, blocked, this.uploads.available)
+        : kind === "local"
+          ? undefined
+          : kind === "platform"
+            ? "noSpace"
+            : "noStore",
+    );
+  }
+
+  /** People chose where new assets of the open project go: a step, which undo takes back. */
+  setDefaultStorage(kind: "lfs" | "local"): boolean {
+    return this.projectEdits.setDefaultStorage(defaultToWrite(kind, this.mode));
   }
 
   /** Gives up every file of the open project that is not there yet, once people said so. */
@@ -3346,99 +3396,25 @@ export class Workbench {
    */
   async importDropped(transfer: DataTransfer): Promise<readonly string[]> {
     const folders = this.projectFolders;
-    const before = this.#assetCount();
     if (!folders?.assets())
-      return this.#imported(await this.media.importFiles([...transfer.files]), before);
-    return this.#imported(await this.#importPlaced(await folders.droppedFiles(transfer)), before);
+      return this.#imported(await this.media.importFiles([...transfer.files]));
+    return this.#imported(await this.#importPlaced(await folders.droppedFiles(transfer)));
   }
 
   /** Lets people choose files to bring in, in the project folder where it is one: see `importDropped`. */
   async pickFiles(): Promise<readonly string[]> {
     const folders = this.projectFolders;
-    const before = this.#assetCount();
     const placed = folders?.assets() ? await folders.pickFiles() : undefined;
-    return this.#imported(
-      placed ? await this.#importPlaced(placed) : await this.media.pickFiles(),
-      before,
-    );
-  }
-
-  #noticeOfUploads(...args: Parameters<Notifications["push"]>): void {
-    this.#uploadNotices.push(this.notifications.push(...args));
-  }
-
-  #assetCount(): number {
-    return Object.keys(this.session.store?.getState().assets ?? {}).length;
+    return this.#imported(placed ? await this.#importPlaced(placed) : await this.media.pickFiles());
   }
 
   /**
-   * New assets of a project of the platform (docs/design/asset-storage.md of AnimaQuill Cloud, 4.3
-   * and 4.6): into the large file storage by themselves where people turned that on for the
-   * project; otherwise they stay here, and people hear once where that is not safe: a large file,
-   * a project only in this browser, and the first assets of a new project.
+   * New assets go where the default storage of the project says (docs/design/online-offline.md of
+   * AnimaQuill Cloud, 1.7), see `NewAssets`.
    */
-  #imported(ids: readonly string[], before: number): readonly string[] {
-    void this.#afterImport(ids, before);
+  #imported(ids: readonly string[]): readonly string[] {
+    void this.#newAssets.imported(ids);
     return ids;
-  }
-
-  async #afterImport(ids: readonly string[], before: number): Promise<void> {
-    const project = this.#uploadProject();
-    if (ids.length === 0 || !project?.project || !this.uploads.available) return;
-    const { t } = this;
-    const platform = project.project;
-    // As the account has it now: the switch may have been turned on on another computer.
-    await this.lfsAccount.refresh();
-    if (this.lfsAccount.isAuto(platform)) {
-      await this.uploads.add(ids);
-      return;
-    }
-    const put = (assets: readonly string[]) => ({
-      label: t("storage.uploads.notice.put"),
-      run: () => void this.putInLfs(assets),
-    });
-    const assets = this.session.store?.getState().assets ?? {};
-    for (const id of ids) {
-      const asset = assets[id];
-      if (asset?.size === undefined || asset.size <= LARGE_IMPORT_BYTES) continue;
-      this.#noticeOfUploads(
-        t("storage.uploads.notice.large", {
-          name: asset.name ?? asset.path,
-          size: formatSize(asset.size),
-          interpolation: { escapeValue: false },
-        }),
-        {
-          stays: true,
-          actions: [put([id]), { label: t("storage.uploads.notice.no"), run: () => {} }],
-        },
-      );
-    }
-    const cloud = this.cloud?.getSnapshot();
-    if (cloud?.kind === "linked") {
-      this.#noticeOfUploads(t("storage.uploads.notice.browserOnly"), {
-        stays: true,
-        actions: [put(ids), { label: t("storage.uploads.notice.later"), run: () => {} }],
-      });
-    } else if (before === 0) void this.#askOnce(`firstImport.${platform}`, "firstImport");
-  }
-
-  /**
-   * Asks once whether to put the assets of the open project into the large file storage, opening
-   * the dialog for that: `what` says why now. Once for each `name`, in this browser.
-   */
-  async #askOnce(name: string, what: "connected" | "firstImport"): Promise<void> {
-    const key = `uploads.asked.${name}`;
-    const settings = this.#settings;
-    if ((await settings.load(key).catch(() => true)) !== undefined) return;
-    await settings.save(key, Date.now()).catch(() => {});
-    const { t } = this;
-    this.#noticeOfUploads(t(`storage.uploads.notice.${what}`), {
-      stays: true,
-      actions: [
-        { label: t("storage.uploads.notice.choose"), run: () => void this.choosePlaces() },
-        { label: t("storage.uploads.notice.later"), run: () => {} },
-      ],
-    });
   }
 
   /**
@@ -4186,6 +4162,7 @@ export class Workbench {
     // What is on its way stops where it is, and goes on the next time the project is open.
     await this.uploads.close();
     await this.downloads.close();
+    this.#newAssets.reset();
     for (const id of this.#uploadNotices.splice(0)) this.notifications.dismiss(id);
     // What the platform does not have yet stays in the log, for whoever syncs next.
     await this.cloud?.close();

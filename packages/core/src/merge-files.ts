@@ -931,6 +931,7 @@ const FIELD_NAMES: Readonly<Record<string, string>> = {
   tags: "标签",
   cover: "封面",
   credits: "署名",
+  defaultStorage: "默认存储空间",
   fps: "帧率",
 };
 

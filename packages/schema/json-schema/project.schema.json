@@ -13,7 +13,8 @@
     "fonts": { "$ref": "#/$defs/__schema11" },
     "tags": { "$ref": "#/$defs/__schema12" },
     "cover": { "$ref": "#/$defs/__schema13" },
-    "credits": { "$ref": "#/$defs/__schema14" }
+    "credits": { "$ref": "#/$defs/__schema14" },
+    "defaultStorage": { "$ref": "#/$defs/__schema15" }
   },
   "required": ["formatVersion", "id", "name", "languages", "formats", "timelines"],
   "additionalProperties": false,
@@ -119,6 +120,14 @@
         "required": ["role", "name"],
         "additionalProperties": false
       }
+    },
+    "__schema15": {
+      "type": "object",
+      "properties": {
+        "kind": { "type": "string", "enum": ["lfs", "local"] }
+      },
+      "required": ["kind"],
+      "additionalProperties": false
     }
   }
 }

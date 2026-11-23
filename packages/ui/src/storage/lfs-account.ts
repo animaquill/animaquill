@@ -9,8 +9,7 @@ import { Emitter } from "../workbench/emitter.ts";
 /**
  * What the person who is signed in has in the large file storage of GitHub through the platform,
  * and how they go about it (docs/design/asset-storage.md of AnimaQuill Cloud, 4.3): whether they
- * said once that they know what it means, which projects put new assets there by themselves, and
- * what is there by repository, for the storage page of the start page. The platform keeps it for
+ * said once that they know what it means, and what is there by repository, for the storage page of the start page. The platform keeps it for
  * all their computers. No DOM.
  */
 
@@ -83,19 +82,9 @@ export class LfsAccountState {
     return this.#snapshot.account?.acknowledgedAt !== undefined;
   }
 
-  /** Whether new assets of a project go into the storage by themselves. */
-  isAuto(project: string): boolean {
-    return this.#snapshot.account?.auto.includes(project) ?? false;
-  }
-
   /** People said they know what it means: kept for good, for all their computers. */
   async acknowledge(): Promise<boolean> {
     return this.#change({ acknowledged: true });
-  }
-
-  /** Whether new assets of a project go into the storage by themselves. Resolves to whether it took. */
-  async setAuto(project: string, on: boolean): Promise<boolean> {
-    return this.#change({ auto: { project, on } });
   }
 
   async #change(changes: Parameters<LfsAccountAccess["change"]>[1]): Promise<boolean> {

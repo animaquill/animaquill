@@ -95,6 +95,12 @@ export const ProjectManifest = z
     /** Which frame stands for the project. */
     cover: z.strictObject({ timeline: Id, time: Time }).optional(),
     credits: z.array(z.strictObject({ role: z.string(), name: z.string() })).optional(),
+    /**
+     * Where the files of assets imported from now on go, by default. Not written: as the mode
+     * has it, the repository's large file storage online and only this computer offline. It only
+     * says where uploads go; an asset says itself where its file is (`storage`).
+     */
+    defaultStorage: z.strictObject({ kind: z.enum(["lfs", "local"]) }).optional(),
   })
   .superRefine((project, context) => {
     const unique = (items: readonly string[], field: string) => {

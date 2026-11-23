@@ -28,5 +28,6 @@
   "cover": { "timeline": "main", "time": "2.5" },
   "credits": [
     { "role": "音乐", "name": "示例作者" }
-  ]
+  ],
+  "defaultStorage": { "kind": "local" }
 }

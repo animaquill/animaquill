@@ -39,6 +39,15 @@ const files = {
 const shot = (page: Page, name: string) =>
   page.screenshot({ path: test.info().outputPath(`${name}.png`) });
 
+/** A picture in the dark and in the light. */
+async function shots(page: Page, name: string) {
+  for (const scheme of ["dark", "light"] as const) {
+    await page.emulateMedia({ colorScheme: scheme });
+    await shot(page, `${name}-${scheme}`);
+  }
+  await page.emulateMedia({ colorScheme: null });
+}
+
 interface Lab {
   lfs: {
     pieceMs: number;
@@ -49,7 +58,6 @@ interface Lab {
   };
   lfsAccount: {
     acknowledgedAt: number | undefined;
-    auto: Set<string>;
     repositories: unknown[];
   };
 }
@@ -93,6 +101,53 @@ const github = (page: Page) => footer(page).locator('[data-save-status="github"]
 const notice = (page: Page, text: string | RegExp) =>
   page.getByRole("status").filter({ hasText: text }).or(page.getByText(text)).first();
 
+/** What the notification that asks first says, before anybody said they know. */
+const ASKS = /会放进这个项目的 GitHub 大文件存储/;
+
+/** New assets of an online project, before people said they know: kept here, as people may. */
+async function keepHere(page: Page) {
+  await expect(notice(page, ASKS)).toBeVisible();
+  await page.getByRole("button", { name: "这个项目只放在这台电脑上" }).click();
+  await expect(notice(page, ASKS)).toHaveCount(0);
+}
+
+async function properties(page: Page) {
+  await chooseFrom(page, "文件", "项目属性…");
+  const shown = page.getByTestId("project-properties");
+  await shown
+    .getByRole("navigation", { name: "项目属性的分组" })
+    .getByRole("button", { name: "存放和同步" })
+    .click();
+  return shown;
+}
+
+const defaultStorage = (page: Page) =>
+  page.getByTestId("project-properties").getByRole("combobox", { name: "默认存储空间" });
+
+/** A file of a picture this large, dropped on the assets panel, made in the page. */
+async function dropLarge(page: Page, name: string, bytes: number) {
+  await tab(page, "assets").click();
+  // Dropped where the import button is: it is in the panel, which takes what is dropped on it.
+  await page.getByRole("button", { name: "导入" }).evaluate(
+    (element, { file, length, png }) => {
+      const head = Uint8Array.from(atob(png), (c) => c.charCodeAt(0));
+      const transfer = new DataTransfer();
+      // A picture, and nothing after its end that a decoder looks at.
+      // Of its own content, by its name: the same bytes would be the asset there already.
+      const tail = new Uint8Array(length);
+      tail[0] = file.length;
+      tail[1] = file.charCodeAt(0) % 256;
+      transfer.items.add(new File([head, tail], file, { type: "image/png" }));
+      for (const type of ["dragenter", "dragover", "drop"])
+        element.dispatchEvent(
+          new DragEvent(type, { dataTransfer: transfer, bubbles: true, cancelable: true }),
+        );
+    },
+    { file: name, length: bytes, png: PNG.toString("base64") },
+  );
+  await expect(page.getByRole("option", { name }).first()).toBeVisible({ timeout: 30_000 });
+}
+
 test.describe("files of assets into the large file storage", () => {
   test("from where each file is, one or many, until they are there", async ({ page }) => {
     test.setTimeout(120_000);
@@ -101,10 +156,8 @@ test.describe("files of assets into the large file storage", () => {
     await importFiles(page, files.video, files.other, files.image);
     await explorer(page);
 
-    // A project of the platform: the new assets say that they are only in this browser, and ask.
-    await expect(notice(page, "新素材现在只在这个浏览器里")).toBeVisible();
-    await shot(page, "connected-prompt");
-    await page.getByRole("button", { name: "以后再说" }).click();
+    // Nobody said yet what it means: asked first, and here they stay.
+    await keepHere(page);
 
     await page.getByRole("option", { name: "采访.mp4" }).click();
     await expect(place(page)).toContainText("换电脑打开、云端 AI 都拿不到这个文件");
@@ -196,6 +249,7 @@ test.describe("files of assets into the large file storage", () => {
     await arrive(page);
     await createOnline(page, "shibai", "失败");
     await importFiles(page, files.video, files.other);
+    await keepHere(page);
     await withLab(page, (lab) => {
       lab.lfsAccount.acknowledgedAt = Date.now();
       lab.lfs.faults = ["githubQuota"];
@@ -240,6 +294,7 @@ test.describe("files of assets into the large file storage", () => {
     await arrive(page);
     await createOnline(page, "meichuanwan", "没传完");
     await importFiles(page, files.video);
+    await keepHere(page);
     await withLab(page, (lab) => {
       lab.lfsAccount.acknowledgedAt = Date.now();
       lab.lfs.pieceMs = 2000;
@@ -278,76 +333,106 @@ test.describe("files of assets into the large file storage", () => {
     await expect(place(page)).toContainText("GitHub 大文件存储 ·", { timeout: 30_000 });
   });
 
-  test("new assets go by themselves where the switch was turned on on another computer, without asking", async ({
+  test("new assets of an online project go into its repository by themselves; another default moves nothing", async ({
     page,
   }) => {
+    test.setTimeout(90_000);
     await arrive(page);
     await createOnline(page, "zidong", "自动");
-    // On another computer: said once what it means, and turned it on for this project.
+    // Said once before, on another computer: nothing asks.
     await withLab(page, (lab) => {
-      const [project] = [
-        ...(
-          lab as unknown as { platform: { projects: Map<string, unknown> } }
-        ).platform.projects.keys(),
-      ];
       lab.lfsAccount.acknowledgedAt = Date.now();
-      lab.lfsAccount.auto.add(project as string);
     });
     await importFiles(page, files.video);
     await explorer(page);
     await page.getByRole("option", { name: "采访.mp4" }).click();
     await expect(place(page)).toContainText("GitHub 大文件存储 ·", { timeout: 30_000 });
-    await expect(page.getByText("要把素材放进 GitHub 大文件存储吗？")).toHaveCount(0);
+    await expect(notice(page, ASKS)).toHaveCount(0);
+
+    // The default of the project, in its properties: the repository, and where the assets are.
+    const shown = await properties(page);
+    await expect(defaultStorage(page)).toHaveValue("lfs");
+    await expect(defaultStorage(page).locator("option:checked")).toHaveText(
+      "GitHub 大文件存储 · octo/zidong",
+    );
+    await expect(shown.getByTestId("project-assets")).toContainText(
+      "已有的：1 个在 GitHub 大文件存储",
+    );
+    await shots(page, "properties-default-lfs");
+    // Only this computer from now on: a step, which undo takes back.
+    await defaultStorage(page).selectOption("local");
+    await expect(shown).toContainText("清理浏览器数据时会丢");
+    await shots(page, "properties-default-local");
+    await page.keyboard.press("Escape");
+    await importFiles(page, files.image);
+    await explorer(page);
+    await page.getByRole("option", { name: "封面.png" }).click();
+    await expect(place(page)).toContainText("只在这台电脑上");
+    await page.waitForTimeout(500);
+    await expect(place(page)).toContainText("只在这台电脑上");
+    // What was there before stays there.
+    await page.getByRole("option", { name: "采访.mp4" }).click();
+    await expect(place(page)).toContainText("GitHub 大文件存储 ·");
+
+    // Back to the repository: what is only here is put there too only where people say so.
+    await properties(page);
+    await defaultStorage(page).selectOption("lfs");
+    await expect(page.getByTestId("project-assets")).toContainText("1 个只在这台电脑上");
+    await page.getByRole("button", { name: "把已有的也换过去…" }).click();
+    const dialog = page.locator("dialog[data-places-dialog]");
+    await expect(dialog.getByRole("checkbox", { name: "封面.png" })).toBeChecked();
+    await shots(page, "properties-move-existing");
+    await dialog.getByRole("button", { name: /^开始上传/ }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByTestId("project-assets")).toContainText(
+      "已有的：2 个在 GitHub 大文件存储",
+      { timeout: 30_000 },
+    );
   });
 
-  test("the switch for new assets asks first what people have to know, as the dialog does", async ({
+  test("before people said they know: one notification asks, with the large files in it, and sends all", async ({
     page,
   }) => {
+    test.setTimeout(120_000);
     await arrive(page);
-    await createOnline(page, "kaiguan", "开关");
-    await chooseFrom(page, "文件", "项目属性…");
-    const properties = page.getByTestId("project-properties");
-    await properties
-      .getByRole("navigation", { name: "项目属性的分组" })
-      .getByRole("button", { name: "存放和同步" })
-      .click();
-    const auto = properties.getByRole("switch", { name: "新导入的素材自动放进 GitHub 大文件存储" });
-    await auto.click();
-    const asking = page
-      .locator("dialog[open]")
-      .filter({ hasText: "我知道：放进去以后不能单独删掉" });
-    await expect(asking).toBeVisible();
-    await shot(page, "auto-acknowledge");
-    await asking.getByRole("button", { name: "取消" }).click();
-    await expect(auto).not.toBeChecked();
-    expect(await withLab(page, (lab) => lab.lfsAccount.auto.size)).toBe(0);
-    await auto.click();
-    await page.locator("dialog[open]").getByRole("button", { name: "我知道了，打开" }).click();
-    await expect(auto).toBeChecked();
+    await createOnline(page, "xianwen", "先问");
+    await importFiles(page, files.video);
+    await dropLarge(page, "大图.png", 101 * 1024 * 1024);
+    // One notification for both imports, the large file in it.
+    const asking = notice(page, ASKS);
+    await expect(asking).toContainText("新导入的 2 个素材");
+    await expect(asking).toContainText("放进去以后不能单独删掉，只能删整个仓库");
+    await expect(asking).toContainText("「大图.png」有 105.9 MB");
+    await expect(page.getByRole("status").filter({ hasText: ASKS })).toHaveCount(1);
+    await shots(page, "ask-first");
+    await explorer(page);
+    await page.getByRole("option", { name: "采访.mp4" }).click();
+    await expect(place(page)).toContainText("只在这台电脑上");
+    await page.getByRole("button", { name: "知道了，放进去" }).click();
     expect(await withLab(page, (lab) => lab.lfsAccount.acknowledgedAt !== undefined)).toBe(true);
+    await expect(place(page)).toContainText("GitHub 大文件存储 ·", { timeout: 30_000 });
+
+    // Said once: a large file after that is told of on its own, and can stay here.
+    await dropLarge(page, "又一张.png", 101 * 1024 * 1024);
+    const large = notice(page, "会放进 GitHub 大文件存储，占你 GitHub 账号的大文件额度");
+    await expect(large).toContainText("「又一张.png」有 105.9 MB");
+    await expect(notice(page, ASKS)).toHaveCount(0);
+    await shots(page, "large-notice");
+    await page.getByRole("button", { name: "这个不放进去" }).click();
+    await explorer(page);
+    await page.getByRole("option", { name: "又一张.png" }).click();
+    await expect(place(page)).toContainText("只在这台电脑上", { timeout: 30_000 });
   });
 
   test("the storage page of the start page, and the properties of a project", async ({ page }) => {
     await arrive(page);
     await createOnline(page, "shuxing", "属性");
     await importFiles(page, files.video, files.image);
-    // Assets of a new project of the platform: asked once.
-    await chooseFrom(page, "文件", "项目属性…");
-    const properties = page.getByTestId("project-properties");
-    await properties
-      .getByRole("navigation", { name: "项目属性的分组" })
-      .getByRole("button", { name: "存放和同步" })
-      .click();
-    await expect(properties.getByTestId("project-assets")).toContainText(
-      "0 个在 GitHub 大文件存储（0 B），2 个只在这台电脑上",
+    await keepHere(page);
+    const shown = await properties(page);
+    await expect(shown.getByTestId("project-assets")).toContainText(
+      "已有的：0 个在 GitHub 大文件存储（0 B），2 个只在这台电脑上",
     );
-    const auto = properties.getByRole("switch", { name: "新导入的素材自动放进 GitHub 大文件存储" });
-    await expect(auto).not.toBeChecked();
-    await auto.click();
-    await page.locator("dialog[open]").getByRole("button", { name: "我知道了，打开" }).click();
-    await expect(auto).toBeChecked();
-    await shot(page, "properties-assets");
-    expect(await withLab(page, (lab) => lab.lfsAccount.auto.size)).toBe(1);
     await page.keyboard.press("Escape");
 
     await withLab(page, (lab) => {

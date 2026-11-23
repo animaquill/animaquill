@@ -44,7 +44,7 @@ describe("the registry of operations", () => {
   it("has every operation once, each with what it runs on", () => {
     const names = OPERATIONS.map(({ name }) => name);
     expect(new Set(names).size).toBe(names.length);
-    expect(names).toHaveLength(64);
+    expect(names).toHaveLength(65);
     for (const op of OPERATIONS as readonly Operation[]) {
       expect(op.type).toBe(op.name);
       expect(["edit", "outside", "human"]).toContain(op.level);
@@ -61,11 +61,17 @@ describe("the registry of operations", () => {
 
   it("says who can use what: people only, and the 57 that AI can", () => {
     const human = OPERATIONS.filter(({ level }) => level === "human").map(({ name }) => name);
-    expect(human).toEqual(["project.setTags", "conflict.take", "asset.setStorage"]);
+    expect(human).toEqual([
+      "project.setTags",
+      "conflict.take",
+      "project.setDefaultStorage",
+      "asset.setStorage",
+    ]);
     expect(OPERATIONS.filter((op) => op.ai === "yes")).toHaveLength(57);
     expect(OPERATIONS.filter((op) => op.ai !== "yes").map(({ name }) => name)).toEqual([
       "project.setTags",
       "conflict.take",
+      "project.setDefaultStorage",
       "asset.add",
       "asset.setStorage",
       "file.write",

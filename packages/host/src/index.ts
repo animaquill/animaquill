@@ -1903,7 +1903,8 @@ export interface LfsRepositoryUse {
 /**
  * What a person has in the large file storage (Git LFS) of the repositories of their projects, as
  * far as the platform knows (the account keeps the room and the traffic, which only GitHub says),
- * and how they go about it, for all their computers.
+ * and whether they said they know what it means, for all their computers. Where the new assets of
+ * a project go is the project's own, see `defaultStorage` of the format.
  */
 export interface LfsAccount {
   /** Whose it is, see `AccountSnapshot.id`. */
@@ -1913,8 +1914,6 @@ export interface LfsAccount {
    * and it is their account's room), the first time; missing while they never did.
    */
   readonly acknowledgedAt?: number;
-  /** Their projects, by id on the platform, whose new assets go there by themselves. */
-  readonly auto: readonly string[];
   /** By repository, the largest first. */
   readonly repositories: readonly LfsRepositoryUse[];
 }
@@ -1926,13 +1925,7 @@ export interface LfsAccount {
  */
 export interface LfsAccountAccess {
   read(): Promise<LfsAccount>;
-  change(
-    account: string,
-    changes: {
-      readonly acknowledged?: true;
-      readonly auto?: { readonly project: string; readonly on: boolean };
-    },
-  ): Promise<LfsAccount>;
+  change(account: string, changes: { readonly acknowledged?: true }): Promise<LfsAccount>;
 }
 
 /** What the platform says when it refuses something about sending files to the storage. */
