@@ -108,6 +108,8 @@ export {
 } from "./paths.ts";
 export {
   OFFLINE_SCOPE,
+  RELAY_PORTS_KEY,
+  RELAY_TRUST_KEY,
   UNSCOPED_DATABASES,
   onlineScope,
   resetStorageScope,

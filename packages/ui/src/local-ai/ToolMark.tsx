@@ -1,5 +1,5 @@
 import { useTranslation } from "react-i18next";
-import { knownTool, type ToolClient } from "../folder/tool-notes.ts";
+import { knownTool, type ToolClient } from "./tools.ts";
 import { toolName } from "../workbench/tool-activity.ts";
 import styles from "./LocalAi.module.css";
 

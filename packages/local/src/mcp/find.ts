@@ -2,7 +2,12 @@ import { lstat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, resolve } from "node:path";
 import { MANIFEST_FILE } from "@animaquill/schema";
-import type { ProjectPlace } from "./host.ts";
+
+/** Where the project is, as the server was started, or why there is none. */
+export type ProjectPlace =
+  | { readonly kind: "folder"; readonly root: string }
+  /** `home`: the nearest one is the home folder or the top of the disk, taken only when named. */
+  | { readonly kind: "none"; readonly reason: string; readonly home?: true };
 
 /** Whether a folder has animaquill.json at its top, as a file of its own and no link. */
 async function hasManifest(folder: string): Promise<boolean> {
@@ -51,6 +56,7 @@ export async function findProject(
   if (found && (found === resolve(homedir()) || dirname(found) === found)) {
     return {
       kind: "none",
+      home: true,
       reason: `error no-project: the nearest folder with ${MANIFEST_FILE} above where the server started is ${found}, the home folder or the top of the disk, which is not taken as a project without being named. --project ${JSON.stringify(found)} in the server's command works on it.`,
     };
   }

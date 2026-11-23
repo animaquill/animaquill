@@ -86,7 +86,9 @@ export const PACK_PICTURES = "https://raw.githubusercontent.com";
 /**
  * The policy of the editor's page. It runs only its own scripts, and shows only the compositor in a
  * frame. It talks to any https address, and to services on this computer, because the browser agent
- * talks to the AI services people set up themselves (2026-11-10, user's decision). Pictures come only
+ * talks to the AI services people set up themselves (2026-11-10, user's decision), and to the relay
+ * of AI tools on this computer over a WebSocket (`animaquill mcp`, docs/design/online-offline.md of
+ * AnimaQuill Cloud, 5.3). Pictures come only
  * from the page, from the READMEs of model packs (`PACK_PICTURES`), and from what a deployment adds.
  *
  * The code editor (Monaco) writes `<style>` elements and `style=""` attributes and does not work
@@ -104,7 +106,7 @@ export function editorPolicy(sites: Sites, options: PolicyOptions = {}): string 
     "style-src 'self' 'unsafe-inline'",
     `img-src ${images.join(" ")}`,
     "font-src 'self'",
-    "connect-src 'self' https: http://localhost:* http://127.0.0.1:*",
+    "connect-src 'self' https: http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*",
     "manifest-src 'self'",
     `frame-src ${sites.compositor}`,
     "base-uri 'none'",

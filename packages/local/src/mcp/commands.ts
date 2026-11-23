@@ -3,7 +3,7 @@ import { createProject } from "@animaquill/schema";
 import { CallerState, createToolset, type ToolHost } from "@animaquill/tools";
 import type { Problem } from "@animaquill/schema";
 import { FolderProject } from "./folder-project.ts";
-import type { ProjectPlace } from "./host.ts";
+import type { ProjectPlace } from "./find.ts";
 
 /**
  * The commands of the command line on a project folder, which read and write nothing but what they

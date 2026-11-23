@@ -1,12 +1,12 @@
 ---
 name: animaquill
-description: Work on an AnimaQuill video project (a folder with animaquill.json) through the aq_ tools of the animaquill MCP server - put scene clips on a timeline and animate them with keyframes, space clips out on the beats, fix what aq_check_run reports, change the HTML, CSS and JavaScript of scenes. Use when the user asks to edit, animate, time or fix an AnimaQuill project.
+description: Work on an AnimaQuill video project (open in the AnimaQuill editor; offline, a folder with animaquill.json) through the aq_ tools of the animaquill MCP server - put scene clips on a timeline and animate them with keyframes, space clips out on the beats, fix what aq_check_run reports, change the HTML, CSS and JavaScript of scenes. Use when the user asks to edit, animate, time or fix an AnimaQuill project.
 license: AGPL-3.0-only
 ---
 
 # Working on an AnimaQuill project
 
-An AnimaQuill project is a folder with `animaquill.json` at its top: timelines of clips, HTML scenes, sounds made by code, and the assets they use. The `animaquill` MCP server (`npx -y animaquill@latest mcp`, started in the project folder) has the tools for it. In Claude Code they show as `mcp__animaquill__aq_edit` and so on; this skill calls them by their own names.
+An AnimaQuill project has timelines of clips, HTML scenes, sounds made by code, and the assets they use; offline it is a folder with `animaquill.json` at its top, online it is on a server. The `animaquill` MCP server (`npx -y animaquill@latest mcp`, started in the project folder for an offline one) has the tools for it, which run in the AnimaQuill editor the user has open in the browser. In Claude Code they show as `mcp__animaquill__aq_edit` and so on; this skill calls them by their own names.
 
 ## How changes are made
 

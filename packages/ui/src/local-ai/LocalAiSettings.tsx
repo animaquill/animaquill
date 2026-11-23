@@ -1,4 +1,4 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession, useWorkbench } from "../app/context.ts";
 import { GroupPage, SettingRow, Toggle } from "../settings/parts.tsx";
@@ -22,7 +22,7 @@ export function whenText(time: number, now = Date.now()): string {
     : day.format(time);
 }
 
-/** Who is connected to the open project, and who wrote to it, as the editor looks every so often. */
+/** Who is connected to the open project, and who changed it lately. */
 export function useToolActivity() {
   const { tools } = useWorkbench();
   return useSyncExternalStore(tools.subscribe, tools.getSnapshot);
@@ -30,19 +30,17 @@ export function useToolActivity() {
 
 /**
  * 设置 › 电脑上的 AI 工具 (docs/design/settings-and-properties.md of AnimaQuill Cloud, 4.3): the way
- * to the guide, the AI tools that wrote to the open project, and whether new projects start with
- * AGENTS.md.
+ * to the guide, the AI tools that changed the open project, whether the editor connects to them by
+ * itself, and whether new projects start with AGENTS.md.
  */
 export function LocalAiGroup() {
   const workbench = useWorkbench();
-  const { tools, agentsFile } = workbench;
+  const { agentsFile, autoConnect } = workbench;
   const { t } = useTranslation();
   const { store } = useSession();
   const activity = useToolActivity();
   const agents = useSyncExternalStore(agentsFile.subscribe, agentsFile.getSnapshot);
-  useEffect(() => {
-    void tools.look({ batches: true });
-  }, [tools]);
+  const auto = useSyncExternalStore(autoConnect.subscribe, autoConnect.getSnapshot);
   const project = store?.getState().manifest.name;
   const connected = new Set(activity.connections.map(({ client }) => client?.name ?? ""));
   return (
@@ -61,7 +59,7 @@ export function LocalAiGroup() {
           </button>
         </div>
       </div>
-      {project !== undefined && activity.folder && (
+      {project !== undefined && (
         <SettingRow
           id="localAi.recent"
           name={t("localAi.settings.recent")}
@@ -90,6 +88,13 @@ export function LocalAiGroup() {
           }
         />
       )}
+      <SettingRow id="localAi.autoConnect" help="">
+        <Toggle
+          label={t("settings.items.localAi.autoConnect.name")}
+          checked={auto}
+          onChange={(on) => autoConnect.set(on)}
+        />
+      </SettingRow>
       <SettingRow id="localAi.agentsFile" help="">
         <Toggle
           label={t("settings.items.localAi.agentsFile.name")}

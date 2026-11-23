@@ -281,3 +281,9 @@
 .toolMark[data-tool="other"] {
   background: var(--aq-tool-other);
 }
+
+.connect {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

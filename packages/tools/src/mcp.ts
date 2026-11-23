@@ -1,4 +1,5 @@
 import { systemPromptOf } from "./texts/index.ts";
+import { listHash } from "./bridge.ts";
 import type { JsonSchema, Tool } from "./types.ts";
 
 /**
@@ -9,22 +10,25 @@ import type { JsonSchema, Tool } from "./types.ts";
 
 /** Where the tools change the project, which is the one sentence that differs between servers. */
 export type McpPlace =
-  /** A server on this computer, on a project folder: `npx animaquill mcp`. */
-  "folder";
+  /**
+   * A server on this computer whose calls run in the AnimaQuill editor open in the browser, on the
+   * project open there: `npx animaquill mcp` (docs/design/online-offline.md of AnimaQuill Cloud, 5).
+   */
+  "editor";
 
 /**
  * The first paragraph, which has to make sense alone: Codex holds only to the first 512 characters,
  * and Claude Code decides from it, with the names of the tools, whether to look for them.
  */
 const INTRO: Readonly<Record<McpPlace, string>> = {
-  folder:
-    "AnimaQuill is a video and animation editor whose projects are folders. These aq_ tools read and change the AnimaQuill project in a folder on this computer, and what they change is written to its files; an AnimaQuill editor open on the same folder takes it in. aq_project_status gives the project as it is. Timelines, clips and keyframes change through aq_edit, not by writing their JSON files; aq_check_run lists what is wrong with the project.",
+  editor:
+    "AnimaQuill is a video and animation editor. These aq_ tools read and change the project open in the AnimaQuill editor in the browser on this computer, and run there: a change shows in the editor at once and can be taken back there as a whole. aq_project_status gives the project as it is. Timelines, clips and keyframes change through aq_edit, not by writing their JSON files; aq_check_run lists what is wrong with the project.",
 };
 
-/** What the place has, after the rules: no picture, no sound, no editor. */
+/** What the place has, after the rules. */
 const HOST: Readonly<Record<McpPlace, string>> = {
-  folder:
-    "- These tools cannot render frames or play sound (aq_render_frames and aq_audio_analyze give not-available here): seeing the picture and hearing it takes the AnimaQuill editor. Judge what no picture shows by names, lengths and what the user tells you, and say so when it matters.\n- What the editor selects is the editor's: aq_selection_read here has no editor to read it from.",
+  editor:
+    "- The first result of a session names the project the calls work on, and whether it is offline (a folder on this computer) or online (on a server, without a folder). In an offline project the files of scene and sound code are in that folder, and your own file tools can change them; the editor takes in what changes there. An online project has no folder: its files change through aq_file_edit and aq_file_write.\n- aq_render_frames needs the editor in front: in a background tab the browser draws nothing.",
 };
 
 /** The instructions of a server, as MCP gives them to the client. */
@@ -58,3 +62,11 @@ export const mcpToolsOf = (tools: readonly Tool[]): readonly McpTool[] =>
     annotations,
     ...(name === ALWAYS_LOAD && { _meta: { "anthropic/alwaysLoad": true } }),
   }));
+
+/**
+ * What tells whether two places list the same tools: the hash of the list of `tools/list`, as
+ * `animaquill mcp` and the editor compare them (`listHash`).
+ */
+export function mcpListHash(tools: readonly Tool[]): string {
+  return listHash(mcpToolsOf(tools));
+}

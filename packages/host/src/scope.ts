@@ -62,3 +62,11 @@ export const UNSCOPED_DATABASES: readonly string[] = [
   "animaquill-organizer",
   "animaquill-covers",
 ];
+
+/**
+ * Keys of the local storage that are this computer's rather than a mode's or an account's: the
+ * relays of AI tools on this computer people allowed, and the ports tests move them to
+ * (docs/design/online-offline.md of AnimaQuill Cloud, 5.2). Kept where what was before goes.
+ */
+export const RELAY_TRUST_KEY = "animaquill.mcp.relays";
+export const RELAY_PORTS_KEY = "animaquill.mcp.ports";

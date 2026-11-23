@@ -77,7 +77,14 @@ import { ChatSession } from "../chat/session.ts";
 import type { FrameShot } from "../chat/attachments.ts";
 import { ChatPointing } from "../chat/pointing.ts";
 import { proposedIn } from "../chat/conversations.ts";
-import { parseAddress } from "@animaquill/tools";
+import { TOOLSET_VERSION, createToolset, mcpListHash, parseAddress } from "@animaquill/tools";
+import { BridgeExecutor } from "../local-ai/bridge/executor.ts";
+import {
+  ToolBridge,
+  browserRelayTrust,
+  loopbackPermission,
+  type BridgePage,
+} from "../local-ai/bridge/bridge.ts";
 import { ModelPacks } from "../chat/packs.ts";
 import { AiSettingsStore } from "../chat/settings.ts";
 import { AccountAi } from "../chat/account-ai.ts";
@@ -459,8 +466,12 @@ export class Workbench {
   readonly listens: SoundListens;
   /** What the meters of the mixer show, as the preview plays. */
   readonly levels = new MixLevels();
-  /** What AI tools on this computer do through the folder of the open project. */
+  /** What AI tools on this computer do to the open project, through `animaquill mcp`. */
   readonly tools: ToolActivity;
+  /** The editor's end of the AI tools on this computer, see `ToolBridge`. */
+  readonly bridge: ToolBridge;
+  /** Whether the editor connects to the AI tools on this computer by itself. */
+  readonly autoConnect: SwitchSetting;
   /** What merges of changes on GitHub did to the open project, see `RepoChanges`. */
   readonly repoChanges: RepoChanges;
   /** Merges of changes on GitHub taken back as a whole, see `BatchUndo`. */
@@ -665,6 +676,7 @@ export class Workbench {
     this.proxyOffer = new SwitchSetting(host.settings, "proxyOffer", true);
     this.appearance = new Appearance(host.settings);
     this.agentsFile = new SwitchSetting(host.settings, "agentsFile", true);
+    this.autoConnect = new SwitchSetting(host.settings, "localAi.autoConnect", false);
     this.palette = new CommandPalette(host.settings, this.actions);
     this.resourceHabits = new ResourceHabits(host.settings);
     this.startHabits = new StartHabits(host.settings);
@@ -915,10 +927,8 @@ export class Workbench {
         },
       }),
       isFolder: (key) => this.projectFolders?.holds(key) === true,
-      // What AI tools on this computer wrote is looked at now that the folder is compared, and
-      // what is not here downloads now that the project has what the platform and the folder had.
+      // What is not here downloads now that the project has what the platform and the folder had.
       live: () => {
-        void this.tools.look({ batches: true });
         this.downloads.follow();
       },
       ...(options.openingTiming && { timing: options.openingTiming }),
@@ -928,12 +938,8 @@ export class Workbench {
       t,
       notifications: this.notifications,
       dialogs: this.dialogs,
-      showProblems: () => this.layout.openPanel("problems"),
-      // Not before the folder is compared with the project, see `ProjectOpening`.
-      folder: () => (this.opening.isLive() ? this.projectFolders?.folderOpen : undefined),
-      held: () => this.projectFolders?.isHeld === true,
-      undo: (origin) => void this.projectFolders?.undoBatch(origin),
-      lookAt: (paths) => this.projectFolders?.lookAt(paths),
+      undo: (origin) => void this.takeBackOrigin(origin, "undo"),
+      projectKey: () => this.session.getSnapshot().key,
     });
     // What the last turn of AI changed shows on the timeline until the next one, and what the
     // latest batch of an AI tool on this computer changed.
@@ -1000,6 +1006,7 @@ export class Workbench {
     void this.videos.cleanUp();
     this.looks = this.#frameLooks(host.chatImages);
     this.listens = this.#soundListens();
+    this.bridge = this.#toolBridge();
     // Folders are projects only in the offline mode: online they are copies people save to.
     this.projectFolders =
       host.mode === "offline" && host.localFolders
@@ -1013,7 +1020,6 @@ export class Workbench {
             notifications: this.notifications,
             problems: this.problems,
             t,
-            tools: this.tools,
             takeBack: (origin, direction) => this.undo.takeBack(origin, direction),
             startingFiles: () => this.startingFiles(),
             changeProject: (next) => this.#changeProject(next),
@@ -2036,7 +2042,7 @@ export class Workbench {
       this.trials.load(),
       ...(this.accountAi ? [] : [ai]),
     ]);
-    this.tools.start();
+    void this.bridge.start();
     // An address of a project folder opens as one once the page is there, see `resume`; and so
     // does one of a project of the platform that this browser has nothing of yet.
     if (!(await this.projectFolders?.restore()) && (await this.#hasAddressed()))
@@ -2937,6 +2943,103 @@ export class Workbench {
       signal.removeEventListener("abort", stop);
       compositor.dispose();
     }
+  }
+
+  /**
+   * The editor's end of the AI tools on this computer (docs/design/online-offline.md of AnimaQuill
+   * Cloud, 5): their calls run here with the same tools and the same parts of the editor as the
+   * assistant in the browser, on the project of this window.
+   */
+  #toolBridge(): ToolBridge {
+    // Pictures of looks go to the AI tool, and nowhere in this browser.
+    const pictures = memoryChatImages();
+    const looks = this.#frameLooks(pictures);
+    const executor = new BridgeExecutor({
+      store: () => this.session.getSnapshot().store,
+      parts: {
+        selection: () => {
+          const { model, selection, transition } = this.timeline.getSnapshot();
+          if (!model) return undefined;
+          return {
+            timeline: model.id,
+            playhead: formatTime(frameTime(this.timeline.frame, model.rate)),
+            clips: [...selection],
+            ...(transition && { transition }),
+          };
+        },
+        problems: () => this.problems.set,
+        describe: (clip) => this.keyframes.describe(clip),
+        ranNow: (object, state) => this.#ranNow(object, state),
+        problemInputs: () => ({
+          describe: (clip) => this.keyframes.describe(clip),
+          registered: (revision) => this.registrations.problemsOf(revision),
+        }),
+        look: (request, signal) => looks.look(request, true, signal),
+        listen: (request, signal) => this.listens.listen(request, signal),
+      },
+      hidden: () => typeof document !== "undefined" && document.visibilityState === "hidden",
+      picture: async (image) => {
+        const blob = await pictures.read(image);
+        if (!blob) return undefined;
+        await pictures.delete([image]);
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        let text = "";
+        for (let at = 0; at < bytes.length; at += 0x8000) {
+          text += String.fromCharCode(...bytes.subarray(at, at + 0x8000));
+        }
+        return { type: blob.type || "image/jpeg", data: btoa(text) };
+      },
+      wrote: (write) => this.tools.wrote(write),
+    });
+    const page = (): BridgePage => {
+      const { store, key } = this.session.getSnapshot();
+      if (!store || key === undefined) return { project: undefined, eligible: false };
+      const { id, name } = store.getState().manifest;
+      const link = this.mode === "online" ? this.#address.linkTo?.(key) : undefined;
+      const folder = this.projectFolders?.getSnapshot().open;
+      return {
+        project: { mode: this.mode, key, id, name, ...(link && { link }) },
+        // Offline, the window that writes the folder: the others are behind it.
+        eligible: folder === undefined || folder.snapshot.role === "writing",
+      };
+    };
+    const bridge = new ToolBridge({
+      executor,
+      page,
+      subscribe: (listener) => {
+        const stops = [
+          this.session.subscribe(listener),
+          ...(this.projectFolders ? [this.projectFolders.subscribe(listener)] : []),
+        ];
+        return () => {
+          for (const stop of stops) stop();
+        };
+      },
+      readFile: async (path) => this.projectFolders?.folderOpen?.readText(path),
+      trust: browserRelayTrust(),
+      autoConnect: () => this.autoConnect.getSnapshot(),
+      confirm: () =>
+        this.dialogs.confirm({
+          title: this.t("localAi.bridge.askTitle"),
+          message: this.t("localAi.bridge.askMessage"),
+          confirm: this.t("localAi.bridge.allow"),
+          cancel: this.t("localAi.bridge.deny"),
+        }),
+      toolset: TOOLSET_VERSION,
+      list: mcpListHash(
+        createToolset({
+          store: () => undefined,
+          origin: () => "nobody",
+          problems: () => this.problems.set,
+        }),
+      ),
+      browser: browserName(),
+      origin: typeof location === "undefined" ? "" : location.origin,
+      permission: loopbackPermission,
+    });
+    bridge.subscribe(() => this.tools.connected(bridge.here));
+    this.autoConnect.subscribe(() => bridge.autoConnectChanged(this.autoConnect.getSnapshot()));
+    return bridge;
   }
 
   /**
@@ -4570,6 +4673,7 @@ export class Workbench {
     }
     const result = await this.undo.takeBack(origin, direction);
     if (!result) return undefined;
+    if (direction === "undo" && result.ok) this.tools.undone(origin);
     this.#tellTakenBack(origin, direction, store, result);
     return result;
   }
@@ -4606,18 +4710,18 @@ export class Workbench {
     const operation = this.operations?.getSnapshot().find((each) => each.origin === origin);
     const about: { -readonly [K in keyof UndoAbout]?: UndoAbout[K] } = {};
     if (operation) about.count = operation.count;
-    if (origin.startsWith("ai:")) {
+    // A batch of an AI tool on this computer, see `BridgeExecutor`.
+    const batch = this.tools.batchOf(origin);
+    if (batch) {
+      about.tool = toolName(this.t, batch.client);
+      about.count = batch.changes.length;
+      about.from = batch.startedAt;
+    } else if (origin.startsWith("ai:")) {
       const label = this.chat.labelOf(origin.slice("ai:".length));
       if (label !== undefined) about.label = label;
     } else {
       const files = this.projectFolders?.filesOf(origin);
       if (files) about.files = files;
-      const batch = this.tools.batchOf(origin);
-      if (batch) {
-        about.tool = toolName(this.t, batch.client);
-        about.count = batch.changes.length;
-        about.from = batch.startedAt;
-      }
     }
     return about;
   }
@@ -4794,4 +4898,19 @@ export interface ComposeHandlers {
   readonly selection: () => void;
   readonly picture: () => void;
   readonly focus: () => void;
+}
+
+/** The browser, as people call it: for who takes the calls of AI tools. */
+function browserName(): string {
+  if (typeof navigator === "undefined") return "";
+  const brands =
+    (navigator as Navigator & { userAgentData?: { brands?: { brand: string }[] } }).userAgentData
+      ?.brands ?? [];
+  const named = brands.map(({ brand }) => brand);
+  if (named.some((brand) => brand.includes("Edge"))) return "Edge";
+  if (named.some((brand) => brand.includes("Chrome"))) return "Chrome";
+  if (/Firefox\//.test(navigator.userAgent)) return "Firefox";
+  if (/Edg\//.test(navigator.userAgent)) return "Edge";
+  if (/Chrome\//.test(navigator.userAgent)) return "Chrome";
+  return "";
 }

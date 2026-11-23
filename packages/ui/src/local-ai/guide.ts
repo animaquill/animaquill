@@ -91,9 +91,16 @@ export const cleanPath = (pasted: string): string =>
     .replace(/^["']+|["']+$/g, "")
     .trim();
 
-/** What goes into the configuration of Claude's desktop app, for the project at `path`. */
-export function desktopConfig(path: string): string {
-  const args = [...SERVER_ARGS, "--project", path];
+/** Lets the AI tools on this computer connect to the editor of a site, once for every time after. */
+export const allowOriginCommand = (origin: string): string =>
+  `${SERVER_LINE} allow-origin ${origin}`;
+
+/**
+ * What goes into the configuration of Claude's desktop app: for the project at `path`, or without
+ * one for whatever project the editor has open in front.
+ */
+export function desktopConfig(path?: string): string {
+  const args = [...SERVER_ARGS, ...(path === undefined ? [] : ["--project", path])];
   return JSON.stringify(
     { mcpServers: { [SERVER_NAME]: { command: SERVER_COMMAND, args } } },
     null,

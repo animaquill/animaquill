@@ -58,7 +58,7 @@ describe("policies", () => {
       "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; " +
         "style-src 'self' 'unsafe-inline'; " +
         "img-src 'self' data: blob: https://raw.githubusercontent.com https://pictures.example; " +
-        "font-src 'self'; connect-src 'self' https: http://localhost:* http://127.0.0.1:*; " +
+        "font-src 'self'; connect-src 'self' https: http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*; " +
         "manifest-src 'self'; frame-src https://compositor.example.net; base-uri 'none'; " +
         "form-action 'none'; frame-ancestors 'none'",
     );

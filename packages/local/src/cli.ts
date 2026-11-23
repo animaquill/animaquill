@@ -6,8 +6,14 @@ import { LOCAL_PORT, localSites } from "@animaquill/web/sites";
 import { PortInUse, startLocalServer } from "./server.ts";
 import { check, describe, guide } from "./mcp/commands.ts";
 import { findProject } from "./mcp/find.ts";
-import { FolderTools } from "./mcp/host.ts";
-import { serveMcp } from "./mcp/server.ts";
+import { animaquillHome } from "./mcp/home.ts";
+import { IdentityRefused, loadIdentity } from "./mcp/identity.ts";
+import { ElectedLink } from "./mcp/link.ts";
+import { allowOrigin, allowedOrigins } from "./mcp/origins.ts";
+import { listedTools, serveMcp } from "./mcp/server.ts";
+import { McpSession } from "./mcp/session.ts";
+import { findTarget } from "./mcp/target.ts";
+import { TOOLSET_VERSION, mcpListHash } from "@animaquill/tools";
 
 /**
  * `npx animaquill`: the editor on this computer. Everything that needs no platform works, in Chrome
@@ -27,7 +33,11 @@ const HELP = `用法：animaquill [选项]
 在这台电脑上启动 AnimaQuill 编辑器，用 Chrome 或 Edge 打开显示的地址。
 
 命令（项目默认是当前文件夹，或者往上最近的有 animaquill.json 的文件夹）：
-  mcp              给电脑上的 AI 工具（Claude Code、Codex 等）用的 MCP 服务器（stdio）
+  mcp              给电脑上的 AI 工具（Claude Code、Codex 等）用的 MCP 服务器（stdio）：
+                   工具在浏览器里打开的编辑器里执行，编辑器要开着这个项目、连着电脑上的 AI 工具。
+                   --project 也可以是在线项目的地址；--allow-origin <网址> 让自己部署的编辑器连接
+  mcp allow-origin <网址>
+                   记住一个自己部署的编辑器的网址，以后每次都让它连接
   check [--json]   检查项目，有错误时退出码是 1
   describe         项目概要和时间轴
   guide [<主题>]   手册，比如 guide ops/clip.move；--query <词> 按关键词找
@@ -83,11 +93,12 @@ async function runCommand(name: string, argv: readonly string[]): Promise<number
       args: [...argv],
       options: {
         project: { type: "string" },
+        "allow-origin": { type: "string", multiple: true },
         json: { type: "boolean" },
         query: { type: "string" },
         help: { type: "boolean", short: "h" },
       },
-      allowPositionals: name === "guide",
+      allowPositionals: name === "guide" || name === "mcp",
       strict: true,
     });
   } catch (error) {
@@ -104,25 +115,74 @@ async function runCommand(name: string, argv: readonly string[]): Promise<number
     err: (text: string) => console.error(text),
   };
   if (name === "guide") return guide(positionals[0], values.query, output);
-  const place = await findProject(values.project);
-  if (name === "check") return check(place, values.json === true, output);
-  if (name === "describe") return describe(place, output);
+  if (name === "mcp" && positionals.length > 0) {
+    const [what, address] = positionals;
+    if (what !== "allow-origin" || address === undefined || positionals.length !== 2) {
+      console.error(HELP);
+      return 2;
+    }
+    try {
+      const origin = await allowOrigin(animaquillHome(), address);
+      console.log(`以后电脑上的 AI 工具也连接 ${origin} 上的编辑器。`);
+      return 0;
+    } catch (error) {
+      console.error((error as Error).message);
+      return 2;
+    }
+  }
+  if (name === "check")
+    return check(await findProject(values.project), values.json === true, output);
+  if (name === "describe") return describe(await findProject(values.project), output);
 
   // mcp: stdout is the protocol from here on, and what is said to people goes to stderr.
   console.log = console.error;
-  const tools = new FolderTools({ place, notes: true });
-  const handle = serveMcp({ tools, version });
+  const home = animaquillHome();
+  let identity;
+  try {
+    identity = await loadIdentity(home);
+  } catch (error) {
+    if (!(error instanceof IdentityRefused)) throw error;
+    console.error(error.message);
+    return 1;
+  }
+  const allowed = await allowedOrigins(home, values["allow-origin"] ?? []);
+  const link = new ElectedLink({
+    identity,
+    allowed,
+    toolset: TOOLSET_VERSION,
+    list: mcpListHash(listedTools()),
+    ...portsFromEnvironment(),
+    log: (text) => console.error(text),
+  });
+  void link.start().catch((error: unknown) => console.error(error));
+  const session = new McpSession({
+    link,
+    find: (id) => findTarget(values.project, id),
+  });
+  const handle = serveMcp({ session, version });
   let stopping = false;
   const stop = () => {
     if (stopping) return;
     stopping = true;
-    void Promise.allSettled([handle.close(), tools.close()]).then(() => process.exit(0));
+    session.close();
+    void session
+      .open()
+      .then((found) => (found.kind === "target" ? found.cleanup() : undefined))
+      .catch(() => {})
+      .then(() => Promise.allSettled([handle.close(), link.close()]))
+      .then(() => process.exit(0));
   };
   process.stdin.once("end", stop);
   process.stdin.once("close", stop);
   process.once("SIGINT", stop);
   process.once("SIGTERM", stop);
   return -1;
+}
+
+/** The ports of the relay, where `ANIMAQUILL_RELAY_PORTS` (`<first>:<count>`) moves them: for tests. */
+function portsFromEnvironment(): { ports?: { first: number; count: number } } {
+  const given = /^(\d+):(\d+)$/.exec(process.env["ANIMAQUILL_RELAY_PORTS"] ?? "");
+  return given ? { ports: { first: Number(given[1]), count: Number(given[2]) } } : {};
 }
 
 async function main(argv: readonly string[]): Promise<number> {

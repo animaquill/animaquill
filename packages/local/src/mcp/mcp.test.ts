@@ -1,17 +1,14 @@
 import {
   existsSync,
-  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
-  rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ProjectStore, readFolder } from "@animaquill/core";
-import { diskFolder } from "@animaquill/core/disk-folder";
+import { diskWriter } from "@animaquill/core/disk-folder";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import {
@@ -24,38 +21,15 @@ import {
 import { afterEach, describe, expect, it } from "vitest";
 import { check, describe as describeProject, guide } from "./commands.ts";
 import { findProject } from "./find.ts";
-import { FolderTools } from "./host.ts";
-import {
-  BATCH_GAP_MS,
-  BatchNotes,
-  CONNECTIONS_FOLDER,
-  ConnectionFile,
-  GONE_AFTER_MS,
-  KEEP_BATCHES_MS,
-  LEFT_CONNECTION_MS,
-  readBatchNotes,
-  tidyLeftovers,
-  readConnections,
-} from "./notes.ts";
-import { cleanUp, sampleFolder, tempFolder } from "./test-support.ts";
-import { FolderProject } from "./folder-project.ts";
-import { diskWriter } from "@animaquill/core/disk-folder";
+import { listedTools } from "./server.ts";
+import { findTarget } from "./target.ts";
+import { FakePage, cleanUp, sampleFolder, storeOf, tempFolder } from "./test-support.ts";
 
 afterEach(cleanUp);
 
 const CLI = fileURLToPath(new URL("../cli.ts", import.meta.url));
 
 const read = (folder: string, path: string) => readFileSync(join(folder, path), "utf8");
-
-/** The project in a folder as the editor would read it now. */
-async function projectIn(folder: string) {
-  const reading = await readFolder(await diskFolder(folder));
-  return ProjectStore.create(reading.project, reading.sources);
-}
-
-/** The tools on a folder, as the server has them, without the protocol. */
-const toolsOn = (root: string, notes = false) =>
-  new FolderTools({ place: { kind: "folder", root }, notes });
 
 describe("finding the project", () => {
   it("is the folder the server starts in, or the nearest one above with animaquill.json", async () => {
@@ -90,11 +64,32 @@ describe("finding the project", () => {
     expect(given.kind === "none" && given.reason).toMatch(/has no animaquill\.json/);
   });
 
-  it("gives every call the error, and the same list of tools", async () => {
-    const reason = "error no-project: none here";
-    const tools = new FolderTools({ place: { kind: "none", reason } });
-    expect(tools.tools.map(({ name }) => name)).toContain("aq_edit");
-    expect(await tools.call("aq_project_status", {})).toEqual({ text: reason, isError: true });
+  it("is a folder of a project, an address of an online one, or else the project in front", async () => {
+    const root = sampleFolder();
+    const found = await findTarget(undefined, "s1", root, "");
+    expect(found.kind === "target" && found.target).toMatchObject({ kind: "folder", root });
+    if (found.kind === "target" && found.target.kind === "folder") {
+      const probe = JSON.parse(read(root, found.target.probe.path));
+      expect(probe.nonce).toBe(found.target.probe.nonce);
+      await found.cleanup();
+      expect(existsSync(join(root, found.target.probe.path))).toBe(false);
+    }
+    expect(await findTarget("https://editor.test/p/abc%20d", "s1")).toMatchObject({
+      target: { kind: "link", origin: "https://editor.test", project: "abc d" },
+    });
+    expect((await findTarget("https://editor.test/start", "s1")).kind).toBe("none");
+    expect(await findTarget(undefined, "s1", tempFolder(), "")).toMatchObject({
+      target: { kind: "front" },
+    });
+  });
+
+  it("writes no probe through a link", async () => {
+    const root = sampleFolder();
+    const outside = tempFolder();
+    symlinkSync(outside, join(root, ".animaquill"));
+    const found = await findTarget(undefined, "s1", root, "");
+    expect(found.kind).toBe("none");
+    expect(readdirSync(outside)).toEqual([]);
   });
 });
 
@@ -111,7 +106,7 @@ describe("the tools through MCP", () => {
   };
 
   it("are the tools of the browser, in the same order and to the byte", () => {
-    const listed = mcpToolsOf(toolsOn(tempFolder()).tools);
+    const listed = mcpToolsOf(listedTools());
     const browser = browserTools();
     expect(listed.map(({ _meta, ...tool }) => tool)).toEqual(
       browser.map(({ name, title, description, inputSchema, annotations }) => ({
@@ -142,261 +137,13 @@ describe("the tools through MCP", () => {
   });
 
   it("come with instructions whose first paragraph says it all, in 512 characters", () => {
-    const instructions = mcpInstructions("folder");
+    const instructions = mcpInstructions("editor");
     const first = instructions.split("\n\n")[0] ?? "";
     expect(first.length).toBeLessThanOrEqual(512);
     expect(first).toMatch(/aq_project_status/);
     expect(first).toMatch(/aq_edit/);
     expect(instructions.length).toBeLessThanOrEqual(4000);
     expect(instructions).toMatch(/AnimaQuill editor/);
-  });
-});
-
-describe("a project folder", () => {
-  it("takes in what changed in the folder, and the next result says who changed what", async () => {
-    const root = sampleFolder();
-    const tools = toolsOn(root);
-    const before = await tools.call("aq_timeline_read", { timeline: "main" });
-    expect(before.isError).toBe(false);
-    const manifest = JSON.parse(read(root, "animaquill.json")) as Record<string, unknown>;
-    writeFileSync(
-      join(root, "animaquill.json"),
-      `${JSON.stringify({ ...manifest, name: "外面改的名字" }, null, 2)}\n`,
-    );
-    const status = await tools.call("aq_project_status", {});
-    expect(status.text).toContain("外面改的名字");
-    expect(status.text).toMatch(/^others: .*files in the project folder changed/m);
-    const next = await tools.call("aq_timeline_read", { timeline: "main" });
-    expect(next.text).not.toMatch(/^others:/m);
-    await tools.close();
-  });
-
-  it("writes a change back, which the editor reads as it was made", async () => {
-    const root = sampleFolder();
-    const tools = toolsOn(root);
-    await tools.call("aq_timeline_read", { timeline: "main" });
-    const result = await tools.call("aq_edit", {
-      operations: [
-        {
-          op: "clip.add",
-          timeline: "main",
-          track: "track_captions",
-          id: "clip_mcp",
-          start: "9",
-          duration: "2",
-          source: { kind: "caption", text: "从命令行加的" },
-        },
-      ],
-    });
-    expect(result.isError, result.text).toBe(false);
-    const store = await projectIn(root);
-    expect(store.getState().timelines.main?.clips.clip_mcp?.source).toMatchObject({
-      kind: "caption",
-      text: "从命令行加的",
-    });
-    store.destroy();
-    await tools.close();
-  });
-
-  it("writes only what changed, and not what a file merely looks like differently", async () => {
-    const root = sampleFolder();
-    // Valid, and not how the editor writes it.
-    const manifest = read(root, "animaquill.json").replaceAll("\n", "\r\n");
-    writeFileSync(join(root, "animaquill.json"), manifest);
-    const tools = toolsOn(root);
-    await tools.call("aq_file_read", { path: "code/animate.js" });
-    const edited = await tools.call("aq_file_edit", {
-      path: "code/animate.js",
-      edits: [{ old_text: "export", new_text: "// 改过\nexport" }],
-    });
-    expect(edited.isError, edited.text).toBe(false);
-    expect(read(root, "code/animate.js")).toMatch(/^\/\/ 改过\nexport/);
-    expect(read(root, "animaquill.json")).toBe(manifest);
-    await tools.close();
-  });
-
-  it("does not write over a file that changed right before, and takes it in first", async () => {
-    const root = sampleFolder();
-    const project = await FolderProject.open(root);
-    const text = read(root, "code/animate.js");
-    writeFileSync(join(root, "code/animate.js"), `${text}// 外面\n`);
-    const changed = project.store.execute({
-      type: "file.write",
-      params: { path: "code/animate.js", text: `// 里面\n${text}` },
-    });
-    expect(changed.ok).toBe(true);
-    await project.save();
-    expect(read(root, "code/animate.js")).toBe(`// 里面\n${text}// 外面\n`);
-    project.destroy();
-  });
-
-  it("leaves a file that cannot come in as it is", async () => {
-    const root = sampleFolder();
-    const tools = toolsOn(root);
-    await tools.call("aq_timeline_read", { timeline: "main" });
-    writeFileSync(join(root, "timelines/main/timeline.json"), "{ 坏了");
-    await tools.call("aq_edit", {
-      operations: [{ op: "project.rename", name: "新名字" }],
-    });
-    expect(read(root, "timelines/main/timeline.json")).toBe("{ 坏了");
-    expect(JSON.parse(read(root, "animaquill.json")).name).toBe("新名字");
-    await tools.close();
-  });
-});
-
-describe("what the review found (MCP1)", () => {
-  it("writes nothing more once animaquill.json went away, as before an export", async () => {
-    const root = sampleFolder();
-    const project = await FolderProject.open(root);
-    const text = read(root, "code/animate.js");
-    const changed = project.store.execute({
-      type: "file.write",
-      params: { path: "code/animate.js", text: `// 改过\n${text}` },
-    });
-    expect(changed.ok).toBe(true);
-    rmSync(join(root, "animaquill.json"));
-    expect(await project.save()).toEqual([]);
-    expect(project.trouble).toBe("manifest-gone");
-    expect(read(root, "code/animate.js")).toBe(text);
-    project.destroy();
-  });
-
-  it("keeps a file that became a link, and neither writes it nor takes it away", async () => {
-    const root = sampleFolder();
-    const outside = tempFolder();
-    writeFileSync(join(outside, "x.html"), "外面");
-    const tools = toolsOn(root);
-    await tools.call("aq_project_status", {});
-    rmSync(join(root, "code/animate.js"));
-    symlinkSync(join(outside, "x.html"), join(root, "code/animate.js"));
-    await tools.call("aq_file_read", { path: "code/animate.js" });
-    const edited = await tools.call("aq_file_edit", {
-      path: "code/animate.js",
-      edits: [{ old_text: "export", new_text: "// 改过\nexport" }],
-    });
-    expect(edited.text).not.toMatch(/not found|no such file/i);
-    expect(read(outside, "x.html")).toBe("外面");
-    expect(lstatSync(join(root, "code/animate.js")).isSymbolicLink()).toBe(true);
-    await tools.close();
-  });
-
-  it("says which folder it works on", async () => {
-    const root = sampleFolder();
-    const tools = toolsOn(root);
-    expect((await tools.call("aq_project_status", {})).text).toContain(`project folder: ${root}`);
-    await tools.close();
-  });
-
-  it("takes no project from the home folder unless it is named", async () => {
-    const home = sampleFolder();
-    const before = process.env["HOME"];
-    process.env["HOME"] = home;
-    try {
-      const found = await findProject(undefined, join(home, "scenes"), "");
-      expect(found.kind === "none" && found.reason).toMatch(/home folder.*--project/s);
-      expect(await findProject(home, tempFolder(), "")).toEqual({ kind: "folder", root: home });
-    } finally {
-      process.env["HOME"] = before;
-    }
-  });
-
-  it("clears what a stopped server left, and only that", async () => {
-    const root = tempFolder();
-    const writer = await diskWriter(root);
-    await writer.write(".animaquill/tmp/0123456789abcdef.part", "half");
-    await writer.write(".animaquill/tmp/mine.txt", "somebody's");
-    await writer.write(".animaquill/mcp/0123456789ab.json", "{}");
-    const later = Date.now() + LEFT_CONNECTION_MS + 60_000;
-    await tidyLeftovers(root, writer, Date.now() + 60_000);
-    expect(existsSync(join(root, ".animaquill/tmp/0123456789abcdef.part"))).toBe(true);
-    await tidyLeftovers(root, writer, later);
-    expect(readdirSync(join(root, ".animaquill/tmp"))).toEqual(["mine.txt"]);
-    expect(readdirSync(join(root, ".animaquill/mcp"))).toEqual([]);
-  });
-
-  it("tidies only notes on batches that it wrote", async () => {
-    const root = tempFolder();
-    const writer = await diskWriter(root);
-    await writer.write(".animaquill/batches/other.json", '{"format":1,"batch":"x"}');
-    await writer.write(".animaquill/batches/odd.json", '{"format":1,"batch":"odd"}');
-    let now = 1_000_000;
-    const notes = new BatchNotes(writer, root, "s1", () => now);
-    const first = await notes.note([{ path: "a.js", hash: "1" }], undefined);
-    now += KEEP_BATCHES_MS + BATCH_GAP_MS + 1;
-    await notes.note([{ path: "a.js", hash: "2" }], undefined);
-    const names = readdirSync(join(root, ".animaquill/batches"));
-    expect(names).toContain("other.json");
-    expect(names).toContain("odd.json");
-    expect(names).not.toContain(`${first.batch}.json`);
-  });
-});
-
-describe("notes of the local MCP", () => {
-  it("make one batch of writes of a connection that follow within ten minutes", async () => {
-    const root = tempFolder();
-    const writer = await diskWriter(root);
-    let now = 1_000_000;
-    const notes = new BatchNotes(writer, root, "s1", () => now);
-    const client = { name: "claude-code", version: "2.1.0" };
-    const first = await notes.note([{ path: "a.js", hash: "1" }], client);
-    now += BATCH_GAP_MS;
-    const second = await notes.note([{ path: "b.js", hash: "2" }], client);
-    expect(second.batch).toBe(first.batch);
-    expect(second.files).toEqual({ "a.js": "1", "b.js": "2" });
-    now += BATCH_GAP_MS + 1;
-    const third = await notes.note([{ path: "a.js", hash: undefined }], client);
-    expect(third.batch).not.toBe(first.batch);
-    expect(third.files).toEqual({ "a.js": null });
-    // Another connection is another batch.
-    const other = await new BatchNotes(writer, root, "s2", () => now).note(
-      [{ path: "a.js", hash: "3" }],
-      client,
-    );
-    expect(other.batch).not.toBe(third.batch);
-    const kept = await readBatchNotes(root);
-    expect(kept.map(({ session, client: who }) => [session, who?.name]).toSorted()).toEqual([
-      ["s1", "claude-code"],
-      ["s1", "claude-code"],
-      ["s2", "claude-code"],
-    ]);
-    expect(read(root, ".animaquill/.gitignore")).toBe("*\n");
-  });
-
-  it("are written as an AI tool changes the project, with its name", async () => {
-    const root = sampleFolder();
-    const tools = toolsOn(root, true);
-    tools.named({ name: "codex", version: "1.0" });
-    await tools.call("aq_file_read", { path: "code/animate.js" });
-    await tools.call("aq_file_edit", {
-      path: "code/animate.js",
-      edits: [{ old_text: "export", new_text: "// 改过\nexport" }],
-    });
-    const [note] = await readBatchNotes(root);
-    expect(note?.client).toEqual({ name: "codex", version: "1.0" });
-    expect(Object.keys(note?.files ?? {})).toEqual(["code/animate.js"]);
-    const connections = await readConnections(root);
-    expect(connections.map(({ session, client }) => [session, client?.name])).toEqual([
-      [tools.session, "codex"],
-    ]);
-    await tools.close();
-    expect(await readConnections(root)).toEqual([]);
-    expect(readdirSync(join(root, CONNECTIONS_FOLDER))).toEqual([]);
-  });
-
-  it("say a connection is on while it says so, and gone after two minutes", async () => {
-    const root = tempFolder();
-    let now = 5_000_000;
-    const file = new ConnectionFile(await diskWriter(root), "s1", () => now);
-    await file.start();
-    expect((await readConnections(root, now)).length).toBe(1);
-    expect((await readConnections(root, now + GONE_AFTER_MS + 1)).length).toBe(0);
-    now += 60_000;
-    await file.named({ name: "claude-code" });
-    expect(
-      (await readConnections(root, now + GONE_AFTER_MS)).map(({ aliveAt }) => aliveAt),
-    ).toEqual([now]);
-    await file.close();
-    expect(existsSync(join(root, file.path))).toBe(false);
   });
 });
 
@@ -415,15 +162,6 @@ describe("writing a folder", () => {
     await expect(writer.write("code/file.js", "x")).rejects.toThrow(/a link/);
     await expect(writer.remove("code/file.js")).rejects.toThrow(/a link/);
     expect(readdirSync(outside)).toEqual([]);
-  });
-
-  it("keeps AI to the project folder", async () => {
-    const root = sampleFolder();
-    const tools = toolsOn(root);
-    const result = await tools.call("aq_file_write", { path: "../outside.js", text: "x" });
-    expect(result.isError).toBe(true);
-    expect(existsSync(join(root, "..", "outside.js"))).toBe(false);
-    await tools.close();
   });
 });
 
@@ -465,15 +203,22 @@ describe("the command line", () => {
 });
 
 /** The server as AI tools start it: `animaquill mcp` in a process of its own, on stdio. */
-async function connect(cwd: string, args: readonly string[] = [], legacy = false) {
+async function connect(
+  cwd: string,
+  env: Record<string, string>,
+  args: readonly string[] = [],
+  legacy = false,
+  name = "test-client",
+) {
   const client = new Client(
-    { name: "test-client", version: "1.0.0" },
+    { name, version: "1.0.0" },
     { versionNegotiation: { mode: legacy ? "legacy" : { pin: "2026-07-28" } } },
   );
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [CLI, "mcp", ...args],
     cwd,
+    env: { ...(process.env as Record<string, string>), ...env },
     stderr: "pipe",
   });
   await client.connect(transport);
@@ -481,39 +226,80 @@ async function connect(cwd: string, args: readonly string[] = [], legacy = false
 }
 
 const textOf = (result: unknown) =>
-  ((result as { content: { text: string }[] }).content[0]?.text ?? "") as string;
+  ((result as { content: { text: string }[] }).content.at(-1)?.text ?? "") as string;
+
+/** A range of ports of its own for each test, which nothing else here uses. */
+let nextPorts = 47_600 + (process.pid % 40) * 10;
+const portsOfTest = () => {
+  nextPorts += 10;
+  return { first: nextPorts, count: 3 };
+};
+
+const ORIGIN = "https://editor.test";
 
 describe("animaquill mcp", { timeout: 60_000 }, () => {
-  it("serves the tools to a client of 2026 and of 2025, on the project it starts in", async () => {
+  it("serves the tools of the browser to clients of 2026 and of 2025, and says there is no editor", async () => {
     const root = sampleFolder();
+    const ports = portsOfTest();
+    const env = {
+      ANIMAQUILL_HOME: tempFolder(),
+      ANIMAQUILL_RELAY_PORTS: `${ports.first}:${ports.count}`,
+    };
     for (const legacy of [false, true]) {
-      const client = await connect(join(root, "scenes"), [], legacy);
+      const client = await connect(join(root, "scenes"), env, [], legacy);
       expect(client.getNegotiatedProtocolVersion()).toBe(legacy ? "2025-11-25" : "2026-07-28");
       const { tools } = await client.listTools();
       expect(tools.map(({ name }) => name)).toEqual(
-        mcpToolsOf(toolsOn(root).tools).map(({ name }) => name),
+        mcpToolsOf(listedTools()).map(({ name }) => name),
       );
-      expect(client.getInstructions()).toBe(mcpInstructions("folder"));
+      expect(client.getInstructions()).toBe(mcpInstructions("editor"));
       const status = await client.callTool({ name: "aq_project_status", arguments: {} });
-      expect(textOf(status)).toContain("原子是什么");
+      expect(status.isError).toBe(true);
+      expect(textOf(status)).toMatch(/^error editor-not-open: .*the folder /s);
       await client.close();
     }
   });
 
-  it("does the tasks of the design: read, add a clip with keys, change code, fix a problem", async () => {
+  it("runs the calls of two AI tools in the page that has the project, through one relay", async () => {
     const root = sampleFolder();
-    const client = await connect(tempFolder(), ["--project", root]);
-    const call = async (name: string, args: Record<string, unknown>) => {
+    const ports = portsOfTest();
+    const home = tempFolder();
+    const env = { ANIMAQUILL_HOME: home, ANIMAQUILL_RELAY_PORTS: `${ports.first}:${ports.count}` };
+    // One is told on its command line, and every one by what `allow-origin` keeps.
+    writeFileSync(join(home, "mcp.json"), JSON.stringify({ allowOrigins: [ORIGIN] }));
+    const first = await connect(root, env, ["--allow-origin", ORIGIN], false, "claude-code");
+    const second = await connect(tempFolder(), env, ["--project", root], false, "codex");
+    // The first one listens; the page finds it there.
+    await first.listTools();
+    const store = await storeOf(root);
+    const manifest = store.getState().manifest;
+    const page = new FakePage({
+      port: ports.first,
+      origin: ORIGIN,
+      store,
+      folder: root,
+      project: { mode: "offline", key: "folder-1", id: manifest.id, name: manifest.name },
+    });
+    await waitFor(() =>
+      page.connect().then(
+        () => true,
+        () => false,
+      ),
+    );
+    const call = async (client: Client, name: string, args: Record<string, unknown>) => {
       const result = await client.callTool({ name, arguments: args });
       expect(result.isError, textOf(result)).toBeFalsy();
       return textOf(result);
     };
-    expect(await call("aq_timeline_read", { timeline: "main" })).toMatch(/clip_/);
-    // The AI tool has its own plan mode: a plan goes in its reply, and nothing here holds changes.
-    expect(
-      await call("aq_propose", { kind: "plan", title: "片头", steps: [{ text: "淡入" }] }),
-    ).toMatch(/no plan card/);
-    await call("aq_edit", {
+    // The page says what it has open a moment after it connects, later on a busy computer.
+    await waitFor(async () => {
+      const result = await first.callTool({ name: "aq_project_status", arguments: {} });
+      return !/^error editor-not-open/.test(textOf(result)) || false;
+    }, 30_000);
+    const status = await call(first, "aq_project_status", {});
+    expect(status).toMatch(new RegExp(`^project: "${manifest.name}" \\(offline, the folder `));
+    expect(await call(second, "aq_timeline_read", { timeline: "main" })).toMatch(/clip_/);
+    await call(second, "aq_edit", {
       operations: [
         {
           op: "clip.add",
@@ -524,72 +310,124 @@ describe("animaquill mcp", { timeout: 60_000 }, () => {
           duration: "4",
           source: { kind: "scene", scene: "title" },
         },
-        {
-          op: "property.edit",
-          timeline: "main",
-          edits: [
-            {
-              owner: { clip: "clip_headline" },
-              path: "transform.scale",
-              op: "set",
-              value: {
-                keys: [
-                  { time: "0", value: 0.8 },
-                  { time: "1", value: 1 },
-                ],
-              },
-            },
-          ],
-        },
       ],
     });
-    await call("aq_file_read", { path: "scenes/title/index.html" });
-    await call("aq_file_edit", {
-      path: "scenes/title/index.html",
-      edits: [{ old_text: '<h1 id="title"></h1>', new_text: '<h1 id="title" class="big"></h1>' }],
-    });
-    // A problem made outside: the AI finds it, and fixes it.
-    const timeline = JSON.parse(read(root, "timelines/main/timeline.json"));
-    timeline.tracks[0].clips.push({
-      id: "clip_ghost",
-      start: "40",
-      duration: "1",
-      source: { kind: "scene", scene: "ghost" },
-    });
-    writeFileSync(join(root, "timelines/main/timeline.json"), JSON.stringify(timeline));
-    const problems = await call("aq_check_run", {});
-    expect(problems).toMatch(/scene-missing clip_ghost/);
-    // Changed by somebody else: it is read before it is changed, as with the editor.
-    expect(await call("aq_timeline_read", { timeline: "main" })).toMatch(/clip_ghost/);
-    await call("aq_edit", {
-      operations: [{ op: "clip.remove", timeline: "main", clips: ["clip_ghost"] }],
-    });
-    expect(await call("aq_check_run", {})).not.toMatch(/clip_ghost/);
-    await client.close();
-
-    const store = await projectIn(root);
-    const state = store.getState();
-    const clip = state.timelines.main?.clips.clip_headline;
+    // In the page, as that session.
+    const clip = store.getState().timelines.main?.clips.clip_headline;
     expect(clip?.source).toMatchObject({ kind: "scene", scene: "title" });
-    expect(JSON.stringify(clip?.properties)).toMatch(/"keys"/);
-    expect(state.files["scenes/title/index.html"]).toContain('class="big"');
-    expect(state.timelines.main?.clips.clip_ghost).toBeUndefined();
+    // The AI tool has its own plan mode: a plan goes in its reply, and nothing here holds changes.
+    expect(
+      await call(first, "aq_propose", { kind: "plan", title: "片头", steps: [{ text: "淡入" }] }),
+    ).toMatch(/no plan card/);
+    // The relay goes: the other one takes over, and the page connects to it.
+    await first.close();
+    page.close();
+    // On whichever port of the range it got, as pages look on each.
+    const again = await waitFor(async () => {
+      for (let port = ports.first; port < ports.first + ports.count; port += 1) {
+        const next = new FakePage({
+          port,
+          origin: ORIGIN,
+          store,
+          folder: root,
+          project: { mode: "offline", key: "folder-1", id: manifest.id, name: manifest.name },
+        });
+        const connected = await next.connect().then(
+          () => true,
+          () => false,
+        );
+        if (connected) return next;
+      }
+      return false;
+    });
+    expect(await call(second, "aq_timeline_read", { timeline: "main" })).toMatch(/clip_headline/);
+    await second.close();
+    again.close();
     store.destroy();
-    const [note] = await readBatchNotes(root);
-    expect(note?.client?.name).toBe("test-client");
-    expect(Object.keys(note?.files ?? {})).toEqual(
-      expect.arrayContaining(["timelines/main/timeline.json", "scenes/title/index.html"]),
-    );
+    // What told the page which folder it is goes with the sessions.
+    expect(existsSync(join(root, ".animaquill/mcp"))).toBe(true);
+    expect(readdirSync(join(root, ".animaquill/mcp"))).toEqual([]);
   });
 
-  it("says where it looked when it finds no project", async () => {
-    const client = await connect(tempFolder());
+  it("finds no project in a copy of the folder, which has the same id", async () => {
+    const root = sampleFolder();
+    const copy = sampleFolder();
+    const ports = portsOfTest();
+    const env = {
+      ANIMAQUILL_HOME: tempFolder(),
+      ANIMAQUILL_RELAY_PORTS: `${ports.first}:${ports.count}`,
+    };
+    const client = await connect(copy, env, ["--allow-origin", ORIGIN]);
+    await client.listTools();
+    const store = await storeOf(root);
+    const manifest = store.getState().manifest;
+    const page = new FakePage({
+      port: ports.first,
+      origin: ORIGIN,
+      store,
+      folder: root,
+      project: { mode: "offline", key: "folder-1", id: manifest.id, name: manifest.name },
+    });
+    await waitFor(() =>
+      page.connect().then(
+        () => true,
+        () => false,
+      ),
+    );
+    const result = await client.callTool({ name: "aq_project_status", arguments: {} });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/editor-not-open/);
+    await client.close();
+    page.close();
+    store.destroy();
+  });
+
+  it("keeps out pages of other origins", async () => {
+    const root = sampleFolder();
+    const ports = portsOfTest();
+    const env = {
+      ANIMAQUILL_HOME: tempFolder(),
+      ANIMAQUILL_RELAY_PORTS: `${ports.first}:${ports.count}`,
+    };
+    const client = await connect(root, env, ["--allow-origin", ORIGIN]);
+    await client.listTools();
+    const store = await storeOf(root);
+    const page = new FakePage({
+      port: ports.first,
+      origin: "https://elsewhere.test",
+      store,
+      project: { mode: "online", key: "p", id: "x", name: "x" },
+    });
+    await waitFor(() =>
+      page.connect().then(
+        () => "in",
+        (error: Error) => (/403|Unexpected server response/.test(error.message) ? "out" : false),
+      ),
+    ).then((how) => expect(how).toBe("out"));
+    await client.close();
+    store.destroy();
+  });
+
+  it("says what to do where --project names no project", async () => {
+    const env = { ANIMAQUILL_HOME: tempFolder(), ANIMAQUILL_RELAY_PORTS: "47590:2" };
+    const client = await connect(tempFolder(), env, ["--project", tempFolder()]);
     const result = await client.callTool({ name: "aq_project_status", arguments: {} });
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/no-project.*--project/s);
     await client.close();
   });
 });
+
+/** Waits for something to be true, or gives what it was. */
+async function waitFor<T>(attempt: () => Promise<T | false>, ms = 10_000): Promise<T> {
+  const until = Date.now() + ms;
+  for (;;) {
+    const got = await attempt();
+    if (got !== false) return got;
+    if (Date.now() > until) throw new Error("waited in vain");
+    await new Promise((done) => setTimeout(done, 100));
+  }
+}
 
 describe("the skill", () => {
   const SKILL = fileURLToPath(new URL("../../../../skills/animaquill/", import.meta.url));
@@ -609,7 +447,7 @@ describe("the skill", () => {
   });
 
   it("gives batches that aq_edit takes, and names only tools there are", () => {
-    const tools = toolsOn(tempFolder()).tools;
+    const tools = listedTools();
     const edit = tools.find(({ name }) => name === "aq_edit");
     const names = new Set(tools.map(({ name }) => name));
     let batches = 0;

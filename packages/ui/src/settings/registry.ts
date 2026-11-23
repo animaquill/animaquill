@@ -60,6 +60,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
   { id: "chat.autoCompact", group: "chat", where: "account" },
   { id: "localAi.connect", group: "localAi" },
   { id: "localAi.recent", group: "localAi" },
+  { id: "localAi.autoConnect", group: "localAi", where: "device" },
   { id: "localAi.agentsFile", group: "localAi", where: "device" },
   { id: "account.who", group: "account" },
   { id: "account.github", group: "account" },

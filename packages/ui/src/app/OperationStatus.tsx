@@ -39,15 +39,14 @@ export function OperationStatus() {
   const [anchor, setAnchor] = useState<DOMRect>();
   const [message, setMessage] = useState<string>();
   const listElement = useRef<HTMLOListElement>(null);
-  // Re-rendered as batches of AI tools on this computer come in, which name their operations.
+  // Re-rendered as AI tools on this computer change the project, which names their operations.
   useSyncExternalStore(workbench.tools.subscribe, workbench.tools.getSnapshot);
   // And as what can be taken back changes, also in other windows, and what the platform says of
   // merges.
   useSyncExternalStore(workbench.undo.subscribe, workbench.undo.getSnapshot);
   useSyncExternalStore(workbench.batchUndo.subscribe, workbench.batchUndo.getSnapshot);
   const toolOf = (operation: Operation) => {
-    const batch =
-      operation.source === "folder" ? workbench.tools.batchOf(operation.origin) : undefined;
+    const batch = operation.source === "ai" ? workbench.tools.batchOf(operation.origin) : undefined;
     if (batch) {
       const { startedAt: from, updatedAt: to } = batch;
       return { from, to, name: toolName(t, batch.client), count: batch.changes.length };

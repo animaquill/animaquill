@@ -42,7 +42,9 @@ animaquill mcp|check|describe|guide [--project <项目文件夹>]
 
 ## 让电脑上的 AI 工具改项目（MCP）
 
-Claude Code、Codex 这类在你电脑上运行的 AI 工具，可以通过 AnimaQuill 的工具读、改项目文件夹，用的是它们自己的订阅和额度。`animaquill mcp` 是一个 MCP 服务器，只经 stdio 和启动它的程序通信，不联网，只读写项目文件夹里的文件。
+Claude Code、Codex 这类在你电脑上运行的 AI 工具，可以通过 AnimaQuill 的工具读、改浏览器里打开的项目，用的是它们自己的订阅和额度。`animaquill mcp` 是一个 MCP 服务器，经 stdio 和启动它的程序通信；工具在浏览器里开着这个项目的编辑器里执行，看画面、听声音也在那里。它只在本机地址 `127.0.0.1`（端口 47300 起）上等编辑器连过来，不联网。
+
+编辑器第一次要连接时，在编辑器的“帮助 › 连接电脑上的 AI 工具”里点“连接”（浏览器会问能不能访问这台设备上的应用，选允许）；以后可以让它自动连接。只有 Chrome 和 Edge 能连。
 
 **Claude Code：** 装一次插件，工具和“怎么做”的说明（技能）一起装好：
 
@@ -67,15 +69,16 @@ codex mcp add animaquill -- npx -y animaquill@latest mcp
 
 Codex 默认只等服务器启动 10 秒，第一次要下载时可能来不及：先运行一次 `npm install -g animaquill`，再把命令里的 `npx -y animaquill@latest` 换成 `animaquill`。以后在项目文件夹里输入 `codex`。
 
-**别的 AI 工具：** 命令是 `npx -y animaquill@latest mcp`。在项目文件夹（或者它里面的文件夹）里启动时，它往上找有 `animaquill.json` 的文件夹；不在项目文件夹里启动的工具（比如 Claude 桌面版），加上 `--project <项目文件夹的路径>`。
+**别的 AI 工具：** 命令是 `npx -y animaquill@latest mcp`。在离线项目的文件夹（或者它里面的文件夹）里启动时，它改的就是编辑器里开着的这个文件夹；在线项目可以加 `--project <项目的网址>`；都没有时，它改编辑器里最近一次在前台的项目。
 
 要知道的：
 
-- 编辑器开着同一个文件夹时，AI 的改动马上并入编辑器，可以整批撤销；你同时改了同一处，留下你的，AI 下一次调用工具时会知道你改了什么。
-- 编辑器没开时，AI 照样改文件夹，下次打开项目时并入。
-- 时间轴、片段和关键帧经 AnimaQuill 的工具改（它们检查格式和别人的改动），场景代码可以直接当文本改。新建的项目里有一份 `AGENTS.md`，Claude Code 和 Codex 打开文件夹时会读它。
-- 看画面、听声音还要在编辑器里：这些工具现在出不了画面。
-- 它在项目的 `.animaquill/` 里记下每批改动是哪个工具做的（`batches/`），以及现在连着的工具（`mcp/`）；这个文件夹不进 Git。
+- 编辑器要开着这个项目、连着电脑上的 AI 工具；没开时工具回一个错误，说要打开哪个项目。
+- AI 的改动马上出现在编辑器里，一个工具连续改的算一批，可以整批撤销。
+- 自己部署的编辑器要先让 AI 工具认它：`npx -y animaquill@latest mcp allow-origin <编辑器的网址>`（记在 `~/.animaquill/mcp.json`）。`npx animaquill` 的编辑器不用。
+- 时间轴、片段和关键帧经 AnimaQuill 的工具改（它们检查格式和别人的改动）。离线项目的场景代码也可以直接用 AI 工具自己的文件工具改，编辑器会并入。新建的项目里有一份 `AGENTS.md`，Claude Code 和 Codex 打开文件夹时会读它。
+- 编辑器在后台标签页时读和改照常，看画面要把它切到前台。
+- `~/.animaquill/mcp-key` 是这台电脑上 `animaquill mcp` 的身份，编辑器靠它认出连过来的是你允许过的那个；只有你自己能读。
 
 ## 命令行
 

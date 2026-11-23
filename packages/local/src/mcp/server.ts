@@ -10,12 +10,21 @@ import {
   type Transport,
 } from "@modelcontextprotocol/server";
 import { serveStdio, type StdioServerHandle } from "@modelcontextprotocol/server/stdio";
-import { mcpInstructions, mcpToolsOf, type ToolResult } from "@animaquill/tools";
-import { FolderTools } from "./host.ts";
+import { ProblemSet } from "@animaquill/core";
+import {
+  createToolset,
+  mcpInstructions,
+  mcpToolsOf,
+  type BridgeResult,
+  type Tool,
+} from "@animaquill/tools";
+import type { McpSession } from "./session.ts";
 
 /**
  * `animaquill mcp`: the tools of AnimaQuill for AI tools on this computer (Claude Code, Codex,
- * Cursor, VS Code, Claude Desktop), over stdio only, on a project folder. It speaks MCP from
+ * Cursor, VS Code, Claude Desktop), over stdio only. The calls run in the editor in the browser that
+ * has the project open (see `McpSession`); the list of the tools and their instructions are the same
+ * as there and answer at once, without an editor. It speaks MCP from
  * 2024-11-05 to 2026-07-28 through the official SDK: an `initialize` handshake for clients of 2025,
  * `server/discover` and the envelope of each request for those of 2026. It answers what it is at
  * once and opens the project meanwhile, as Codex gives a server 10 seconds to start.
@@ -26,10 +35,27 @@ const LIST_TTL_MS = 60 * 60 * 1000;
 
 type ObjectSchema = { readonly type: "object" } & Record<string, unknown>;
 
-const asResult = ({ text, isError }: ToolResult) => ({
-  content: [{ type: "text" as const, text }],
+const asResult = ({ text, isError, images = [] }: BridgeResult) => ({
+  // Pictures first, then the words, as in the browser.
+  content: [
+    ...images.map(({ data, type }) => ({ type: "image" as const, data, mimeType: type })),
+    { type: "text" as const, text },
+  ],
   isError,
 });
+
+/**
+ * The tools as AI tools get them, without a project: what lists them and checks the parameters of
+ * `aq_propose`, which is answered here. The same list as in the browser, to the byte.
+ */
+export function listedTools(): readonly Tool[] {
+  const problems = new ProblemSet();
+  return createToolset({
+    store: () => undefined,
+    origin: () => "nobody",
+    problems: () => problems,
+  });
+}
 
 /** Who the client is and what it can do: from the envelope of a request, or from `initialize`. */
 function clientOf(server: Server, ctx: ServerContext) {
@@ -95,10 +121,10 @@ function answerOf(question: Question, content: Record<string, unknown> | undefin
  * Asks the question of `aq_propose`. The turn belongs to the AI tool, so nothing waits in the editor:
  * the client asks with a form where it can, and otherwise the question is the model's to put.
  */
-function propose(tools: FolderTools, server: Server, args: unknown, ctx: ServerContext) {
-  const tool = tools.tools.find(({ name }) => name === "aq_propose");
+function propose(tools: readonly Tool[], server: Server, args: unknown, ctx: ServerContext) {
+  const tool = tools.find(({ name }) => name === "aq_propose");
   const invalid = tool?.validate(args);
-  if (invalid) return asResult(invalid);
+  if (invalid) return asResult({ text: invalid.text, isError: invalid.isError });
   // A plan is for the chat of the editor, which asks for one ("先出方案"); AI tools have plan
   // modes of their own, and a form has no room for one.
   if ((args as { readonly kind?: unknown }).kind === "plan") {
@@ -123,42 +149,47 @@ function propose(tools: FolderTools, server: Server, args: unknown, ctx: ServerC
   return asResult({ text: answerOf(question, response.content), isError: false });
 }
 
-/** One server for one connection, around the tools of one project folder. */
-export function serverOf(tools: FolderTools, version: string): Server {
+/** One server for one connection, around one session. */
+export function serverOf(session: McpSession, version: string): Server {
+  const tools = listedTools();
   const server = new Server(
     { name: "animaquill", title: "AnimaQuill", version },
     {
       capabilities: { tools: {} },
-      instructions: mcpInstructions("folder"),
+      instructions: mcpInstructions("editor"),
       cacheHints: { "tools/list": { ttlMs: LIST_TTL_MS, cacheScope: "public" } },
     },
   );
-  const list = mcpToolsOf(tools.tools);
-  server.setRequestHandler("tools/list", () => ({
-    // Every schema of the toolset is an object: the type says only that it is JSON.
-    tools: list.map((tool) => ({ ...tool, inputSchema: tool.inputSchema as ObjectSchema })),
-  }));
+  const list = mcpToolsOf(tools);
+  server.setRequestHandler("tools/list", (_request, ctx) => {
+    // Who it is shows in the editor before it calls anything.
+    session.named(clientOf(server, ctx).info);
+    return {
+      // Every schema of the toolset is an object: the type says only that it is JSON.
+      tools: list.map((tool) => ({ ...tool, inputSchema: tool.inputSchema as ObjectSchema })),
+    };
+  });
   server.setRequestHandler("tools/call", async (request, ctx) => {
-    tools.named(clientOf(server, ctx).info);
+    session.named(clientOf(server, ctx).info);
     const { name, arguments: args = {} } = request.params;
     if (name === "aq_propose") return propose(tools, server, args, ctx);
-    return asResult(await tools.call(name, args));
+    return asResult(await session.call(name, args, ctx.mcpReq.signal));
   });
   return server;
 }
 
 export interface McpOptions {
-  readonly tools: FolderTools;
+  readonly session: McpSession;
   readonly version: string;
   /** Another transport than the stdio of this process, for tests. */
   readonly transport?: Transport;
 }
 
-/** Serves MCP on stdio until the client goes, then takes away what says it is connected. */
-export function serveMcp({ tools, version, transport }: McpOptions): StdioServerHandle {
-  // The project opens while the client gets to know the server.
-  void tools.open();
-  return serveStdio(() => serverOf(tools, version), {
+/** Serves MCP on stdio until the client goes. */
+export function serveMcp({ session, version, transport }: McpOptions): StdioServerHandle {
+  // The project is found while the client gets to know the server.
+  void session.open();
+  return serveStdio(() => serverOf(session, version), {
     ...(transport && { transport }),
     onerror: (error) => console.error(error),
   });

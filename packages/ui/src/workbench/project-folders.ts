@@ -59,7 +59,6 @@ import type { ConfirmOptions, Dialogs } from "./dialogs.ts";
 import { Emitter } from "./emitter.ts";
 import type { Notifications } from "./notifications.ts";
 import type { ProjectOpening } from "./opening.ts";
-import type { ToolActivity } from "./tool-activity.ts";
 import { projectKeyOf, type ProjectSession } from "./session.ts";
 import { failureMessage, translateWith } from "../i18n/failures.ts";
 
@@ -102,8 +101,6 @@ export interface ProjectFoldersOptions {
   readonly notifications: Notifications;
   readonly problems: ProblemList;
   readonly t: TFunction;
-  /** What AI tools on this computer do through the folder, which tells of their batches. */
-  readonly tools?: ToolActivity;
   /**
    * Takes back a batch as a whole or does it again, one window at a time, see
    * `UndoKeeper.takeBack`. Without it the store does it right away.
@@ -1354,13 +1351,8 @@ export class ProjectFolders {
     return this.#current?.session.folder;
   }
 
-  /** Looks at files of the folder of the open project now, see `FolderSession.lookAt`. */
-  lookAt(paths: readonly string[]): void {
-    this.#current?.session.lookAt(paths);
-  }
-
   #merged(store: ProjectStore, merge: FolderMerge): void {
-    const { t, tools } = this.#options;
+    const { t } = this.#options;
     const { files, conflicts, problems } = merge;
     if (files.length > 0) {
       // The merges of a batch of an AI tool are one origin: taking it back keeps all their files.
@@ -1378,9 +1370,8 @@ export class ProjectFolders {
     }
     if (files.length === 0 && conflicts.length === 0 && problems.length === 0) return;
     const partly = conflicts.length > 0 || problems.length > 0;
-    // What an AI tool wrote is told by its batch, which says who and what, see `ToolActivity`.
-    if (merge.tool && tools && files.length > 0) tools.merged(store, merge);
-    else this.#tellMerged(store, merge, partly);
+    // Also what an AI tool on this computer changed with its own file tools: files of the folder.
+    this.#tellMerged(store, merge, partly);
     if (!partly) return;
     const kept = t("folder.keptIn", { folder: RECOVERED_FOLDER });
     const listed: Listed[] = [
@@ -1459,7 +1450,6 @@ export class ProjectFolders {
     }
     const result = await this.#takeBack(store, merge.origin, "undo");
     if (!result) return undefined;
-    if (result.ok) this.#options.tools?.undone(merge.origin);
     if (!result.ok) {
       notifications.push(
         t("folder.undoFailed", { message: failureMessage(result.error, translateWith(t)) }),

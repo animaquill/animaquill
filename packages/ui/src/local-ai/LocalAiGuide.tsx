@@ -1,5 +1,5 @@
 import { scoped } from "@animaquill/host";
-import { Check, CircleAlert, ExternalLink, X } from "lucide-react";
+import { Check, ExternalLink, X } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession, useWorkbench } from "../app/context.ts";
@@ -13,6 +13,7 @@ import {
   GUIDE_SYSTEMS,
   GUIDE_TOOLS,
   NODE_DOWNLOAD,
+  allowOriginCommand,
   cleanPath,
   cursorJson,
   cursorLink,
@@ -29,8 +30,19 @@ import {
 import { whenText, useToolActivity } from "./LocalAiSettings.tsx";
 import styles from "./LocalAi.module.css";
 
-/** How often the guide looks who is connected while it is open. */
-const LOOK_MS = 1500;
+/** Whether this browser can connect to the AI tools on this computer: Chrome and Edge. */
+const isChromium = () =>
+  typeof navigator !== "undefined" &&
+  (navigator as Navigator & { userAgentData?: unknown }).userAgentData !== undefined;
+
+/** The editor of `npx animaquill`, which every `animaquill mcp` lets connect without being told. */
+const isLocalEditor = (origin: string) => {
+  try {
+    return new URL(origin).hostname === "animaquill.localhost";
+  } catch {
+    return false;
+  }
+};
 /** Where this browser keeps the tool people picked last: what they use, not a setting. */
 const TOOL_KEY = "animaquill.localAi.tool";
 
@@ -123,14 +135,15 @@ function More(props: {
 }
 
 /**
- * Let an AI tool on this computer change this project (docs/design/mcp.md, 6.16a, screen M1):
- * whether this project can be, what to have, the tool with what to set up once and what to do each
- * time, a sentence to try, and at the bottom who is connected now. Words only where a step needs
+ * Let an AI tool on this computer change this project (docs/design/mcp.md, 6.16a, screen M1; its
+ * calls run in this editor, docs/design/online-offline.md 5): where the project is, what to have,
+ * the tool with what to set up once and what to do each time, connecting this editor, a sentence to
+ * try, and at the bottom who is connected now. Words only where a step needs
  * them: the commands say the rest.
  */
 function LocalAiGuide() {
   const workbench = useWorkbench();
-  const { localAiGuide, projectFolders, tools } = workbench;
+  const { localAiGuide, projectFolders, bridge, autoConnect } = workbench;
   const { t } = useTranslation();
   const narrow = useNarrow();
   const { store } = useSession();
@@ -139,6 +152,8 @@ function LocalAiGuide() {
     projectFolders?.getSnapshot ?? nothing,
   );
   const activity = useToolActivity();
+  const link = useSyncExternalStore(bridge.subscribe, bridge.getSnapshot);
+  const auto = useSyncExternalStore(autoConnect.subscribe, autoConnect.getSnapshot);
   const [tool, setTool] = useState<GuideTool>(rememberedTool);
   const [system, setSystem] = useState<GuideSystem>(systemHere);
   const [path, setPath] = useState("");
@@ -148,20 +163,25 @@ function LocalAiGuide() {
   // Re-rendered with the project: AGENTS.md can be added from here.
   useSyncExternalStore(store?.subscribe ?? noSubscription, store?.getState ?? nothing);
 
-  useEffect(() => {
-    const look = () => void tools.look();
-    look();
-    const timer = setInterval(look, LOOK_MS);
-    return () => clearInterval(timer);
-  }, [tools]);
-
   const close = () => localAiGuide.set(false);
   const folder = folders?.open?.record.folder.name;
-  const project = store === undefined ? "none" : folder !== undefined ? "folder" : "browser";
+  const project =
+    store === undefined
+      ? "none"
+      : workbench.mode === "online"
+        ? "online"
+        : folder !== undefined
+          ? "folder"
+          : "browser";
+  // Where the AI tool starts: in the folder of an offline project, anywhere for any other.
   const where =
     folder !== undefined
       ? t("localAi.guide.theFolder", { folder, interpolation: { escapeValue: false } })
-      : t("localAi.guide.projectFolder");
+      : project === "online" || project === "browser"
+        ? t("localAi.guide.anyFolder")
+        : t("localAi.guide.projectFolder");
+  const origin = typeof location === "undefined" ? "" : location.origin;
+  const chromium = isChromium();
   const [first] = activity.connections;
   const pick = (next: GuideTool) => {
     setTool(next);
@@ -257,6 +277,20 @@ function LocalAiGuide() {
         );
       case "claudeDesktop": {
         const cleaned = cleanPath(path);
+        // Without a folder, the project is the one open in front.
+        if (project === "online" || project === "browser") {
+          return (
+            <>
+              <span className={styles.line}>
+                {t("localAi.guide.desktopFile", {
+                  file: DESKTOP_CONFIG[system],
+                  interpolation: { escapeValue: false },
+                })}
+              </span>
+              <Copyable text={desktopConfig()} label="claude_desktop_config.json" />
+            </>
+          );
+        }
         return (
           <>
             <label className={styles.panel}>
@@ -326,40 +360,18 @@ function LocalAiGuide() {
         </header>
         <div className={styles.page}>
           {project !== "none" && (
-            <div
-              className={styles.state}
-              data-ok={project === "folder" ? "" : "false"}
-              data-testid="local-ai-project"
-            >
-              {project === "folder" ? (
-                <Check size={15} aria-hidden />
-              ) : (
-                <CircleAlert size={15} aria-hidden />
-              )}
+            <div className={styles.state} data-ok="" data-testid="local-ai-project">
+              <Check size={15} aria-hidden />
               <span>
                 {project === "folder"
-                  ? t("localAi.guide.inFolder", {
+                  ? t("localAi.guide.offlineFolder", {
                       folder,
                       interpolation: { escapeValue: false },
                     })
-                  : t(
-                      workbench.mode === "online"
-                        ? "localAi.guide.onlineOnly"
-                        : "localAi.guide.browserOnly",
-                    )}
+                  : project === "online"
+                    ? t("localAi.guide.online")
+                    : t("localAi.guide.offlineBrowser")}
               </span>
-              {project === "browser" && workbench.mode === "online" && (
-                <button
-                  type="button"
-                  className={settings.button}
-                  onClick={() => {
-                    close();
-                    void workbench.saveToFolder();
-                  }}
-                >
-                  {t("saveToFolder.action")}
-                </button>
-              )}
             </div>
           )}
           <ol className={styles.steps}>
@@ -436,7 +448,69 @@ function LocalAiGuide() {
                 {panel}
               </div>
             </Step>
-            <Step number={3} title={t("localAi.guide.try")}>
+            <Step number={3} title={t("localAi.guide.connectStep")}>
+              {chromium && origin !== "" && !isLocalEditor(origin) && (
+                <>
+                  <span className={styles.line}>{t("localAi.guide.allowSite")}</span>
+                  <Copyable text={allowOriginCommand(origin)} />
+                </>
+              )}
+              {chromium ? (
+                <div className={styles.connect} data-testid="local-ai-connect">
+                  {link.status === "connected" ? (
+                    <span className={styles.line} role="status">
+                      <Check size={14} aria-hidden /> {t("localAi.guide.connectedRelay")}
+                      <button
+                        type="button"
+                        className={settings.link}
+                        onClick={() => bridge.disconnect()}
+                      >
+                        {t("localAi.guide.disconnect")}
+                      </button>
+                    </span>
+                  ) : (
+                    <>
+                      <span className={styles.line}>{t("localAi.guide.connectAsk")}</span>
+                      <button
+                        type="button"
+                        className={`${settings.button} ${settings.primary}`}
+                        style={{ alignSelf: "flex-start" }}
+                        data-testid="local-ai-connect-button"
+                        disabled={link.status === "connecting"}
+                        onClick={() => bridge.connect()}
+                      >
+                        {t("localAi.guide.connect")}
+                      </button>
+                      {link.status !== "off" && (
+                        <span className={styles.muted} role="status">
+                          {t(
+                            link.status === "connecting"
+                              ? "localAi.guide.connecting"
+                              : link.status === "refused"
+                                ? "localAi.guide.refused"
+                                : "localAi.guide.noRelay",
+                          )}
+                        </span>
+                      )}
+                    </>
+                  )}
+                  {link.mismatch && link.status === "connected" && (
+                    <span className={styles.muted}>{t("localAi.guide.mismatch")}</span>
+                  )}
+                  <label className={styles.line}>
+                    <input
+                      type="checkbox"
+                      checked={auto}
+                      onChange={(event) => autoConnect.set(event.target.checked)}
+                    />
+                    {t("localAi.guide.autoConnect")}
+                  </label>
+                </div>
+              ) : (
+                <span className={styles.line}>{t("localAi.guide.chromeOnly")}</span>
+              )}
+            </Step>
+            <Step number={4} title={t("localAi.guide.try")}>
               <Copyable text={t("localAi.guide.trySay")} />
               <span className={styles.muted}>{t("localAi.guide.allow")}</span>
             </Step>

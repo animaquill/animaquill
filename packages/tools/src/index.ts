@@ -77,4 +77,21 @@ export type {
   ToolImage,
   ToolResult,
 } from "./types.ts";
-export { mcpInstructions, mcpToolsOf, type McpPlace, type McpTool } from "./mcp.ts";
+export { mcpInstructions, mcpListHash, mcpToolsOf, type McpPlace, type McpTool } from "./mcp.ts";
+export {
+  BRIDGE_MAX_BYTES,
+  BRIDGE_PROTOCOL,
+  RELAY_PORTS,
+  bridgeResult,
+  fromPage,
+  listHash,
+  proofText,
+  readMessage,
+  toPage,
+  type BridgeClient,
+  type BridgeResult,
+  type BridgeSession,
+  type FromPage,
+  type PageProject,
+  type ToPage,
+} from "./bridge.ts";

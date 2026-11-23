@@ -931,7 +931,8 @@
         },
         "askBeforeEdit": {
           "name": "AI 改项目前先问我",
-          "keywords": "approve ask permission confirm 批准 允许 询问 确认 权限 改项目 先问"
+          "keywords": "approve ask permission confirm 批准 允许 询问 确认 权限 改项目 先问",
+          "help": "只管编辑器里的 AI 助手；电脑上的 AI 工具在它自己那里确认。"
         },
         "autoCompact": {
           "name": "上下文快满时自动压缩",
@@ -1022,6 +1023,10 @@
         "agentsFile": {
           "name": "新建项目时放一份 AI 说明（AGENTS.md）",
           "keywords": "agents.md 说明 指令 claude codex 新建"
+        },
+        "autoConnect": {
+          "name": "自动连接电脑上的 AI 工具",
+          "keywords": "mcp 自动 连接 本机 端口"
         }
       }
     },
@@ -5635,13 +5640,10 @@
       "changed": "{{tool}}：{{first}}",
       "changedMore": "{{tool}}：{{first}}等 {{count}} 处",
       "changedNone": "{{tool}} 改了项目",
-      "whileAway": "你不在时，{{tool}} 改了 {{count}} 个文件，已并入",
-      "yoursKept": "其中 {{count}} 处你也改了，保留了你的",
       "show": "查看",
       "undo": "撤销这次",
       "showTitle": "{{tool}} 改了 {{count}} 处",
-      "changes": "改了什么",
-      "held": "项目现在只读，{{tool}} 的改动先留在文件夹里，能编辑以后再并入"
+      "changes": "改了什么"
     },
     "operation": "{{tool}} 改了 {{count}} 处",
     "source": "电脑上的 AI",
@@ -5655,8 +5657,6 @@
     },
     "guide": {
       "title": "让电脑上的 AI 工具改这个项目",
-      "inFolder": "这个项目在文件夹「{{folder}}」里",
-      "browserOnly": "这个浏览器不能打开电脑上的文件夹，电脑上的 AI 工具改不了这个项目。换用 Chrome 或 Edge 可以把项目放进文件夹。",
       "prepare": "准备",
       "node": "需要 Node.js 22 或更新",
       "nodeDownload": "下载 Node.js",
@@ -5709,7 +5709,22 @@
       "close": "关闭",
       "topicHolder": "<主题>",
       "pathHolder": "<项目文件夹的路径>",
-      "onlineOnly": "电脑上的 AI 工具现在只能改离线模式里的文件夹项目。可以先保存到文件夹，再在离线模式里打开。"
+      "offlineFolder": "这个项目在文件夹「{{folder}}」里，AI 工具在这个文件夹里启动",
+      "offlineBrowser": "这个项目在这个浏览器里，AI 工具在哪个文件夹里启动都行，会连到这里开着的项目",
+      "online": "这个项目在服务器上，AI 工具在哪个文件夹里启动都行，会连到这里开着的项目",
+      "connect": "连接",
+      "connectStep": "连接这个编辑器",
+      "connectAsk": "浏览器会问能不能访问这台设备上的应用，选允许。",
+      "connecting": "正在找电脑上的 AI 工具…",
+      "connectedRelay": "已连接电脑上的 AI 工具",
+      "noRelay": "电脑上还没有 AI 工具在运行：照上面装好、启动一次，这里会自己连上。",
+      "refused": "没有允许电脑上的 AI 工具连接",
+      "disconnect": "断开",
+      "mismatch": "电脑上的 animaquill 和编辑器的版本不一样，重启 AI 工具就会用新的。",
+      "chromeOnly": "电脑上的 AI 工具要在 Chrome 或 Edge 里用。",
+      "allowSite": "让 AI 工具连接这个网站上的编辑器，装好以后运行一次：",
+      "autoConnect": "以后打开编辑器时自动连接",
+      "anyFolder": "任何一个文件夹"
     },
     "settings": {
       "wizard": "连接向导…",
@@ -5745,6 +5760,12 @@
       "cleared": "去掉{{kind}}{{name}}的{{field}}",
       "lines": "改{{kind}}{{name}}（+{{added}} −{{removed}} 行）",
       "fieldsMore": "{{line}}等 {{count}} 项"
+    },
+    "bridge": {
+      "askTitle": "允许电脑上的 AI 工具连接这个编辑器吗？",
+      "askMessage": "电脑上有一个还没允许过的 animaquill 想把 AI 工具的调用交给这个编辑器执行。不是你刚启动的 AI 工具就选不允许。",
+      "allow": "允许",
+      "deny": "不允许"
     }
   },
   "repoMerge": {

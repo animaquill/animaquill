@@ -1,6 +1,7 @@
 /**
  * The guide to the AI tools on this computer (docs/design/mcp.md of AnimaQuill Cloud, 6.16a) where
- * there is no project folder: a project only in the browser, and the start page; its ways in from
+ * there is no project folder: a project only in the browser, which they change through the editor
+ * as well (docs/design/online-offline.md 5), and the start page; its ways in from
  * the chat and the palette; the switch for AGENTS.md of new projects, and the group of the project
  * properties. With a folder, see local-ai-folders.spec.ts.
  */
@@ -15,7 +16,7 @@ const shot = (page: Page, name: string) =>
 const guide = (page: Page) => page.getByTestId("local-ai-guide");
 
 test.describe("a project only in the browser", () => {
-  test("the guide says that a project only in the browser needs one, and opens from the chat", async ({
+  test("the guide says a project only in the browser works from any folder, and opens from the chat", async ({
     page,
   }) => {
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -25,10 +26,17 @@ test.describe("a project only in the browser", () => {
       .click()
       .catch(() => {});
     await content(page, "chat").getByTestId("chat-onboard-local-ai").click();
-    await expect(guide(page).getByTestId("local-ai-project")).toContainText(
-      "这个浏览器不能打开电脑上的文件夹，电脑上的 AI 工具改不了这个项目。",
+    await expect(guide(page).getByTestId("local-ai-project")).toHaveText(
+      "这个项目在这个浏览器里，AI 工具在哪个文件夹里启动都行，会连到这里开着的项目",
     );
-    await expect(guide(page).getByRole("button", { name: "关联文件夹…" })).toHaveCount(0);
+    await guide(page).getByRole("radio", { name: "Windows" }).click();
+    await expect(guide(page).getByTestId("local-ai-panel")).toContainText(
+      "在资源管理器里打开任何一个文件夹，在地址栏输入 cmd 回车",
+    );
+    // Not the editor of npx animaquill: what lets the AI tools connect to this site, to copy.
+    await expect(guide(page)).toContainText(
+      "npx -y animaquill@latest mcp allow-origin http://localhost:5173",
+    );
     await shot(page, "guide-browser");
     await guide(page).getByRole("button", { name: "关闭" }).last().click();
     // The palette has it too.

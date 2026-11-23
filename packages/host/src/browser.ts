@@ -1,4 +1,6 @@
 import {
+  RELAY_PORTS_KEY,
+  RELAY_TRUST_KEY,
   OFFLINE_SCOPE,
   UNSCOPED_DATABASES,
   onlineScope,
@@ -1730,6 +1732,8 @@ export function browserModeMemory(storage: () => Storage = () => localStorage): 
 const UNSCOPED_PREFIX = "animaquill.";
 const UNSCOPED_KEPT: ReadonlySet<string> = new Set([
   PROJECTS_HERE_KEY,
+  RELAY_TRUST_KEY,
+  RELAY_PORTS_KEY,
   PERSIST_ASKED_KEY,
   ...Array.from(DEVICE_SETTINGS, (key) => PREFIX + key),
   MODE_KEY,
