@@ -1,10 +1,12 @@
 import { RELAY_PORTS_KEY, RELAY_TRUST_KEY, scoped } from "@animaquill/host";
 import {
+  BRIDGE_MAX_RESULT,
   BRIDGE_PROTOCOL,
   RELAY_PORTS,
   proofText,
   readMessage,
   toPage,
+  type BridgeResult,
   type BridgeSession,
   type FromPage,
   type PageProject,
@@ -24,7 +26,9 @@ import type { BridgeExecutor } from "./executor.ts";
  *   turned on connecting by itself. A page that opens does not try the ports otherwise: browsers
  *   ask people whether a site may reach this computer, and nobody should be asked for nothing.
  * - **Which relay:** the one whose key this browser remembers. A new one is remembered when people
- *   connect from the guide (that click is the yes); met otherwise, people are asked first.
+ *   connect from the guide and the look for it right then finds just that one new one (that click
+ *   is the yes). Two or more new ones then are none of them: one may be another user of this
+ *   computer pretending. Met otherwise, people are asked first, once a page for each key.
  * - **Which window takes calls:** one window in a browser for each project, by a Web Lock; the next
  *   one takes over when it goes.
  */
@@ -38,7 +42,9 @@ export type BridgeStatus =
   /** Nothing to connect to: no `animaquill mcp` runs, or the browser does not let the page. */
   | "no-relay"
   /** People did not allow the relay that is there. */
-  | "refused";
+  | "refused"
+  /** Connecting found more than one relay never allowed: none of them is taken. */
+  | "several";
 
 export interface BridgeSnapshot {
   readonly status: BridgeStatus;
@@ -132,8 +138,6 @@ function portsMoved(): { first: number; count: number } | undefined {
 /** How long a relay has to say hello, and how often to look again for one that is not there. */
 const HELLO_MS = 3_000;
 const AGAIN_MS = 2_000;
-/** How long after people asked to connect a relay found is the one they allow. */
-const ASKED_MS = 60_000;
 
 const nonceOf = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(18));
@@ -144,6 +148,17 @@ const nonceOf = () => {
 };
 
 const bytesOf = (base64: string) => Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+
+/** A result as it can go: one too large for a message says so instead, and the change stays made. */
+function fitting(result: BridgeResult): BridgeResult {
+  const size =
+    result.text.length * 3 + (result.images ?? []).reduce((sum, { data }) => sum + data.length, 0);
+  if (size <= BRIDGE_MAX_RESULT) return result;
+  return {
+    text: `error result-too-large: the result of the call was larger than the ${Math.round(BRIDGE_MAX_RESULT / 1024 / 1024)} MB the editor sends at once, so it was not sent${result.isError ? "" : "; what the call did stays done"}. Fewer frames, a smaller size or a shorter range give a smaller one.`,
+    isError: true,
+  };
+}
 
 /** Whether a relay's signature of the proof is by its key. */
 export async function provesKey(key: string, signature: string, text: string): Promise<boolean> {
@@ -193,8 +208,10 @@ export class ToolBridge {
   #ws: WebSocket | undefined;
   /** People want it connected: it keeps connecting again while they do. */
   #wanted = false;
-  /** When people last asked to connect. */
-  #askedAt: number | undefined;
+  /** People asked to connect, and the look that it starts has not been yet. */
+  #asked = false;
+  /** Keys people were asked about in this page, whatever they said: not asked again. */
+  readonly #askedAbout = new Set<string>();
   #scanning: Promise<void> | undefined;
   #again: ReturnType<typeof setTimeout> | undefined;
   #frontAt: number;
@@ -254,20 +271,21 @@ export class ToolBridge {
 
   #want(asked: boolean): void {
     this.#wanted = true;
-    if (asked) this.#askedAt = this.#now();
+    if (asked) this.#asked = true;
     if (this.#ws) return;
     this.#set({ status: "connecting" });
     void this.#scan();
   }
 
   /**
-   * Looks for the relay on each port, once at a time. What people asked for in the last minute is
-   * a relay they allow: the one they just started, most likely. Later, one they did not allow yet is
-   * asked about.
+   * Looks for the relay on each port, once at a time. Only the look that people's asking starts
+   * takes a relay they did not allow yet without asking them, see the top.
    */
   #scan(): Promise<void> {
-    const asked = this.#askedAt !== undefined && this.#now() - this.#askedAt < ASKED_MS;
-    this.#scanning ??= this.#look(asked).finally(() => {
+    if (this.#scanning) return this.#scanning;
+    const asked = this.#asked;
+    this.#asked = false;
+    this.#scanning = this.#look(asked).finally(() => {
       this.#scanning = undefined;
     });
     return this.#scanning;
@@ -276,29 +294,34 @@ export class ToolBridge {
   async #look(asked: boolean): Promise<void> {
     clearTimeout(this.#again);
     const { first, count } = this.#options.ports ?? portsMoved() ?? RELAY_PORTS;
-    let stranger: Hello | undefined;
+    const strangers: Hello[] = [];
     let found: Hello | undefined;
     for (let port = first; port < first + count && !found; port += 1) {
       const hello = await this.#hello(port);
       if (!hello) continue;
-      if (this.#options.trust.has(hello.key)) {
-        found = hello;
-        stranger?.ws.close();
-      } else if (!stranger) {
-        stranger = hello;
-      } else {
-        hello.ws.close();
-      }
+      if (this.#options.trust.has(hello.key)) found = hello;
+      else if (strangers.some(({ key }) => key === hello.key)) hello.ws.close();
+      else strangers.push(hello);
+    }
+    // All the ports are looked at when none is allowed: how many new ones there are counts.
+    const [stranger] = strangers;
+    for (const other of found ? strangers : strangers.slice(1)) other.ws.close();
+    if (!found && strangers.length > 1) {
+      stranger?.ws.close();
+      this.#wanted = false;
+      this.#set({ status: "several" });
+      return;
     }
     if (!found && stranger) {
-      const allowed = asked || (await this.#options.confirm());
+      const ask = !asked && !this.#askedAbout.has(stranger.key);
+      if (ask) this.#askedAbout.add(stranger.key);
+      const allowed = asked || (ask && (await this.#options.confirm()));
       if (allowed) {
         this.#options.trust.add(stranger.key);
         found = stranger;
       } else {
         stranger.ws.close();
         this.#wanted = false;
-        this.#askedAt = undefined;
         this.#set({ status: "refused" });
         return;
       }
@@ -408,13 +431,15 @@ export class ToolBridge {
               answer: message.answer,
               tool: message.tool,
               args: message.args,
+              project: message.project,
               ...(message.client && { client: message.client }),
+              ...(message.again && { again: true }),
             })
           : {
               text: "error editor-not-open: the editor that got the call does not take calls for its project now, so nothing was done.",
               isError: true,
             };
-        this.#send({ t: "result", call: message.call, result });
+        this.#send({ t: "result", call: message.call, result: fitting(result) });
         return;
       }
       case "cancel":

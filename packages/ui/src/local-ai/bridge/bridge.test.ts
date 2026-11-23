@@ -173,8 +173,8 @@ function bridgeOf(options: {
   return { bridge, asked, store };
 }
 
-const until = async (check: () => boolean) => {
-  for (let tries = 0; tries < 200 && !check(); tries += 1) {
+const until = async (check: () => boolean, tries = 200) => {
+  for (let tried = 0; tried < tries && !check(); tried += 1) {
     await new Promise((done) => setTimeout(done, 5));
   }
   expect(check()).toBe(true);
@@ -254,5 +254,36 @@ describe("the editor and the AI tools on this computer", () => {
     expect(said.filter(({ t }) => t === "page").at(-1)?.serving).toBe(false);
     first.bridge.dispose();
     await until(() => second.bridge.getSnapshot().serving);
+  });
+
+  it("takes none of two relays never allowed, also when people asked to connect", async () => {
+    const one = { ...(await relayKey()), port: 47_300 };
+    const two = { ...(await relayKey()), port: 47_301 };
+    const { Socket } = socketsTo([one, two]);
+    const trust = trustOf();
+    const { bridge, asked } = bridgeOf({ Socket, trust });
+    bridge.connect();
+    await until(() => bridge.getSnapshot().status === "several");
+    expect(trust.any).toBe(false);
+    expect(asked).toEqual([]);
+  });
+
+  it("takes a new relay without asking only in the look people's click starts", async () => {
+    const relay = { ...(await relayKey()), port: 47_300 };
+    // Nothing there when people click; it comes after.
+    const relays: Relay[] = [];
+    const { Socket } = socketsTo(relays);
+    const trust = trustOf();
+    const { bridge, asked } = bridgeOf({ Socket, trust, confirm: async () => false });
+    bridge.connect();
+    await until(() => bridge.getSnapshot().status === "no-relay");
+    relays.push(relay);
+    // The next look, by itself, asks about it, and only once in this page.
+    await until(() => asked.length === 1, 1_000);
+    await until(() => bridge.getSnapshot().status === "refused");
+    expect(trust.any).toBe(false);
+    bridge.autoConnectChanged(true);
+    await new Promise((done) => setTimeout(done, 50));
+    expect(asked).toHaveLength(1);
   });
 });

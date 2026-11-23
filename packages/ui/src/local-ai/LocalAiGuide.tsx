@@ -488,9 +488,14 @@ function LocalAiGuide() {
                               ? "localAi.guide.connecting"
                               : link.status === "refused"
                                 ? "localAi.guide.refused"
-                                : "localAi.guide.noRelay",
+                                : link.status === "several"
+                                  ? "localAi.guide.several"
+                                  : "localAi.guide.noRelay",
                           )}
                         </span>
+                      )}
+                      {link.status === "no-relay" && (
+                        <span className={styles.muted}>{t("localAi.guide.wsl")}</span>
                       )}
                     </>
                   )}

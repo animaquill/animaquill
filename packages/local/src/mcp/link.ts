@@ -1,7 +1,8 @@
 import { randomBytes } from "node:crypto";
-import { RELAY_PORTS } from "@animaquill/tools";
+import { BRIDGE_PROTOCOL, RELAY_PORTS } from "@animaquill/tools";
 import { WebSocket, type RawData } from "ws";
 import type { RelayIdentity } from "./identity.ts";
+import { fromPeer, peerHello, peerOk, peerProof, readPeer, relayProof, toPeer } from "./peer.ts";
 import {
   Relay,
   type CallAnswer,
@@ -10,6 +11,7 @@ import {
   type Router,
   type SessionInfo,
 } from "./relay.ts";
+import { isOwnUser } from "./uid.ts";
 
 /**
  * How one `animaquill mcp` gets its calls to the relay (docs/design/online-offline.md of AnimaQuill
@@ -43,7 +45,7 @@ const textOf = (data: RawData): string =>
     ? Buffer.concat(data).toString("utf8")
     : Buffer.from(data as ArrayBuffer).toString("utf8");
 
-/** Serves the calls of peers on the router of the relay. */
+/** Serves the calls of peers on the router of the relay. A message it cannot read lets the peer go. */
 function servePeer(router: Router, ws: WebSocket): void {
   const sessions = new Set<string>();
   const calls = new Map<string, AbortController>();
@@ -51,31 +53,36 @@ function servePeer(router: Router, ws: WebSocket): void {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(message));
   };
   ws.on("message", (data) => {
-    let message: Record<string, unknown>;
-    try {
-      message = JSON.parse(textOf(data)) as Record<string, unknown>;
-    } catch {
+    const message = readPeer(fromPeer, textOf(data));
+    if (!message) {
+      ws.close(1008, "unreadable");
       return;
     }
-    if (message["t"] === "session" && typeof message["info"] === "object") {
-      const info = message["info"] as SessionInfo;
-      if (typeof info.session !== "string") return;
-      sessions.add(info.session);
-      router.addSession(info);
-    } else if (message["t"] === "end" && typeof message["session"] === "string") {
-      sessions.delete(message["session"]);
-      router.removeSession(message["session"]);
-    } else if (message["t"] === "call" && typeof message["request"] === "object") {
-      const request = message["request"] as CallRequest;
-      if (typeof request.call !== "string" || !sessions.has(request.session)) return;
-      const controller = new AbortController();
-      calls.set(request.call, controller);
-      void router.call(request, controller.signal).then((answer) => {
-        calls.delete(request.call);
-        send({ t: "answer", call: request.call, answer });
-      });
-    } else if (message["t"] === "cancel" && typeof message["call"] === "string") {
-      calls.get(message["call"])?.abort();
+    switch (message.t) {
+      case "session":
+        sessions.add(message.info.session);
+        router.addSession(message.info as SessionInfo);
+        return;
+      case "end":
+        sessions.delete(message.session);
+        router.removeSession(message.session);
+        return;
+      case "call": {
+        const request = message.request as CallRequest;
+        if (!sessions.has(request.session)) return;
+        const controller = new AbortController();
+        calls.set(request.call, controller);
+        void router
+          .call(request, controller.signal)
+          .catch((): CallAnswer => ({ kind: "gone" }))
+          .then((answer) => {
+            calls.delete(request.call);
+            send({ t: "answer", call: request.call, answer });
+          });
+        return;
+      }
+      case "cancel":
+        calls.get(message.call)?.abort();
     }
   });
   ws.on("close", () => {
@@ -84,12 +91,20 @@ function servePeer(router: Router, ws: WebSocket): void {
   });
 }
 
-/** Connects to a relay as a peer: resolves to the socket once both proved the key, or undefined. */
-function connectPeer(port: number, identity: RelayIdentity): Promise<WebSocket | undefined> {
+/**
+ * Connects to a relay as a peer: resolves to the socket once both proved the key, or undefined. On
+ * Linux the relay has to be of this user as well.
+ */
+function connectPeer(
+  port: number,
+  identity: RelayIdentity,
+  ownUser: (localPort: number, remotePort: number) => Promise<boolean>,
+): Promise<WebSocket | undefined> {
   return new Promise((resolve) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/peer`, { handshakeTimeout: 3_000 });
     const nonce = randomBytes(18).toString("base64url");
     let step = 0;
+    let ownPort: number | undefined;
     const fail = () => {
       clearTimeout(timer);
       ws.removeAllListeners();
@@ -98,31 +113,39 @@ function connectPeer(port: number, identity: RelayIdentity): Promise<WebSocket |
       resolve(undefined);
     };
     const timer = setTimeout(fail, 5_000);
+    ws.on("upgrade", (response) => {
+      ownPort = response.socket.localPort;
+    });
     ws.on("error", fail);
     ws.on("close", fail);
     ws.on("message", (data) => {
-      let message: Record<string, unknown>;
-      try {
-        message = JSON.parse(textOf(data)) as Record<string, unknown>;
-      } catch {
-        fail();
+      const raw = textOf(data);
+      if (step === 0) {
+        const hello = readPeer(peerHello, raw);
+        if (!hello) {
+          fail();
+          return;
+        }
+        step = 1;
+        void (async () => {
+          // The other end of this connection is the relay: of this user, where the system tells.
+          if (ownPort === undefined || !(await ownUser(ownPort, port))) {
+            fail();
+            return;
+          }
+          ws.send(
+            JSON.stringify({
+              t: "peer-auth",
+              nonce,
+              protocol: BRIDGE_PROTOCOL,
+              mac: identity.mac(peerProof(hello.nonce, port)),
+            }),
+          );
+        })();
         return;
       }
-      if (step === 0 && message["t"] === "peer-hello" && typeof message["nonce"] === "string") {
-        step = 1;
-        ws.send(
-          JSON.stringify({
-            t: "peer-auth",
-            nonce,
-            mac: identity.mac(`peer\n${message["nonce"]}`),
-          }),
-        );
-      } else if (
-        step === 1 &&
-        message["t"] === "peer-ok" &&
-        typeof message["mac"] === "string" &&
-        identity.checks(`relay\n${nonce}`, message["mac"])
-      ) {
+      const ok = readPeer(peerOk, raw);
+      if (step === 1 && ok && identity.checks(relayProof(nonce, port), ok.mac)) {
         clearTimeout(timer);
         ws.removeAllListeners();
         resolve(ws);
@@ -131,6 +154,15 @@ function connectPeer(port: number, identity: RelayIdentity): Promise<WebSocket |
       }
     });
   });
+}
+
+/** A call without an answer yet. */
+interface Pending {
+  readonly request: CallRequest;
+  readonly resolve: (answer: CallAnswer) => void;
+  readonly signal: AbortSignal | undefined;
+  /** It went to a relay once. */
+  sent: boolean;
 }
 
 type Current =
@@ -148,14 +180,7 @@ export class ElectedLink implements RelayLink {
   readonly #options: ElectionOptions;
   readonly #sessions = new Map<string, SessionInfo>();
   /** Calls without an answer, which go again once the relay changed. */
-  readonly #calls = new Map<
-    string,
-    {
-      readonly request: CallRequest;
-      readonly resolve: (answer: CallAnswer) => void;
-      readonly signal: AbortSignal | undefined;
-    }
-  >();
+  readonly #calls = new Map<string, Pending>();
   #current: Current | undefined;
   #electing: Promise<Current> | undefined;
   #closed = false;
@@ -195,7 +220,11 @@ export class ElectedLink implements RelayLink {
       for (let port = first; port < first + count; port += 1) {
         const relay = await Relay.listen(port, this.#options).catch(() => undefined);
         if (relay) return this.#became({ kind: "relay", relay });
-        const ws = await connectPeer(port, this.#options.identity);
+        const ws = await connectPeer(
+          port,
+          this.#options.identity,
+          this.#options.ownUser ?? isOwnUser,
+        );
         if (ws) return this.#became({ kind: "peer", ws, port });
       }
       // Every port is taken, or the relay that had one is going: a moment, and again.
@@ -215,22 +244,17 @@ export class ElectedLink implements RelayLink {
       const { router } = current.relay;
       current.relay.onPeer((ws) => servePeer(router, ws));
       for (const info of this.#sessions.values()) router.addSession(info);
-      for (const [call, { request, signal }] of this.#calls)
-        this.#routeLocal(router, call, request, signal);
+      for (const [call, pending] of this.#calls)
+        this.#routeLocal(router, call, this.#again(pending), pending.signal);
     } else {
       const { ws } = current;
       ws.on("message", (data) => {
-        let message: Record<string, unknown>;
-        try {
-          message = JSON.parse(textOf(data)) as Record<string, unknown>;
-        } catch {
-          return;
-        }
-        if (message["t"] !== "answer" || typeof message["call"] !== "string") return;
-        const pending = this.#calls.get(message["call"]);
+        const message = readPeer(toPeer, textOf(data));
+        if (!message) return;
+        const pending = this.#calls.get(message.call);
         if (!pending) return;
-        this.#calls.delete(message["call"]);
-        pending.resolve(message["answer"] as CallAnswer);
+        this.#calls.delete(message.call);
+        pending.resolve(message.answer as CallAnswer);
       });
       ws.on("error", () => ws.terminate());
       ws.on("close", () => {
@@ -238,19 +262,32 @@ export class ElectedLink implements RelayLink {
         if (!this.#closed) void this.#elect().catch(() => {});
       });
       for (const info of this.#sessions.values()) ws.send(JSON.stringify({ t: "session", info }));
-      for (const { request } of this.#calls.values())
-        ws.send(JSON.stringify({ t: "call", request }));
+      for (const pending of this.#calls.values())
+        ws.send(JSON.stringify({ t: "call", request: this.#again(pending) }));
     }
     return current;
   }
 
+  /**
+   * A call as it goes to the relay: once it went to one that is gone, it says it comes again, and
+   * the page that has no record of it makes no change for it.
+   */
+  #again(pending: Pending): CallRequest {
+    const request = pending.sent ? { ...pending.request, again: true } : pending.request;
+    pending.sent = true;
+    return request;
+  }
+
   #routeLocal(router: Router, call: string, request: CallRequest, signal?: AbortSignal): void {
-    void router.call(request, signal).then((answer) => {
-      const pending = this.#calls.get(call);
-      if (!pending) return;
-      this.#calls.delete(call);
-      pending.resolve(answer);
-    });
+    void router
+      .call(request, signal)
+      .catch((): CallAnswer => ({ kind: "gone" }))
+      .then((answer) => {
+        const pending = this.#calls.get(call);
+        if (!pending) return;
+        this.#calls.delete(call);
+        pending.resolve(answer);
+      });
   }
 
   session(info: SessionInfo): void {
@@ -268,8 +305,10 @@ export class ElectedLink implements RelayLink {
   }
 
   async call(request: CallRequest, signal?: AbortSignal): Promise<CallAnswer> {
+    let pending: Pending | undefined;
     const answer = new Promise<CallAnswer>((resolve) => {
-      this.#calls.set(request.call, { request, resolve, signal });
+      pending = { request, resolve, signal, sent: false };
+      this.#calls.set(request.call, pending);
     });
     signal?.addEventListener(
       "abort",
@@ -281,10 +320,10 @@ export class ElectedLink implements RelayLink {
       { once: true },
     );
     const current = this.#current;
-    if (current?.kind === "relay") {
-      this.#routeLocal(current.relay.router, request.call, request, signal);
-    } else if (current?.kind === "peer") {
-      current.ws.send(JSON.stringify({ t: "call", request }));
+    if (current?.kind === "relay" && pending) {
+      this.#routeLocal(current.relay.router, request.call, this.#again(pending), signal);
+    } else if (current?.kind === "peer" && pending) {
+      current.ws.send(JSON.stringify({ t: "call", request: this.#again(pending) }));
     } else {
       // `#became` sends it, once there is a relay.
       void this.#elect().catch(() => {

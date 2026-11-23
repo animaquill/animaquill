@@ -19,16 +19,20 @@ import {
  * AnimaQuill Cloud, 5.1): the same tools as the assistant in the browser, on the project open in
  * this window, through the same store. Each session of an AI tool has what it read of the project
  * (`CallerState`), and its changes as batches: one batch while it keeps changing, a new one after
- * ten minutes without, each an origin of its own that people take back as a whole. Calls go one
- * after the other, as the editor has one compositor; a call that comes again under the same id, as
- * after the relay changed, gets the answer it got, and is not run twice.
+ * ten minutes without, each an origin of its own that people take back as a whole: `ai:mcp-` with
+ * the session, this start of the page and the batch, so that a batch after a reload, or after the
+ * relay changed, is never one of before. Calls go one after the other, as the editor has one
+ * compositor, and only on the project they are for. A change that comes again under the same id, as
+ * after the relay changed, gets the answer it got and is not made twice; one this page has no record
+ * of is not made at all, as it may have been made by a page that is gone.
  */
 
 /** How long without a change before the next change of a session is a batch of its own. */
 export const BATCH_GAP_MS = 10 * 60 * 1000;
-/** How many answers are kept to give again, and for how long. */
+/** How many answers of changes are kept to give again, for how long, and how much of them. */
 const KEPT_ANSWERS = 200;
 const KEPT_MS = 10 * 60 * 1000;
+const KEPT_BYTES = 4 * 1024 * 1024;
 
 /** What the tools need of the editor, as the assistant in the browser has it too. */
 export type EditorToolParts = Pick<
@@ -46,6 +50,10 @@ export interface BridgeCall {
   readonly answer: string;
   readonly tool: string;
   readonly args: unknown;
+  /** The project it is for: it runs on no other. */
+  readonly project?: { readonly mode: "online" | "offline"; readonly key: string };
+  /** It comes again, as after the relay changed, see the top. */
+  readonly again?: boolean;
 }
 
 /** A change a session made, for whoever tells people. */
@@ -61,6 +69,10 @@ export interface BridgeWrite {
 export interface BridgeExecutorOptions {
   /** The project of this window. */
   readonly store: () => ProjectStore | undefined;
+  /** What the page says the project of this window is, and its name, to check calls against. */
+  readonly project?: () =>
+    | { readonly mode: "online" | "offline"; readonly key: string; readonly name: string }
+    | undefined;
   readonly parts: EditorToolParts;
   /** Whether the page is in the background, where the browser draws nothing. */
   readonly hidden: () => boolean;
@@ -92,52 +104,82 @@ const failed = (text: string): BridgeResult => ({ text, isError: true });
 export class BridgeExecutor {
   readonly #options: BridgeExecutorOptions;
   readonly #sessions = new Map<string, SessionState>();
-  readonly #answers = new Map<
+  /** Calls that run or wait, by id: one that comes again meanwhile waits for the same answer. */
+  readonly #running = new Map<
     string,
-    { readonly at: number; readonly result: Promise<BridgeResult> }
+    { readonly controller: AbortController; readonly result: Promise<BridgeResult> }
   >();
-  readonly #running = new Map<string, AbortController>();
+  /** What changes answered, without pictures, to give again: see `KEPT_ANSWERS`. */
+  readonly #answers = new Map<string, { readonly at: number; readonly result: BridgeResult }>();
+  #answerBytes = 0;
+  /** The last batch of each session on this page, which a session read anew goes on from. */
+  readonly #batches = new Map<string, number>();
+  /** This start of the page, in the origins of its batches. */
+  readonly #start: string;
   #queue: Promise<unknown> = Promise.resolve();
 
   constructor(options: BridgeExecutorOptions) {
     this.#options = options;
+    const now = (options.now ?? Date.now)();
+    const random = crypto.getRandomValues(new Uint32Array(1))[0] ?? 0;
+    this.#start = `${now.toString(36)}${(random % 1296).toString(36).padStart(2, "0")}`;
+  }
+
+  #originOf(session: string, batch: number): Origin {
+    return aiTask(`mcp-${session}-${this.#start}-${batch}`);
   }
 
   /** The origin a session changes the project as now, see the top. */
   originOf(session: string): Origin | undefined {
     const state = this.#sessions.get(session);
-    return state && aiTask(`mcp-${session}-${state.batch}`);
+    return state && this.#originOf(session, state.batch);
   }
 
   /** Runs a call, or gives what it gave before. */
   run(call: BridgeCall): Promise<BridgeResult> {
-    const now = (this.#options.now ?? Date.now)();
-    for (const [id, { at }] of this.#answers) {
-      if (this.#answers.size <= KEPT_ANSWERS && now - at < KEPT_MS) break;
-      this.#answers.delete(id);
-    }
-    const known = this.#answers.get(call.call);
-    if (known) return known.result;
+    const running = this.#running.get(call.call);
+    if (running) return running.result;
+    const kept = this.#answers.get(call.call);
+    if (kept) return Promise.resolve(kept.result);
     const controller = new AbortController();
-    this.#running.set(call.call, controller);
     const result = this.#queue
       .then(() => this.#run(call, controller.signal))
       .catch((error: unknown) =>
         failed(`error failed: the editor could not run the call: ${(error as Error).message}`),
       )
+      .then((done) => {
+        if (WRITE_TOOLS.has(call.tool)) this.#keep(call.call, done);
+        return done;
+      })
       .finally(() => this.#running.delete(call.call));
+    this.#running.set(call.call, { controller, result });
     this.#queue = result;
-    this.#answers.set(call.call, { at: now, result });
     return result;
+  }
+
+  /** Keeps what a change answered, the oldest going first past the limits. */
+  #keep(call: string, result: BridgeResult): void {
+    const now = (this.#options.now ?? Date.now)();
+    const kept = { text: result.text, isError: result.isError };
+    this.#answers.set(call, { at: now, result: kept });
+    this.#answerBytes += kept.text.length * 2;
+    for (const [id, { at, result: old }] of this.#answers) {
+      const over =
+        this.#answers.size > KEPT_ANSWERS || this.#answerBytes > KEPT_BYTES || now - at >= KEPT_MS;
+      if (!over || id === call) break;
+      this.#answers.delete(id);
+      this.#answerBytes -= old.text.length * 2;
+    }
   }
 
   /** The AI tool stopped waiting for a call. */
   cancel(call: string): void {
-    this.#running.get(call)?.abort();
+    this.#running.get(call)?.controller.abort();
   }
 
   /** Another project is open, or none: what the sessions read is of the one before. */
   reset(): void {
+    for (const { controller } of this.#running.values()) controller.abort();
     this.#sessions.clear();
   }
 
@@ -149,11 +191,14 @@ export class BridgeExecutor {
     }
     const { parts } = this.#options;
     const caller = new CallerState();
+    // A session read anew, as on another project, changes it as a batch of its own.
+    const batch = (this.#batches.get(call.session) ?? 0) + 1;
+    this.#batches.set(call.session, batch);
     const state: SessionState = {
       caller,
       store,
       client: call.client,
-      batch: 1,
+      batch,
       lastWrite: 0,
       start: undefined,
       answer: call.answer,
@@ -162,7 +207,7 @@ export class BridgeExecutor {
     };
     const host: ToolHost = {
       store: () => (this.#options.store() === store ? store : undefined),
-      origin: () => aiTask(`mcp-${call.session}-${state.batch}`),
+      origin: () => this.#originOf(call.session, state.batch),
       answer: () => `${call.session}:${state.answer}`,
       stopped: () => state.signal?.aborted === true,
       problems: parts.problems,
@@ -195,18 +240,34 @@ export class BridgeExecutor {
 
   async #run(call: BridgeCall, signal: AbortSignal): Promise<BridgeResult> {
     const store = this.#options.store();
-    if (!store) {
+    if (!store || signal.aborted) {
       return failed(
         "error editor-not-open: the editor that took the call has no project open any more, so nothing was done.",
+      );
+    }
+    const open = this.#options.project?.();
+    if (
+      call.project &&
+      open &&
+      (open.key !== call.project.key || open.mode !== call.project.mode)
+    ) {
+      return failed(
+        `error editor-not-open: the editor that took the call has the project ${JSON.stringify(open.name)} open now, not the one the call was for, so nothing was done.`,
+      );
+    }
+    const writes = WRITE_TOOLS.has(call.tool);
+    if (call.again && writes) {
+      return failed(
+        "error outcome-unknown: this change came again after the connection to the editor was lost, and the editor that has the project now has no record of it, so it was not made again here. Whether it was made before is not known: aq_timeline_read, aq_object_read or aq_file_read show the project as it is now.",
       );
     }
     const session = this.#sessionOf(call, store);
     const tool = session.tools.find(({ name }) => name === call.tool);
     if (!tool) return failed(`error unknown-tool: there is no tool ${JSON.stringify(call.tool)}.`);
     const now = (this.#options.now ?? Date.now)();
-    const writes = WRITE_TOOLS.has(call.tool);
     if (writes && session.lastWrite > 0 && now - session.lastWrite > BATCH_GAP_MS) {
       session.batch += 1;
+      this.#batches.set(call.session, session.batch);
       session.start = undefined;
     }
     session.start ??= store.getState();
@@ -228,7 +289,7 @@ export class BridgeExecutor {
     if (writes && !result.isError) {
       session.lastWrite = now;
       this.#options.wrote?.({
-        origin: aiTask(`mcp-${call.session}-${session.batch}`),
+        origin: this.#originOf(call.session, session.batch),
         session: call.session,
         client: session.client,
         tool: call.tool,

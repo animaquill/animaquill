@@ -6,6 +6,7 @@ import { WebSocket } from "ws";
 import { IdentityRefused, KEY_FILE, loadIdentity, type RelayIdentity } from "./identity.ts";
 import { ElectedLink } from "./link.ts";
 import { allowOrigin, allowedOrigins } from "./origins.ts";
+import { peerProof } from "./peer.ts";
 import { admit } from "./relay.ts";
 import { FakePage, cleanUp, sampleFolder, storeOf, tempFolder } from "./test-support.ts";
 import { ownerOf } from "./uid.ts";
@@ -112,6 +113,15 @@ describe("who the relay lets in", () => {
     // The other end is the socket at its port, connected to ours.
     expect(await ownerOf(0x9c40, 0xb8d4, [file])).toBe(1001);
     expect(await ownerOf(0x9c40, 0x1234, [file])).toBeUndefined();
+    // The same ports at another loopback address are somebody else's connection.
+    writeFileSync(
+      file,
+      [
+        "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+        "   0: 0200007F:B8D4 0100007F:9C40 01 00000000:00000000 00:00000000 00000000  1001        0 1",
+      ].join("\n"),
+    );
+    expect(await ownerOf(0x9c40, 0xb8d4, [file])).toBeUndefined();
   });
 });
 
@@ -204,5 +214,100 @@ describe("the processes of one user", { timeout: 30_000 }, () => {
     expect(twice.kind === "result" && twice.result).toEqual(done.kind === "result" && done.result);
     page.close();
     store.destroy();
+  });
+});
+
+describe("what review O5a found", { timeout: 30_000 }, () => {
+  it("binds a session on the project in front at its first call, not at its start", async () => {
+    const ports = portsOfTest();
+    const link = await linkOf(await loadIdentity(tempFolder()), ports);
+    const storeA = await storeOf(sampleFolder());
+    const storeB = await storeOf(sampleFolder());
+    const a = new FakePage({
+      port: ports.first,
+      origin: ORIGIN,
+      store: storeA,
+      frontAt: 1_000,
+      project: { mode: "online", key: "A", id: "a", name: "项目A" },
+      page: "pa",
+    });
+    await a.connect();
+    link.session({ session: "s", target: { kind: "front" }, since: 0 });
+    await new Promise((done) => setTimeout(done, 300));
+    // The user now works in B, which is in front.
+    const b = new FakePage({
+      port: ports.first,
+      origin: ORIGIN,
+      store: storeB,
+      frontAt: 2_000,
+      project: { mode: "online", key: "B", id: "b", name: "项目B" },
+      page: "pb",
+    });
+    await b.connect();
+    // What B says it has open reaches the relay.
+    await new Promise((done) => setTimeout(done, 300));
+    const answer = await link.call({
+      call: "s-1",
+      session: "s",
+      answer: "1",
+      tool: "aq_project_status",
+      args: {},
+    });
+    expect(answer.kind === "result" && answer.bound.project.name).toBe("项目B");
+    a.close();
+    b.close();
+    storeA.destroy();
+    storeB.destroy();
+  });
+
+  it("lets a peer go that says what it cannot, and stays up for the others", async () => {
+    const ports = portsOfTest();
+    const identity = await loadIdentity(tempFolder());
+    const relay = await linkOf(identity, ports);
+    // A peer of the same user, proving the key, then sending what no version sends.
+    const ws = new WebSocket(`ws://127.0.0.1:${ports.first}/peer`);
+    const nonce = "n".repeat(20);
+    const closed = new Promise<number>((resolve) => ws.on("close", resolve));
+    ws.on("message", (data) => {
+      const message = JSON.parse(String(data)) as { t: string; nonce?: string };
+      if (message.t === "peer-hello") {
+        ws.send(
+          JSON.stringify({
+            t: "peer-auth",
+            nonce,
+            protocol: 1,
+            mac: identity.mac(peerProof(message.nonce ?? "", ports.first)),
+          }),
+        );
+      } else if (message.t === "peer-ok") {
+        ws.send(JSON.stringify({ t: "session", info: { session: 5 } }));
+      }
+    });
+    expect(await closed).toBe(1008);
+    // Another peer still gets in.
+    const other = await linkOf(identity, ports);
+    expect(relay.role?.kind).toBe("relay");
+    expect(other.role).toEqual({ kind: "peer", port: ports.first });
+  });
+
+  it("takes no proof of the key that was made for another port", async () => {
+    const ports = portsOfTest();
+    const identity = await loadIdentity(tempFolder());
+    await linkOf(identity, ports);
+    const ws = new WebSocket(`ws://127.0.0.1:${ports.first}/peer`);
+    const closed = new Promise<number>((resolve) => ws.on("close", resolve));
+    ws.on("message", (data) => {
+      const message = JSON.parse(String(data)) as { t: string; nonce?: string };
+      if (message.t !== "peer-hello") return;
+      ws.send(
+        JSON.stringify({
+          t: "peer-auth",
+          nonce: "n".repeat(20),
+          protocol: 1,
+          mac: identity.mac(peerProof(message.nonce ?? "", ports.first + 1)),
+        }),
+      );
+    });
+    expect(await closed).toBe(1008);
   });
 });

@@ -10,14 +10,20 @@ import { readFile } from "node:fs/promises";
 /** "0100007F:B8D4" to its port. */
 const portOf = (address: string | undefined) => Number.parseInt(address?.split(":")[1] ?? "", 16);
 
+/** 127.0.0.1 as /proc/net/tcp writes it: the relay listens there, and pages and peers come from it. */
+export const LOOPBACK_HEX = "0100007F";
+
+const hostOf = (address: string | undefined) => address?.split(":")[0]?.toUpperCase();
+
 /**
- * The user id of the socket at `remotePort` connected to `localPort`, undefined where it cannot be
- * told: off Linux, or where /proc says nothing of it.
+ * The user id of the socket at 127.0.0.1:`remotePort` connected to 127.0.0.1:`localPort`,
+ * undefined where it cannot be told: off Linux, or where /proc says nothing of it. The relay listens
+ * on IPv4 only, so /proc/net/tcp has every connection to it.
  */
 export async function ownerOf(
   localPort: number,
   remotePort: number,
-  files: readonly string[] = ["/proc/net/tcp", "/proc/net/tcp6"],
+  files: readonly string[] = ["/proc/net/tcp"],
 ): Promise<number | undefined> {
   for (const file of files) {
     let text: string;
@@ -29,7 +35,13 @@ export async function ownerOf(
     for (const line of text.split("\n").slice(1)) {
       const fields = line.trim().split(/\s+/);
       // sl local_address rem_address st tx:rx tr:when retrnsmt uid ...
-      if (portOf(fields[1]) === remotePort && portOf(fields[2]) === localPort) {
+      // Both ends at 127.0.0.1: another loopback address with the same ports is someone else's.
+      if (
+        portOf(fields[1]) === remotePort &&
+        portOf(fields[2]) === localPort &&
+        hostOf(fields[1]) === LOOPBACK_HEX &&
+        hostOf(fields[2]) === LOOPBACK_HEX
+      ) {
         const uid = Number(fields[7]);
         if (Number.isInteger(uid)) return uid;
       }

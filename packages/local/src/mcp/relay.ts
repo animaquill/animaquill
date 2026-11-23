@@ -17,6 +17,7 @@ import {
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { RelayIdentity } from "./identity.ts";
 import type { AllowedOrigins } from "./origins.ts";
+import { peerAuth, peerProof, readPeer, relayProof } from "./peer.ts";
 import { isOwnUser } from "./uid.ts";
 
 /**
@@ -66,6 +67,8 @@ export interface CallRequest {
   readonly answer: string;
   readonly tool: string;
   readonly args: unknown;
+  /** It went before, to a relay that went away: see `ToPage`. */
+  readonly again?: boolean;
 }
 
 export type CallAnswer =
@@ -78,6 +81,10 @@ export type CallAnswer =
 /** How often pages are asked whether they are there, and how long one may not answer. */
 export const PING_EVERY_MS = 10_000;
 export const PAGE_SILENT_MS = 30_000;
+/** How many pages and peers the relay takes at once: more is no browser and AI tools of one person. */
+export const MAX_PAGES = 32;
+export const MAX_PEERS = 64;
+
 /** How long a call waits for a page that has its project, before it says there is none. */
 export const PAGE_WAIT_MS = 5_000;
 /** How long a page has to look for the file of a probe. */
@@ -132,13 +139,18 @@ export class Router {
     return () => this.#listeners.delete(listener);
   }
 
+  get pageCount(): number {
+    return this.#pages.size;
+  }
+
   get pages(): readonly NonNullable<PageConnection["info"]>[] {
     return [...this.#pages.values()].flatMap(({ info }) => (info ? [info] : []));
   }
 
   addSession(info: SessionInfo): void {
     const known = this.#sessions.get(info.session);
-    const bound = info.target.kind === "front" ? info.target.bound : known?.bound;
+    // What it found is kept, also where it says it again without it, after the relay changed.
+    const bound = (info.target.kind === "front" ? info.target.bound : undefined) ?? known?.bound;
     this.#sessions.set(info.session, {
       ...info,
       page: known?.page,
@@ -178,6 +190,8 @@ export class Router {
         answer: request.answer,
         tool: request.tool,
         args: request.args,
+        project: { mode: project.mode, key: project.key },
+        ...(request.again && { again: true }),
       });
     });
     return answer.kind === "result"
@@ -366,9 +380,16 @@ export class Router {
     });
   }
 
-  /** Finds pages for sessions that have none, so that pages show who works on them before a call. */
+  /**
+   * Finds pages for sessions that have none, so that pages show who works on them before a call.
+   * Not one whose project is whatever is in front: that is the one in front at its first call
+   * (design 5.5), not at its start.
+   */
   async #bindAll(): Promise<void> {
-    for (const session of this.#sessions.values()) await this.#pageOf(session).catch(() => {});
+    for (const session of this.#sessions.values()) {
+      if (session.target.kind === "front" && session.bound === undefined) continue;
+      await this.#pageOf(session).catch(() => {});
+    }
     this.#tellSessions();
   }
 
@@ -448,6 +469,8 @@ export class Relay {
   readonly #sockets: WebSocketServer;
   readonly #options: RelayOptions;
   readonly #peers = new Set<WebSocket>();
+  /** Peers that connected and did not prove the key yet. */
+  #proving = 0;
   #onPeer: ((ws: WebSocket) => void) | undefined;
 
   private constructor(server: Server, port: number, options: RelayOptions) {
@@ -491,7 +514,12 @@ export class Relay {
     socket.on("error", () => socket.destroy());
     const { allowed, ownUser } = this.#options;
     const admitted = await admit(request, this.port, allowed, ownUser).catch(() => "user" as const);
-    if (typeof admitted === "string") {
+    const full =
+      typeof admitted !== "string" &&
+      (admitted.kind === "page"
+        ? this.router.pageCount >= MAX_PAGES
+        : this.#peers.size + this.#proving >= MAX_PEERS);
+    if (typeof admitted === "string" || full) {
       socket.end("HTTP/1.1 403 Forbidden\r\nconnection: close\r\ncontent-length: 0\r\n\r\n");
       return;
     }
@@ -526,27 +554,27 @@ export class Relay {
   #peer(ws: WebSocket): void {
     const { identity } = this.#options;
     const nonce = randomBytes(18).toString("base64url");
+    this.#proving += 1;
+    let proving = true;
+    const settle = () => {
+      if (!proving) return;
+      proving = false;
+      this.#proving -= 1;
+    };
     const timer = setTimeout(() => ws.terminate(), 5_000);
+    ws.once("close", () => {
+      clearTimeout(timer);
+      settle();
+    });
     ws.once("message", (data) => {
       clearTimeout(timer);
-      let message: { t?: unknown; mac?: unknown; nonce?: unknown };
-      try {
-        message = JSON.parse(textOf(data)) as typeof message;
-      } catch {
-        ws.terminate();
-        return;
-      }
-      if (
-        message.t !== "peer-auth" ||
-        typeof message.mac !== "string" ||
-        typeof message.nonce !== "string" ||
-        message.nonce.length < 16 ||
-        !identity.checks(`peer\n${nonce}`, message.mac)
-      ) {
+      settle();
+      const message = readPeer(peerAuth, textOf(data));
+      if (!message || !identity.checks(peerProof(nonce, this.port), message.mac)) {
         ws.close(1008, "key");
         return;
       }
-      send(ws, { t: "peer-ok", mac: identity.mac(`relay\n${message.nonce}`) });
+      send(ws, { t: "peer-ok", mac: identity.mac(relayProof(message.nonce, this.port)) });
       this.#peers.add(ws);
       ws.once("close", () => this.#peers.delete(ws));
       this.#onPeer?.(ws);

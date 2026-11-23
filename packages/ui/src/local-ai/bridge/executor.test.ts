@@ -1,4 +1,4 @@
-import { ProblemSet, aiTask, type ProjectStore } from "@animaquill/core";
+import { ProblemSet, type ProjectStore } from "@animaquill/core";
 import { describe, expect, it } from "vitest";
 import {
   openUnlocked,
@@ -14,7 +14,14 @@ import { BATCH_GAP_MS, BridgeExecutor, type BridgeCall, type BridgeWrite } from 
  * read and its own batches, a call that comes again answered once.
  */
 
-function executorOn(store: ProjectStore, options: { hidden?: boolean; now?: () => number } = {}) {
+function executorOn(
+  store: ProjectStore,
+  options: {
+    hidden?: boolean;
+    now?: () => number;
+    project?: () => { mode: "online" | "offline"; key: string; name: string } | undefined;
+  } = {},
+) {
   const problems = new ProblemSet();
   const writes: BridgeWrite[] = [];
   const executor = new BridgeExecutor({
@@ -29,6 +36,7 @@ function executorOn(store: ProjectStore, options: { hidden?: boolean; now?: () =
     picture: async () => undefined,
     wrote: (write) => writes.push(write),
     ...(options.now && { now: options.now }),
+    ...(options.project && { project: options.project }),
   });
   return { executor, writes };
 }
@@ -78,12 +86,14 @@ describe("the calls of AI tools in the editor", () => {
     await executor.run(callOf("a", "aq_timeline_read", { timeline: "main" }));
     const added = await executor.run(callOf("a", "aq_edit", addClip("clip_a1", 40)));
     expect(added.isError, added.text).toBe(false);
-    expect(writes.map(({ origin }) => origin)).toEqual([aiTask("mcp-a-1")]);
+    const [first] = writes.map(({ origin }) => origin);
+    expect(first).toMatch(/^ai:mcp-a-[0-9a-z]+-1$/);
     // Ten minutes on, a batch of its own.
     now += BATCH_GAP_MS + 1;
     await executor.run(callOf("a", "aq_edit", addClip("clip_a2", 45)));
-    expect(writes.map(({ origin }) => origin)).toEqual([aiTask("mcp-a-1"), aiTask("mcp-a-2")]);
-    expect(store.undoOrigin(aiTask("mcp-a-1")).ok).toBe(true);
+    const [, second] = writes.map(({ origin }) => origin);
+    expect(second).toBe(first?.replace(/-1$/, "-2"));
+    expect(store.undoOrigin(first as string).ok).toBe(true);
     const clips = store.getState().timelines.main?.clips ?? {};
     expect(clips.clip_a1).toBeUndefined();
     expect(clips.clip_a2).toBeDefined();
@@ -126,6 +136,83 @@ describe("the calls of AI tools in the editor", () => {
     const unread = await executor.run(callOf("b", "aq_edit", update));
     expect(unread.isError).toBe(true);
     expect(unread.text).toMatch(/not-read/);
+    store.destroy();
+  });
+});
+
+describe("what review O5a found", () => {
+  it("never makes a later batch one of before: after the relay changed, or a reload", async () => {
+    const store = openUnlocked();
+    const first = executorOn(store);
+    await first.executor.run(callOf("s", "aq_timeline_read", { timeline: "main" }));
+    await first.executor.run(callOf("s", "aq_edit", addClip("c1", 40)));
+    // The relay changed: the page goes on, its sessions read anew.
+    first.executor.reset();
+    await first.executor.run(callOf("s", "aq_timeline_read", { timeline: "main" }));
+    await first.executor.run(callOf("s", "aq_edit", addClip("c2", 45)));
+    // A reload: another executor, for the same session of the AI tool.
+    const second = executorOn(store);
+    await second.executor.run(callOf("s", "aq_timeline_read", { timeline: "main" }));
+    await second.executor.run(callOf("s", "aq_edit", addClip("c3", 50)));
+    const origins = [...first.writes, ...second.writes].map(({ origin }) => origin);
+    expect(new Set(origins).size, origins.join(",")).toBe(3);
+    store.destroy();
+  });
+
+  it("makes no change that comes again without a record here, as in another tab or after a reload", async () => {
+    const store = openUnlocked();
+    const tab = executorOn(store);
+    await tab.executor.run(callOf("s", "aq_timeline_read", { timeline: "main" }));
+    const call = callOf("s", "aq_edit", addClip("clip_twice", 40));
+    expect((await tab.executor.run(call)).isError).toBe(false);
+    // Here it is known: the same answer, not done twice.
+    expect((await tab.executor.run({ ...call, again: true })).isError).toBe(false);
+    // Another tab, or this one reloaded, has no record of it: nothing is done.
+    const other = executorOn(store);
+    await other.executor.run(callOf("s", "aq_timeline_read", { timeline: "main" }));
+    const again = await other.executor.run({ ...call, again: true });
+    expect(again.isError).toBe(true);
+    expect(again.text).toMatch(/^error outcome-unknown: /);
+    expect(other.writes).toHaveLength(0);
+    // What only reads runs again.
+    const read = await other.executor.run({
+      ...callOf("s", "aq_timeline_read", { timeline: "main" }),
+      again: true,
+    });
+    expect(read.isError).toBe(false);
+    store.destroy();
+  });
+
+  it("keeps the answers of changes only, to give again", async () => {
+    const store = openUnlocked();
+    const { executor } = executorOn(store);
+    const read = callOf("s", "aq_timeline_read", { timeline: "main" });
+    const once = await executor.run(read);
+    const twice = await executor.run(read);
+    // Not the same object: it ran again, as a read may.
+    expect(twice).not.toBe(once);
+    store.destroy();
+  });
+
+  it("runs a call only on the project it is for, also one that waited while another was opened", async () => {
+    const store = openUnlocked();
+    let open = { mode: "online" as const, key: "A", name: "项目A" };
+    const { executor, writes } = executorOn(store, { project: () => open });
+    const forA = { mode: "online" as const, key: "A" };
+    await executor.run({
+      ...callOf("s", "aq_timeline_read", { timeline: "main" }),
+      project: forA,
+    });
+    // One that waits behind another, and the editor opens B meanwhile.
+    const waiting = executor.run({
+      ...callOf("s", "aq_edit", addClip("clip_a", 40)),
+      project: forA,
+    });
+    open = { mode: "online", key: "B", name: "项目B" };
+    const result = await waiting;
+    expect(result.isError).toBe(true);
+    expect(result.text).toMatch(/^error editor-not-open: .*"项目B"/);
+    expect(writes).toHaveLength(0);
     store.destroy();
   });
 });
@@ -208,7 +295,7 @@ describe("two AI tools and people changing one project at once", () => {
     const own = there(made.a);
     expect(own.length).toBeGreaterThan(0);
     const origin = executor.originOf("a");
-    expect(origin).toBe(aiTask("mcp-a-1"));
+    expect(origin).toMatch(/^ai:mcp-a-[0-9a-z]+-1$/);
     const undone = store.undoOrigin(origin as string);
     expect(undone.ok).toBe(true);
     expect([...there(made.b), ...there(made.you)]).toEqual(others);

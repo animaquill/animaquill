@@ -2956,6 +2956,11 @@ export class Workbench {
     const looks = this.#frameLooks(pictures);
     const executor = new BridgeExecutor({
       store: () => this.session.getSnapshot().store,
+      project: () => {
+        const { store, key } = this.session.getSnapshot();
+        if (!store || key === undefined) return undefined;
+        return { mode: this.mode, key, name: store.getState().manifest.name };
+      },
       parts: {
         selection: () => {
           const { model, selection, transition } = this.timeline.getSnapshot();

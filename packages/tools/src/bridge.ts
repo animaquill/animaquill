@@ -21,6 +21,9 @@ export const RELAY_PORTS: { readonly first: number; readonly count: number } = {
 /** Larger messages close the connection: pictures of frames are the largest there are. */
 export const BRIDGE_MAX_BYTES = 32 * 1024 * 1024;
 
+/** Results larger than this are not sent: the page answers that it was too large instead. */
+export const BRIDGE_MAX_RESULT = BRIDGE_MAX_BYTES - 64 * 1024;
+
 /** The words the relay signs, which tie a proof to this connection: see `proofText`. */
 export const proofText = (nonce: string, origin: string, port: number): string =>
   `animaquill-relay\n${BRIDGE_PROTOCOL}\n${nonce}\n${origin}\n${port}`;
@@ -73,6 +76,13 @@ export const toPage = z.discriminatedUnion("t", [
     answer: id,
     tool: z.string().max(100),
     args: z.unknown(),
+    /** The project it is for, as the page said it has it open: the page runs it on no other. */
+    project: z.object({ mode: z.enum(["online", "offline"]), key: id }),
+    /**
+     * It comes again, as after the relay changed: it may have run on a page that is gone. A page
+     * that has no record of it runs no change for it.
+     */
+    again: z.boolean().optional(),
   }),
   z.object({ t: z.literal("cancel"), call: id }),
   /** Whether the page's folder has this file with this content, see `BridgeProbe`. */

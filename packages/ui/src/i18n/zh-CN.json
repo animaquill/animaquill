@@ -5724,7 +5724,9 @@
       "chromeOnly": "电脑上的 AI 工具要在 Chrome 或 Edge 里用。",
       "allowSite": "让 AI 工具连接这个网站上的编辑器，装好以后运行一次：",
       "autoConnect": "以后打开编辑器时自动连接",
-      "anyFolder": "任何一个文件夹"
+      "anyFolder": "任何一个文件夹",
+      "several": "发现不止一个没连过的 AI 工具在等编辑器，可能有别的账号在冒充：关掉电脑上的 AI 工具，重开以后再连接。",
+      "wsl": "AI 工具在 WSL 里运行时这里连不上：在 Windows 里运行它。"
     },
     "settings": {
       "wizard": "连接向导…",

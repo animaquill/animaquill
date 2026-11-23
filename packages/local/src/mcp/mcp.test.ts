@@ -294,7 +294,7 @@ describe("animaquill mcp", { timeout: 60_000 }, () => {
     // The page says what it has open a moment after it connects, later on a busy computer.
     await waitFor(async () => {
       const result = await first.callTool({ name: "aq_project_status", arguments: {} });
-      return !/^error editor-not-open/.test(textOf(result)) || false;
+      return !textOf(result).startsWith("error editor-not-open") || false;
     }, 30_000);
     const status = await call(first, "aq_project_status", {});
     expect(status).toMatch(new RegExp(`^project: "${manifest.name}" \\(offline, the folder `));

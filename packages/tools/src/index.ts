@@ -80,6 +80,7 @@ export type {
 export { mcpInstructions, mcpListHash, mcpToolsOf, type McpPlace, type McpTool } from "./mcp.ts";
 export {
   BRIDGE_MAX_BYTES,
+  BRIDGE_MAX_RESULT,
   BRIDGE_PROTOCOL,
   RELAY_PORTS,
   bridgeResult,
