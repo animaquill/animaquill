@@ -186,7 +186,11 @@ export const test = base.extend<{
       const problems: string[] = [];
       page.on("pageerror", (error) => problems.push(error.message));
       page.on("console", (message) => {
-        if (message.type() === "error") problems.push(message.text());
+        if (message.type() !== "error") return;
+        // Which resource, where the browser only says that one failed.
+        const { url } = message.location();
+        const text = message.text();
+        problems.push(text.startsWith("Failed to load resource") && url ? `${text} ${url}` : text);
       });
       // The console does not show every violation. This only finds something where the site sends
       // a Content-Security-Policy, which the development server does not: run these tests against

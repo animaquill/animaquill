@@ -1,11 +1,18 @@
-import { ChevronDown, Feather, LayoutDashboard, Search, Settings } from "lucide-react";
-import { useEffect, useSyncExternalStore } from "react";
+import {
+  ChevronDown,
+  Feather,
+  LayoutDashboard,
+  Menu as MenuIcon,
+  Search,
+  Settings,
+} from "lucide-react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { TrialStatus } from "../properties/TrialStatus.tsx";
 import { formatCombo } from "../workbench/keys.ts";
 import { AccountMenu, OfflineSignIn } from "./AccountMenu.tsx";
 import { useLayout, useProject, useSession, useWorkbench } from "./context.ts";
-import { Menu } from "./Menu.tsx";
+import { Menu, PopupMenu } from "./Menu.tsx";
 import styles from "./TitleBar.module.css";
 
 const MENUS = ["file", "edit", "view", "timeline", "help"] as const;
@@ -19,6 +26,8 @@ export function TitleBar() {
   const { t } = useTranslation();
   useSyncExternalStore(keybindings.subscribe, keybindings.getSnapshot);
 
+  // The menus in one, where the window is too narrow for them side by side.
+  const [compact, setCompact] = useState<{ readonly x: number; readonly y: number }>();
   const name = project?.manifest.name;
   // "●" while the chat has something people have not seen, such as an answer that came meanwhile.
   const attention = useSyncExternalStore(
@@ -56,14 +65,47 @@ export function TitleBar() {
 
   return (
     <header className={styles.bar}>
-      <div className={styles.brand}>
+      <div className={styles.brand} data-title-part="">
         <Feather size={16} />
-        <span>AnimaQuill</span>
+        <span className={styles.brandName}>AnimaQuill</span>
         <small className={styles.version}>{workbench.version}</small>
       </div>
-      {MENUS.map((menu) => (
-        <Menu key={menu} label={t(`menu.${menu}`)} groups={() => menuOf(menu)} />
-      ))}
+      <div className={styles.menus}>
+        {MENUS.map((menu) => (
+          <Menu key={menu} label={t(`menu.${menu}`)} groups={() => menuOf(menu)} />
+        ))}
+      </div>
+      <button
+        type="button"
+        className={styles.compact}
+        aria-label={t("menu.all")}
+        title={t("menu.all")}
+        aria-haspopup="menu"
+        aria-expanded={compact !== undefined}
+        onClick={(event) => {
+          if (compact) return setCompact(undefined);
+          const box = event.currentTarget.getBoundingClientRect();
+          setCompact({ x: box.left, y: box.bottom + 2 });
+        }}
+      >
+        <MenuIcon size={16} />
+      </button>
+      {compact && (
+        <PopupMenu
+          label={t("menu.all")}
+          x={compact.x}
+          y={compact.y}
+          groups={[
+            MENUS.map((menu) => ({
+              id: menu,
+              label: t(`menu.${menu}`),
+              run: () => {},
+              items: menuOf(menu),
+            })),
+          ]}
+          onClose={() => setCompact(undefined)}
+        />
+      )}
       <div className={styles.middle}>
         <button
           type="button"
@@ -86,7 +128,7 @@ export function TitleBar() {
             trigger={
               <>
                 <LayoutDashboard size={14} />
-                <span>{layoutName}</span>
+                <span className={styles.layoutName}>{layoutName}</span>
                 <ChevronDown size={12} />
               </>
             }

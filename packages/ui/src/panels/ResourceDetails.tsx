@@ -412,11 +412,20 @@ function ResourceDetails({
         fields.push([t("explorer.fields.size"), formatSize(asset.size)]);
       if (asset.license) fields.push([t("explorer.fields.license"), asset.license]);
       if (asset.credit) fields.push([t("explorer.fields.credit"), asset.credit]);
+      const file = missing.get(item.id);
+      // Online there is no folder: where the file is, here or in the repository, or both.
+      const inLfs =
+        workbench.mode === "online" &&
+        state !== undefined &&
+        placedAsset(state, item.id, workbench.here())?.storage === "lfs";
       fields.push([
         t("explorer.fields.from"),
-        t("explorer.from.asset", { path: asset.path, interpolation: { escapeValue: false } }),
+        workbench.mode !== "online"
+          ? t("explorer.from.asset", { path: asset.path, interpolation: { escapeValue: false } })
+          : inLfs
+            ? t(file ? "explorer.from.onlineLfs" : "explorer.from.onlineLfsHere")
+            : t(file ? "explorer.from.onlineElsewhere" : "explorer.from.onlineHere"),
       ]);
-      const file = missing.get(item.id);
       // In a project of the platform it comes by itself, and "存放位置" says how that goes.
       if (file?.elsewhere && !autoDownloads(workbench.downloads.available, coming)) {
         const url = state && placedAsset(state, item.id, workbench.here())?.url;
@@ -438,7 +447,17 @@ function ResourceDetails({
         }
       }
     } else {
-      fields.push([t("explorer.fields.from"), t(`explorer.from.${item.kind}`, { id: item.id })]);
+      fields.push([
+        t("explorer.fields.from"),
+        t(
+          workbench.mode !== "online"
+            ? `explorer.from.${item.kind}`
+            : item.kind === "scene"
+              ? "explorer.from.onlineScene"
+              : "explorer.from.onlineSound",
+          { id: item.id },
+        ),
+      ]);
     }
   } else if (data.kind === "missing") {
     const { missing: gone } = data;

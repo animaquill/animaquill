@@ -95,6 +95,7 @@ const CODES: ReadonlySet<string> = new Set<LfsRefusal>([
   "notLinked",
   "gone",
   "githubQuota",
+  "notAcknowledged",
   "offset",
   "slow",
   "forbidden",

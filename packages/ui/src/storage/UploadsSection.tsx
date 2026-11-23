@@ -98,6 +98,7 @@ export function UploadsSection({ focused }: { focused: boolean }) {
           {item.phase === "failed" && (
             <>
               {(item.problem === "githubQuota" ||
+                item.problem === "notAcknowledged" ||
                 item.problem === "changed" ||
                 item.problem === "missing" ||
                 item.problem === "access" ||
@@ -111,11 +112,13 @@ export function UploadsSection({ focused }: { focused: boolean }) {
                     `storage.uploads.fix.${
                       item.problem === "githubQuota"
                         ? "quota"
-                        : item.problem === "access"
-                          ? "allow"
-                          : item.problem === "signedOut"
-                            ? "signIn"
-                            : "problems"
+                        : item.problem === "notAcknowledged"
+                          ? "acknowledge"
+                          : item.problem === "access"
+                            ? "allow"
+                            : item.problem === "signedOut"
+                              ? "signIn"
+                              : "problems"
                     }`,
                   )}
                 </button>

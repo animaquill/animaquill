@@ -348,6 +348,8 @@ test.describe("files of assets into the large file storage", () => {
     await page.getByRole("option", { name: "采访.mp4" }).click();
     await expect(place(page)).toContainText("GitHub 大文件存储 ·", { timeout: 30_000 });
     await expect(notice(page, ASKS)).toHaveCount(0);
+    // Where it is, as an online project has it: no folder.
+    await expect(page.getByText("GitHub 大文件存储，这台电脑上也有一份")).toBeVisible();
 
     // The default of the project, in its properties: the repository, and where the assets are.
     const shown = await properties(page);
@@ -368,6 +370,7 @@ test.describe("files of assets into the large file storage", () => {
     await explorer(page);
     await page.getByRole("option", { name: "封面.png" }).click();
     await expect(place(page)).toContainText("只在这台电脑上");
+    await expect(page.getByText("只在这台电脑上（这个浏览器里）")).toBeVisible();
     await page.waitForTimeout(500);
     await expect(place(page)).toContainText("只在这台电脑上");
     // What was there before stays there.

@@ -1940,6 +1940,11 @@ export type LfsRefusal =
   | "gone"
   /** The large file storage of the account has no room left. */
   | "githubQuota"
+  /**
+   * The person never said they know what putting files there means (it cannot be taken out file by
+   * file, and it is their account's room): the platform takes no file before.
+   */
+  | "notAcknowledged"
   /** A piece that does not go where the upload got: see `received`. */
   | "offset"
   /** A piece that came too slowly, or took longer than the platform waits: send smaller ones. */

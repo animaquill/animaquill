@@ -169,9 +169,17 @@ test.describe("with a project folder", () => {
     await expect(shown).toBeHidden();
     await expect(content(page, "code")).toContainText("给 AI 的说明", { timeout: 10_000 });
     {
+      // Narrow, the menus are in one.
       await page.setViewportSize({ width: 390, height: 844 });
-      await page.getByRole("button", { name: "帮助" }).click();
-      await page.getByRole("menu").getByRole("menuitem", { name: "连接电脑上的 AI 工具" }).click();
+      await page.locator("header").getByRole("button", { name: "菜单" }).click();
+      await page
+        .getByRole("menu", { name: "菜单" })
+        .getByRole("menuitem", { name: "帮助" })
+        .click();
+      await page
+        .getByRole("menu", { name: "帮助" })
+        .getByRole("menuitem", { name: "连接电脑上的 AI 工具" })
+        .click();
       await shot(page, "guide-390");
     }
   });

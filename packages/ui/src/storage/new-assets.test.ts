@@ -24,6 +24,7 @@ function world({
       b: { hash: "sha256-b", size: 300 * MB, path: "assets/b.mp4", name: "b.mp4" },
       c: { hash: "sha256-c", size: 3 * 1024 * MB, path: "assets/c.mov", name: "c.mov" },
       d: { hash: "sha256-d", size: 2 * MB, path: "assets/d.png", name: "d.png" },
+      e: { hash: "sha256-e", size: 900 * MB, path: "assets/e.mov", name: "e.mov" },
     } as Record<string, { hash: string; size: number; path: string; name: string }>,
   };
   const sent: string[][] = [];
@@ -57,7 +58,7 @@ function world({
     },
     dismiss: (id) => notices.delete(id),
     failed: (message) => failed.push(message),
-    sizes: { large: 100 * MB, most: 2 * 1024 * MB },
+    sizes: { large: 100 * MB, most: 2 * 1024 * MB, batch: 1024 * MB },
   });
   const press = async (id: number, label: string) => {
     const action = notices.get(id)?.options.actions?.find((each) => each.label === label);
@@ -127,6 +128,46 @@ describe("assets just imported, once people said they know", () => {
     await w.assets.imported(["a"]);
     expect(w.sent).toEqual([["b"], ["a"]]);
     expect(w.sent.flat()).not.toContain("c");
+  });
+});
+
+describe("one import larger than a gibibyte all together", () => {
+  it("is told of once, in place of each large file, with a way to keep the project's assets here", async () => {
+    const w = world({ knows: true });
+    await w.assets.imported(["a", "b", "c", "e"]);
+    expect(w.sent).toEqual([["a", "b", "e"]]);
+    expect(w.notices.size).toBe(1);
+    const [id, notice] = [...w.notices][0] ?? [];
+    expect(notice?.message).toContain("storage.uploads.notice.batch");
+    expect(notice?.message).not.toContain("largeOne");
+    expect(notice?.message).not.toContain("largeMany");
+    expect(notice?.message).toContain("storage.uploads.notice.tooLargeOne(1:c.mov)");
+    expect(notice?.options.stays).toBe(true);
+    await w.press(id as number, "storage.uploads.notice.keepHere");
+    expect(w.cancelled.toSorted()).toEqual(["a", "b", "e"]);
+    expect(w.keptHere()).toBe(1);
+  });
+
+  it("is not where one file alone is large: that is told of as such", async () => {
+    const w = world({ knows: true });
+    w.state.assets["f"] = {
+      hash: "sha256-f",
+      size: 1500 * MB,
+      path: "assets/f.mov",
+      name: "f.mov",
+    };
+    await w.assets.imported(["f"]);
+    const [notice] = [...w.notices.values()];
+    expect(notice?.message).toBe("storage.uploads.notice.largeOne(1:f.mov)");
+  });
+
+  it("before people said they know, says the total in the one notification that asks", async () => {
+    const w = world();
+    await w.assets.imported(["b", "e"]);
+    const [notice] = [...w.notices.values()];
+    expect(w.notices.size).toBe(1);
+    expect(notice?.message).toContain("storage.uploads.notice.askTotal");
+    expect(notice?.message).toContain("storage.uploads.notice.cost");
   });
 });
 

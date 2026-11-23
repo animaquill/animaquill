@@ -21,6 +21,7 @@
     "view": "视图",
     "timeline": "时间轴",
     "help": "帮助",
+    "all": "菜单",
     "opened": "已打开"
   },
   "edit": {
@@ -2937,6 +2938,12 @@
       "asset": "项目文件夹里的 {{path}}",
       "scene": "项目文件夹里的 scenes/{{id}}/",
       "sound": "项目文件夹里的 sounds/{{id}}/",
+      "onlineScene": "项目里的 scenes/{{id}}/",
+      "onlineSound": "项目里的 sounds/{{id}}/",
+      "onlineHere": "只在这台电脑上（这个浏览器里）",
+      "onlineElsewhere": "只在导入它的那台电脑上",
+      "onlineLfsHere": "GitHub 大文件存储，这台电脑上也有一份",
+      "onlineLfs": "GitHub 大文件存储",
       "missing": "项目里写着用它，但找不到"
     },
     "noTags": "没有标签",
@@ -4960,6 +4967,7 @@
       },
       "problem": {
         "githubQuota": "GitHub 大文件存储的额度用完了，没传上去",
+        "notAcknowledged": "要先确认放进 GitHub 大文件存储的费用，才能上传",
         "tooLarge": "文件超过 2 GB，GitHub 不收",
         "changed": "文件在上传时变了，先处理问题选项卡里的「文件变了」",
         "access": "要允许访问文件夹才能接着传",
@@ -4969,6 +4977,8 @@
       },
       "fix": {
         "quota": "去 GitHub 看额度",
+        "acknowledge": "确认…",
+        "acknowledgeTitle": "放进 GitHub 大文件存储",
         "problems": "打开问题",
         "allow": "允许",
         "signIn": "登录",
@@ -5068,6 +5078,8 @@
         "cost": "放进去以后不能单独删掉，只能删整个仓库；用的是你 GitHub 账号的大文件额度。",
         "askLargeOne": "「{{name}}」有 {{size}}。",
         "askLargeMany": "其中 {{count}} 个大于 100 MB，共 {{size}}。",
+        "askTotal": "一共 {{size}}。",
+        "batch": "这次导入的 {{count}} 个素材一共 {{size}}，会放进 GitHub 大文件存储，占你 GitHub 账号的大文件额度。",
         "largeOne": "「{{name}}」有 {{size}}，会放进 GitHub 大文件存储，占你 GitHub 账号的大文件额度。",
         "largeMany": "{{count}} 个大文件（共 {{size}}）会放进 GitHub 大文件存储，占你 GitHub 账号的大文件额度。",
         "tooLargeOne": "「{{name}}」超过 2 GB，GitHub 大文件存储不收，只在这台电脑上。",

@@ -65,4 +65,6 @@ export const isGoing = (item: UploadItem): boolean =>
 /** Failures that people have to do something about, which the status stands out for. */
 export const needsPeople = (item: UploadItem): boolean =>
   item.phase === "failed" &&
-  ["githubQuota", "changed", "access", "missing", "signedOut"].includes(item.problem ?? "");
+  ["githubQuota", "notAcknowledged", "changed", "access", "missing", "signedOut"].includes(
+    item.problem ?? "",
+  );

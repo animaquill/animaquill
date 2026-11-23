@@ -186,6 +186,8 @@ import {
  */
 /** A file brought in that is larger than this is said to be only here, once (4.3). */
 const LARGE_IMPORT_BYTES = 100 * 1024 * 1024;
+/** One import, all its files together, that people hear of where it goes into GitHub (1 GiB). */
+const BATCH_IMPORT_BYTES = 1024 ** 3;
 
 const LFS_STOPPING: ReadonlySet<string> = new Set([
   "gone",
@@ -1196,7 +1198,7 @@ export class Workbench {
       },
       dismiss: (id) => this.notifications.dismiss(id),
       failed: (message) => this.notifications.push(message),
-      sizes: { large: LARGE_IMPORT_BYTES, most: LFS_FILE_MOST },
+      sizes: { large: LARGE_IMPORT_BYTES, most: LFS_FILE_MOST, batch: BATCH_IMPORT_BYTES },
     });
     this.#followUploads(host);
     this.#keepPresence(host);
@@ -3279,6 +3281,22 @@ export class Workbench {
       case "signedOut":
         await this.signIn();
         return;
+      case "notAcknowledged": {
+        // What the platform asked first: said here, then what waited for it goes.
+        const { t } = this;
+        const knows = await this.dialogs.confirm({
+          title: t("storage.uploads.fix.acknowledgeTitle"),
+          message: t("storage.uploads.notice.cost"),
+          confirm: t("storage.uploads.notice.agree"),
+        });
+        if (!knows) return;
+        if (!(await this.lfsAccount.acknowledge())) {
+          this.notifications.push(t("storage.uploads.dialog.failed"));
+          return;
+        }
+        await this.uploads.retryAll(["notAcknowledged"]);
+        return;
+      }
       default:
         return;
     }

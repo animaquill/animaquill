@@ -45,7 +45,11 @@ export interface NewAssetsOptions {
   readonly notify: (message: string, options: NotificationOptions, instead?: number) => number;
   readonly dismiss: (id: number) => void;
   readonly failed: (message: string) => void;
-  readonly sizes: { readonly large: number; readonly most: number };
+  /**
+   * `large`: a file told of; `most`: the largest the storage takes; `batch`: one import, all its
+   * files together, told of.
+   */
+  readonly sizes: { readonly large: number; readonly most: number; readonly batch: number };
 }
 
 /** What waits for people to say they know, for one project. */
@@ -99,7 +103,14 @@ export class NewAssets {
       return;
     }
     if (plan.send.length > 0) await this.#options.send(plan.send);
-    this.#tell(plan.large, plan.tooLarge);
+    this.#tell(open.key, plan);
+  }
+
+  #bytes(ids: Iterable<string>): number {
+    const all = this.#options.assets();
+    let bytes = 0;
+    for (const id of ids) bytes += all[id]?.size ?? 0;
+    return bytes;
   }
 
   #names(ids: Iterable<string>): { count: number; name: string; size: string } {
@@ -123,25 +134,50 @@ export class NewAssets {
     });
   }
 
-  /** Large files that go, and files too large that stay: one notification, if any. */
-  #tell(large: readonly string[], tooLarge: readonly string[]): void {
-    const { t, notify, cancel } = this.#options;
+  /**
+   * What went, as one notification, if anything is to be said: an import larger than `batch` all
+   * together, with a way to keep this project's assets here; else large files, with a way to keep
+   * those here; and files too large, which stay here.
+   */
+  #tell(key: string, { send, large, tooLarge }: ReturnType<typeof planImport>): void {
+    const { t, notify, cancel, sizes } = this.#options;
+    const batch = send.length > 1 && this.#bytes(send) > sizes.batch;
     const lines = [
-      ...(large.length > 0 ? [this.#text("large", large)] : []),
+      ...(batch
+        ? [
+            t("storage.uploads.notice.batch", {
+              count: send.length,
+              size: formatSize(this.#bytes(send)),
+            }),
+          ]
+        : large.length > 0
+          ? [this.#text("large", large)]
+          : []),
       ...(tooLarge.length > 0 ? [this.#text("tooLarge", tooLarge)] : []),
     ];
     if (lines.length === 0) return;
-    const actions: NotificationAction[] =
-      large.length > 0
+    const ok = { label: t("storage.uploads.notice.ok"), run: () => {} };
+    const actions: NotificationAction[] = batch
+      ? [
+          {
+            label: t("storage.uploads.notice.keepHere"),
+            run: () => {
+              void Promise.all(send.map((id) => cancel(id)));
+              if (this.#options.project()?.key === key) this.#options.keepHere();
+            },
+          },
+          ok,
+        ]
+      : large.length > 0
         ? [
             {
               label: t(`storage.uploads.notice.${large.length === 1 ? "notThis" : "notThese"}`),
               run: () => void Promise.all(large.map((id) => cancel(id))),
             },
-            { label: t("storage.uploads.notice.ok"), run: () => {} },
+            ok,
           ]
         : [];
-    notify(lines.join(""), { stays: large.length > 0, actions });
+    notify(lines.join(""), { stays: batch || large.length > 0, actions });
   }
 
   #wait(key: string, plan: ReturnType<typeof planImport>): void {
@@ -167,6 +203,9 @@ export class NewAssets {
     const { t, notify } = this.#options;
     const lines = [
       this.#text("ask", waiting.send),
+      ...(waiting.send.size > 1 && this.#bytes(waiting.send) > this.#options.sizes.batch
+        ? [t("storage.uploads.notice.askTotal", { size: formatSize(this.#bytes(waiting.send)) })]
+        : []),
       t("storage.uploads.notice.cost"),
       ...(waiting.large.size > 0 ? [this.#text("askLarge", waiting.large)] : []),
       ...(waiting.tooLarge.size > 0 ? [this.#text("tooLarge", waiting.tooLarge)] : []),

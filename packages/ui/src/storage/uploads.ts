@@ -62,6 +62,8 @@ const TELL_EVERY_MS = 400;
 export type UploadProblem =
   /** The large file storage of the account has no room left. */
   | "githubQuota"
+  /** The person never said they know what putting files there means, which the platform asks. */
+  | "notAcknowledged"
   /** Larger than the storage takes. */
   | "tooLarge"
   /** The file is not the one the asset says any more, as it changed while it was sent. */
@@ -705,6 +707,7 @@ export class AssetUploads {
           switch (error.code) {
             case "tooLarge":
             case "githubQuota":
+            case "notAcknowledged":
               throw new Failed(error.code);
             case "notLinked":
             case "gone":

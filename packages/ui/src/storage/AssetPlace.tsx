@@ -106,13 +106,15 @@ export function AssetPlace({ asset }: { asset: string }) {
       const fix =
         problem === "githubQuota"
           ? "quota"
-          : problem === "changed" || problem === "missing"
-            ? "problems"
-            : problem === "access"
-              ? "allow"
-              : problem === "signedOut"
-                ? "signIn"
-                : undefined;
+          : problem === "notAcknowledged"
+            ? "acknowledge"
+            : problem === "changed" || problem === "missing"
+              ? "problems"
+              : problem === "access"
+                ? "allow"
+                : problem === "signedOut"
+                  ? "signIn"
+                  : undefined;
       return frame(
         "failed",
         <>

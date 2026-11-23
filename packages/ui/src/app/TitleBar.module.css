@@ -106,3 +106,68 @@
   color: var(--aq-text-strong);
   background: var(--aq-bg-hover);
 }
+
+.menus {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* The menus in one, only where the window is too narrow for them side by side. */
+.compact {
+  display: none;
+  padding: 3px 5px;
+  color: var(--aq-text);
+  background: none;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.compact:hover,
+.compact[aria-expanded="true"] {
+  background: var(--aq-bg-hover);
+}
+
+/*
+ * Narrower: the search goes along with the rest instead of over the middle, which the menus and
+ * what is on the right would reach. Then the words go where an icon says it, and at last the
+ * menus go into one. Nothing ever lies over anything else (e2e/title-bar.spec.ts).
+ */
+@media (max-width: 960px) {
+  .middle {
+    position: static;
+    transform: none;
+    margin-left: auto;
+  }
+
+  .end {
+    margin-left: 12px;
+  }
+}
+
+@media (max-width: 720px) {
+  .brandName,
+  .version,
+  .layoutName {
+    display: none;
+  }
+
+  .brand {
+    margin-right: 4px;
+  }
+
+  .end {
+    gap: 8px;
+  }
+}
+
+@media (max-width: 560px) {
+  .menus {
+    display: none;
+  }
+
+  .compact {
+    display: inline-flex;
+  }
+}
