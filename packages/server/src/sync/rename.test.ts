@@ -1,3 +1,4 @@
+import { ProjectStore } from "@animaquill/core";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { OWNER_ONLY } from "../access.ts";
@@ -93,10 +94,12 @@ describe.skipIf(!TEST_DATABASE)("renaming a project from the start page, on a da
     expect(batch).toMatchObject({ id: renamed.json.batch, seq: renamed.json.seq, files: 1 });
     expect(batch?.undo).not.toBeNull();
     expect((await platformFiles(m)).get("animaquill.json")).toContain('"name": "宣传片"');
-    // A window that comes later reads it as any change.
+    // A window that comes later reads it as any change, and hears what it was.
     const later = await Window.open(m.hub, m.who, m.project);
-    later.hear();
-    expect(later.store.getState().manifest.name).toBe("宣传片");
+    const updates = later.peer.of("update");
+    const { store } = ProjectStore.fromUpdates(updates.map(({ payload }) => payload));
+    expect(store?.getState().manifest.name).toBe("宣传片");
+    expect(updates.at(-1)?.by).toMatchObject({ kind: RENAME_BATCH });
 
     // Called so already: nothing is written.
     const again = await rename("宣传片");
