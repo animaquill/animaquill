@@ -107,7 +107,7 @@ const ASKS = /会放进这个项目的 GitHub 大文件存储/;
 /** New assets of an online project, before people said they know: kept here, as people may. */
 async function keepHere(page: Page) {
   await expect(notice(page, ASKS)).toBeVisible();
-  await page.getByRole("button", { name: "这个项目只放在这台电脑上" }).click();
+  await page.getByRole("button", { name: "这个项目只放在这个浏览器里" }).click();
   await expect(notice(page, ASKS)).toHaveCount(0);
 }
 
@@ -160,7 +160,7 @@ test.describe("files of assets into the large file storage", () => {
     await keepHere(page);
 
     await page.getByRole("option", { name: "采访.mp4" }).click();
-    await expect(place(page)).toContainText("换电脑打开、云端 AI 都拿不到这个文件");
+    await expect(place(page)).toContainText("清理浏览器数据会丢，换电脑、别人、云端 AI 都拿不到。");
     await expect(place(page).getByRole("button", { name: "放进 GitHub 大文件存储" })).toBeEnabled();
     await shot(page, "U1-place-here");
 
@@ -348,8 +348,8 @@ test.describe("files of assets into the large file storage", () => {
     await page.getByRole("option", { name: "采访.mp4" }).click();
     await expect(place(page)).toContainText("GitHub 大文件存储 ·", { timeout: 30_000 });
     await expect(notice(page, ASKS)).toHaveCount(0);
-    // Where it is, as an online project has it: no folder.
-    await expect(page.getByText("GitHub 大文件存储，这台电脑上也有一份")).toBeVisible();
+    // Where it is, said once: no folder, and nothing above the place says it again.
+    await expect(page.getByText("来自哪里")).toHaveCount(0);
 
     // The default of the project, in its properties: the repository, and where the assets are.
     const shown = await properties(page);
@@ -363,16 +363,15 @@ test.describe("files of assets into the large file storage", () => {
     await shots(page, "properties-default-lfs");
     // Only this computer from now on: a step, which undo takes back.
     await defaultStorage(page).selectOption("local");
-    await expect(shown).toContainText("清理浏览器数据时会丢");
+    await expect(shown).toContainText("新素材只放在这个浏览器里：清理浏览器数据会丢");
     await shots(page, "properties-default-local");
     await page.keyboard.press("Escape");
     await importFiles(page, files.image);
     await explorer(page);
     await page.getByRole("option", { name: "封面.png" }).click();
-    await expect(place(page)).toContainText("只在这台电脑上");
-    await expect(page.getByText("只在这台电脑上（这个浏览器里）")).toBeVisible();
+    await expect(place(page)).toContainText("只在这个浏览器里");
     await page.waitForTimeout(500);
-    await expect(place(page)).toContainText("只在这台电脑上");
+    await expect(place(page)).toContainText("只在这个浏览器里");
     // What was there before stays there.
     await page.getByRole("option", { name: "采访.mp4" }).click();
     await expect(place(page)).toContainText("GitHub 大文件存储 ·");
@@ -380,7 +379,7 @@ test.describe("files of assets into the large file storage", () => {
     // Back to the repository: what is only here is put there too only where people say so.
     await properties(page);
     await defaultStorage(page).selectOption("lfs");
-    await expect(page.getByTestId("project-assets")).toContainText("1 个只在这台电脑上");
+    await expect(page.getByTestId("project-assets")).toContainText("1 个只在这个浏览器里");
     await page.getByRole("button", { name: "把已有的也换过去…" }).click();
     const dialog = page.locator("dialog[data-places-dialog]");
     await expect(dialog.getByRole("checkbox", { name: "封面.png" })).toBeChecked();
@@ -405,12 +404,16 @@ test.describe("files of assets into the large file storage", () => {
     const asking = notice(page, ASKS);
     await expect(asking).toContainText("新导入的 2 个素材");
     await expect(asking).toContainText("放进去以后不能单独删掉，只能删整个仓库");
-    await expect(asking).toContainText("「大图.png」有 105.9 MB");
+    await expect(asking).toContainText("其中「大图.png」有 105.9 MB，会占不少额度。");
+    await expect(asking).toContainText("没确认之前，它们只在这个浏览器里。");
     await expect(page.getByRole("status").filter({ hasText: ASKS })).toHaveCount(1);
     await shots(page, "ask-first");
     await explorer(page);
     await page.getByRole("option", { name: "采访.mp4" }).click();
-    await expect(place(page)).toContainText("只在这台电脑上");
+    // Waiting, in this window: the place and the picture say so.
+    await expect(place(page)).toContainText("只在这个浏览器里");
+    await expect(place(page)).toContainText("等你确认后上传");
+    await expect(page.locator('[data-upload-mark="waiting"]').first()).toBeVisible();
     await page.getByRole("button", { name: "知道了，放进去" }).click();
     expect(await withLab(page, (lab) => lab.lfsAccount.acknowledgedAt !== undefined)).toBe(true);
     await expect(place(page)).toContainText("GitHub 大文件存储 ·", { timeout: 30_000 });
@@ -424,7 +427,7 @@ test.describe("files of assets into the large file storage", () => {
     await page.getByRole("button", { name: "这个不放进去" }).click();
     await explorer(page);
     await page.getByRole("option", { name: "又一张.png" }).click();
-    await expect(place(page)).toContainText("只在这台电脑上", { timeout: 30_000 });
+    await expect(place(page)).toContainText("只在这个浏览器里", { timeout: 30_000 });
   });
 
   test("the storage page of the start page, and the properties of a project", async ({ page }) => {
@@ -433,9 +436,7 @@ test.describe("files of assets into the large file storage", () => {
     await importFiles(page, files.video, files.image);
     await keepHere(page);
     const shown = await properties(page);
-    await expect(shown.getByTestId("project-assets")).toContainText(
-      "已有的：0 个在 GitHub 大文件存储（0 B），2 个只在这台电脑上",
-    );
+    await expect(shown.getByTestId("project-assets")).toContainText("已有的：2 个只在这个浏览器里");
     await page.keyboard.press("Escape");
 
     await withLab(page, (lab) => {

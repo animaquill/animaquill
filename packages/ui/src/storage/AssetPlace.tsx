@@ -29,7 +29,8 @@ function Buttons({ children }: { children: ReactNode }) {
  */
 export function AssetPlace({ asset }: { asset: string }) {
   const workbench = useWorkbench();
-  const { uploads, downloads, cloud, missingFiles } = workbench;
+  const { uploads, downloads, cloud, missingFiles, newAssets } = workbench;
+  const waiting = useSyncExternalStore(newAssets.subscribe, newAssets.getSnapshot);
   const { t } = useTranslation();
   const { store } = useSession();
   const state = useProject(store);
@@ -123,10 +124,24 @@ export function AssetPlace({ asset }: { asset: string }) {
             {t(`storage.uploads.problem.${problem}`)}
           </p>
           <Buttons>
-            <button type="button" onClick={() => void uploads.retry(asset)}>
+            {/* What has to be said first comes first; trying again before it fails again. */}
+            {fix === "acknowledge" && (
+              <button
+                type="button"
+                className={styles.primary}
+                onClick={() => void workbench.fixUpload(problem)}
+              >
+                {t("storage.uploads.fix.acknowledge")}
+              </button>
+            )}
+            <button
+              type="button"
+              disabled={fix === "acknowledge"}
+              onClick={() => void uploads.retry(asset)}
+            >
               {t("storage.uploads.action.retry")}
             </button>
-            {fix && (
+            {fix && fix !== "acknowledge" && (
               <button
                 type="button"
                 className={styles.link}
@@ -321,7 +336,13 @@ export function AssetPlace({ asset }: { asset: string }) {
             ? t("storage.uploads.row.done", { repo: repo.fullName })
             : t("storage.uploads.row.doneNoRepo")}
         </p>
-        <p className={styles.note}>{t("storage.uploads.row.doneNote")}</p>
+        <p className={styles.note}>
+          {t(
+            workbench.mode === "online"
+              ? "storage.uploads.row.doneNoteBrowser"
+              : "storage.uploads.row.doneNote",
+          )}
+        </p>
         {url && (
           <a className={styles.link} href={url} target="_blank" rel="noopener noreferrer">
             <ExternalLink size={11} aria-hidden />
@@ -350,6 +371,7 @@ export function AssetPlace({ asset }: { asset: string }) {
   }
 
   if (placed.storage !== "local") return null;
+  const online = workbench.mode === "online";
   const blocked = snapshot.blocked;
   const canPut = isCloud && uploads.available && blocked === undefined;
   const why = !isCloud
@@ -358,8 +380,14 @@ export function AssetPlace({ asset }: { asset: string }) {
   return frame(
     "plain",
     <>
-      <p className={styles.headline}>{t("storage.uploads.row.here")}</p>
-      <p className={styles.note}>{t("storage.uploads.row.hereNote")}</p>
+      <p className={styles.headline}>
+        {t(online ? "storage.uploads.row.hereBrowser" : "storage.uploads.row.here")}
+      </p>
+      <p className={styles.note}>
+        {waiting.has(asset)
+          ? t("storage.uploads.row.waiting")
+          : t(online ? "storage.uploads.row.hereBrowserNote" : "storage.uploads.row.hereNote")}
+      </p>
       <Buttons>
         {workbench.mode === "offline" ? (
           <OnlineOnly className={styles.primary} what={t("storage.uploads.row.put")}>

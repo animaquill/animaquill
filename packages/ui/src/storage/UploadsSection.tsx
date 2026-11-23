@@ -123,7 +123,11 @@ export function UploadsSection({ focused }: { focused: boolean }) {
                   )}
                 </button>
               )}
-              <button type="button" onClick={() => void uploads.retry(item.asset)}>
+              <button
+                type="button"
+                disabled={item.problem === "notAcknowledged"}
+                onClick={() => void uploads.retry(item.asset)}
+              >
                 {t("storage.uploads.action.retry")}
               </button>
             </>

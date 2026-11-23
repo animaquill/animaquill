@@ -1,5 +1,5 @@
 import { placedAssets } from "@animaquill/core";
-import { CircleAlert, Cloud } from "lucide-react";
+import { CircleAlert, Clock, Cloud } from "lucide-react";
 import { useMemo, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import type { MenuItem } from "../app/Menu.tsx";
@@ -13,6 +13,8 @@ import styles from "./marks.module.css";
 export type AssetMark =
   | { readonly kind: "lfs" }
   | { readonly kind: "uploading"; readonly percent: number }
+  /** Waits for people to say they know what the storage means, in this window. */
+  | { readonly kind: "waiting" }
   | { readonly kind: "failed"; readonly problem: UploadProblem };
 
 /**
@@ -21,7 +23,8 @@ export type AssetMark =
  */
 export function useAssetMarks(): ReadonlyMap<string, AssetMark> {
   const workbench = useWorkbench();
-  const { uploads, downloads } = workbench;
+  const { uploads, downloads, newAssets } = workbench;
+  const waiting = useSyncExternalStore(newAssets.subscribe, newAssets.getSnapshot);
   const { store } = useSession();
   const state = useProject(store);
   const { items } = useSyncExternalStore(uploads.subscribe, uploads.getSnapshot);
@@ -32,6 +35,7 @@ export function useAssetMarks(): ReadonlyMap<string, AssetMark> {
     if (!state) return marks;
     for (const [id, asset] of Object.entries(placedAssets(state, here) ?? {}))
       if (asset.storage === "lfs") marks.set(id, { kind: "lfs" });
+      else if (waiting.has(id)) marks.set(id, { kind: "waiting" });
     for (const item of items as readonly UploadItem[]) {
       if (item.hash !== state.assets?.[item.asset]?.hash) continue;
       if (item.phase === "failed")
@@ -45,7 +49,7 @@ export function useAssetMarks(): ReadonlyMap<string, AssetMark> {
       if (item.phase !== "done" && item.hash === state.assets?.[item.asset]?.hash)
         marks.delete(item.asset);
     return marks;
-  }, [state, items, coming, here]);
+  }, [state, items, coming, here, waiting]);
 }
 
 /** A small sign in the corner of the picture of an asset, with its words on hover. */
@@ -55,11 +59,13 @@ export function UploadMark({ mark }: { mark: AssetMark | undefined }) {
   const title =
     mark.kind === "lfs"
       ? t("storage.uploads.badge.lfs")
-      : mark.kind === "uploading"
-        ? t("storage.uploads.badge.uploading", { percent: mark.percent })
-        : t("storage.uploads.badge.failed", {
-            reason: t(`storage.uploads.problem.${mark.problem}`),
-          });
+      : mark.kind === "waiting"
+        ? t("storage.uploads.badge.waiting")
+        : mark.kind === "uploading"
+          ? t("storage.uploads.badge.uploading", { percent: mark.percent })
+          : t("storage.uploads.badge.failed", {
+              reason: t(`storage.uploads.problem.${mark.problem}`),
+            });
   return (
     <span
       className={`${styles.mark} ${styles[mark.kind]}`}
@@ -70,6 +76,8 @@ export function UploadMark({ mark }: { mark: AssetMark | undefined }) {
     >
       {mark.kind === "lfs" ? (
         <Cloud size={10} aria-hidden />
+      ) : mark.kind === "waiting" ? (
+        <Clock size={10} aria-hidden />
       ) : mark.kind === "failed" ? (
         <CircleAlert size={11} aria-hidden />
       ) : (

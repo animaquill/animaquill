@@ -307,8 +307,8 @@ export class Workbench {
   readonly lfsAccount: LfsAccountState;
   /** What was said about the files of the open project, which goes with it as it closes. */
   readonly #uploadNotices: number[] = [];
-  /** Assets just imported, into the default storage of the project. */
-  readonly #newAssets: NewAssets;
+  /** Assets just imported, into the default storage of the project, and those that wait to. */
+  readonly newAssets: NewAssets;
   readonly dialogs = new Dialogs();
   readonly session: ProjectSession;
   readonly timeline: TimelineEditor;
@@ -1173,7 +1173,7 @@ export class Workbench {
       this.projectFolders?.downloadsChanged();
     });
     this.lfsAccount = new LfsAccountState(cloud?.lfsAccount, host.account);
-    this.#newAssets = new NewAssets({
+    this.newAssets = new NewAssets({
       t,
       project: () => {
         const key = this.session.key;
@@ -1199,6 +1199,10 @@ export class Workbench {
       dismiss: (id) => this.notifications.dismiss(id),
       failed: (message) => this.notifications.push(message),
       sizes: { large: LARGE_IMPORT_BYTES, most: LFS_FILE_MOST, batch: BATCH_IMPORT_BYTES },
+    });
+    // Said elsewhere, as in the dialog: what waited for it goes.
+    this.lfsAccount.subscribe(() => {
+      if (this.lfsAccount.acknowledged) this.newAssets.knownNow();
     });
     this.#followUploads(host);
     this.#keepPresence(host);
@@ -3284,9 +3288,14 @@ export class Workbench {
       case "notAcknowledged": {
         // What the platform asked first: said here, then what waited for it goes.
         const { t } = this;
+        const count = this.uploads
+          .getSnapshot()
+          .items.filter(
+            (item) => item.phase === "failed" && item.problem === "notAcknowledged",
+          ).length;
         const knows = await this.dialogs.confirm({
           title: t("storage.uploads.fix.acknowledgeTitle"),
-          message: t("storage.uploads.notice.cost"),
+          message: `${t("storage.uploads.fix.acknowledgeCount", { count })}${t("storage.uploads.notice.cost")}`,
           confirm: t("storage.uploads.notice.agree"),
         });
         if (!knows) return;
@@ -3431,7 +3440,7 @@ export class Workbench {
    * AnimaQuill Cloud, 1.7), see `NewAssets`.
    */
   #imported(ids: readonly string[]): readonly string[] {
-    void this.#newAssets.imported(ids);
+    void this.newAssets.imported(ids);
     return ids;
   }
 
@@ -4180,7 +4189,7 @@ export class Workbench {
     // What is on its way stops where it is, and goes on the next time the project is open.
     await this.uploads.close();
     await this.downloads.close();
-    this.#newAssets.reset();
+    this.newAssets.reset();
     for (const id of this.#uploadNotices.splice(0)) this.notifications.dismiss(id);
     // What the platform does not have yet stays in the log, for whoever syncs next.
     await this.cloud?.close();

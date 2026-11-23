@@ -299,6 +299,6 @@ function GroupPage(props: {
     case "agents":
       return <AgentsGroup store={props.store} locked={props.locked} />;
     case "storage":
-      return <StorageGroup store={props.store} />;
+      return <StorageGroup store={props.store} locked={props.locked.locked} />;
   }
 }

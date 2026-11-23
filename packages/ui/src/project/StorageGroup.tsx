@@ -58,7 +58,14 @@ function useProxies(): [
   return [usage, read];
 }
 
-export function StorageGroup({ store }: { readonly store: ProjectStore }) {
+export function StorageGroup({
+  store,
+  locked,
+}: {
+  readonly store: ProjectStore;
+  /** The project cannot be changed now: a locked tag, or read only. */
+  readonly locked: boolean;
+}) {
   const workbench = useWorkbench();
   const { cloud, projectFolders, proxies, dialogs, notifications } = workbench;
   const { t } = useTranslation();
@@ -259,7 +266,7 @@ export function StorageGroup({ store }: { readonly store: ProjectStore }) {
           help={t("projectProps.storage.noFolderBrowser")}
         />
       )}
-      <DefaultStorageRows repo={repository?.status?.repository?.fullName} />
+      <DefaultStorageRows repo={repository?.status?.repository?.fullName} locked={locked} />
       {panel && linked && (
         <>
           <Heading>{t("projectProps.storage.sync")}</Heading>
@@ -337,7 +344,13 @@ function PreferRow({ prefer }: { readonly prefer: "editor" | "github" | undefine
  * project. Under it, where the assets it has are, and a way to put those there too: changing the
  * default moves nothing. What cannot be chosen here is grey, with why.
  */
-function DefaultStorageRows({ repo }: { readonly repo: string | undefined }) {
+function DefaultStorageRows({
+  repo,
+  locked,
+}: {
+  readonly repo: string | undefined;
+  readonly locked: boolean;
+}) {
   const workbench = useWorkbench();
   const { uploads, missingFiles } = workbench;
   const { t } = useTranslation();
@@ -365,9 +378,13 @@ function DefaultStorageRows({ repo }: { readonly repo: string | undefined }) {
           : t("storage.uploads.properties.noRepository");
   const lfsUnusable = why(lfsUsable(workbench.mode, snapshot.blocked, uploads.available));
   const chosen = place.chosen === "lfs" ? "lfs" : "local";
+  // Online a file that is only here is only in this browser; offline it is in the folder.
+  const local = t(
+    online ? "storage.uploads.properties.localBrowser" : "storage.uploads.properties.local",
+  );
   const help =
     place.effective !== place.chosen
-      ? t("storage.uploads.properties.fellBack", { why: why(place.unusable) })
+      ? t("storage.uploads.properties.fellBack", { why: why(place.unusable), where: local })
       : chosen === "lfs"
         ? t("storage.uploads.properties.lfsHelp")
         : online
@@ -375,6 +392,20 @@ function DefaultStorageRows({ repo }: { readonly repo: string | undefined }) {
           : t("storage.uploads.properties.localOffline");
   const summary = placeSummary(rows);
   const movable = rows.filter(canChoose).map(({ asset }) => asset);
+  // Only what there is: nothing for none.
+  const parts = [
+    ...(summary.there > 0
+      ? [
+          t("storage.uploads.properties.existingLfs", {
+            count: summary.there,
+            size: formatSize(summary.thereBytes),
+          }),
+        ]
+      : []),
+    ...(summary.here > 0
+      ? [t("storage.uploads.properties.existingHere", { count: summary.here })]
+      : []),
+  ];
   return (
     <Row
       id="defaultStorage"
@@ -382,14 +413,11 @@ function DefaultStorageRows({ repo }: { readonly repo: string | undefined }) {
       help={help}
       below={
         online &&
-        uploads.available && (
+        uploads.available &&
+        parts.length > 0 && (
           <div className={styles.listRow}>
             <span data-testid="project-assets">
-              {t("storage.uploads.properties.existing", {
-                lfs: summary.there,
-                size: formatSize(summary.thereBytes),
-                here: summary.here,
-              })}
+              {t("storage.uploads.properties.existing", { parts: parts.join("，") })}
             </span>
             {place.effective === "lfs" && movable.length > 0 && (
               <Small onClick={() => void workbench.choosePlaces(movable)}>
@@ -403,7 +431,7 @@ function DefaultStorageRows({ repo }: { readonly repo: string | undefined }) {
       <Choice
         label={t("storage.uploads.properties.default")}
         value={chosen}
-        disabled={state.manifest.tags?.some((tag) => tag.locked) === true}
+        disabled={locked}
         options={[
           {
             value: "lfs",
@@ -416,7 +444,7 @@ function DefaultStorageRows({ repo }: { readonly repo: string | undefined }) {
                   }),
             ...(lfsUnusable !== undefined && chosen !== "lfs" && { unavailable: lfsUnusable }),
           },
-          { value: "local", label: t("storage.uploads.properties.local") },
+          { value: "local", label: local },
         ]}
         onChange={(kind) => {
           workbench.setDefaultStorage(kind);

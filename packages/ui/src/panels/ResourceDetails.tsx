@@ -413,19 +413,13 @@ function ResourceDetails({
       if (asset.license) fields.push([t("explorer.fields.license"), asset.license]);
       if (asset.credit) fields.push([t("explorer.fields.credit"), asset.credit]);
       const file = missing.get(item.id);
-      // Online there is no folder: where the file is, here or in the repository, or both.
-      const inLfs =
-        workbench.mode === "online" &&
-        state !== undefined &&
-        placedAsset(state, item.id, workbench.here())?.storage === "lfs";
-      fields.push([
-        t("explorer.fields.from"),
-        workbench.mode !== "online"
-          ? t("explorer.from.asset", { path: asset.path, interpolation: { escapeValue: false } })
-          : inLfs
-            ? t(file ? "explorer.from.onlineLfs" : "explorer.from.onlineLfsHere")
-            : t(file ? "explorer.from.onlineElsewhere" : "explorer.from.onlineHere"),
-      ]);
+      // Offline it is a file of the folder. Online there is none: where the file is, the place
+      // below says, once.
+      if (workbench.mode !== "online")
+        fields.push([
+          t("explorer.fields.from"),
+          t("explorer.from.asset", { path: asset.path, interpolation: { escapeValue: false } }),
+        ]);
       // In a project of the platform it comes by itself, and "存放位置" says how that goes.
       if (file?.elsewhere && !autoDownloads(workbench.downloads.available, coming)) {
         const url = state && placedAsset(state, item.id, workbench.here())?.url;

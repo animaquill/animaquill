@@ -163,11 +163,34 @@ describe("one import larger than a gibibyte all together", () => {
 
   it("before people said they know, says the total in the one notification that asks", async () => {
     const w = world();
-    await w.assets.imported(["b", "e"]);
+    const many = Array.from({ length: 12 }, (_, at) => `m${at}`);
+    for (const id of many)
+      w.state.assets[id] = { hash: `sha256-${id}`, size: 90 * MB, path: `assets/${id}`, name: id };
+    await w.assets.imported(many);
     const [notice] = [...w.notices.values()];
     expect(w.notices.size).toBe(1);
     expect(notice?.message).toContain("storage.uploads.notice.askTotal");
     expect(notice?.message).toContain("storage.uploads.notice.cost");
+    expect(notice?.message).toContain("storage.uploads.notice.untilThen");
+    // Large ones are named in its place, which says the same of them.
+    const v = world();
+    await v.assets.imported(["b", "e"]);
+    const [named] = [...v.notices.values()];
+    expect(named?.message).toContain("storage.uploads.notice.askLargeMany");
+    expect(named?.message).not.toContain("askTotal");
+  });
+
+  it("are shown as waiting while they wait, and no more once they went or stayed", async () => {
+    const w = world();
+    let told = 0;
+    w.assets.subscribe(() => (told += 1));
+    await w.assets.imported(["a", "d"]);
+    expect([...w.assets.getSnapshot()]).toEqual(["a", "d"]);
+    w.assets.knownNow();
+    expect(w.assets.getSnapshot().size).toBe(0);
+    expect(w.sent).toEqual([["a", "d"]]);
+    expect(w.notices.size).toBe(0);
+    expect(told).toBe(2);
   });
 });
 

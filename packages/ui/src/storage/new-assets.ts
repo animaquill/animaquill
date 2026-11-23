@@ -1,6 +1,7 @@
 import type { TFunction } from "i18next";
 import type { NotificationAction, NotificationOptions } from "../workbench/notifications.ts";
 import { formatSize } from "../transfer/transfer.ts";
+import { Emitter } from "../workbench/emitter.ts";
 import { planImport, type DefaultPlace } from "./default-place.ts";
 
 /**
@@ -71,7 +72,20 @@ const TEXTS = {
 
 export class NewAssets {
   readonly #options: NewAssetsOptions;
+  readonly #emitter = new Emitter();
   #waiting: Waiting | undefined;
+  #shown: ReadonlySet<string> = new Set();
+
+  subscribe = this.#emitter.subscribe;
+  /** The assets that wait for people to say they know, in this window: shown as such. */
+  getSnapshot = (): ReadonlySet<string> => this.#shown;
+
+  #changed(): void {
+    const now = this.#waiting?.send ?? new Set<string>();
+    if (now.size === this.#shown.size && [...now].every((id) => this.#shown.has(id))) return;
+    this.#shown = new Set(now);
+    this.#emitter.emit();
+  }
 
   constructor(options: NewAssetsOptions) {
     this.#options = options;
@@ -82,10 +96,24 @@ export class NewAssets {
     return [...(this.#waiting?.send ?? [])];
   }
 
+  /**
+   * People said they know elsewhere, as in the dialog of where assets go: what waited goes, and
+   * the notification that asked is over.
+   */
+  knownNow(): void {
+    const waiting = this.#waiting;
+    if (!waiting) return;
+    if (waiting.notice !== undefined) this.#options.dismiss(waiting.notice);
+    this.#waiting = undefined;
+    this.#changed();
+    if (this.#options.project()?.key === waiting.key) void this.#options.send([...waiting.send]);
+  }
+
   /** The project closed: what waited stays here, as it is. */
   reset(): void {
     if (this.#waiting?.notice !== undefined) this.#options.dismiss(this.#waiting.notice);
     this.#waiting = undefined;
+    this.#changed();
   }
 
   /** Assets just imported into the open project. */
@@ -196,19 +224,24 @@ export class NewAssets {
     for (const id of plan.large) waiting.large.add(id);
     for (const id of plan.tooLarge) waiting.tooLarge.add(id);
     this.#ask(waiting);
+    this.#changed();
   }
 
   /** The one notification that asks, with everything that waits so far. */
   #ask(waiting: Waiting): void {
     const { t, notify } = this.#options;
+    const total = this.#bytes(waiting.send);
     const lines = [
       this.#text("ask", waiting.send),
-      ...(waiting.send.size > 1 && this.#bytes(waiting.send) > this.#options.sizes.batch
-        ? [t("storage.uploads.notice.askTotal", { size: formatSize(this.#bytes(waiting.send)) })]
-        : []),
+      // Why the large ones are named: they take much of the room.
+      ...(waiting.large.size > 0
+        ? [this.#text("askLarge", waiting.large)]
+        : waiting.send.size > 1 && total > this.#options.sizes.batch
+          ? [t("storage.uploads.notice.askTotal", { size: formatSize(total) })]
+          : []),
       t("storage.uploads.notice.cost"),
-      ...(waiting.large.size > 0 ? [this.#text("askLarge", waiting.large)] : []),
       ...(waiting.tooLarge.size > 0 ? [this.#text("tooLarge", waiting.tooLarge)] : []),
+      t("storage.uploads.notice.untilThen"),
     ];
     waiting.notice = notify(
       lines.join(""),
@@ -220,6 +253,7 @@ export class NewAssets {
             label: t("storage.uploads.notice.keepHere"),
             run: () => {
               if (this.#waiting === waiting) this.#waiting = undefined;
+              this.#changed();
               if (this.#options.project()?.key === waiting.key) this.#options.keepHere();
             },
           },
@@ -231,6 +265,7 @@ export class NewAssets {
 
   async #agree(waiting: Waiting): Promise<void> {
     if (this.#waiting === waiting) this.#waiting = undefined;
+    this.#changed();
     if (this.#options.project()?.key !== waiting.key) return;
     if (!(await this.#options.acknowledge())) {
       this.#options.failed(this.#options.t("storage.uploads.dialog.failed"));
@@ -239,6 +274,7 @@ export class NewAssets {
         waiting.notice = undefined;
         this.#waiting = waiting;
         this.#ask(waiting);
+        this.#changed();
       }
       return;
     }
