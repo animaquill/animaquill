@@ -352,3 +352,39 @@ describe("a site added while the relay runs", { timeout: 30_000 }, () => {
     store.destroy();
   });
 });
+
+describe("a call that waited at a relay that went", { timeout: 30_000 }, () => {
+  it("goes to the next relay as it is, and runs: it ran nowhere", async () => {
+    const ports = portsOfTest();
+    const identity = await loadIdentity(tempFolder());
+    const relay = await linkOf(identity, ports);
+    const peer = await linkOf(identity, ports);
+    peer.session({ session: "s", target: { kind: "front" }, since: 0 });
+    // No page yet: the call waits at the relay, which goes.
+    const call = peer.call({
+      call: "s-1",
+      session: "s",
+      answer: "1",
+      tool: "aq_file_write",
+      args: { path: "code/waited.js", text: "export const a = 1;\n" },
+    });
+    await new Promise((done) => setTimeout(done, 300));
+    await relay.close();
+    const store = await storeOf(sampleFolder());
+    const page = new FakePage({
+      port: ports.first,
+      origin: ORIGIN,
+      store,
+      project: { mode: "online", key: "p1", id: "x", name: "宣传片" },
+    });
+    for (let tries = 0; tries < 50 && !page.key; tries += 1) {
+      await page.connect().catch(() => new Promise((wait) => setTimeout(wait, 100)));
+    }
+    const answer = await call;
+    expect(answer.kind === "result" && answer.result.text).not.toMatch(/outcome-unknown/);
+    expect(answer.kind === "result" && answer.result.isError).toBe(false);
+    expect(store.getState().files["code/waited.js"]).toContain("a = 1");
+    page.close();
+    store.destroy();
+  });
+});

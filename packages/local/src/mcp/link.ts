@@ -73,7 +73,9 @@ function servePeer(router: Router, ws: WebSocket): void {
         const controller = new AbortController();
         calls.set(request.call, controller);
         void router
-          .call(request, controller.signal)
+          .call(request, controller.signal, {
+            dispatched: () => send({ t: "dispatched", call: request.call }),
+          })
           .catch((): CallAnswer => ({ kind: "gone" }))
           .then((answer) => {
             calls.delete(request.call);
@@ -161,8 +163,8 @@ interface Pending {
   readonly request: CallRequest;
   readonly resolve: (answer: CallAnswer) => void;
   readonly signal: AbortSignal | undefined;
-  /** It went to a relay once. */
-  sent: boolean;
+  /** It went to a page once, where it may have run. */
+  dispatched: boolean;
 }
 
 type Current =
@@ -253,6 +255,10 @@ export class ElectedLink implements RelayLink {
         if (!message) return;
         const pending = this.#calls.get(message.call);
         if (!pending) return;
+        if (message.t === "dispatched") {
+          pending.dispatched = true;
+          return;
+        }
         this.#calls.delete(message.call);
         pending.resolve(message.answer as CallAnswer);
       });
@@ -269,18 +275,22 @@ export class ElectedLink implements RelayLink {
   }
 
   /**
-   * A call as it goes to the relay: once it went to one that is gone, it says it comes again, and
-   * the page that has no record of it makes no change for it.
+   * A call as it goes to the relay: once a relay that is gone gave it to a page, it says it comes
+   * again, and the page that has no record of it makes no change for it. One that only waited at
+   * the relay for a page ran nowhere, and goes as it is.
    */
   #again(pending: Pending): CallRequest {
-    const request = pending.sent ? { ...pending.request, again: true } : pending.request;
-    pending.sent = true;
-    return request;
+    return pending.dispatched ? { ...pending.request, again: true } : pending.request;
   }
 
   #routeLocal(router: Router, call: string, request: CallRequest, signal?: AbortSignal): void {
     void router
-      .call(request, signal)
+      .call(request, signal, {
+        dispatched: () => {
+          const pending = this.#calls.get(call);
+          if (pending) pending.dispatched = true;
+        },
+      })
       .catch((): CallAnswer => ({ kind: "gone" }))
       .then((answer) => {
         const pending = this.#calls.get(call);
@@ -307,7 +317,7 @@ export class ElectedLink implements RelayLink {
   async call(request: CallRequest, signal?: AbortSignal): Promise<CallAnswer> {
     let pending: Pending | undefined;
     const answer = new Promise<CallAnswer>((resolve) => {
-      pending = { request, resolve, signal, sent: false };
+      pending = { request, resolve, signal, dispatched: false };
       this.#calls.set(request.call, pending);
     });
     signal?.addEventListener(

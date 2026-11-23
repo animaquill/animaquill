@@ -71,6 +71,12 @@ export interface CallRequest {
   readonly again?: boolean;
 }
 
+/** What the router tells of a call before its answer. */
+export interface CallEvents {
+  /** It went to a page, where it may run. */
+  readonly dispatched?: () => void;
+}
+
 export type CallAnswer =
   | { readonly kind: "result"; readonly result: BridgeResult; readonly bound: Bound }
   /** No page has the project open and takes calls for it. */
@@ -165,7 +171,11 @@ export class Router {
   }
 
   /** Runs a call on the page of its session's project. */
-  async call(request: CallRequest, signal?: AbortSignal): Promise<CallAnswer> {
+  async call(
+    request: CallRequest,
+    signal?: AbortSignal,
+    events: CallEvents = {},
+  ): Promise<CallAnswer> {
     const session = this.#sessions.get(request.session);
     if (!session) return { kind: "no-page" };
     const page = await this.#waitForPage(session, signal);
@@ -182,6 +192,8 @@ export class Router {
           resolve(done);
         },
       });
+      // From here it may run: going again, it says so (`ElectedLink`).
+      events.dispatched?.();
       send(page.ws, {
         t: "call",
         call: request.call,

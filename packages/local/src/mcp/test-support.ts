@@ -4,6 +4,7 @@ import { ProblemSet, ProjectStore, aiTask, readFolder } from "@animaquill/core";
 import { diskFolder } from "@animaquill/core/disk-folder";
 import {
   CallerState,
+  WRITE_TOOLS,
   createToolset,
   proofText,
   readMessage,
@@ -164,6 +165,15 @@ export class FakePage {
     const done = this.#done.get(call.call);
     if (done) {
       this.#send(done as FromPage);
+      return;
+    }
+    // As the editor: a change that comes again without a record here is not made.
+    if (call.again && WRITE_TOOLS.has(call.tool)) {
+      this.#send({
+        t: "result",
+        call: call.call,
+        result: { text: "error outcome-unknown: not made again", isError: true },
+      });
       return;
     }
     const { store } = this.#options;

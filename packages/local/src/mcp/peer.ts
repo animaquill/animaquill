@@ -91,17 +91,20 @@ const result = z.object({
   images: z.array(z.object({ type: z.string(), data: z.string() })).optional(),
 });
 
-/** What the relay answers a peer's call. */
-export const toPeer = z.object({
-  t: z.literal("answer"),
-  call: id,
-  answer: z.discriminatedUnion("kind", [
-    z.object({
-      kind: z.literal("result"),
-      result,
-      bound: z.object({ origin: z.string(), project }),
-    }),
-    z.object({ kind: z.literal("no-page") }),
-    z.object({ kind: z.literal("gone") }),
-  ]),
-});
+/** What the relay says of a peer's call: that it went to a page, and its answer. */
+export const toPeer = z.discriminatedUnion("t", [
+  z.object({ t: z.literal("dispatched"), call: id }),
+  z.object({
+    t: z.literal("answer"),
+    call: id,
+    answer: z.discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("result"),
+        result,
+        bound: z.object({ origin: z.string(), project }),
+      }),
+      z.object({ kind: z.literal("no-page") }),
+      z.object({ kind: z.literal("gone") }),
+    ]),
+  }),
+]);
