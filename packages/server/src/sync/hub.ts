@@ -66,6 +66,7 @@ import {
   type ReleasedFrom,
   type RepoMergeState,
 } from "../schema.ts";
+import { notifyPerson } from "../me/events.ts";
 import {
   CopiesFull,
   CopiesGone,
@@ -1901,6 +1902,7 @@ export class SyncHub {
           // Its id, and whose it was: nothing is made under it for a while.
           await this.#note(tx, id, row.ownerId);
           await tx.delete(projects).where(eq(projects.id, id));
+          await notifyPerson(tx, [row.ownerId]);
           gone = {
             head: row.head,
             bytes: row.bytes,
@@ -3135,6 +3137,7 @@ export class SyncHub {
           dirtySince: at,
           openedAt: at,
         });
+        await notifyPerson(tx, [connection.who.userId]);
         await tx.insert(projectUpdates).values({
           projectId: message.project,
           seq: 1,
@@ -3524,6 +3527,8 @@ export class SyncHub {
           )
           .returning({ head: projects.head });
         if (!moved) throw new HeadMoved();
+        // Its name is in the person's list: their pages read it again.
+        if (name !== project.name) await notifyPerson(tx, [project.ownerId]);
         await tx.insert(projectUpdates).values(
           taking.map((each, index) => ({
             projectId: project.id,

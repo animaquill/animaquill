@@ -21,6 +21,7 @@ import type { AccessPolicy } from "../access.ts";
 import type { ReleaseSwitches } from "../switches.ts";
 import { API, type World } from "./archive-support.ts";
 import { FakeGitHub, type FakeDelivery } from "./fake-github.ts";
+import type { PersonEvents } from "../me/events.ts";
 
 /**
  * The platform as the editor reaches it, for tests of saving to GitHub: the HTTP API with a person
@@ -72,6 +73,8 @@ export const platform = async (
     readonly access?: AccessPolicy;
     /** What the test adds to the server, as a deployment does, see app.ts. */
     readonly extend?: ServerPlatform["extend"];
+    /** The streams of what changed of people's lists, see me/events.ts. */
+    readonly events?: PersonEvents;
   } = {},
 ) => {
   const config = loadConfig(
@@ -142,6 +145,7 @@ export const platform = async (
       ...(options.limits && { limits: options.limits }),
       ...(options.access && { access: options.access }),
       ...(options.extend && { extend: options.extend }),
+      ...(options.events && { events: options.events }),
     },
     false,
   );
@@ -290,6 +294,7 @@ export const platform = async (
 
   return {
     app,
+    sessionId,
     config,
     service,
     queued,

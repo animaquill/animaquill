@@ -38,6 +38,7 @@ import { readSetting } from "../settings.ts";
 import { recheckLink } from "./recheck.ts";
 import { RepoPaused, type RepoHost } from "./repo-host.ts";
 import { dueAt, type ArchiveJob } from "./schedule.ts";
+import { notifyPerson } from "../me/events.ts";
 
 /**
  * Saving a project to a repository, as people ask for it: which repositories they can choose,
@@ -1046,6 +1047,7 @@ export class RepositoryService {
           openedAt: now,
           linkingUntil: until,
         });
+        await notifyPerson(tx, [user.userId]);
         await tx.insert(projectRepos).values({
           projectId,
           installationId: installation,

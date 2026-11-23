@@ -29,6 +29,7 @@ import type { SyncHub } from "./sync/hub.ts";
 import { projectRoutes } from "./sync/routes.ts";
 import { libraryMode } from "./library/config.ts";
 import { meRoutes } from "./me/routes.ts";
+import { personEventsRoutes, type PersonEvents } from "./me/events.ts";
 import { ModelCatalogCache, catalogRoutes } from "./ai/catalog.ts";
 import { createSealer } from "./seal.ts";
 import type { PersonLimits } from "./limits.ts";
@@ -40,6 +41,12 @@ export interface Platform {
   readonly switches?: ReleaseSwitches;
   /** Whether the database answers now. */
   checkDatabase(): Promise<boolean>;
+  /**
+   * The streams of what changed of people's lists, see me/events.ts: where it is there, pages hear
+   * of it at once (`GET /api/me/events`). Something has to listen to the database for it
+   * (`listenForPeople`). None unless said.
+   */
+  readonly events?: PersonEvents | undefined;
   /** Whether migrations and the job queue are in place. */
   ready(): boolean;
   /** Accounts, when people can sign in: see auth/setup.ts. Only asked once `ready`. */
@@ -270,6 +277,15 @@ export const buildApp = (
     access,
     gate,
   });
+  // What changed of people's lists, at once.
+  if (platform.events)
+    app.register(personEventsRoutes, {
+      events: platform.events,
+      accounts,
+      db,
+      gate,
+      now: platform.now,
+    });
   // The open catalog of models for the settings.
   app.register(catalogRoutes, {
     accounts,

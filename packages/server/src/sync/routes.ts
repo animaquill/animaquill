@@ -22,6 +22,7 @@ import { recheckSoon } from "../archive/links.ts";
 import { listProjects } from "./list.ts";
 import { applyOrganizer, changesOf, readOrganized } from "./organize.ts";
 import { wakeCopy } from "./wake.ts";
+import { notifyPerson } from "../me/events.ts";
 
 /**
  * The projects of whoever is signed in, for the editor (the interface of 1A):
@@ -657,6 +658,8 @@ export const projectRoutes = async (app: FastifyInstance, options: ProjectRoutes
           .send({ error: "busy" });
       const at = now();
       const answer = await applyOrganizer(database, user.userId, changes, at, access);
+      // The person's other pages read how they organise them again.
+      if (count > 0) await notifyPerson(database, [user.userId]);
       return { now: at, ...answer };
     },
   );
