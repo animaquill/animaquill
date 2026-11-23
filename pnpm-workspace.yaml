@@ -3,7 +3,10 @@ packages:
 minimumReleaseAgeExclude:
   - lucide-react@1.69.0
   - vite@8.3.6
-# Only for pi's Google provider, which works without them.
 allowBuilds:
+  # drizzle-kit (packages/server, only for writing migrations) brings esbuild. Its install script
+  # only checks the binary, which comes from its platform package anyway.
+  esbuild: false
+  # Only for pi's Google provider, which works without them.
   "@google/genai": false
   protobufjs: false

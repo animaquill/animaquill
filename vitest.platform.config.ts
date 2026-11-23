@@ -1,5 +1,5 @@
 import { configDefaults, defineConfig } from "vitest/config";
-import { PERF } from "./vitest.config.ts";
+import { PERF, SERVER } from "./vitest.config.ts";
 
 /**
  * All tests, and every change they make to a project checked as a platform checks it: none may be
@@ -13,6 +13,7 @@ export default defineConfig({
     exclude: [
       ...configDefaults.exclude,
       PERF,
+      SERVER,
       // It changes what the checks of the format say, for the time of a test.
       "packages/core/src/read-folder-guard.test.ts",
     ],

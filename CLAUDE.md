@@ -1,6 +1,6 @@
 # AnimaQuill 开源版
 
-编辑器的全部功能都在这个仓库里：项目格式、编辑器、浏览器 AI 助手、本机版（`npx animaquill`），以及和平台连接的宿主接口（同步和存档本身由平台做）。AI 的工具、命令行和本机 MCP 也会做在这里。桌面应用暂不做。闭源版依赖这个仓库。
+编辑器的全部功能都在这个仓库里：项目格式、编辑器、浏览器 AI 助手、本机版（`npx animaquill`），以及和平台连接的宿主接口，和后端（`packages/server`：账号、同步、存到 GitHub、大文件、AI 转发；平台在它上面加自己的部分）。AI 的工具、命令行和本机 MCP 也会做在这里。桌面应用暂不做。闭源版依赖这个仓库。
 
 ## 核心准则
 
@@ -21,6 +21,7 @@
 - 浏览器测试跑在开发页的构建上（`vite build` 再 `vite preview`），不是开发服务器。已经开着 `pnpm dev` 时用它，改了代码不用重新构建。
 - 测试里出现 `Yjs was already imported`，是依赖重新链接后 Vitest 还留着旧路径，删掉 `node_modules/.vitest-cache`。
 - 包的依赖方向只能往下，比如 `ui` 依赖 `host`。
+- 后端（`packages/server`）的测试大多要 PostgreSQL 和对象存储：`pnpm test:server` 没有它们就跳过，有 `AQ_TEST_DATABASE`、`AQ_TEST_S3` 时才跑，见 `packages/server/vitest.config.ts`；CI 的 job `server` 带着它们跑。部署自己的东西（管理后台、限额、邀请码）经扩展点（`access.ts`、`auth/people.ts`、`limits.ts`、`holds.ts`、`audit.ts`、`app.ts` 的 `extend`）加进来，后端代码里不写某个部署的名字和默认值。
 - import 写完整的扩展名，这样 Node.js 也能直接运行这些源码。
 - dockview 只在 `packages/ui/src/dock` 里使用，这类关键依赖不进业务代码。
 - 打开面板一律走 `LayoutController.openPanel`：放在哪由不碰 DOM 的 `dock/placement.ts`（`placePanel`）按面板的大小标签（`PanelDefinition.sizes`，没写时按区域推）定，规则和用例见闭源仓库设计 `settings-and-properties.md` 第 11 节，改了跑 `dock/placement.test.ts`。只有人从视图菜单、命令面板、快捷键要的面板才把键盘放进去（`focus: true`）。
