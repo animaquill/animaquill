@@ -51,6 +51,7 @@ async function startTool(
         ...(process.env as Record<string, string>),
         ANIMAQUILL_HOME: tools.home,
         ANIMAQUILL_RELAY_PORTS: `${tools.ports.first}:${tools.ports.count}`,
+        ANIMAQUILL_TEST: "1",
         ANIMAQUILL_OPEN: tools.opener,
       },
       stderr: "ignore",
@@ -266,7 +267,10 @@ test.describe("AI tools on this computer", () => {
       expect(textOf(waited)).toMatch(/^error editor-opening: .*being opened in the browser/);
       expect(said.join("\n")).toMatch(/opening the AnimaQuill editor/);
       const [address] = openedIn(tools);
-      expect(address).toBe(`${editor.origin}/offline?open=${encodeURIComponent(id)}`);
+      const expected = new URL("/offline", editor.origin);
+      expected.searchParams.set("open", id);
+      expected.searchParams.set("name", "原子是什么");
+      expect(address).toBe(expected.href);
       // Once a session.
       await claude.callTool({ name: "aq_project_status", arguments: {} }, { timeout: 60_000 });
       expect(openedIn(tools)).toHaveLength(1);

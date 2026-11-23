@@ -690,13 +690,25 @@ export class ProjectFolders {
    * `clicked`, right after people did something, it may ask the browser to let it at the folder;
    * without, it opens only a folder it may already, and says "ask" where people have to click.
    */
-  async openForAi(project: string, clicked: boolean): Promise<"opened" | "ask"> {
+  async openForAi(project: string, clicked: boolean, name?: string): Promise<"opened" | "ask"> {
     const records = [...(await this.projects.records.withProject(project))].toSorted(
       (a, b) => b.openedAt - a.openedAt,
     );
     if (records.length === 0) {
       if (!clicked) return "ask";
       await this.open();
+      // People chose a folder: it is the project, or they hear that it is another one.
+      const opened = this.#current?.store.getState().manifest;
+      if (opened && opened.id !== project) {
+        const { t, notifications } = this.#options;
+        notifications.push(
+          t("localAi.waiting.wrongFolder", {
+            opened: opened.name,
+            name: name ?? t("localAi.waiting.thatProject"),
+            interpolation: { escapeValue: false },
+          }),
+        );
+      }
       return "opened";
     }
     let record: FolderRecord | undefined = records[0];

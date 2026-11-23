@@ -144,6 +144,8 @@ interface Session extends SessionInfo {
   opened: boolean;
   /** It waited for an editor until `WAIT_GIVE_UP_MS`, and none came. */
   gaveUp: boolean;
+  /** Where the browser opens its project, as `#addressOf` checked it, while it waits. */
+  address: string | undefined;
 }
 
 /** What the router needs to open an editor in the browser, see `Router.call`. */
@@ -175,8 +177,13 @@ const textOf = (data: RawData): string =>
     ? Buffer.concat(data).toString("utf8")
     : Buffer.from(data as ArrayBuffer).toString("utf8");
 
-/** Which project a session waits for, for people: none for one that has not found any yet. */
-function waitingOf(session: Session): Omit<BridgeWaiting, "clients" | "notHere"> | undefined {
+/**
+ * Which project a session waits for, for people: none for one that has not found any yet. Its
+ * address is none that a page said: only the one `#addressOf` checked goes to pages.
+ */
+function waitingOf(
+  session: Session,
+): Omit<BridgeWaiting, "clients" | "notHere" | "link"> | undefined {
   const { target } = session;
   switch (target.kind) {
     case "folder":
@@ -188,19 +195,20 @@ function waitingOf(session: Session): Omit<BridgeWaiting, "clients" | "notHere">
       };
     case "link": {
       const link = `${target.origin}/p/${encodeURIComponent(target.project)}`;
-      return { key: `online\n${link}`, mode: "online", name: link, link };
+      return { key: `online\n${link}`, mode: "online", name: link };
     }
     case "front": {
-      const project = target.bound?.project;
+      // What it found, which the session itself may not have said again yet.
+      const bound = session.bound ?? target.bound;
+      const project = bound?.project;
       if (!project) return undefined;
       return project.mode === "offline"
         ? { key: `offline\n${project.id}`, mode: "offline", id: project.id, name: project.name }
         : {
-            key: `online\n${target.bound?.origin}\n${project.key}`,
+            key: `online\n${bound?.origin}\n${project.key}`,
             mode: "online",
             id: project.id,
             name: project.name,
-            ...(project.link && { link: project.link }),
           };
     }
   }
@@ -249,6 +257,7 @@ export class Router {
       waitingSince: known?.waitingSince,
       opened: known?.opened ?? false,
       gaveUp: known?.gaveUp ?? false,
+      address: known?.address,
     });
     void this.#bindAll();
   }
@@ -358,9 +367,20 @@ export class Router {
     // Where nothing can bring an editor, there is nothing to wait for: no page that people see, and
     // nothing to open in the browser.
     const shown = [...this.#pages.values()].some(({ info }) => info !== undefined);
-    const url = shown || session.opened ? undefined : await this.#addressOf(session, opening);
+    const url = await this.#addressOf(session, opening);
+    session.address = url;
     if (!shown && !session.opened && url === undefined) return { kind: "no-page" };
-    session.waitingSince ??= now;
+    if (session.waitingSince === undefined) {
+      const since = now;
+      session.waitingSince = since;
+      // The notices go once it waited as long as it does, whether a call comes again or not.
+      setTimeout(() => {
+        if (session.waitingSince !== since) return;
+        session.waitingSince = undefined;
+        session.gaveUp = true;
+        this.#tellWaiting();
+      }, opening.giveUpMs ?? WAIT_GIVE_UP_MS).unref();
+    }
     if (now - session.waitingSince >= (opening.giveUpMs ?? WAIT_GIVE_UP_MS)) {
       session.waitingSince = undefined;
       session.gaveUp = true;
@@ -406,9 +426,9 @@ export class Router {
           ? project.mode === "offline" && project.id === target.id
           : target.kind === "link"
             ? project.mode === "online" && project.key === target.project
-            : target.bound !== undefined &&
-              project.mode === target.bound.project.mode &&
-              project.key === target.bound.project.key;
+            : (session.bound ?? target.bound) !== undefined &&
+              project.mode === (session.bound ?? target.bound)?.project.mode &&
+              project.key === (session.bound ?? target.bound)?.project.key;
       if (fits) return project.name;
     }
     return undefined;
@@ -417,26 +437,27 @@ export class Router {
   /** Where the browser opens the project of a session, checked against the sites allowed now. */
   async #addressOf(session: Session, opening: Opening): Promise<string | undefined> {
     const { target } = session;
+    const bound = target.kind === "front" ? (session.bound ?? target.bound) : undefined;
     let url: URL | undefined;
     try {
       if (target.kind === "link") {
         url = new URL(`/p/${encodeURIComponent(target.project)}`, target.origin);
-      } else if (target.kind === "front" && target.bound?.project.mode === "online") {
-        url = new URL(`/p/${encodeURIComponent(target.bound.project.key)}`, target.bound.origin);
+      } else if (bound?.project.mode === "online") {
+        url = new URL(`/p/${encodeURIComponent(bound.project.key)}`, bound.origin);
       } else {
         const id =
           target.kind === "folder"
             ? target.id
-            : target.bound?.project.mode === "offline"
-              ? target.bound.project.id
+            : bound?.project.mode === "offline"
+              ? bound.project.id
               : undefined;
-        const origin =
-          target.kind === "front" && target.bound
-            ? target.bound.origin
-            : await opening.lastOrigin();
+        const origin = bound ? bound.origin : await opening.lastOrigin();
         if (id === undefined || origin === undefined) return undefined;
         url = new URL("/offline", origin);
         url.searchParams.set("open", id);
+        // What it is called, for a browser that has no folder of it yet.
+        const name = target.kind === "folder" ? target.name : bound?.project.name;
+        if (name) url.searchParams.set("name", name.slice(0, 200));
       }
     } catch {
       return undefined;
@@ -464,8 +485,10 @@ export class Router {
           ...[...session.notProbed].map((instance) => instance.split("\n")[0] ?? ""),
         ]),
       ];
+      const link = known?.link ?? (waiting.mode === "online" ? session.address : undefined);
       byProject.set(waiting.key, {
         ...waiting,
+        ...(link !== undefined && { link }),
         clients,
         ...(notHere.length > 0 && { notHere }),
       });
@@ -561,6 +584,11 @@ export class Router {
     session.page = found.info.page;
     session.bound = { origin: found.origin, project: found.info.project };
     session.gaveUp = false;
+    // What it waited for is open: the notices of it go, call or not.
+    if (session.waitingSince !== undefined) {
+      session.waitingSince = undefined;
+      this.#tellWaiting();
+    }
     this.#tellSessions();
     return found;
   }

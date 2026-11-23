@@ -57,7 +57,7 @@ function notOpenInTime(target: Target): string {
       : target.kind === "link"
         ? `the project ${target.origin}/p/${encodeURIComponent(target.project)}`
         : `the project ${JSON.stringify(target.bound?.project.name ?? "")}`;
-  return `error editor-not-open: no AnimaQuill editor opened ${what} in the two minutes since it was waited for, so nothing was done. The call runs once the user opens it in the AnimaQuill editor in Chrome or Edge, connected: 帮助 › 连接电脑上的 AI 工具 › 连接.`;
+  return `error editor-not-open: no AnimaQuill editor opened ${what} in the two minutes since it was waited for, so nothing was done, and this session waits for an editor no more: a call runs once the user has it open in the AnimaQuill editor in Chrome or Edge, connected (帮助 › 连接电脑上的 AI 工具 › 连接), and fails at once until then.`;
 }
 
 export interface McpSessionOptions {

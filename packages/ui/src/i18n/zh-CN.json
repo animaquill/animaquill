@@ -5792,7 +5792,10 @@
       "chooseMessage": "这个浏览器打开过几个文件夹里的这个项目（复制出来的也算）。",
       "chooseFolder": "文件夹「{{folder}}」，{{when}} 打开过",
       "noFolder": "AI 工具在等一个这个浏览器没打开过的项目",
-      "chooseFolderAction": "选择文件夹…"
+      "chooseFolderAction": "选择文件夹…",
+      "noFolderNamed": "AI 工具在等「{{name}}」：这个浏览器还没打开过它的文件夹",
+      "wrongFolder": "选的文件夹里是「{{opened}}」，不是 AI 工具在等的「{{name}}」",
+      "thatProject": "那个项目"
     }
   },
   "repoMerge": {

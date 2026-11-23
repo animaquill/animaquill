@@ -3109,16 +3109,24 @@ export class Workbench {
   /** Opens what AI tools wait for, as people clicked: here where the mode is its, else in a tab. */
   #openWaitedFor(item: BridgeWaiting): void {
     if (item.mode === "offline" && this.mode === "offline" && item.id !== undefined) {
-      void this.projectFolders?.openForAi(item.id, true);
+      void this.projectFolders?.openForAi(item.id, true, item.name);
       return;
     }
-    const address =
-      item.mode === "online"
-        ? item.link
-        : item.id !== undefined
-          ? `/offline?open=${encodeURIComponent(item.id)}`
-          : undefined;
-    if (address) window.open(address, "_blank", "noopener");
+    let address: URL | undefined;
+    try {
+      if (item.mode === "online" && item.link) address = new URL(item.link);
+      else if (item.id !== undefined) {
+        address = new URL("/offline", location.href);
+        address.searchParams.set("open", item.id);
+        address.searchParams.set("name", item.name);
+      }
+    } catch {
+      address = undefined;
+    }
+    // Only a site: what a relay says is no reason to run anything else.
+    if (address && (address.protocol === "https:" || address.protocol === "http:")) {
+      window.open(address.href, "_blank", "noopener");
+    }
   }
 
   /**
@@ -3131,11 +3139,13 @@ export class Workbench {
     const url = new URL(location.href);
     const id = url.searchParams.get("open");
     if (id === null) return;
+    const wanted = url.searchParams.get("name")?.slice(0, 200) || undefined;
     url.searchParams.delete("open");
+    url.searchParams.delete("name");
     history.replaceState(history.state, "", url);
     const folders = this.projectFolders;
     if (this.mode !== "offline" || !folders || id === "") return;
-    if ((await folders.openForAi(id, false)) === "opened") return;
+    if ((await folders.openForAi(id, false, wanted)) === "opened") return;
     const [record] = await folders.projects.records.withProject(id);
     // A project this browser has no folder of: people choose the folder it is in.
     const text = record
@@ -3144,7 +3154,10 @@ export class Workbench {
           name: record.name,
           interpolation: { escapeValue: false },
         })
-      : this.t("localAi.waiting.noFolder");
+      : this.t(wanted ? "localAi.waiting.noFolderNamed" : "localAi.waiting.noFolder", {
+          name: wanted,
+          interpolation: { escapeValue: false },
+        });
     const key = `${ADDRESS_WAIT}${id}`;
     const notice = this.notifications.push(text, {
       stays: true,
@@ -3153,7 +3166,7 @@ export class Workbench {
           label: this.t(record ? "localAi.waiting.open" : "localAi.waiting.chooseFolderAction"),
           run: () => {
             this.#waitNotices.delete(key);
-            void folders.openForAi(id, true);
+            void folders.openForAi(id, true, wanted);
           },
         },
       ],

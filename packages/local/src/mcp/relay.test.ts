@@ -1,4 +1,4 @@
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -432,7 +432,7 @@ describe("a call that finds no editor (O5b)", { timeout: 30_000 }, () => {
     const said: string[] = [];
     const first = await link.call(call(1), undefined, { progress: (text) => said.push(text) });
     expect(first).toEqual({ kind: "opening", name: "宣传片", how: "opened" });
-    expect(opened).toEqual([`${ORIGIN}/offline?open=proj_1`]);
+    expect(opened).toEqual([`${ORIGIN}/offline?open=proj_1&name=%E5%AE%A3%E4%BC%A0%E7%89%87`]);
     expect(said[0]).toMatch(/opening the AnimaQuill editor on "宣传片"/);
     // Once a session.
     expect((await link.call(call(2))).kind).toBe("opening");
@@ -509,5 +509,155 @@ describe("opening the browser", () => {
     expect(openCommand(url, "darwin", undefined)).toEqual({ command: "open", args: [url] });
     expect(openCommand(url, "linux", undefined)).toEqual({ command: "xdg-open", args: [url] });
     expect(openCommand(url, "linux", "/opt/fake")).toEqual({ command: "/opt/fake", args: [url] });
+  });
+});
+
+describe("what review O5b found", { timeout: 30_000 }, () => {
+  const ORIGIN2 = "https://other.test";
+  async function opener(home: string, ports: { first: number; count: number }) {
+    const link = new ElectedLink({
+      identity: await loadIdentity(home),
+      allowed: await allowedOrigins(home, [ORIGIN, ORIGIN2]),
+      toolset: "t",
+      list: "l",
+      ports,
+      home,
+      open: () => {},
+      openWaitMs: 300,
+      giveUpMs: 1_500,
+    });
+    links.push(link);
+    await link.start();
+    return link;
+  }
+  const waitingIn = (page: FakePage) =>
+    page.received
+      .map((raw) => JSON.parse(raw) as { t: string; waiting?: unknown[] })
+      .filter(({ t }) => t === "waiting")
+      .at(-1)?.waiting;
+  const call = (n: number) => ({
+    call: `s-${n}`,
+    session: "s",
+    answer: String(n),
+    tool: "aq_project_status",
+    args: {},
+  });
+
+  it("takes the notice away once the project is open, with no call after", async () => {
+    const home = tempFolder();
+    await rememberOrigin(home, ORIGIN);
+    const ports = portsOfTest();
+    const link = await opener(home, ports);
+    const store = await storeOf(sampleFolder());
+    const other = new FakePage({
+      port: ports.first,
+      origin: ORIGIN,
+      store,
+      project: { mode: "online", key: "other", id: "o", name: "别的" },
+    });
+    await other.connect();
+    // The folder the AI tool works on, with what tells the editor which one it is.
+    const root = sampleFolder();
+    mkdirSync(join(root, ".animaquill/mcp"), { recursive: true });
+    writeFileSync(join(root, ".animaquill/mcp/probe-s.json"), JSON.stringify({ nonce: "n" }));
+    link.session({
+      session: "s",
+      client: { name: "claude-code" },
+      target: {
+        kind: "folder",
+        id: "proj_1",
+        name: "宣传片",
+        root,
+        probe: { path: ".animaquill/mcp/probe-s.json", nonce: "n" },
+      },
+      since: 0,
+    });
+    expect((await link.call(call(1))).kind).toBe("opening");
+    expect(waitingIn(other)).toHaveLength(1);
+    // People open it: the notice goes, though the AI tool calls nothing.
+    const store2 = await storeOf(root);
+    const page2 = new FakePage({
+      port: ports.first,
+      origin: ORIGIN,
+      store: store2,
+      folder: root,
+      project: { mode: "offline", key: "f1", id: "proj_1", name: "宣传片" },
+    });
+    await page2.connect();
+    await new Promise((done) => setTimeout(done, 1_000));
+    expect(waitingIn(other)).toEqual([]);
+    other.close();
+    page2.close();
+    store.destroy();
+    store2.destroy();
+  });
+
+  it("takes the notice away once it waited as long as it does, with no call after", async () => {
+    const home = tempFolder();
+    await rememberOrigin(home, ORIGIN);
+    const ports = portsOfTest();
+    const link = await opener(home, ports);
+    const store = await storeOf(sampleFolder());
+    const other = new FakePage({
+      port: ports.first,
+      origin: ORIGIN,
+      store,
+      project: { mode: "online", key: "other", id: "o", name: "别的" },
+    });
+    await other.connect();
+    link.session({
+      session: "s",
+      target: {
+        kind: "folder",
+        id: "proj_1",
+        name: "宣传片",
+        root: "/x",
+        probe: { path: ".animaquill/mcp/probe-s.json", nonce: "n" },
+      },
+      since: 0,
+    });
+    await link.call(call(1));
+    expect(waitingIn(other)).toHaveLength(1);
+    await new Promise((done) => setTimeout(done, 1_800));
+    expect(waitingIn(other)).toEqual([]);
+    other.close();
+    store.destroy();
+  });
+
+  it("gives pages no address a page said, only one it checked", async () => {
+    const home = tempFolder();
+    const ports = portsOfTest();
+    const link = await opener(home, ports);
+    const s1 = await storeOf(sampleFolder());
+    const evil = new FakePage({
+      port: ports.first,
+      origin: ORIGIN2,
+      store: s1,
+      project: { mode: "online", key: "k", id: "i", name: "x", link: "javascript:alert(1)" },
+    });
+    await evil.connect();
+    link.session({ session: "s", client: { name: "c" }, target: { kind: "front" }, since: 0 });
+    await link.call(call(1));
+    evil.close();
+    const s2 = await storeOf(sampleFolder());
+    const victim = new FakePage({
+      port: ports.first,
+      origin: ORIGIN,
+      store: s2,
+      project: { mode: "online", key: "v", id: "v", name: "v" },
+    });
+    await victim.connect();
+    const second = await link.call(call(2));
+    console.log(
+      "SECOND",
+      JSON.stringify(second),
+      victim.received.filter((r) => r.includes("waiting")),
+    );
+    const seen = JSON.stringify(waitingIn(victim) ?? []);
+    expect(seen).not.toContain("javascript:");
+    expect(seen).toContain(`${ORIGIN2}/p/k`);
+    victim.close();
+    s1.destroy();
+    s2.destroy();
   });
 });

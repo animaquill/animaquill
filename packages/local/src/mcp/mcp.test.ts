@@ -219,7 +219,12 @@ async function connect(
     args: [CLI, "mcp", ...args],
     cwd,
     // Nothing opens in a browser here.
-    env: { ...(process.env as Record<string, string>), ANIMAQUILL_OPEN: "true", ...env },
+    env: {
+      ...(process.env as Record<string, string>),
+      ANIMAQUILL_TEST: "1",
+      ANIMAQUILL_OPEN: "true",
+      ...env,
+    },
     stderr: "pipe",
   });
   await client.connect(transport);
