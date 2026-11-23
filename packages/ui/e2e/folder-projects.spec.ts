@@ -32,19 +32,13 @@ test.use({
 });
 
 test.describe("a project folder", () => {
-  test("is where a new project goes, and gets all of it", async ({ page, devPage }) => {
+  test("is where a new project goes, and gets all of it", async ({ page }) => {
     await installChosen(page);
     await page.reload();
-    await page.getByRole("button", { name: "新建项目" }).click();
+    await page.getByRole("button", { name: "新建项目" }).first().click();
     await page.getByRole("textbox", { name: "项目名称" }).fill("新的片子");
-    if (devPage) {
-      // No platform: the name, and then the folder.
-      await dialog(page).getByRole("button", { name: "选文件夹…" }).click();
-    } else {
-      // The site asks which kind first: nobody is signed in, so one of this computer.
-      await expect(page.getByRole("radio", { name: /^离线项目/ })).toBeChecked();
-      await page.getByRole("button", { name: "新建", exact: true }).click();
-    }
+    // The offline mode, also on the site: the name, and then the folder.
+    await dialog(page).getByRole("button", { name: "选文件夹…" }).click();
     await expect(tab(page, "preview")).toBeVisible();
     await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
     await expect
@@ -189,7 +183,8 @@ test.describe("a folder dropped on the page", () => {
   });
 
   test("while a dialog asks something says to answer it first", async ({ page }) => {
-    await page.getByRole("button", { name: "新建项目" }).click();
+    // Where there are projects already, the new card has the same name as the button above it.
+    await page.getByRole("button", { name: "新建项目" }).first().click();
     await expect(dialog(page)).toBeVisible();
     await drop(page, emptyOnDisk());
     await expect(page.getByText("先回答对话框里的问题，再把文件夹拖进来。")).toBeVisible();

@@ -231,18 +231,17 @@ export const test = base.extend<{
       }
       await page.goto("/");
       await editorReady(page);
-      if (withProject) {
-        // On a site with a backend (scripts/e2e-edge) the page asks first: these tests are of the
-        // offline mode, where a project is made without anybody signed in.
-        const offline = page.getByTestId("entry").getByRole("button", {
-          name: "不登录，使用离线模式",
-        });
-        if (await offline.isVisible()) {
-          await offline.click();
-          await editorReady(page);
-        }
-        await createProject(page);
+      // On a site with a backend (scripts/e2e-edge, scripts/e2e-prod) the page asks first: these
+      // tests are of the offline mode, where nobody is signed in, also those that make their own
+      // project (2026-11-23: on the site they all stopped at the entry page).
+      const offline = page.getByTestId("entry").getByRole("button", {
+        name: "不登录，使用离线模式",
+      });
+      if (await offline.isVisible()) {
+        await offline.click();
+        await expect(page.locator("header").first()).toBeVisible({ timeout: 0 });
       }
+      if (withProject) await createProject(page);
       await use(problems);
       expect(problems).toEqual([]);
     },
