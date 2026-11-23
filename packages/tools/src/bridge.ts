@@ -54,6 +54,22 @@ const session = z.object({
 });
 export type BridgeSession = z.infer<typeof session>;
 
+/** A project AI tools wait for, as pages show it: see `ToPage`, "waiting". */
+const waitingFor = z.object({
+  /** Which project, the same for every session that waits for it. */
+  key: z.string().max(500),
+  mode: z.enum(["online", "offline"]),
+  /** The id in animaquill.json, where it is known. */
+  id: z.string().max(200).optional(),
+  name: z.string().max(500),
+  /** Online: its address. */
+  link: z.string().max(2000).optional(),
+  clients: z.array(client).max(100),
+  /** Pages that have a project with this id open, in another folder: a copy. */
+  notHere: z.array(id).max(100).optional(),
+});
+export type BridgeWaiting = z.infer<typeof waitingFor>;
+
 /** What the relay sends to a page. */
 export const toPage = z.discriminatedUnion("t", [
   z.object({
@@ -88,6 +104,8 @@ export const toPage = z.discriminatedUnion("t", [
   /** Whether the page's folder has this file with this content, see `BridgeProbe`. */
   z.object({ t: z.literal("probe"), probe: id, path: z.string().max(300), nonce: z.string() }),
   z.object({ t: z.literal("sessions"), sessions: z.array(session).max(1000) }),
+  /** The projects AI tools wait for an editor to open, each once however many wait. */
+  z.object({ t: z.literal("waiting"), waiting: z.array(waitingFor).max(100) }),
   z.object({ t: z.literal("ping") }),
 ]);
 export type ToPage = z.infer<typeof toPage>;
@@ -117,6 +135,8 @@ export const fromPage = z.discriminatedUnion("t", [
     /** The project it has open, and whether it takes calls for it: one page in a browser does. */
     project: pageProject.optional(),
     serving: z.boolean(),
+    /** It has the project open and cannot run calls on it: the browser does not let it at the folder. */
+    blocked: z.literal("needs-permission").optional(),
     hidden: z.boolean(),
     /** When it was last in front, by its clock. */
     frontAt: z.number(),

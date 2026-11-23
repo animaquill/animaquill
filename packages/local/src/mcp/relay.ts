@@ -10,6 +10,7 @@ import {
   type BridgeClient,
   type BridgeResult,
   type BridgeSession,
+  type BridgeWaiting,
   type FromPage,
   type PageProject,
   type ToPage,
@@ -17,7 +18,9 @@ import {
 import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { RelayIdentity } from "./identity.ts";
 import type { AllowedOrigins } from "./origins.ts";
+import { openBrowser } from "../open-browser.ts";
 import { peerAuth, peerProof, readPeer, relayProof } from "./peer.ts";
+import { lastOrigin, rememberOrigin } from "./state.ts";
 import { isOwnUser } from "./uid.ts";
 
 /**
@@ -40,6 +43,8 @@ export type Target =
   | {
       readonly kind: "folder";
       readonly id: string;
+      /** What the project is called, as animaquill.json says, for people waiting for it. */
+      readonly name?: string;
       readonly root: string;
       readonly probe: { readonly path: string; readonly nonce: string };
     }
@@ -75,12 +80,25 @@ export interface CallRequest {
 export interface CallEvents {
   /** It went to a page, where it may run. */
   readonly dispatched?: () => void;
+  /** It waits for an editor, as this says, for people. */
+  readonly progress?: (message: string) => void;
 }
 
 export type CallAnswer =
   | { readonly kind: "result"; readonly result: BridgeResult; readonly bound: Bound }
-  /** No page has the project open and takes calls for it. */
-  | { readonly kind: "no-page" }
+  /**
+   * No page has the project open and takes calls for it. `gaveUp`: an editor was waited for since
+   * `WAIT_GIVE_UP_MS` ago, and none came.
+   */
+  | { readonly kind: "no-page"; readonly gaveUp?: true }
+  /** An editor is being opened for it, and it did not come in `OPEN_WAIT_MS`: nothing ran. */
+  /**
+   * An editor is waited for, and did not come in `OPEN_WAIT_MS`: nothing ran. `opened`: the browser
+   * was opened on it; `asked`: the editors that are open say that AI tools wait for it.
+   */
+  | { readonly kind: "opening"; readonly name: string; readonly how: "opened" | "asked" }
+  /** A page has the project open, and the browser does not let it at its folder. */
+  | { readonly kind: "needs-permission"; readonly name: string }
   /** The page went away while the call ran. */
   | { readonly kind: "gone" };
 
@@ -93,6 +111,15 @@ export const MAX_PEERS = 64;
 
 /** How long a call waits for a page that has its project, before it says there is none. */
 export const PAGE_WAIT_MS = 5_000;
+/**
+ * How long a call waits for an editor once it waits for one (design 5.5), and how long after the
+ * first such wait an editor is still waited for at all.
+ */
+export const OPEN_WAIT_MS = 20_000;
+export const WAIT_GIVE_UP_MS = 2 * 60_000;
+/** How long after one project was opened in the browser it is not opened again. */
+const OPENED_AGAIN_MS = 2 * 60_000;
+
 /** How long a page has to look for the file of a probe. */
 const PROBE_MS = 5_000;
 
@@ -108,8 +135,26 @@ interface Session extends SessionInfo {
   /** The page instance it works with now, and what that page has open. */
   page: string | undefined;
   bound: Bound | undefined;
-  /** Pages whose folder had the probe, by page instance. */
+  /** Pages whose folder had the probe, by page instance, and those whose folder did not. */
   readonly probed: Set<string>;
+  readonly notProbed: Set<string>;
+  /** When it began to wait for an editor, while it does. */
+  waitingSince: number | undefined;
+  /** An editor was opened in the browser for it once. */
+  opened: boolean;
+  /** It waited for an editor until `WAIT_GIVE_UP_MS`, and none came. */
+  gaveUp: boolean;
+}
+
+/** What the router needs to open an editor in the browser, see `Router.call`. */
+export interface Opening {
+  /** The origin of the editor that connected last, which a folder opens on. */
+  readonly lastOrigin: () => Promise<string | undefined>;
+  /** Whether a site is one that may take calls, as people allowed it now. */
+  readonly allowed: (origin: string) => Promise<boolean>;
+  readonly open: (url: string) => void;
+  readonly openWaitMs?: number;
+  readonly giveUpMs?: number;
 }
 
 /** What a page answered to a call, before the router says which project it was. */
@@ -130,14 +175,52 @@ const textOf = (data: RawData): string =>
     ? Buffer.concat(data).toString("utf8")
     : Buffer.from(data as ArrayBuffer).toString("utf8");
 
+/** Which project a session waits for, for people: none for one that has not found any yet. */
+function waitingOf(session: Session): Omit<BridgeWaiting, "clients" | "notHere"> | undefined {
+  const { target } = session;
+  switch (target.kind) {
+    case "folder":
+      return {
+        key: `offline\n${target.id}`,
+        mode: "offline",
+        id: target.id,
+        name: target.name ?? target.id,
+      };
+    case "link": {
+      const link = `${target.origin}/p/${encodeURIComponent(target.project)}`;
+      return { key: `online\n${link}`, mode: "online", name: link, link };
+    }
+    case "front": {
+      const project = target.bound?.project;
+      if (!project) return undefined;
+      return project.mode === "offline"
+        ? { key: `offline\n${project.id}`, mode: "offline", id: project.id, name: project.name }
+        : {
+            key: `online\n${target.bound?.origin}\n${project.key}`,
+            mode: "online",
+            id: project.id,
+            name: project.name,
+            ...(project.link && { link: project.link }),
+          };
+    }
+  }
+}
+
 /** Calls to pages and what they answer, for sessions of this process and of peers alike. */
 export class Router {
+  readonly #opening: Opening | undefined;
+  /** When each project was last opened in the browser, by `waitingKey`. */
+  readonly #openedAt = new Map<string, number>();
   readonly #pages = new Map<WebSocket, PageConnection>();
   readonly #sessions = new Map<string, Session>();
   readonly #pending = new Map<string, Pending>();
-  readonly #probes = new Map<string, (found: boolean) => void>();
+  readonly #probes = new Map<string, (found: boolean | undefined) => void>();
   readonly #listeners = new Set<() => void>();
   readonly #searching = new Map<string, Promise<PageConnection | undefined>>();
+
+  constructor(opening?: Opening) {
+    this.#opening = opening;
+  }
 
   /** Hears of every change of pages and sessions, for tests. */
   onChange(listener: () => void): () => void {
@@ -162,12 +245,18 @@ export class Router {
       page: known?.page,
       bound,
       probed: known?.probed ?? new Set(),
+      notProbed: known?.notProbed ?? new Set(),
+      waitingSince: known?.waitingSince,
+      opened: known?.opened ?? false,
+      gaveUp: known?.gaveUp ?? false,
     });
     void this.#bindAll();
   }
 
   removeSession(session: string): void {
-    if (this.#sessions.delete(session)) this.#tellSessions();
+    if (!this.#sessions.delete(session)) return;
+    this.#tellSessions();
+    this.#tellWaiting();
   }
 
   /** Runs a call on the page of its session's project. */
@@ -178,10 +267,17 @@ export class Router {
   ): Promise<CallAnswer> {
     const session = this.#sessions.get(request.session);
     if (!session) return { kind: "no-page" };
-    const page = await this.#waitForPage(session, signal);
-    const info = page?.info;
+    // One that waits for an editor already waits for it at once.
+    const first = session.waitingSince === undefined ? PAGE_WAIT_MS : 0;
+    let page = await this.#waitForPage(session, signal, first);
+    if (!page) {
+      const waited = await this.#waitForEditor(session, signal, events);
+      if (waited.kind !== "page") return waited;
+      page = waited.page;
+    }
+    const info = page.info;
     const project = info?.project;
-    if (!page || !info || !project) return { kind: "no-page" };
+    if (!info || !project) return { kind: "no-page" };
     const answer = await new Promise<PageAnswer>((resolve) => {
       const onAbort = () => send(page.ws, { t: "cancel", call: request.call });
       signal?.addEventListener("abort", onAbort, { once: true });
@@ -215,8 +311,12 @@ export class Router {
    * The page of a session, waiting a moment for one: pages connect again right after the relay
    * changed, and say what they have open a little after they connect.
    */
-  async #waitForPage(session: Session, signal?: AbortSignal): Promise<PageConnection | undefined> {
-    const until = Date.now() + PAGE_WAIT_MS;
+  async #waitForPage(
+    session: Session,
+    signal: AbortSignal | undefined,
+    ms: number,
+  ): Promise<PageConnection | undefined> {
+    const until = Date.now() + ms;
     for (;;) {
       const page = await this.#pageOf(session);
       if (page || signal?.aborted || Date.now() >= until) return page;
@@ -230,6 +330,148 @@ export class Router {
         }
       });
     }
+  }
+
+  /**
+   * Waits for an editor to open the project of a session, after `PAGE_WAIT_MS` found none (design
+   * 5.5): a page that has it open and is not let at its folder says so at once; otherwise the pages
+   * that are connected show that AI tools wait for it, and where none is, the browser opens it,
+   * once a session and once in `OPENED_AGAIN_MS` a project. Then `OPEN_WAIT_MS`, and the call says
+   * the editor is being opened; `WAIT_GIVE_UP_MS` after the first wait, that none came.
+   */
+  async #waitForEditor(
+    session: Session,
+    signal: AbortSignal | undefined,
+    events: CallEvents,
+  ): Promise<
+    | { readonly kind: "page"; readonly page: PageConnection }
+    | Exclude<CallAnswer, { kind: "result" | "gone" }>
+  > {
+    const blocked = this.#blockedFor(session);
+    if (blocked) return { kind: "needs-permission", name: blocked };
+    // Waited for in vain once: not again, until an editor has the project.
+    if (session.gaveUp) return { kind: "no-page", gaveUp: true };
+    const opening = this.#opening;
+    const waiting = waitingOf(session);
+    if (!opening || !waiting) return { kind: "no-page" };
+    const now = Date.now();
+    // Where nothing can bring an editor, there is nothing to wait for: no page that people see, and
+    // nothing to open in the browser.
+    const shown = [...this.#pages.values()].some(({ info }) => info !== undefined);
+    const url = shown || session.opened ? undefined : await this.#addressOf(session, opening);
+    if (!shown && !session.opened && url === undefined) return { kind: "no-page" };
+    session.waitingSince ??= now;
+    if (now - session.waitingSince >= (opening.giveUpMs ?? WAIT_GIVE_UP_MS)) {
+      session.waitingSince = undefined;
+      session.gaveUp = true;
+      this.#tellWaiting();
+      return { kind: "no-page", gaveUp: true };
+    }
+    this.#tellWaiting();
+    if (shown) {
+      events.progress?.(`waiting for the AnimaQuill editor to open "${waiting.name}"`);
+    } else if (!session.opened) {
+      const last = this.#openedAt.get(waiting.key);
+      if (url && (last === undefined || now - last >= OPENED_AGAIN_MS)) {
+        session.opened = true;
+        this.#openedAt.set(waiting.key, now);
+        opening.open(url);
+        events.progress?.(`opening the AnimaQuill editor on "${waiting.name}"`);
+      }
+    }
+    const page = await this.#waitForPage(session, signal, opening.openWaitMs ?? OPEN_WAIT_MS);
+    if (!page) {
+      const late = this.#blockedFor(session);
+      return late
+        ? { kind: "needs-permission", name: late }
+        : {
+            kind: "opening",
+            name: waiting.name,
+            how: session.opened || this.#openedAt.has(waiting.key) ? "opened" : "asked",
+          };
+    }
+    session.waitingSince = undefined;
+    this.#tellWaiting();
+    return { kind: "page", page };
+  }
+
+  /** The name of the project of a session, where a page has it open and is not let at its folder. */
+  #blockedFor(session: Session): string | undefined {
+    const { target } = session;
+    for (const { info } of this.#pages.values()) {
+      const project = info?.project;
+      if (info?.blocked !== "needs-permission" || !project) continue;
+      const fits =
+        target.kind === "folder"
+          ? project.mode === "offline" && project.id === target.id
+          : target.kind === "link"
+            ? project.mode === "online" && project.key === target.project
+            : target.bound !== undefined &&
+              project.mode === target.bound.project.mode &&
+              project.key === target.bound.project.key;
+      if (fits) return project.name;
+    }
+    return undefined;
+  }
+
+  /** Where the browser opens the project of a session, checked against the sites allowed now. */
+  async #addressOf(session: Session, opening: Opening): Promise<string | undefined> {
+    const { target } = session;
+    let url: URL | undefined;
+    try {
+      if (target.kind === "link") {
+        url = new URL(`/p/${encodeURIComponent(target.project)}`, target.origin);
+      } else if (target.kind === "front" && target.bound?.project.mode === "online") {
+        url = new URL(`/p/${encodeURIComponent(target.bound.project.key)}`, target.bound.origin);
+      } else {
+        const id =
+          target.kind === "folder"
+            ? target.id
+            : target.bound?.project.mode === "offline"
+              ? target.bound.project.id
+              : undefined;
+        const origin =
+          target.kind === "front" && target.bound
+            ? target.bound.origin
+            : await opening.lastOrigin();
+        if (id === undefined || origin === undefined) return undefined;
+        url = new URL("/offline", origin);
+        url.searchParams.set("open", id);
+      }
+    } catch {
+      return undefined;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") return undefined;
+    if (url.username !== "" || url.password !== "") return undefined;
+    return (await opening.allowed(url.origin)) ? url.href : undefined;
+  }
+
+  /** Tells every page which projects AI tools wait for, each once. */
+  #tellWaiting(): void {
+    const byProject = new Map<string, BridgeWaiting>();
+    for (const session of this.#sessions.values()) {
+      if (session.waitingSince === undefined) continue;
+      const waiting = waitingOf(session);
+      if (!waiting) continue;
+      const known = byProject.get(waiting.key);
+      const clients = [
+        ...(known?.clients ?? []),
+        ...(session.client ? [session.client] : [{ name: "" }]),
+      ];
+      const notHere = [
+        ...new Set([
+          ...(known?.notHere ?? []),
+          ...[...session.notProbed].map((instance) => instance.split("\n")[0] ?? ""),
+        ]),
+      ];
+      byProject.set(waiting.key, {
+        ...waiting,
+        clients,
+        ...(notHere.length > 0 && { notHere }),
+      });
+    }
+    const message = { t: "waiting", waiting: [...byProject.values()] };
+    for (const page of this.#pages.values()) send(page.ws, message);
   }
 
   /** A page connected, already checked. */
@@ -247,6 +489,7 @@ export class Router {
     ping.unref();
     ws.once("close", () => clearInterval(ping));
     this.#tellSessions(page);
+    this.#tellWaiting();
   }
 
   #fromPage(page: PageConnection, raw: string): void {
@@ -317,6 +560,7 @@ export class Router {
     if (!found?.info?.project) return undefined;
     session.page = found.info.page;
     session.bound = { origin: found.origin, project: found.info.project };
+    session.gaveUp = false;
     this.#tellSessions();
     return found;
   }
@@ -337,7 +581,7 @@ export class Router {
         return (
           project.mode === "offline" &&
           project.id === target.id &&
-          session.probed.has(page.info?.page ?? "")
+          session.probed.has(`${page.info?.page ?? ""}\n${project.key}`)
         );
       case "link":
         return (
@@ -365,29 +609,38 @@ export class Router {
       ({ info }) => info?.project?.mode === "offline" && info.project.id === target.id,
     );
     for (const page of candidates) {
-      const instance = page.info?.page ?? "";
+      // A page and the folder it has open: another folder in the same page is probed anew.
+      const instance = `${page.info?.page ?? ""}\n${page.info?.project?.key ?? ""}`;
       if (session.probed.has(instance)) return page;
-      if (await this.#probe(page, target.probe)) {
+      if (session.notProbed.has(instance)) continue;
+      const found = await this.#probe(page, target.probe);
+      if (found) {
         session.probed.add(instance);
         return page;
       }
+      // Another folder with the same project: a copy.
+      if (found === false) session.notProbed.add(instance);
     }
     return undefined;
   }
 
   /** Asks a page whether its folder has the file of a probe, which only the folder meant has. */
-  #probe(page: PageConnection, probe: { path: string; nonce: string }): Promise<boolean> {
+  #probe(
+    page: PageConnection,
+    probe: { path: string; nonce: string },
+  ): Promise<boolean | undefined> {
     const id = randomBytes(9).toString("base64url");
     const key = `${page.info?.page}\n${id}`;
     return new Promise((resolve) => {
-      const done = (found: boolean) => {
+      // Undefined where the page did not answer: busy, or gone, which says nothing of its folder.
+      const done = (found: boolean | undefined) => {
         clearTimeout(timer);
         this.#probes.delete(key);
         resolve(found);
       };
-      const timer = setTimeout(() => done(false), PROBE_MS);
+      const timer = setTimeout(() => done(undefined), PROBE_MS);
       this.#probes.set(key, done);
-      page.ws.once("close", () => done(false));
+      page.ws.once("close", () => done(undefined));
       send(page.ws, { t: "probe", probe: id, path: probe.path, nonce: probe.nonce });
     });
   }
@@ -440,6 +693,15 @@ export interface RelayOptions {
   /** `TOOLSET_VERSION` and the hash of the list, which pages compare with theirs. */
   readonly toolset: string;
   readonly list: string;
+  /**
+   * Where this user's things are (`animaquill mcp`'s home): with it, the relay opens an editor in
+   * the browser for a call that finds none, see `Router.call`.
+   */
+  readonly home?: string;
+  /** What opens an address in the browser; `openBrowser` but in tests. */
+  readonly open?: (url: string) => void;
+  readonly openWaitMs?: number;
+  readonly giveUpMs?: number;
   /** Whether a connection is of this user; `isOwnUser` but in tests. */
   readonly ownUser?: (localPort: number, remotePort: number) => Promise<boolean>;
 }
@@ -475,7 +737,7 @@ export async function admit(
 
 /** The relay as it listens on one port. */
 export class Relay {
-  readonly router = new Router();
+  readonly router: Router;
   readonly port: number;
   readonly #server: Server;
   readonly #sockets: WebSocketServer;
@@ -491,6 +753,21 @@ export class Relay {
     this.#server = server;
     this.port = port;
     this.#options = options;
+    const { home, allowed } = options;
+    this.router = new Router(
+      home === undefined
+        ? undefined
+        : {
+            lastOrigin: () => lastOrigin(home),
+            allowed: async (origin) => {
+              await allowed.reload().catch(() => {});
+              return allowed.has(origin);
+            },
+            open: options.open ?? openBrowser,
+            ...(options.openWaitMs !== undefined && { openWaitMs: options.openWaitMs }),
+            ...(options.giveUpMs !== undefined && { giveUpMs: options.giveUpMs }),
+          },
+    );
     this.#sockets = new WebSocketServer({ noServer: true, maxPayload: BRIDGE_MAX_BYTES });
     server.on("request", (request, response) => void this.#request(request, response));
     server.on("upgrade", (request, socket, head) => void this.#upgrade(request, socket, head));
@@ -602,6 +879,10 @@ export class Relay {
       signature: identity.sign(proofText(nonce, origin, this.port)),
     });
     this.router.addPage(ws, origin);
+    // The site an editor for a folder opens on, next time one is opened.
+    if (this.#options.home !== undefined) {
+      void rememberOrigin(this.#options.home, origin).catch(() => {});
+    }
   }
 
   /**

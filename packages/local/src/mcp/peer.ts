@@ -30,6 +30,7 @@ const target = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("folder"),
     id: z.string().max(200),
+    name: z.string().max(500).optional(),
     root: z.string().max(4096),
     probe: z.object({ path: z.string().max(300), nonce: z.string().max(200) }),
   }),
@@ -94,6 +95,7 @@ const result = z.object({
 /** What the relay says of a peer's call: that it went to a page, and its answer. */
 export const toPeer = z.discriminatedUnion("t", [
   z.object({ t: z.literal("dispatched"), call: id }),
+  z.object({ t: z.literal("progress"), call: id, message: z.string().max(500) }),
   z.object({
     t: z.literal("answer"),
     call: id,
@@ -103,7 +105,13 @@ export const toPeer = z.discriminatedUnion("t", [
         result,
         bound: z.object({ origin: z.string(), project }),
       }),
-      z.object({ kind: z.literal("no-page") }),
+      z.object({ kind: z.literal("no-page"), gaveUp: z.literal(true).optional() }),
+      z.object({
+        kind: z.literal("opening"),
+        name: z.string().max(500),
+        how: z.enum(["opened", "asked"]),
+      }),
+      z.object({ kind: z.literal("needs-permission"), name: z.string().max(500) }),
       z.object({ kind: z.literal("gone") }),
     ]),
   }),

@@ -6,7 +6,9 @@ import { WebSocket } from "ws";
 import { IdentityRefused, KEY_FILE, loadIdentity, type RelayIdentity } from "./identity.ts";
 import { ElectedLink } from "./link.ts";
 import { allowOrigin, allowedOrigins } from "./origins.ts";
+import { openCommand } from "../open-browser.ts";
 import { peerProof } from "./peer.ts";
+import { rememberOrigin } from "./state.ts";
 import { admit } from "./relay.ts";
 import { FakePage, cleanUp, sampleFolder, storeOf, tempFolder } from "./test-support.ts";
 import { ownerOf } from "./uid.ts";
@@ -386,5 +388,126 @@ describe("a call that waited at a relay that went", { timeout: 30_000 }, () => {
     expect(store.getState().files["code/waited.js"]).toContain("a = 1");
     page.close();
     store.destroy();
+  });
+});
+
+describe("a call that finds no editor (O5b)", { timeout: 30_000 }, () => {
+  async function opener(home: string, ports: { first: number; count: number }) {
+    const opened: string[] = [];
+    const link = new ElectedLink({
+      identity: await loadIdentity(home),
+      allowed: await allowedOrigins(home, [ORIGIN]),
+      toolset: "t",
+      list: "l",
+      ports,
+      home,
+      open: (url) => opened.push(url),
+      openWaitMs: 300,
+      giveUpMs: 1_500,
+    });
+    links.push(link);
+    await link.start();
+    return { link, opened };
+  }
+  const folderTarget = {
+    kind: "folder" as const,
+    id: "proj_1",
+    name: "宣传片",
+    root: "/x",
+    probe: { path: ".animaquill/mcp/probe-s.json", nonce: "n" },
+  };
+  const call = (n: number) => ({
+    call: `s-${n}`,
+    session: "s",
+    answer: String(n),
+    tool: "aq_project_status",
+    args: {},
+  });
+
+  it("opens the editor of the last site once, on the folder's project, and gives up in the end", async () => {
+    const home = tempFolder();
+    await rememberOrigin(home, ORIGIN);
+    const { link, opened } = await opener(home, portsOfTest());
+    link.session({ session: "s", target: folderTarget, since: 0 });
+    const said: string[] = [];
+    const first = await link.call(call(1), undefined, { progress: (text) => said.push(text) });
+    expect(first).toEqual({ kind: "opening", name: "宣传片", how: "opened" });
+    expect(opened).toEqual([`${ORIGIN}/offline?open=proj_1`]);
+    expect(said[0]).toMatch(/opening the AnimaQuill editor on "宣传片"/);
+    // Once a session.
+    expect((await link.call(call(2))).kind).toBe("opening");
+    expect(opened).toHaveLength(1);
+    await new Promise((done) => setTimeout(done, 1_600));
+    expect(await link.call(call(3))).toEqual({ kind: "no-page", gaveUp: true });
+  });
+
+  it("opens no site that is not allowed now, nor where none connected ever", async () => {
+    const home = tempFolder();
+    await rememberOrigin(home, "https://elsewhere.test");
+    const { link, opened } = await opener(home, portsOfTest());
+    link.session({ session: "s", target: folderTarget, since: 0 });
+    // Nothing can bring an editor: it says so, without waiting.
+    expect((await link.call(call(1))).kind).toBe("no-page");
+    const none = await opener(tempFolder(), portsOfTest());
+    none.link.session({ session: "s", target: folderTarget, since: 0 });
+    await none.link.call(call(1));
+    expect([...opened, ...none.opened]).toEqual([]);
+  });
+
+  it("tells the pages that are open, and opens nothing, where there are some", async () => {
+    const home = tempFolder();
+    await rememberOrigin(home, ORIGIN);
+    const ports = portsOfTest();
+    const { link, opened } = await opener(home, ports);
+    const store = await storeOf(sampleFolder());
+    const page = new FakePage({
+      port: ports.first,
+      origin: ORIGIN,
+      store,
+      project: { mode: "online", key: "other", id: "o", name: "别的" },
+    });
+    await page.connect();
+    link.session({ session: "s", client: { name: "claude-code" }, target: folderTarget, since: 0 });
+    expect((await link.call(call(1))).kind).toBe("opening");
+    expect(opened).toEqual([]);
+    const waiting = page.received.map((raw) => JSON.parse(raw)).filter(({ t }) => t === "waiting");
+    expect(waiting.at(-1)?.waiting).toMatchObject([
+      { mode: "offline", id: "proj_1", name: "宣传片", clients: [{ name: "claude-code" }] },
+    ]);
+    page.close();
+    store.destroy();
+  });
+
+  it("says a page has the project and is not let at its folder", async () => {
+    const home = tempFolder();
+    const ports = portsOfTest();
+    const { link } = await opener(home, ports);
+    const store = await storeOf(sampleFolder());
+    const page = new FakePage({
+      port: ports.first,
+      origin: ORIGIN,
+      store,
+      project: { mode: "offline", key: "f1", id: "proj_1", name: "宣传片" },
+      serving: false,
+      blocked: "needs-permission",
+    });
+    await page.connect();
+    link.session({ session: "s", target: folderTarget, since: 0 });
+    expect(await link.call(call(1))).toEqual({ kind: "needs-permission", name: "宣传片" });
+    page.close();
+    store.destroy();
+  });
+});
+
+describe("opening the browser", () => {
+  it("gives the address as one argument, through no shell, on every system", () => {
+    const url = "https://editor.test/offline?open=a&b=c";
+    expect(openCommand(url, "win32", undefined)).toEqual({
+      command: "rundll32.exe",
+      args: ["url.dll,FileProtocolHandler", url],
+    });
+    expect(openCommand(url, "darwin", undefined)).toEqual({ command: "open", args: [url] });
+    expect(openCommand(url, "linux", undefined)).toEqual({ command: "xdg-open", args: [url] });
+    expect(openCommand(url, "linux", "/opt/fake")).toEqual({ command: "/opt/fake", args: [url] });
   });
 });

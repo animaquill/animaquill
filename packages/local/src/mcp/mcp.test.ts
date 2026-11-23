@@ -218,7 +218,8 @@ async function connect(
     command: process.execPath,
     args: [CLI, "mcp", ...args],
     cwd,
-    env: { ...(process.env as Record<string, string>), ...env },
+    // Nothing opens in a browser here.
+    env: { ...(process.env as Record<string, string>), ANIMAQUILL_OPEN: "true", ...env },
     stderr: "pipe",
   });
   await client.connect(transport);
@@ -374,9 +375,10 @@ describe("animaquill mcp", { timeout: 60_000 }, () => {
         () => false,
       ),
     );
+    // The page of the other folder shows that AI tools wait for this one; nothing runs there.
     const result = await client.callTool({ name: "aq_project_status", arguments: {} });
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toMatch(/editor-not-open/);
+    expect(textOf(result)).toMatch(/^error editor-opening: .*wait for the project/);
     await client.close();
     page.close();
     store.destroy();

@@ -683,6 +683,47 @@ export class ProjectFolders {
     return this.projects.records.list();
   }
 
+  /**
+   * Opens the project an AI tool on this computer waits for, by the id in its animaquill.json
+   * (docs/design/online-offline.md of AnimaQuill Cloud, 5.5): the one folder this browser knows with
+   * it, or the one people choose of several (copies have the same id), or one they choose anew. With
+   * `clicked`, right after people did something, it may ask the browser to let it at the folder;
+   * without, it opens only a folder it may already, and says "ask" where people have to click.
+   */
+  async openForAi(project: string, clicked: boolean): Promise<"opened" | "ask"> {
+    const records = [...(await this.projects.records.withProject(project))].toSorted(
+      (a, b) => b.openedAt - a.openedAt,
+    );
+    if (records.length === 0) {
+      if (!clicked) return "ask";
+      await this.open();
+      return "opened";
+    }
+    let record: FolderRecord | undefined = records[0];
+    if (records.length > 1) {
+      if (!clicked) return "ask";
+      const { t } = this.#options;
+      const chosen = await this.#options.dialogs.choose({
+        title: t("localAi.waiting.chooseTitle", { name: records[0]?.name ?? "" }),
+        message: t("localAi.waiting.chooseMessage"),
+        stacked: true,
+        choices: records.map((each) => ({
+          id: each.id,
+          label: t("localAi.waiting.chooseFolder", {
+            folder: each.folder.name,
+            when: new Date(each.openedAt).toLocaleString("zh-CN"),
+            interpolation: { escapeValue: false },
+          }),
+        })),
+      });
+      record = records.find(({ id }) => id === chosen);
+    }
+    if (!record) return "opened";
+    if (!clicked && (await this.projects.statusOf(record)) !== "ready") return "ask";
+    await this.openRecent(record);
+    return "opened";
+  }
+
   /** A folder opened before, from the list on the start page. */
   async openRecent(record: FolderRecord): Promise<void> {
     const status = await this.projects.statusOf(record);

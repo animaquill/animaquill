@@ -49,6 +49,17 @@ function notOpen(target: Target): string {
   return `error editor-not-open: no AnimaQuill editor on this computer has ${what} open and connected to AI tools on this computer, so nothing was done. The call runs once ${what === "any project" ? "a project" : "it"} is open in the AnimaQuill editor in Chrome or Edge, and the editor is connected: in the editor, 帮助 › 连接电脑上的 AI 工具 › 连接, then 允许 where the browser asks about this computer.`;
 }
 
+/** What waiting for an editor for two minutes came to. */
+function notOpenInTime(target: Target): string {
+  const what =
+    target.kind === "folder"
+      ? `the project in the folder ${target.root}`
+      : target.kind === "link"
+        ? `the project ${target.origin}/p/${encodeURIComponent(target.project)}`
+        : `the project ${JSON.stringify(target.bound?.project.name ?? "")}`;
+  return `error editor-not-open: no AnimaQuill editor opened ${what} in the two minutes since it was waited for, so nothing was done. The call runs once the user opens it in the AnimaQuill editor in Chrome or Edge, connected: 帮助 › 连接电脑上的 AI 工具 › 连接.`;
+}
+
 export interface McpSessionOptions {
   readonly link: RelayLink;
   /** Finds what the session works on, once. */
@@ -108,11 +119,20 @@ export class McpSession {
     });
   }
 
-  call(name: string, args: unknown, signal?: AbortSignal): Promise<BridgeResult> {
+  /**
+   * Runs a call. `progress` hears what it waits for, for the notifications of progress where the
+   * client asked for them.
+   */
+  call(
+    name: string,
+    args: unknown,
+    signal?: AbortSignal,
+    progress?: (message: string) => void,
+  ): Promise<BridgeResult> {
     if (this.#pending === 0) this.#answers += 1;
     this.#pending += 1;
     const answer = String(this.#answers);
-    return this.#run(name, args, answer, signal).finally(() => {
+    return this.#run(name, args, answer, signal, progress).finally(() => {
       this.#pending -= 1;
     });
   }
@@ -122,6 +142,7 @@ export class McpSession {
     args: unknown,
     answer: string,
     signal: AbortSignal | undefined,
+    progress: ((message: string) => void) | undefined,
   ): Promise<BridgeResult> {
     const found = await this.open();
     if (found.kind === "none") return failed(found.reason);
@@ -130,8 +151,25 @@ export class McpSession {
     const result = await this.#options.link.call(
       { call: `${this.session}-${this.#calls}`, session: this.session, answer, tool: name, args },
       signal,
+      { ...(progress && { progress }) },
     );
-    if (result.kind === "no-page") return failed(notOpen(target));
+    if (result.kind === "no-page") {
+      return failed(result.gaveUp ? notOpenInTime(target) : notOpen(target));
+    }
+    if (result.kind === "opening") {
+      const how =
+        result.how === "opened"
+          ? `the AnimaQuill editor is being opened in the browser on the project ${JSON.stringify(result.name)}`
+          : `the AnimaQuill editor shows the user that AI tools wait for the project ${JSON.stringify(result.name)} to be opened`;
+      return failed(
+        `error editor-opening: ${how}, and it was not open within 20 seconds, so nothing was done. The same call again runs once it is.`,
+      );
+    }
+    if (result.kind === "needs-permission") {
+      return failed(
+        `error editor-needs-permission: the AnimaQuill editor has the project ${JSON.stringify(result.name)} open, and the browser does not let it at its folder yet, so nothing was done. The call runs once the user allows it: in the editor, 重新允许 in the status bar, or 允许 on the notice there.`,
+      );
+    }
     if (result.kind === "gone") {
       return failed(
         "error editor-closed: the editor that ran the call went away before it answered, so whether it was done is not known; aq_project_status tells how the project is now.",

@@ -6,6 +6,7 @@ import { fromPeer, peerHello, peerOk, peerProof, readPeer, relayProof, toPeer } 
 import {
   Relay,
   type CallAnswer,
+  type CallEvents,
   type CallRequest,
   type RelayOptions,
   type Router,
@@ -28,7 +29,7 @@ import { isOwnUser } from "./uid.ts";
 export interface RelayLink {
   session(info: SessionInfo): void;
   end(session: string): void;
-  call(request: CallRequest, signal?: AbortSignal): Promise<CallAnswer>;
+  call(request: CallRequest, signal?: AbortSignal, events?: CallEvents): Promise<CallAnswer>;
   close(): Promise<void>;
 }
 
@@ -75,6 +76,7 @@ function servePeer(router: Router, ws: WebSocket): void {
         void router
           .call(request, controller.signal, {
             dispatched: () => send({ t: "dispatched", call: request.call }),
+            progress: (said) => send({ t: "progress", call: request.call, message: said }),
           })
           .catch((): CallAnswer => ({ kind: "gone" }))
           .then((answer) => {
@@ -165,6 +167,8 @@ interface Pending {
   readonly signal: AbortSignal | undefined;
   /** It went to a page once, where it may have run. */
   dispatched: boolean;
+  /** Hears what it waits for. */
+  readonly progress: ((message: string) => void) | undefined;
 }
 
 type Current =
@@ -259,6 +263,10 @@ export class ElectedLink implements RelayLink {
           pending.dispatched = true;
           return;
         }
+        if (message.t === "progress") {
+          pending.progress?.(message.message);
+          return;
+        }
         this.#calls.delete(message.call);
         pending.resolve(message.answer as CallAnswer);
       });
@@ -290,6 +298,7 @@ export class ElectedLink implements RelayLink {
           const pending = this.#calls.get(call);
           if (pending) pending.dispatched = true;
         },
+        progress: (said) => this.#calls.get(call)?.progress?.(said),
       })
       .catch((): CallAnswer => ({ kind: "gone" }))
       .then((answer) => {
@@ -314,10 +323,14 @@ export class ElectedLink implements RelayLink {
     else if (current?.kind === "peer") current.ws.send(JSON.stringify({ t: "end", session }));
   }
 
-  async call(request: CallRequest, signal?: AbortSignal): Promise<CallAnswer> {
+  async call(
+    request: CallRequest,
+    signal?: AbortSignal,
+    events: CallEvents = {},
+  ): Promise<CallAnswer> {
     let pending: Pending | undefined;
     const answer = new Promise<CallAnswer>((resolve) => {
-      pending = { request, resolve, signal, dispatched: false };
+      pending = { request, resolve, signal, dispatched: false, progress: events.progress };
       this.#calls.set(request.call, pending);
     });
     signal?.addEventListener(

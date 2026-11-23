@@ -5779,6 +5779,20 @@
       "askMessage": "电脑上有一个还没允许过的 animaquill 想把 AI 工具的调用交给这个编辑器执行。不是你刚启动的 AI 工具就选不允许。",
       "allow": "允许",
       "deny": "不允许"
+    },
+    "waiting": {
+      "waits": "{{tool}}在等「{{name}}」",
+      "several": "{{count}} 个 AI 工具",
+      "otherFolder": "{{tool}}要的是另一个文件夹里的「{{name}}」",
+      "blocked": "{{tool}}在等「{{name}}」：浏览器还没让编辑器访问这个文件夹",
+      "open": "打开",
+      "other": "换一个",
+      "allow": "允许",
+      "chooseTitle": "打开哪个「{{name}}」？",
+      "chooseMessage": "这个浏览器打开过几个文件夹里的这个项目（复制出来的也算）。",
+      "chooseFolder": "文件夹「{{folder}}」，{{when}} 打开过",
+      "noFolder": "AI 工具在等一个这个浏览器没打开过的项目",
+      "chooseFolderAction": "选择文件夹…"
     }
   },
   "repoMerge": {

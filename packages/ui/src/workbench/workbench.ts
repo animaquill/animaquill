@@ -85,6 +85,10 @@ import {
   loopbackPermission,
   type BridgePage,
 } from "../local-ai/bridge/bridge.ts";
+import type { BridgeWaiting } from "@animaquill/tools";
+
+/** The key of the notice of a project opened from the address for AI tools, see `#tellWaiting`. */
+const ADDRESS_WAIT = "address\n";
 import { ModelPacks } from "../chat/packs.ts";
 import { AiSettingsStore } from "../chat/settings.ts";
 import { AccountAi } from "../chat/account-ai.ts";
@@ -2047,6 +2051,7 @@ export class Workbench {
     // does one of a project of the platform that this browser has nothing of yet.
     if (!(await this.projectFolders?.restore()) && (await this.#hasAddressed()))
       await this.session.restore();
+    await this.#openForAiFromAddress();
     // Who is signed in comes when it comes: the editor does not wait for it.
     if (this.account) void this.#followAccount(this.account);
   }
@@ -3002,10 +3007,12 @@ export class Workbench {
       const { id, name } = store.getState().manifest;
       const link = this.mode === "online" ? this.#address.linkTo?.(key) : undefined;
       const folder = this.projectFolders?.getSnapshot().open;
+      const denied = folder?.snapshot.trouble?.reason === "denied";
       return {
         project: { mode: this.mode, key, id, name, ...(link && { link }) },
         // Offline, the window that writes the folder: the others are behind it.
-        eligible: folder === undefined || folder.snapshot.role === "writing",
+        eligible: !denied && (folder === undefined || folder.snapshot.role === "writing"),
+        ...(denied && { blocked: "needs-permission" as const }),
       };
     };
     const bridge = new ToolBridge({
@@ -3043,8 +3050,115 @@ export class Workbench {
       permission: loopbackPermission,
     });
     bridge.subscribe(() => this.tools.connected(bridge.here));
+    bridge.subscribe(() => this.#tellWaiting(bridge.getSnapshot().waiting, bridge.pageId));
     this.autoConnect.subscribe(() => bridge.autoConnectChanged(this.autoConnect.getSnapshot()));
     return bridge;
+  }
+
+  /** The notice of each project AI tools wait for, by its key, and what it says. */
+  readonly #waitNotices = new Map<string, { readonly id: number; readonly text: string }>();
+
+  /**
+   * Tells people which projects AI tools on this computer wait for an editor to open (design 5.5 of
+   * AnimaQuill Cloud): one notice a project, however many wait, with the one thing that helps. A
+   * notice people closed does not come back unless what it says changes.
+   */
+  #tellWaiting(waiting: readonly BridgeWaiting[], page: string): void {
+    const { t, notifications } = this;
+    const open = this.session.getSnapshot();
+    const here = open.store?.getState().manifest.id;
+    const blocked = this.projectFolders?.getSnapshot().open?.snapshot.trouble?.reason === "denied";
+    const seen = new Set<string>();
+    for (const item of waiting) {
+      seen.add(item.key);
+      const [first] = item.clients;
+      const tool =
+        item.clients.length > 1
+          ? t("localAi.waiting.several", { count: item.clients.length })
+          : // A name of Latin letters, as most are, takes a space before the Chinese.
+            `${toolName(this.t, first?.name ? first : undefined)} `;
+      const isHere = item.mode === "offline" && item.id !== undefined && item.id === here;
+      const notHere = item.notHere?.includes(page) === true;
+      const text = t(
+        isHere && blocked
+          ? "localAi.waiting.blocked"
+          : notHere
+            ? "localAi.waiting.otherFolder"
+            : "localAi.waiting.waits",
+        { tool, name: item.name, interpolation: { escapeValue: false } },
+      );
+      const known = this.#waitNotices.get(item.key);
+      if (known?.text === text) continue;
+      const action =
+        isHere && blocked
+          ? { label: t("localAi.waiting.allow"), run: () => void this.projectFolders?.allowAgain() }
+          : {
+              label: t(notHere ? "localAi.waiting.other" : "localAi.waiting.open"),
+              run: () => this.#openWaitedFor(item),
+            };
+      const id = notifications.update(known?.id, text, { stays: true, actions: [action] });
+      this.#waitNotices.set(item.key, { id, text });
+    }
+    for (const [key, { id }] of this.#waitNotices) {
+      if (seen.has(key) || key.startsWith(ADDRESS_WAIT)) continue;
+      notifications.dismiss(id);
+      this.#waitNotices.delete(key);
+    }
+  }
+
+  /** Opens what AI tools wait for, as people clicked: here where the mode is its, else in a tab. */
+  #openWaitedFor(item: BridgeWaiting): void {
+    if (item.mode === "offline" && this.mode === "offline" && item.id !== undefined) {
+      void this.projectFolders?.openForAi(item.id, true);
+      return;
+    }
+    const address =
+      item.mode === "online"
+        ? item.link
+        : item.id !== undefined
+          ? `/offline?open=${encodeURIComponent(item.id)}`
+          : undefined;
+    if (address) window.open(address, "_blank", "noopener");
+  }
+
+  /**
+   * An editor opened for AI tools on a folder, as `animaquill mcp` opens it (`/offline?open=<id>`,
+   * design 5.5): the folder opens where this browser may, and otherwise a notice has the click it
+   * takes. The address forgets it at once, so that reloading the page does not open it again.
+   */
+  async #openForAiFromAddress(): Promise<void> {
+    if (typeof location === "undefined") return;
+    const url = new URL(location.href);
+    const id = url.searchParams.get("open");
+    if (id === null) return;
+    url.searchParams.delete("open");
+    history.replaceState(history.state, "", url);
+    const folders = this.projectFolders;
+    if (this.mode !== "offline" || !folders || id === "") return;
+    if ((await folders.openForAi(id, false)) === "opened") return;
+    const [record] = await folders.projects.records.withProject(id);
+    // A project this browser has no folder of: people choose the folder it is in.
+    const text = record
+      ? this.t("localAi.waiting.waits", {
+          tool: this.t("localAi.tools.unknown"),
+          name: record.name,
+          interpolation: { escapeValue: false },
+        })
+      : this.t("localAi.waiting.noFolder");
+    const key = `${ADDRESS_WAIT}${id}`;
+    const notice = this.notifications.push(text, {
+      stays: true,
+      actions: [
+        {
+          label: this.t(record ? "localAi.waiting.open" : "localAi.waiting.chooseFolderAction"),
+          run: () => {
+            this.#waitNotices.delete(key);
+            void folders.openForAi(id, true);
+          },
+        },
+      ],
+    });
+    this.#waitNotices.set(key, { id: notice, text });
   }
 
   /**

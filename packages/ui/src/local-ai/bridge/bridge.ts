@@ -8,6 +8,7 @@ import {
   toPage,
   type BridgeResult,
   type BridgeSession,
+  type BridgeWaiting,
   type FromPage,
   type PageProject,
   type ToPage,
@@ -55,6 +56,8 @@ export interface BridgeSnapshot {
   readonly status: BridgeStatus;
   /** Every session of an AI tool the relay has. */
   readonly sessions: readonly BridgeSession[];
+  /** The projects AI tools wait for an editor to open (design 5.5). */
+  readonly waiting: readonly BridgeWaiting[];
   /** This window takes the calls for its project. */
   readonly serving: boolean;
   /**
@@ -69,6 +72,8 @@ export interface BridgePage {
   readonly project: PageProject | undefined;
   /** It may take calls for it: offline, only the window that writes the folder. */
   readonly eligible: boolean;
+  /** It has the project open, and the browser does not let it at the folder. */
+  readonly blocked?: "needs-permission";
 }
 
 /** The keys of relays people allowed, in this browser, for every mode: it is this computer's. */
@@ -250,7 +255,13 @@ export class ToolBridge {
   readonly #options: ToolBridgeOptions;
   readonly #emitter = new Emitter();
   readonly pageId = nonceOf();
-  #snapshot: BridgeSnapshot = { status: "off", sessions: [], serving: false, mismatch: false };
+  #snapshot: BridgeSnapshot = {
+    status: "off",
+    sessions: [],
+    waiting: [],
+    serving: false,
+    mismatch: false,
+  };
   #ws: WebSocket | undefined;
   /** People want it connected: it keeps connecting again while they do. */
   #wanted = false;
@@ -473,7 +484,12 @@ export class ToolBridge {
       if (this.#ws !== ws) return;
       this.#ws = undefined;
       this.#letGo();
-      this.#set({ status: this.#wanted ? "connecting" : "off", sessions: [], serving: false });
+      this.#set({
+        status: this.#wanted ? "connecting" : "off",
+        sessions: [],
+        waiting: [],
+        serving: false,
+      });
       // The relay changed, most likely: another `animaquill mcp` of this user is the relay in a
       // moment, with the same key. One with another key is asked about, as it was not asked for.
       if (this.#wanted) void this.#scan();
@@ -489,6 +505,9 @@ export class ToolBridge {
         return;
       case "sessions":
         this.#set({ sessions: message.sessions });
+        return;
+      case "waiting":
+        this.#set({ waiting: message.waiting });
         return;
       case "probe": {
         const text = await this.#options.readFile(message.path).catch(() => undefined);
@@ -583,7 +602,7 @@ export class ToolBridge {
 
   #say(): void {
     if (!this.#ws) return;
-    const { project } = this.#options.page();
+    const { project, blocked } = this.#options.page();
     const hidden =
       this.#options.hidden?.() ??
       (typeof document !== "undefined" && document.visibilityState === "hidden");
@@ -595,6 +614,7 @@ export class ToolBridge {
       list: this.#options.list,
       ...(project && { project }),
       serving: this.#snapshot.serving && project !== undefined,
+      ...(blocked && project && { blocked }),
       hidden,
       frontAt: this.#frontAt,
     });
@@ -608,7 +628,7 @@ export class ToolBridge {
     this.#ws = undefined;
     this.#letGo();
     ws?.close();
-    this.#set({ status: "off", sessions: [] });
+    this.#set({ status: "off", sessions: [], waiting: [] });
   }
 
   /** The sessions whose project is the one of this window. */

@@ -173,7 +173,24 @@ export function serverOf(session: McpSession, version: string): Server {
     session.named(clientOf(server, ctx).info);
     const { name, arguments: args = {} } = request.params;
     if (name === "aq_propose") return propose(tools, server, args, ctx);
-    return asResult(await session.call(name, args, ctx.mcpReq.signal));
+    // What it waits for goes as notifications of progress, where the client asked for them.
+    // oxlint-disable-next-line no-underscore-dangle -- where MCP puts the token
+    const token = (request.params._meta as { progressToken?: string | number } | undefined)
+      ?.progressToken;
+    let step = 0;
+    const progress =
+      token === undefined
+        ? undefined
+        : (message: string) => {
+            step += 1;
+            void ctx.mcpReq
+              .notify({
+                method: "notifications/progress",
+                params: { progressToken: token, progress: step, message },
+              })
+              .catch(() => {});
+          };
+    return asResult(await session.call(name, args, ctx.mcpReq.signal, progress));
   });
   return server;
 }

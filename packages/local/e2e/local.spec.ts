@@ -19,6 +19,7 @@ import {
   sceneFrames,
 } from "../../ui/e2e/scene-support.ts";
 import { anthropicSays } from "../../ui/e2e/ai-support.ts";
+import { openCommand } from "../src/open-browser.ts";
 import { content, expect, findCompositor, resourcesIn, tab, test } from "../../ui/e2e/support.ts";
 
 const RED = fileURLToPath(new URL("../../ui/e2e/fixtures/red.webm", import.meta.url));
@@ -150,6 +151,20 @@ test.describe("the editor on this computer", () => {
     // Without a backend there is only the offline mode, whose pages are under /offline.
     expect(page.url()).toBe(`http://animaquill.localhost:${port}/offline`);
     await expect(page.getByRole("button", { name: "新建项目", exact: true })).toBeVisible();
+  });
+
+  test("opens in the browser people use, the address one argument and no shell", () => {
+    const address = "http://animaquill.localhost:7651/offline?open=a&b=c";
+    // Windows: what a link double-clicked does, not `start`, which a command prompt reads.
+    expect(openCommand(address, "win32", undefined)).toEqual({
+      command: "rundll32.exe",
+      args: ["url.dll,FileProtocolHandler", address],
+    });
+    expect(openCommand(address, "darwin", undefined)).toEqual({ command: "open", args: [address] });
+    expect(openCommand(address, "linux", undefined)).toEqual({
+      command: "xdg-open",
+      args: [address],
+    });
   });
 
   test("can be installed as an app", async ({ page }) => {

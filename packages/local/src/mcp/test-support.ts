@@ -68,6 +68,7 @@ export interface FakePageOptions {
   readonly page?: string;
   /** The key the page trusts; any where not given. */
   readonly trusts?: string;
+  readonly blocked?: "needs-permission";
 }
 
 /**
@@ -143,6 +144,7 @@ export class FakePage {
       list: "",
       project,
       serving,
+      ...(this.#options.blocked && { blocked: this.#options.blocked }),
       hidden: false,
       frontAt,
     });

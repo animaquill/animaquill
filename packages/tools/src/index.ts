@@ -92,6 +92,7 @@ export {
   type BridgeClient,
   type BridgeResult,
   type BridgeSession,
+  type BridgeWaiting,
   type FromPage,
   type PageProject,
   type ToPage,

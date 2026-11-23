@@ -1,8 +1,8 @@
-import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { LOCAL_PORT, localSites } from "@animaquill/web/sites";
+import { openBrowser } from "./open-browser.ts";
 import { PortInUse, startLocalServer } from "./server.ts";
 import { check, describe, guide } from "./mcp/commands.ts";
 import { findProject } from "./mcp/find.ts";
@@ -51,28 +51,6 @@ const HELP = `用法：animaquill [选项]
 
 这个版本不能登录，也不能用云服务（云端同步、云端 AI）。
 `;
-
-/** Opens the address in the browser people use. Not finding one is fine: the address is printed. */
-function openBrowser(url: string) {
-  const [command, args] =
-    process.platform === "win32"
-      ? ["cmd", ["/c", "start", '""', `"${url}"`]]
-      : process.platform === "darwin"
-        ? ["open", [url]]
-        : ["xdg-open", [url]];
-  try {
-    const child = spawn(command, args, {
-      stdio: "ignore",
-      detached: true,
-      windowsHide: true,
-      windowsVerbatimArguments: true,
-    });
-    child.on("error", () => {});
-    child.unref();
-  } catch {
-    // Printed anyway.
-  }
-}
 
 function portFrom(value: string | undefined): number {
   if (value === undefined) return LOCAL_PORT;
@@ -151,6 +129,8 @@ async function runCommand(name: string, argv: readonly string[]): Promise<number
   const link = new ElectedLink({
     identity,
     allowed,
+    // An editor opens in the browser for a call that finds none (design 5.5 of AnimaQuill Cloud).
+    home,
     toolset: TOOLSET_VERSION,
     list: mcpListHash(listedTools()),
     ...portsFromEnvironment(),

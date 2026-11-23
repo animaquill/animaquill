@@ -6,7 +6,7 @@
  * (`ANIMAQUILL_RELAY_PORTS`, and `animaquill.mcp.ports` in the page), and a home of its own for the
  * identity of the relay.
  */
-import { mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,13 +28,15 @@ const portsOf = (worker: number, index: number) => ({
 
 interface Tools {
   readonly home: string;
+  /** What the browser was asked to open, one address a line: see `ANIMAQUILL_OPEN`. */
+  readonly opened: string;
   readonly ports: { readonly first: number; readonly count: number };
   readonly clients: Client[];
 }
 
 /** An AI tool that starts `animaquill mcp`, in a folder, as Claude Code or Codex does. */
 async function startTool(
-  tools: Tools,
+  tools: Tools & { readonly opener: string },
   name: string,
   cwd: string,
   args: readonly string[] = [],
@@ -49,6 +51,7 @@ async function startTool(
         ...(process.env as Record<string, string>),
         ANIMAQUILL_HOME: tools.home,
         ANIMAQUILL_RELAY_PORTS: `${tools.ports.first}:${tools.ports.count}`,
+        ANIMAQUILL_OPEN: tools.opener,
       },
       stderr: "ignore",
     }),
@@ -59,11 +62,21 @@ async function startTool(
   return client;
 }
 
-const toolsFor = (worker: number, index: number): Tools => ({
-  home: mkdtempSync(join(tmpdir(), "animaquill-home-")),
-  ports: portsOf(worker, index),
-  clients: [],
-});
+function toolsFor(worker: number, index: number): Tools & { readonly opener: string } {
+  const home = mkdtempSync(join(tmpdir(), "animaquill-home-"));
+  const opened = join(home, "opened.txt");
+  // In place of the browser: notes the address it gets.
+  const opener = join(home, "open.cjs");
+  writeFileSync(
+    opener,
+    `#!/usr/bin/env node\nrequire("node:fs").appendFileSync(${JSON.stringify(opened)}, process.argv[2] + "\\n");\n`,
+  );
+  chmodSync(opener, 0o755);
+  return { home, opened, opener, ports: portsOf(worker, index), clients: [] };
+}
+
+const openedIn = (tools: Tools) =>
+  existsSync(tools.opened) ? readFileSync(tools.opened, "utf8").split("\n").filter(Boolean) : [];
 
 const textOf = (result: unknown) =>
   (result as { content: { type: string; text?: string }[] }).content.findLast(
@@ -225,6 +238,83 @@ test.describe("AI tools on this computer", () => {
         arguments: { timeline: "main", times: ["0"] },
       });
       expect(textOf(frames)).toMatch(/^error editor-hidden: /m);
+    } finally {
+      await Promise.all(tools.clients.map((client) => client.close()));
+    }
+  });
+
+  test("open the editor on the folder that none has open, once, and run there once it is", async ({
+    page,
+  }, info) => {
+    test.slow();
+    const tools = toolsFor(info.workerIndex, 2);
+    try {
+      const disk = projectOnDisk();
+      await openDropped(page, disk);
+      const id = JSON.parse(readFileSync(join(disk, "animaquill.json"), "utf8")).id as string;
+      const claude = await startTool(tools, "claude-code", disk);
+      // Connected once: the relay knows which site the editor is on.
+      await connectEditor(page, tools);
+      // And no editor any more.
+      const editor = new URL(page.url());
+      await page.goto("about:blank");
+      const said: string[] = [];
+      const waited = await claude.callTool(
+        { name: "aq_project_status", arguments: {} },
+        { onprogress: (progress) => said.push(progress.message ?? ""), timeout: 60_000 },
+      );
+      expect(textOf(waited)).toMatch(/^error editor-opening: .*being opened in the browser/);
+      expect(said.join("\n")).toMatch(/opening the AnimaQuill editor/);
+      const [address] = openedIn(tools);
+      expect(address).toBe(`${editor.origin}/offline?open=${encodeURIComponent(id)}`);
+      // Once a session.
+      await claude.callTool({ name: "aq_project_status", arguments: {} }, { timeout: 60_000 });
+      expect(openedIn(tools)).toHaveLength(1);
+      // The browser opens it: the folder opens, and the address forgets what it was for.
+      await page.goto(address ?? "");
+      await expect(footer(page).getByText("原子是什么")).toBeVisible({ timeout: 15_000 });
+      expect(new URL(page.url()).searchParams.has("open")).toBe(false);
+      await connectEditor(page, tools);
+      const ran = await claude.callTool({ name: "aq_project_status", arguments: {} });
+      expect(ran.isError, textOf(ran)).toBeFalsy();
+    } finally {
+      await Promise.all(tools.clients.map((client) => client.close()));
+    }
+  });
+
+  test("tell the editor that is open what they wait for, once for two, and open nothing", async ({
+    page,
+  }, info) => {
+    test.slow();
+    const tools = toolsFor(info.workerIndex, 3);
+    try {
+      const disk = projectOnDisk();
+      await openDropped(page, disk);
+      const claude = await startTool(tools, "claude-code", disk);
+      const codex = await startTool(tools, "codex-mcp-client", disk);
+      // The editor goes back to its start page, connected.
+      await page.goto("/offline");
+      await connectEditor(page, tools);
+      await guide(page)
+        .getByRole("button", { name: /好了|关闭/ })
+        .last()
+        .click();
+      const calls = [claude, codex].map((client) =>
+        client.callTool({ name: "aq_project_status", arguments: {} }, { timeout: 60_000 }),
+      );
+      const notice = page.locator("[data-notifications] > div > div", {
+        hasText: "2 个 AI 工具在等「原子是什么」",
+      });
+      await expect(notice).toBeVisible({ timeout: 15_000 });
+      await expect(
+        page.locator("[data-notifications] > div > div", { hasText: "在等「原子是什么」" }),
+      ).toHaveCount(1);
+      await notice.getByRole("button", { name: "打开" }).click();
+      await expect(footer(page).getByText("原子是什么")).toBeVisible({ timeout: 15_000 });
+      for (const result of await Promise.all(calls))
+        expect(result.isError, textOf(result)).toBeFalsy();
+      await expect(notice).toBeHidden();
+      expect(openedIn(tools)).toEqual([]);
     } finally {
       await Promise.all(tools.clients.map((client) => client.close()));
     }

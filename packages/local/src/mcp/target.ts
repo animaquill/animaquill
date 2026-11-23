@@ -63,12 +63,15 @@ export async function findTarget(
   }
   const { root } = place;
   let id: string;
+  let name: string | undefined;
   try {
     const manifest = JSON.parse(await readFile(join(root, MANIFEST_FILE), "utf8")) as {
       id?: unknown;
+      name?: unknown;
     };
     if (typeof manifest.id !== "string" || manifest.id === "") throw new Error("no id");
     id = manifest.id;
+    if (typeof manifest.name === "string") name = manifest.name.slice(0, 500);
   } catch {
     return {
       kind: "none",
@@ -83,7 +86,13 @@ export async function findTarget(
     await writer.write(path, JSON.stringify({ format: 1, nonce }));
     return {
       kind: "target",
-      target: { kind: "folder", id, root, probe: { path, nonce } },
+      target: {
+        kind: "folder",
+        id,
+        ...(name !== undefined && { name }),
+        root,
+        probe: { path, nonce },
+      },
       cleanup: () => writer.remove(path).catch(() => {}),
     };
   } catch (error) {
