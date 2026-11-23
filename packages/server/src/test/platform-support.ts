@@ -162,7 +162,7 @@ export const platform = async (
   });
 
   const request = async (
-    method: "GET" | "POST",
+    method: "GET" | "POST" | "PUT",
     url: string,
     body?: unknown,
     headers: Record<string, string> = {},
@@ -172,7 +172,7 @@ export const platform = async (
       url,
       headers: {
         cookie: `${SESSION_COOKIE}=${sessionId}`,
-        ...(method === "POST" && {
+        ...(method !== "GET" && {
           origin: ORIGIN,
           [REQUEST_HEADER]: "1",
           "content-type": "application/json",

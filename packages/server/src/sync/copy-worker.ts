@@ -34,6 +34,8 @@ import {
   type CopyInfo,
   type CopyRequest,
   type CopyResponse,
+  type ExecuteRequest,
+  type Executed,
   type Late,
   type MergeRequest,
   type Merged,
@@ -553,6 +555,58 @@ function takeBack(project: string, request: TakeBackRequest): TakenBack {
   };
 }
 
+/**
+ * Runs commands as the platform, as one batch, see `SyncHub.rename`: in one write, all of them or
+ * none, checked as an editor's change would be, with what takes the batch back as a whole
+ * (`saveUndo`). Not watched for changes made without it: what it writes is what a person asked for,
+ * as an editor's change, and goes by the order Yjs gives where another one meets it.
+ */
+function execute(project: string, request: ExecuteRequest): Executed {
+  const store = copies.get(project);
+  if (!store) throw new Error(`project ${project} is not open`);
+  const origin = repoBatch(request.batch);
+  const made: Uint8Array[] = [];
+  const take = (part: Uint8Array) => made.push(part);
+  const refused = (detail: string): Executed => {
+    drop(project);
+    return { kind: "refused", reason: "failed", detail: detail.slice(0, 200), dropped: true };
+  };
+  let written: ReturnType<typeof writeBatch<ReturnType<ProjectStore["executeBatch"]>>>;
+  store.doc.on("update", take);
+  try {
+    written = writeBatch(store, request.batch, () => store.executeBatch(request.calls, { origin }));
+  } catch (error) {
+    return refused(String(error));
+  } finally {
+    store.doc.off("update", take);
+  }
+  const result = written.result;
+  if (!result.ok) {
+    // All of it or none: nothing was written, and the copy is as it was.
+    if (made.length > 0) return refused(`${result.error.code} after writing`);
+    const reason = result.error.code === "project-locked" ? "locked" : "invalid";
+    return { kind: "refused", reason, detail: result.error.code };
+  }
+  for (const key of written.watched.changes) {
+    const raw = key.at?.map.get(key.at.key);
+    if (raw === undefined) continue;
+    const wrong = checkWritten(key.path, raw);
+    if (wrong) return refused(`${wrong.path}: ${wrong.problem}`);
+  }
+  const info = infoOf(project, store);
+  if (info.projectId !== ids.get(project)) return refused("another project");
+  const merged = made.length > 0 ? mergeUpdates(made) : undefined;
+  const delta = merged && !isEmptyUpdate(merged) ? merged : undefined;
+  if (delta) values.set(project, (values.get(project) ?? 0) + (piecesOf(delta)?.values ?? 0));
+  return {
+    kind: "executed",
+    delta,
+    info,
+    batch: { ...written.batch, seq: request.seq, copied: [] },
+    undo: store.saveUndo(origin),
+  };
+}
+
 function handle(request: CopyRequest): unknown {
   switch (request.op) {
     case "open":
@@ -565,6 +619,8 @@ function handle(request: CopyRequest): unknown {
       return merge(request.project, request.merge);
     case "takeBack":
       return takeBack(request.project, request.takeBack);
+    case "execute":
+      return execute(request.project, request.execute);
     case "without":
       return valuesWithout(request.parts, request.paths);
     case "vector":

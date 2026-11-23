@@ -82,6 +82,17 @@ import { wakeCopy } from "./wake.ts";
  *   on GitHub; otherwise 409 `{error: "notAllowed"}`. Such a copy has nothing in common with the
  *   one before (`rebuiltFrom.commonBase: false` in the status). 404 `notFound`. Only from pages of
  *   this site.
+ * - `PUT /api/projects/:id/name` `{name}`: renames the project, as people do on the start page without
+ *   opening it, see `SyncHub.rename`: the same rename as in the editor, which its windows hear at
+ *   once, and which the list says from then on. The name is taken as it is but for the spaces around
+ *   it, and has to be something. 200 `{name, batch, seq}` (`batch` takes it back as a whole, see
+ *   below), or `{name}` where it is called that already. 400 `{error: "invalid"}` for no name, or
+ *   a body that is none; 409 `{error: "locked" | "unusable"}` for a project with locked tags or
+ *   whose repository cannot be used; 409 `{error: "waking", copy: "restoring"}` where its working
+ *   copy was let go of and is being made again now, as `POST .../wake` does: ask again once the
+ *   list says it is "live"; 409 `{error: "noRepository" | ..., copy: "released"}` and 429 `busy` as
+ *   `wake` says them where it cannot be made; 413 `{error: "quota"}`; 404 `notFound`. Only for
+ *   who may manage the project, and only from pages of this site.
  * - `GET /api/projects/:id/cover`: the picture, with its `ETag` (what the list says), which only the
  *   browser keeps (`private`) and asks about again each time (`If-None-Match`, 304). 404
  *   `notFound` for a project that has none, is not there, or is not the person's.
@@ -154,6 +165,9 @@ export interface ProjectRoutesOptions {
 }
 
 const TEN_MINUTES = 10 * 60_000;
+
+/** The body of a rename at most: a name, with room to spare. */
+export const NAME_BODY_BYTES = 4096;
 
 /**
  * How many changes of how projects are organised a person gives in ten minutes at most: a whole
@@ -381,6 +395,75 @@ export const projectRoutes = async (app: FastifyInstance, options: ProjectRoutes
         return reply.code(409).send({ error: "notUndoable", why: said.why });
       const { kind: _kind, ...taken } = said;
       return taken;
+    },
+  );
+
+  app.put<{ Params: Params; Body: unknown }>(
+    "/api/projects/:id/name",
+    {
+      config: { access: { project: "id", action: "manage" } },
+      preHandler: guard,
+      bodyLimit: NAME_BODY_BYTES,
+    },
+    async (request, reply) => {
+      const user = await signedIn(request, reply, limits.change);
+      if (!user) return reply;
+      const sync = hub();
+      const database = db();
+      if (!sync || !database) return reply.code(503).send({ error: "unavailable" });
+      const body = request.body as { name?: unknown } | undefined;
+      const name = typeof body === "object" && body !== null ? body.name : undefined;
+      if (typeof name !== "string" || name.trim() === "")
+        return reply.code(400).send({ error: "invalid" });
+      const said = await sync.rename(request.params.id, user.userId, name);
+      switch (said.kind) {
+        case "missing":
+          return reply.code(404).send({ error: "notFound" });
+        case "unchanged":
+          return { name: said.name };
+        case "renamed":
+          return { name: said.name, batch: said.batch, seq: said.seq ?? null };
+        case "refused":
+          break;
+      }
+      if (said.why === "invalid") return reply.code(400).send({ error: "invalid" });
+      if (said.why === "quota") return reply.code(413).send({ error: "quota" });
+      if (said.why === "locked" || said.why === "unusable")
+        return reply.code(409).send({ error: said.why });
+      if (said.why === "failed") return reply.code(503).send({ error: "unavailable" });
+      // Let go of: made again from the repository, as opening it would, and renamed after.
+      const { rebuild } = options;
+      if (!rebuild) return reply.code(503).send({ error: "unavailable" });
+      const woke = await wakeCopy(
+        database,
+        request.params.id,
+        { userId: user.userId, access },
+        new Date(now()),
+      );
+      switch (woke.copy) {
+        case "missing":
+          return reply.code(404).send({ error: "notFound" });
+        case "live":
+          // Back meanwhile: ask again.
+          return reply.code(409).send({ error: "waking", copy: "live" });
+        case "restoring":
+          await rebuild(request.params.id);
+          return reply.code(409).send({ error: "waking", copy: "restoring" });
+        case "released":
+          if (woke.why === "later")
+            return reply
+              .code(429)
+              .header(
+                "retry-after",
+                String(Math.max(1, Math.ceil(((woke.retryAt ?? now()) - now()) / 1000))),
+              )
+              .send({ error: "busy", ...(woke.problem && { copyProblem: woke.problem }) });
+          return reply.code(409).send({
+            error: woke.why,
+            copy: "released",
+            ...(woke.problem && { copyProblem: woke.problem }),
+          });
+      }
     },
   );
 

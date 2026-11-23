@@ -1,5 +1,6 @@
 import { Worker } from "node:worker_threads";
 import type {
+  CommandCall,
   FileChange,
   Here,
   LateConflict,
@@ -201,6 +202,38 @@ export type TakenBack =
       readonly dropped?: true;
     };
 
+/**
+ * Commands the platform runs on a project itself, as one batch of its own, such as a rename from
+ * the start page (`SyncHub.rename`): the same commands as anywhere, checked as an editor's change
+ * is, and kept so that the batch can be taken back as a whole, see `SyncHub.takeBack`.
+ */
+export interface ExecuteRequest {
+  readonly calls: readonly CommandCall[];
+  /** Its id, which the origin and the batch of the platform go by. */
+  readonly batch: string;
+  /** The update of the platform it is to be. */
+  readonly seq: number;
+}
+
+/** What came of commands the platform ran, see `ExecuteRequest`. */
+export type Executed =
+  | {
+      readonly kind: "executed";
+      /** What it changed, as one update: none where nothing changed. */
+      readonly delta: Uint8Array | undefined;
+      readonly info: CopyInfo;
+      readonly batch: PlatformBatch;
+      readonly undo: UndoRecord | undefined;
+    }
+  | {
+      readonly kind: "refused";
+      /** "locked" for a project with locked tags, "invalid" for a command it does not take. */
+      readonly reason: "locked" | "invalid" | "failed";
+      readonly detail: string;
+      /** The copy had written some of it, and went: it has to be opened again. */
+      readonly dropped?: true;
+    };
+
 export type CopyRequest = { readonly id: number } & (
   | {
       readonly op: "open";
@@ -233,6 +266,11 @@ export type CopyRequest = { readonly id: number } & (
       readonly op: "takeBack";
       readonly project: string;
       readonly takeBack: TakeBackRequest;
+    }
+  | {
+      readonly op: "execute";
+      readonly project: string;
+      readonly execute: ExecuteRequest;
     }
   | {
       readonly op: "without";
@@ -474,6 +512,35 @@ export class WorkingCopies {
     Object.assign(open, { bytes, structs, values });
     this.#weights.set(project, weightOfOpen(open));
     return taken;
+  }
+
+  /**
+   * Runs commands as the platform in an open project, as a batch of its own (see copy-worker.ts):
+   * also turned away where it makes the project more than it may be, which drops the copy.
+   */
+  async execute(project: string, execute: ExecuteRequest): Promise<Executed> {
+    this.#use(project);
+    const done = (await this.#ask({ op: "execute", project, execute })) as Executed;
+    if (done.kind === "refused") {
+      if (done.dropped) this.#open.delete(project);
+      return done;
+    }
+    const open = this.#open.get(project);
+    if (!open || !done.delta) return done;
+    const bytes = open.bytes + done.delta.length;
+    const { structs, values } = done.info;
+    if (weightOf(bytes, structs, values) > this.#options.perProject) {
+      await this.drop(project);
+      return {
+        kind: "refused",
+        reason: "failed",
+        detail: "more than a project may be",
+        dropped: true,
+      };
+    }
+    Object.assign(open, { bytes, structs, values });
+    this.#weights.set(project, weightOfOpen(open));
+    return done;
   }
 
   /**

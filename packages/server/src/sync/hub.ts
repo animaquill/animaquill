@@ -71,6 +71,7 @@ import {
   CopiesGone,
   WorkingCopies,
   type CopyInfo,
+  type Executed,
   type Late,
   type Merged,
   type Taken,
@@ -514,6 +515,31 @@ export type BatchStateOutcome =
   { readonly kind: "missing" } | { readonly kind: "state"; readonly state: BatchState };
 
 /** What came of `SyncHub.takeBack`. */
+/** The kind of the batch a rename from the start page is, see `SyncHub.rename`. */
+export const RENAME_BATCH = "rename";
+
+/** What came of renaming a project from the start page, see `SyncHub.rename`. */
+export type RenameOutcome =
+  | { readonly kind: "missing" }
+  /** It is called that already: nothing was written. */
+  | { readonly kind: "unchanged"; readonly name: string }
+  /** `batch`, the batch it is, which takes it back as a whole; `seq`, its update. */
+  | {
+      readonly kind: "renamed";
+      readonly name: string;
+      readonly batch: string;
+      readonly seq: number | undefined;
+    }
+  /**
+   * Not renamed: no name ("invalid"), the project is locked ("locked"), its repository cannot be
+   * used ("unusable"), the working copy is not here but in the repository ("released", see
+   * wake.ts), more than the person may have ("quota"), or something else ("failed").
+   */
+  | {
+      readonly kind: "refused";
+      readonly why: "invalid" | "locked" | "unusable" | "released" | "quota" | "failed";
+    };
+
 export type TakeBackOutcome =
   | { readonly kind: "missing" }
   | { readonly kind: "refused"; readonly why: BatchWhy }
@@ -542,6 +568,34 @@ interface TakingBack {
   readonly root: typeof projectBatches.$inferSelect;
   readonly direction: "undo" | "redo";
 }
+
+/**
+ * The update of a batch of the platform's own, for `#store`: of the platform's device, its window
+ * the batch, with `by` for the windows; none where it changed nothing.
+ */
+const platformChange = (
+  delta: Uint8Array | undefined,
+  options: {
+    readonly kind: string;
+    readonly base: number;
+    readonly at: Date;
+    readonly by: SyncBatch;
+  },
+): Taking[] =>
+  delta
+    ? [
+        {
+          delta,
+          kind: options.kind,
+          device: PLATFORM_DEVICE,
+          window: options.by.batch,
+          base: options.base,
+          behind: false,
+          madeAt: options.at,
+          by: options.by,
+        },
+      ]
+    : [];
 
 /** What the platform writes into the database as an update of a project, see `#store`. */
 interface Taking {
@@ -2190,20 +2244,7 @@ export class SyncHub {
         return refuse("quota");
       }
       const at = this.#now();
-      const taking: Taking[] = delta
-        ? [
-            {
-              delta,
-              kind: "repo",
-              device: PLATFORM_DEVICE,
-              window: id,
-              base: oursSeq,
-              behind: false,
-              madeAt: at,
-              by,
-            },
-          ]
-        : [];
+      const taking = platformChange(delta, { kind: "repo", base: oursSeq, at, by });
       // Each from the commit it goes on from, where it is merged again: the one before GitHub made
       // it what could not be taken in (the worker says, see archiver.ts), or this merge's own.
       const bases = readMergeBases(merge.input);
@@ -2302,25 +2343,11 @@ export class SyncHub {
       });
     } catch (error) {
       // The copy has the merge, and the database does not.
-      await this.#copies.drop(project.id);
+      await this.#notStored(project, error);
       if (error instanceof NotReady) return { kind: "done", state: "applied" };
-      if (error instanceof HeadMoved) {
-        this.#log.error({ project: project.id }, "another process changed the project");
-        this.#projects.delete(project.id);
-        for (const other of Array.from(project.connections)) {
-          other.close(SYNC_CLOSE.unavailable, "the project changed elsewhere");
-        }
-      }
       throw error;
     }
-    const made = stored[0];
-    if (made) {
-      project.watched.push({ id, seq: made.seq });
-      // As the copy does: only so many of them.
-      while (project.watched.length > this.#limits.batchesWatched)
-        project.unwatched = project.watched.shift();
-    }
-    this.#tell(project, stored);
+    this.#stored(project, stored, { watch: id });
     this.#log.info(
       {
         project: project.id,
@@ -2374,6 +2401,98 @@ export class SyncHub {
    */
   takeBack(projectId: string, userId: string, batch: string): Promise<TakeBackOutcome> {
     return this.#owned(projectId, userId, "edit", batch, () => this.#takeBack(projectId, batch));
+  }
+
+  /**
+   * Renames a project, as people do on the start page, without opening it: the same
+   * "project.rename" as in the project, run by the platform on the working copy as a batch of its
+   * own (`RENAME_BATCH`), in the project's turn, as merges from GitHub are. The windows that have the
+   * project hear it with `by`, and the list says the new name; it is archived as any change is, and
+   * taken back as a whole as a merge is, see `takeBack`. The change is of the person (kind "user"),
+   * written by the platform. For whoever may manage the project (`AccessPolicy`, "manage"): for
+   * anyone else it is "missing".
+   */
+  rename(projectId: string, userId: string, name: string): Promise<RenameOutcome> {
+    return this.#owned(projectId, userId, "manage", RENAME_BATCH, () =>
+      this.#rename(projectId, name.trim()),
+    );
+  }
+
+  async #rename(projectId: string, name: string): Promise<RenameOutcome> {
+    if (name === "") return { kind: "refused", why: "invalid" };
+    let project: Project | undefined;
+    try {
+      project = await this.#project(projectId);
+    } catch (error) {
+      if (error instanceof NotLive) return { kind: "refused", why: "released" };
+      throw error;
+    }
+    if (!project) return { kind: "missing" };
+    if (project.name === name) return { kind: "unchanged", name };
+    if (await unusableOf(this.#db, project.id)) return { kind: "refused", why: "unusable" };
+    await this.#ensureOpen(project);
+    const batch = randomUUID();
+    const base = project.head;
+    let done: Executed;
+    try {
+      done = await this.#copies.execute(project.id, {
+        calls: [{ type: "project.rename", params: { name } }],
+        batch,
+        seq: base + 1,
+      });
+    } catch (error) {
+      await this.#copies.drop(project.id);
+      throw error;
+    }
+    if (done.kind === "refused") {
+      if (done.reason === "failed")
+        this.#log.warn({ project: project.id, detail: done.detail }, "a rename did not go");
+      return { kind: "refused", why: done.reason === "locked" ? "locked" : "failed" };
+    }
+    if (!done.delta) return { kind: "unchanged", name };
+    const label = `在开始页改名为「${name}」`.slice(0, 200);
+    const by: SyncBatch = { batch, kind: RENAME_BATCH, label, files: 1 };
+    const at = this.#now();
+    let stored: Stored[];
+    try {
+      if (!(await this.#fits(project, done.delta.length))) {
+        await this.#copies.drop(project.id);
+        return { kind: "refused", why: "failed" };
+      }
+      if (
+        (await this.#userTotal(project.ownerId)) + done.delta.length >
+        this.#limits.bytesPerUser
+      ) {
+        await this.#copies.drop(project.id);
+        return { kind: "refused", why: "quota" };
+      }
+      const changes = platformChange(done.delta, { kind: "user", base, at, by });
+      stored = await this.#store(project, changes, done.info, async (tx, kept) => {
+        await tx.insert(projectBatches).values({
+          id: batch,
+          projectId: project.id,
+          kind: RENAME_BATCH,
+          undoes: null,
+          mergeId: null,
+          seq: kept[0]?.seq ?? base,
+          label,
+          files: 1,
+          writes: batchRow(done.batch),
+          undo: done.undo ?? null,
+          formatVersion: done.undo?.doc.formatVersion ?? CURRENT_FORMAT_VERSION,
+          snapshotId: null,
+          createdAt: at,
+        });
+      });
+    } catch (error) {
+      await this.#notStored(project, error);
+      throw error;
+    }
+    // Not watched: it is what a person asked for, as an editor's change, see copy-worker.ts.
+    this.#stored(project, stored);
+    this.#log.info({ project: project.id, batch, seq: stored[0]?.seq }, "a project was renamed");
+    await this.#compactSoon(project);
+    return { kind: "renamed", name, batch, seq: stored[0]?.seq };
   }
 
   async #owned<T>(
@@ -2621,20 +2740,7 @@ export class SyncHub {
         await this.#copies.drop(project.id);
         return { kind: "refused", why: "failed" };
       }
-      const changes: Taking[] = taken.delta
-        ? [
-            {
-              delta: taken.delta,
-              kind: was?.kind ?? "repo",
-              device: PLATFORM_DEVICE,
-              window: batch,
-              base,
-              behind: false,
-              madeAt: at,
-              by,
-            },
-          ]
-        : [];
+      const changes = platformChange(taken.delta, { kind: was?.kind ?? "repo", base, at, by });
       stored = await this.#store(project, changes, taken.info, async (tx, kept) => {
         const [turned] = await tx
           .update(projectBatches)
@@ -2682,24 +2788,12 @@ export class SyncHub {
       });
     } catch (error) {
       // The copy has it, and the database does not.
-      await this.#copies.drop(project.id);
+      await this.#notStored(project, error);
       if (error instanceof NotReady) return { kind: "refused", why: undo ? "undone" : "done" };
-      if (error instanceof HeadMoved) {
-        this.#log.error({ project: project.id }, "another process changed the project");
-        this.#projects.delete(project.id);
-        for (const other of Array.from(project.connections)) {
-          other.close(SYNC_CLOSE.unavailable, "the project changed elsewhere");
-        }
-      }
       throw error;
     }
     const made = stored[0];
-    if (made) {
-      project.watched.push({ id: batch, seq: made.seq });
-      while (project.watched.length > this.#limits.batchesWatched)
-        project.unwatched = project.watched.shift();
-    }
-    this.#tell(project, stored);
+    this.#stored(project, stored, { watch: batch });
     this.#log.info(
       {
         project: project.id,
@@ -2730,6 +2824,36 @@ export class SyncHub {
       ...(taken.obstacle !== undefined && { obstacle: taken.obstacle }),
       next: { batch, direction: undo ? "redo" : "undo" },
     };
+  }
+
+  /**
+   * A batch of the platform's own is in the database (`stored`, as `#store` resolved): the windows
+   * hear of it, and where it is one that changes made without it are looked at for (`watch`, as the
+   * copy does), it is watched, only so many of them.
+   */
+  #stored(project: Project, stored: readonly Stored[], { watch }: { watch?: string } = {}): void {
+    const made = stored[0];
+    if (made && watch !== undefined) {
+      project.watched.push({ id: watch, seq: made.seq });
+      while (project.watched.length > this.#limits.batchesWatched)
+        project.unwatched = project.watched.shift();
+    }
+    this.#tell(project, stored);
+  }
+
+  /**
+   * A batch of the platform's own that the copy has did not get into the database: the copy goes,
+   * and comes back from the database. Where another process changed the project meanwhile, this
+   * one lets go of it, and its windows connect again. The caller says what came of it.
+   */
+  async #notStored(project: Project, error: unknown): Promise<void> {
+    await this.#copies.drop(project.id);
+    if (!(error instanceof HeadMoved)) return;
+    this.#log.error({ project: project.id }, "another process changed the project");
+    this.#projects.delete(project.id);
+    for (const other of Array.from(project.connections)) {
+      other.close(SYNC_CLOSE.unavailable, "the project changed elsewhere");
+    }
   }
 
   /** Snapshots from before merges from GitHub, kept for each project as those before late changes. */

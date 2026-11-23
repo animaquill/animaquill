@@ -100,6 +100,13 @@ const PROJECT_ROUTES: readonly ProjectRoute[] = [
     url: (f) => `/api/projects/${f.id}/batches/${f.batch}/undo`,
   },
   {
+    method: "PUT",
+    route: "/api/projects/:id/name",
+    action: "manage",
+    url: (f) => `/api/projects/${f.id}/name`,
+    body: () => ({ name: "别的名字" }),
+  },
+  {
     method: "POST",
     route: "/api/projects/:id/wake",
     action: "edit",
