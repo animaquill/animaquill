@@ -5,8 +5,8 @@ import { createHash } from "node:crypto";
  * repository, by a number that stays as it is renamed or moved, written as the platform (on GitHub,
  * the App). Writing is in two steps, so that the platform can note a commit before the branch has
  * it: a tree on top of the parent's, with the files that changed and those that go, and a commit;
- * then the branch, only if that is a fast-forward. See: GitHub's Git Data API now, another platform
- * with isomorphic-git later.
+ * then the branch, only if that is a fast-forward: GitHub's Git Data API now, other places that keep
+ * repositories later.
  */
 
 export interface RepoPlace {
