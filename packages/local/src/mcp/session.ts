@@ -46,7 +46,7 @@ function notOpen(target: Target): string {
         : target.bound
           ? `the project ${JSON.stringify(target.bound.project.name)} that this session worked on`
           : "any project";
-  return `error editor-not-open: no AnimaQuill editor on this computer has ${what} open and connected to AI tools on this computer, so nothing was done. The call runs once ${what === "any project" ? "a project" : "it"} is open in the AnimaQuill editor in Chrome or Edge, connected (AnimaQuill settings › AI tools on this computer › Connect).`;
+  return `error editor-not-open: no AnimaQuill editor on this computer has ${what} open and connected to AI tools on this computer, so nothing was done. The call runs once ${what === "any project" ? "a project" : "it"} is open in the AnimaQuill editor in Chrome or Edge, and the editor is connected: in the editor, 帮助 › 连接电脑上的 AI 工具 › 连接, then 允许 where the browser asks about this computer.`;
 }
 
 export interface McpSessionOptions {

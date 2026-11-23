@@ -26,9 +26,10 @@ import type { BridgeExecutor } from "./executor.ts";
  *   turned on connecting by itself. A page that opens does not try the ports otherwise: browsers
  *   ask people whether a site may reach this computer, and nobody should be asked for nothing.
  * - **Which relay:** the one whose key this browser remembers. A new one is remembered when people
- *   connect from the guide and the look for it right then finds just that one new one (that click
- *   is the yes). Two or more new ones then are none of them: one may be another user of this
- *   computer pretending. Met otherwise, people are asked first, once a page for each key.
+ *   connect from the guide and the looks of the minute after find just that one new one (that
+ *   click is the yes, also where they start the AI tool only then). Two or more different new ones
+ *   in that minute are none of them, also one taken in it already: one may be another user of this
+ *   computer, or WSL. Met otherwise, people are asked first, once a page for each key.
  * - **Which window takes calls:** one window in a browser for each project, by a Web Lock; the next
  *   one takes over when it goes.
  */
@@ -43,6 +44,10 @@ export type BridgeStatus =
   | "no-relay"
   /** People did not allow the relay that is there. */
   | "refused"
+  /** The browser does not let the page at this computer: people said no to it. */
+  | "denied"
+  /** A relay is there, and does not take this site: `animaquill mcp allow-origin`. */
+  | "not-allowed"
   /** Connecting found more than one relay never allowed: none of them is taken. */
   | "several";
 
@@ -52,8 +57,11 @@ export interface BridgeSnapshot {
   readonly sessions: readonly BridgeSession[];
   /** This window takes the calls for its project. */
   readonly serving: boolean;
-  /** The relay lists other tools than this editor has: an older or newer `animaquill`. */
-  readonly mismatch: boolean;
+  /**
+   * The relay lists other tools than this editor has: "editor" where its `TOOLSET_VERSION` is the
+   * older, "tools" where the relay's is, "other" where they are the same and the lists are not.
+   */
+  readonly mismatch: "editor" | "tools" | "other" | false;
 }
 
 /** What this window has open, as the relay is told. */
@@ -67,6 +75,7 @@ export interface BridgePage {
 export interface RelayTrust {
   has(key: string): boolean;
   add(key: string): void;
+  delete(key: string): void;
   readonly any: boolean;
 }
 
@@ -88,6 +97,16 @@ export function browserRelayTrust(): RelayTrust {
         localStorage.setItem(RELAY_TRUST_KEY, JSON.stringify([...keys, key].slice(-10)));
       } catch {
         // Asked again next time.
+      }
+    },
+    delete(key) {
+      try {
+        localStorage.setItem(
+          RELAY_TRUST_KEY,
+          JSON.stringify(read().filter((each) => each !== key)),
+        );
+      } catch {
+        // It stays allowed: what took it out says so.
       }
     },
     get any() {
@@ -116,6 +135,8 @@ export interface ToolBridgeOptions {
   readonly permission?: () => Promise<PermissionState | undefined>;
   readonly locks?: () => LockManager | undefined;
   readonly WebSocket?: typeof WebSocket;
+  /** For asking a port whether a relay there takes this site, see `#whyNone`. */
+  readonly fetch?: typeof fetch;
   readonly ports?: { readonly first: number; readonly count: number };
   readonly hidden?: () => boolean;
   readonly now?: () => number;
@@ -138,6 +159,8 @@ function portsMoved(): { first: number; count: number } | undefined {
 /** How long a relay has to say hello, and how often to look again for one that is not there. */
 const HELLO_MS = 3_000;
 const AGAIN_MS = 2_000;
+/** How long after people asked to connect the looks are theirs, see the top. */
+const ASKED_MS = 60_000;
 
 const nonceOf = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(18));
@@ -149,15 +172,38 @@ const nonceOf = () => {
 
 const bytesOf = (base64: string) => Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
 
+/** What makes a result of a tool smaller, for when one was too large to send. */
+const SMALLER: Readonly<Record<string, string>> = {
+  aq_render_frames: "Fewer times, a smaller size or a region give a smaller one.",
+  aq_audio_analyze: "A shorter range or fewer measures in what give a smaller one.",
+  aq_file_read: "offset and limit read a part of the file.",
+  aq_timeline_read: "from, to, tracks and limit read a part of the timeline.",
+  aq_object_read: "Fewer ids, fields, or response_format concise give a smaller one.",
+  aq_search: "limit gives fewer at a time.",
+  aq_check_run: "limit, severity or checks give fewer at a time.",
+};
+
 /** A result as it can go: one too large for a message says so instead, and the change stays made. */
-function fitting(result: BridgeResult): BridgeResult {
+function fitting(tool: string, result: BridgeResult): BridgeResult {
   const size =
     result.text.length * 3 + (result.images ?? []).reduce((sum, { data }) => sum + data.length, 0);
   if (size <= BRIDGE_MAX_RESULT) return result;
+  const smaller = SMALLER[tool];
   return {
-    text: `error result-too-large: the result of the call was larger than the ${Math.round(BRIDGE_MAX_RESULT / 1024 / 1024)} MB the editor sends at once, so it was not sent${result.isError ? "" : "; what the call did stays done"}. Fewer frames, a smaller size or a shorter range give a smaller one.`,
+    text: `error result-too-large: the result of the call was larger than the ${Math.round(BRIDGE_MAX_RESULT / 1024 / 1024)} MB the editor sends at once, so it was not sent${result.isError ? "" : "; what the call did stays done"}.${smaller ? ` ${smaller}` : ""}`,
     isError: true,
   };
+}
+
+/** Which side is older, by `TOOLSET_VERSION` ("2026.20"), where the lists are not the same. */
+function mismatchOf(
+  own: { readonly toolset: string; readonly list: string },
+  toolset: string,
+  list: string,
+): BridgeSnapshot["mismatch"] {
+  if (toolset === own.toolset && list === own.list) return false;
+  const order = toolset.localeCompare(own.toolset, undefined, { numeric: true });
+  return order > 0 ? "editor" : order < 0 ? "tools" : "other";
 }
 
 /** Whether a relay's signature of the proof is by its key. */
@@ -208,8 +254,10 @@ export class ToolBridge {
   #ws: WebSocket | undefined;
   /** People want it connected: it keeps connecting again while they do. */
   #wanted = false;
-  /** People asked to connect, and the look that it starts has not been yet. */
-  #asked = false;
+  /** When people asked to connect: the minute after is theirs, see the top. */
+  #askedAt: number | undefined;
+  /** The new keys the looks of that minute found. */
+  readonly #newKeys = new Set<string>();
   /** Keys people were asked about in this page, whatever they said: not asked again. */
   readonly #askedAbout = new Set<string>();
   #scanning: Promise<void> | undefined;
@@ -271,8 +319,11 @@ export class ToolBridge {
 
   #want(asked: boolean): void {
     this.#wanted = true;
-    if (asked) this.#asked = true;
     if (this.#ws) return;
+    if (asked && !this.#scanning) {
+      this.#askedAt = this.#now();
+      this.#newKeys.clear();
+    }
     this.#set({ status: "connecting" });
     void this.#scan();
   }
@@ -283,8 +334,8 @@ export class ToolBridge {
    */
   #scan(): Promise<void> {
     if (this.#scanning) return this.#scanning;
-    const asked = this.#asked;
-    this.#asked = false;
+    const asked = this.#askedAt !== undefined && this.#now() - this.#askedAt < ASKED_MS;
+    if (!asked) this.#askedAt = undefined;
     this.#scanning = this.#look(asked).finally(() => {
       this.#scanning = undefined;
     });
@@ -303,12 +354,18 @@ export class ToolBridge {
       else if (strangers.some(({ key }) => key === hello.key)) hello.ws.close();
       else strangers.push(hello);
     }
-    // All the ports are looked at when none is allowed: how many new ones there are counts.
+    // All the ports are looked at when none is allowed: how many new ones there are counts, in
+    // every look of the minute that people's asking started.
     const [stranger] = strangers;
     for (const other of found ? strangers : strangers.slice(1)) other.ws.close();
-    if (!found && strangers.length > 1) {
+    if (asked && !found) for (const { key } of strangers) this.#newKeys.add(key);
+    const several = !found && (strangers.length > 1 || (asked && this.#newKeys.size > 1));
+    if (several) {
+      // One taken earlier in the minute is none of them either.
+      for (const key of this.#newKeys) this.#options.trust.delete(key);
       stranger?.ws.close();
       this.#wanted = false;
+      this.#askedAt = undefined;
       this.#set({ status: "several" });
       return;
     }
@@ -327,11 +384,36 @@ export class ToolBridge {
       }
     }
     if (!found) {
-      this.#set({ status: "no-relay" });
+      this.#set({ status: await this.#whyNone(first, count, asked) });
       if (this.#wanted) this.#again = setTimeout(() => void this.#scan(), AGAIN_MS);
       return;
     }
     this.#attach(found);
+  }
+
+  /**
+   * Why no relay answered: the browser said no to this computer, a relay there does not take this
+   * site (it says so at `/ping`, which proves nothing and is only for telling people), or none runs.
+   */
+  async #whyNone(first: number, count: number, asked: boolean): Promise<BridgeStatus> {
+    if ((await this.#options.permission?.()) === "denied") return "denied";
+    // Only while people wait for it, in the minute after they clicked: each port asked is a line
+    // in the console of the browser where nothing listens.
+    if (!asked) return this.#snapshot.status === "not-allowed" ? "not-allowed" : "no-relay";
+    const fetcher = this.#options.fetch ?? (typeof fetch === "undefined" ? undefined : fetch);
+    if (!fetcher) return "no-relay";
+    const pings = Array.from({ length: count }, async (_, index) => {
+      try {
+        const response = await fetcher(`http://127.0.0.1:${first + index}/ping`, {
+          signal: AbortSignal.timeout(HELLO_MS),
+        });
+        const said = (await response.json()) as { relay?: unknown; allowed?: unknown };
+        return said.relay === true && said.allowed === false;
+      } catch {
+        return false;
+      }
+    });
+    return (await Promise.all(pings)).some(Boolean) ? "not-allowed" : "no-relay";
   }
 
   /** Connects to a port, and resolves to the relay once it proved its key there. */
@@ -382,10 +464,7 @@ export class ToolBridge {
 
   #attach({ ws, toolset, list }: Hello): void {
     this.#ws = ws;
-    this.#set({
-      status: "connected",
-      mismatch: toolset !== this.#options.toolset || list !== this.#options.list,
-    });
+    this.#set({ status: "connected", mismatch: mismatchOf(this.#options, toolset, list) });
     ws.addEventListener("message", (event) => {
       const message = readMessage(toPage, String(event.data));
       if (message) void this.#hear(message);
@@ -439,7 +518,7 @@ export class ToolBridge {
               text: "error editor-not-open: the editor that got the call does not take calls for its project now, so nothing was done.",
               isError: true,
             };
-        this.#send({ t: "result", call: message.call, result: fitting(result) });
+        this.#send({ t: "result", call: message.call, result: fitting(message.tool, result) });
         return;
       }
       case "cancel":

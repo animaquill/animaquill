@@ -27,13 +27,11 @@ import {
   type GuideSystem,
   type GuideTool,
 } from "./guide.ts";
-import { whenText, useToolActivity } from "./LocalAiSettings.tsx";
+import { canConnectHere, whenText, useToolActivity } from "./LocalAiSettings.tsx";
 import styles from "./LocalAi.module.css";
 
-/** Whether this browser can connect to the AI tools on this computer: Chrome and Edge. */
-const isChromium = () =>
-  typeof navigator !== "undefined" &&
-  (navigator as Navigator & { userAgentData?: unknown }).userAgentData !== undefined;
+/** Edge says the same as Chrome in other words. */
+const isEdge = () => typeof navigator !== "undefined" && /\bEdg\//.test(navigator.userAgent);
 
 /** The editor of `npx animaquill`, which every `animaquill mcp` lets connect without being told. */
 const isLocalEditor = (origin: string) => {
@@ -181,7 +179,7 @@ function LocalAiGuide() {
         ? t("localAi.guide.anyFolder")
         : t("localAi.guide.projectFolder");
   const origin = typeof location === "undefined" ? "" : location.origin;
-  const chromium = isChromium();
+  const chromium = canConnectHere();
   const [first] = activity.connections;
   const pick = (next: GuideTool) => {
     setTool(next);
@@ -482,25 +480,38 @@ function LocalAiGuide() {
                         {t("localAi.guide.connect")}
                       </button>
                       {link.status !== "off" && (
-                        <span className={styles.muted} role="status">
-                          {t(
-                            link.status === "connecting"
-                              ? "localAi.guide.connecting"
-                              : link.status === "refused"
-                                ? "localAi.guide.refused"
-                                : link.status === "several"
-                                  ? "localAi.guide.several"
-                                  : "localAi.guide.noRelay",
-                          )}
+                        <span
+                          className={styles.muted}
+                          role="status"
+                          data-testid="local-ai-connect-status"
+                        >
+                          {link.status === "denied"
+                            ? t(
+                                isEdge()
+                                  ? "localAi.guide.deniedEdge"
+                                  : "localAi.guide.deniedChrome",
+                              )
+                            : t(`localAi.guide.status.${link.status}`)}
                         </span>
                       )}
+                      {link.status === "not-allowed" && (
+                        <Copyable text={allowOriginCommand(origin)} />
+                      )}
                       {link.status === "no-relay" && (
-                        <span className={styles.muted}>{t("localAi.guide.wsl")}</span>
+                        <More summary={t("localAi.guide.stillNot")}>
+                          <span className={styles.line}>{t("localAi.guide.wsl")}</span>
+                        </More>
                       )}
                     </>
                   )}
                   {link.mismatch && link.status === "connected" && (
-                    <span className={styles.muted}>{t("localAi.guide.mismatch")}</span>
+                    <span className={styles.muted}>
+                      {t(
+                        link.mismatch === "editor"
+                          ? "localAi.guide.mismatchEditor"
+                          : "localAi.guide.mismatchTools",
+                      )}
+                    </span>
                   )}
                   <label className={styles.line}>
                     <input
@@ -516,6 +527,7 @@ function LocalAiGuide() {
               )}
             </Step>
             <Step number={4} title={t("localAi.guide.try")}>
+              <span className={styles.line}>{t("localAi.guide.keepOpen")}</span>
               <Copyable text={t("localAi.guide.trySay")} />
               <span className={styles.muted}>{t("localAi.guide.allow")}</span>
             </Step>

@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { createServer, type IncomingMessage, type Server } from "node:http";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Duplex } from "node:stream";
 import {
   BRIDGE_MAX_BYTES,
@@ -471,6 +471,8 @@ export class Relay {
   readonly #peers = new Set<WebSocket>();
   /** Peers that connected and did not prove the key yet. */
   #proving = 0;
+  /** Pages that are being looked at, before they are pages of the router. */
+  #upgrading = 0;
   #onPeer: ((ws: WebSocket) => void) | undefined;
 
   private constructor(server: Server, port: number, options: RelayOptions) {
@@ -478,10 +480,7 @@ export class Relay {
     this.port = port;
     this.#options = options;
     this.#sockets = new WebSocketServer({ noServer: true, maxPayload: BRIDGE_MAX_BYTES });
-    server.on("request", (_request, response) => {
-      // Nothing here for anybody to read.
-      response.writeHead(404, { "content-type": "text/plain" }).end();
-    });
+    server.on("request", (request, response) => void this.#request(request, response));
     server.on("upgrade", (request, socket, head) => void this.#upgrade(request, socket, head));
   }
 
@@ -510,14 +509,60 @@ export class Relay {
     this.#onPeer = handler;
   }
 
+  /**
+   * `GET /ping`, the one thing here without a WebSocket: whether this is a relay, and whether it
+   * takes the site that asks, so that the editor can tell people why it cannot connect. It says
+   * nothing else, and proves nothing: the editor connects only to a relay that proves its key.
+   */
+  async #request(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    const host = request.headers.host?.toLowerCase();
+    const { pathname } = new URL(request.url ?? "/", "http://relay");
+    const origin = request.headers.origin;
+    if (
+      request.method !== "GET" ||
+      pathname !== "/ping" ||
+      (host !== `127.0.0.1:${this.port}` && host !== `localhost:${this.port}`) ||
+      origin === undefined
+    ) {
+      response.writeHead(404, { "content-type": "text/plain" }).end();
+      return;
+    }
+    await this.#options.allowed.reload().catch(() => {});
+    response
+      .writeHead(200, {
+        "content-type": "application/json",
+        "access-control-allow-origin": origin,
+        vary: "Origin",
+        "cache-control": "no-store",
+      })
+      .end(JSON.stringify({ relay: true, allowed: this.#options.allowed.has(origin) }));
+  }
+
   async #upgrade(request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
     socket.on("error", () => socket.destroy());
+    // What `animaquill mcp allow-origin` added since this relay started counts at once.
+    const isPage = new URL(request.url ?? "/", "http://relay").pathname === "/page";
+    if (!isPage) {
+      await this.#admitted(request, socket, head);
+      return;
+    }
+    // A page is counted from here, while it is being looked at.
+    this.#upgrading += 1;
+    try {
+      await this.#options.allowed.reload().catch(() => {});
+      await this.#admitted(request, socket, head);
+    } finally {
+      this.#upgrading -= 1;
+    }
+  }
+
+  async #admitted(request: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
     const { allowed, ownUser } = this.#options;
     const admitted = await admit(request, this.port, allowed, ownUser).catch(() => "user" as const);
     const full =
       typeof admitted !== "string" &&
       (admitted.kind === "page"
-        ? this.router.pageCount >= MAX_PAGES
+        ? this.router.pageCount + this.#upgrading - 1 >= MAX_PAGES
         : this.#peers.size + this.#proving >= MAX_PEERS);
     if (typeof admitted === "string" || full) {
       socket.end("HTTP/1.1 403 Forbidden\r\nconnection: close\r\ncontent-length: 0\r\n\r\n");

@@ -311,3 +311,44 @@ describe("what review O5a found", { timeout: 30_000 }, () => {
     expect(await closed).toBe(1008);
   });
 });
+
+describe("a site added while the relay runs", { timeout: 30_000 }, () => {
+  it("connects without restarting it, and the relay says at /ping whether it takes a site", async () => {
+    const ports = portsOfTest();
+    const home = tempFolder();
+    const link = new ElectedLink({
+      identity: await loadIdentity(home),
+      allowed: await allowedOrigins(home),
+      toolset: "t",
+      list: "l",
+      ports,
+    });
+    links.push(link);
+    await link.start();
+    const ping = async (origin?: string) => {
+      const response = await fetch(`http://127.0.0.1:${ports.first}/ping`, {
+        ...(origin && { headers: { origin } }),
+      });
+      return {
+        status: response.status,
+        body: response.status === 200 ? await response.json() : undefined,
+      };
+    };
+    expect(await ping(ORIGIN)).toEqual({ status: 200, body: { relay: true, allowed: false } });
+    // Nothing for a request that is no page's.
+    expect((await ping()).status).toBe(404);
+    const store = await storeOf(sampleFolder());
+    const page = new FakePage({
+      port: ports.first,
+      origin: ORIGIN,
+      store,
+      project: { mode: "online", key: "p", id: "x", name: "x" },
+    });
+    await expect(page.connect()).rejects.toThrow();
+    await allowOrigin(home, ORIGIN);
+    expect(await ping(ORIGIN)).toEqual({ status: 200, body: { relay: true, allowed: true } });
+    await page.connect();
+    page.close();
+    store.destroy();
+  });
+});

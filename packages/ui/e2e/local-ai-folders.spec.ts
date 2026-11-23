@@ -97,7 +97,11 @@ test.describe("with a project folder", () => {
     // in packages/local/e2e/mcp.spec.ts, with `animaquill mcp` itself.
     await page.evaluate(() => localStorage.setItem("animaquill.mcp.ports", "47390:2"));
     await shown.getByTestId("local-ai-connect-button").click();
-    await expect(shown.getByTestId("local-ai-connect")).toContainText("电脑上还没有 AI 工具在运行");
+    // Why, as far as the browser tells: none runs, or (the test browser, which asks nobody) it does
+    // not let the page at this computer, with where to change that.
+    await expect(shown.getByTestId("local-ai-connect-status")).toHaveText(
+      /^(电脑上还没有 AI 工具在运行|Chrome 挡了这个网站访问这台设备上的应用：点地址栏左边的图标 › 网站设置)/,
+    );
     await shot(page, "guide-folder");
     // AGENTS.md: the project has one, which opens in the code tab.
     await shown.getByTestId("local-ai-agents").locator("summary").click();

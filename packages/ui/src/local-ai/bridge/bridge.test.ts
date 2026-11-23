@@ -98,6 +98,10 @@ function trustOf(keys: string[] = []): RelayTrust {
   return {
     has: (key) => keys.includes(key),
     add: (key) => void keys.push(key),
+    delete: (key) => {
+      const at = keys.indexOf(key);
+      if (at >= 0) keys.splice(at, 1);
+    },
     get any() {
       return keys.length > 0;
     },
@@ -139,6 +143,8 @@ function bridgeOf(options: {
   readonly granted?: boolean;
   readonly locks?: LockManager;
   readonly page?: BridgePage;
+  readonly permission?: PermissionState;
+  readonly fetch?: typeof fetch;
 }) {
   const store = openUnlocked();
   const problems = new ProblemSet();
@@ -164,7 +170,8 @@ function bridgeOf(options: {
     list: "l",
     browser: "Test",
     origin: ORIGIN,
-    permission: async () => (options.granted ? "granted" : "prompt"),
+    permission: async () => options.permission ?? (options.granted ? "granted" : "prompt"),
+    fetch: options.fetch ?? ((() => Promise.reject(new Error("nothing there"))) as typeof fetch),
     ...(options.locks && { locks: () => options.locks }),
     WebSocket: options.Socket,
     ports: PORTS,
@@ -268,9 +275,9 @@ describe("the editor and the AI tools on this computer", () => {
     expect(asked).toEqual([]);
   });
 
-  it("takes a new relay without asking only in the look people's click starts", async () => {
+  it("takes the relay people start in the minute after they clicked, without asking", async () => {
     const relay = { ...(await relayKey()), port: 47_300 };
-    // Nothing there when people click; it comes after.
+    // Nothing there when people click; the AI tool starts after.
     const relays: Relay[] = [];
     const { Socket } = socketsTo(relays);
     const trust = trustOf();
@@ -278,12 +285,56 @@ describe("the editor and the AI tools on this computer", () => {
     bridge.connect();
     await until(() => bridge.getSnapshot().status === "no-relay");
     relays.push(relay);
-    // The next look, by itself, asks about it, and only once in this page.
-    await until(() => asked.length === 1, 1_000);
-    await until(() => bridge.getSnapshot().status === "refused");
+    await until(() => bridge.getSnapshot().status === "connected", 1_000);
+    expect(asked).toEqual([]);
+    expect(trust.has(relay.key)).toBe(true);
+  });
+
+  it("takes none of two new ones that come one after the other in the minute", async () => {
+    const first = { ...(await relayKey()), port: 47_300 };
+    const second = { ...(await relayKey()), port: 47_301 };
+    const relays: Relay[] = [first];
+    const { Socket, open } = socketsTo(relays);
+    const trust = trustOf();
+    const { bridge, asked } = bridgeOf({ Socket, trust, confirm: async () => true });
+    bridge.connect();
+    await until(() => bridge.getSnapshot().status === "connected");
+    // That relay goes, and another key answers within the minute.
+    relays.splice(0, 1, second);
+    for (const socket of open) socket.close();
+    await until(() => bridge.getSnapshot().status === "several", 1_000);
     expect(trust.any).toBe(false);
+    expect(asked).toEqual([]);
+  });
+
+  it("asks about a new one met by itself only once in a page", async () => {
+    const relay = { ...(await relayKey()), port: 47_300 };
+    const { Socket } = socketsTo([relay]);
+    const trust = trustOf();
+    const { bridge, asked } = bridgeOf({ Socket, trust, auto: true, confirm: async () => false });
+    await bridge.start();
+    await until(() => bridge.getSnapshot().status === "refused");
     bridge.autoConnectChanged(true);
     await new Promise((done) => setTimeout(done, 50));
     expect(asked).toHaveLength(1);
+  });
+
+  it("says why it cannot connect: the browser said no, or the relay does not take this site", async () => {
+    const { Socket } = socketsTo([]);
+    const denied = bridgeOf({ Socket, trust: trustOf(), permission: "denied" });
+    denied.bridge.connect();
+    await until(() => denied.bridge.getSnapshot().status === "denied");
+    const asked: string[] = [];
+    const notAllowed = bridgeOf({
+      Socket,
+      trust: trustOf(),
+      fetch: (async (url: string) => {
+        asked.push(url);
+        return new Response(JSON.stringify({ relay: true, allowed: false }));
+      }) as unknown as typeof fetch,
+    });
+    notAllowed.bridge.connect();
+    await until(() => notAllowed.bridge.getSnapshot().status === "not-allowed");
+    expect(asked[0]).toBe("http://127.0.0.1:47300/ping");
   });
 });

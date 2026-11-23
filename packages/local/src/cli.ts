@@ -35,9 +35,9 @@ const HELP = `用法：animaquill [选项]
 命令（项目默认是当前文件夹，或者往上最近的有 animaquill.json 的文件夹）：
   mcp              给电脑上的 AI 工具（Claude Code、Codex 等）用的 MCP 服务器（stdio）：
                    工具在浏览器里打开的编辑器里执行，编辑器要开着这个项目、连着电脑上的 AI 工具。
-                   --project 也可以是在线项目的地址；--allow-origin <网址> 让自己部署的编辑器连接
+                   --project 也可以是在线项目的地址；--allow-origin <网址> 让那个网站上的编辑器连接
   mcp allow-origin <网址>
-                   记住一个自己部署的编辑器的网址，以后每次都让它连接
+                   记住一个网站（官网、自己部署的）上的编辑器，让它连接；已经开着的 AI 工具不用重启
   check [--json]   检查项目，有错误时退出码是 1
   describe         项目概要和时间轴
   guide [<主题>]   手册，比如 guide ops/clip.move；--query <词> 按关键词找
@@ -123,7 +123,9 @@ async function runCommand(name: string, argv: readonly string[]): Promise<number
     }
     try {
       const origin = await allowOrigin(animaquillHome(), address);
-      console.log(`以后电脑上的 AI 工具也连接 ${origin} 上的编辑器。`);
+      console.log(
+        `电脑上的 AI 工具现在也连接 ${origin} 上的编辑器，已经开着的不用重启：回到编辑器再点一次“连接”。`,
+      );
       return 0;
     } catch (error) {
       console.error((error as Error).message);

@@ -33,20 +33,42 @@ function isLocalEditor(origin: string): boolean {
 
 export interface AllowedOrigins {
   has(origin: string | undefined): boolean;
-  /** What people added, as given. */
+  /** What people added, as given and as `mcp.json` says now. */
   readonly added: readonly string[];
+  /**
+   * Reads `mcp.json` again, as `allow-origin` writes it while a relay runs: what it cannot read
+   * leaves the list as it was.
+   */
+  reload(): Promise<void>;
 }
 
-/** What `mcp.json` says, where it says anything that can be read. */
-async function readConfig(home: string): Promise<{ allowOrigins: string[] }> {
+/**
+ * What `mcp.json` says, where it says anything that can be read: none at all where there is no file.
+ * `strict` gives undefined for a file that is there and cannot be read, rather than nothing.
+ */
+async function readConfig(home: string): Promise<{ allowOrigins: string[] }>;
+async function readConfig(
+  home: string,
+  strict: true,
+): Promise<{ allowOrigins: string[] } | undefined>;
+async function readConfig(
+  home: string,
+  strict = false,
+): Promise<{ allowOrigins: string[] } | undefined> {
+  let text: string;
   try {
-    const value = JSON.parse(await readFile(join(home, CONFIG_FILE), "utf8")) as unknown;
-    const list = (value as { allowOrigins?: unknown }).allowOrigins;
+    text = await readFile(join(home, CONFIG_FILE), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { allowOrigins: [] };
+    return strict ? undefined : { allowOrigins: [] };
+  }
+  try {
+    const list = (JSON.parse(text) as { allowOrigins?: unknown }).allowOrigins;
     return {
       allowOrigins: Array.isArray(list) ? list.filter((each) => typeof each === "string") : [],
     };
   } catch {
-    return { allowOrigins: [] };
+    return strict ? undefined : { allowOrigins: [] };
   }
 }
 
@@ -54,14 +76,24 @@ export async function allowedOrigins(
   home: string,
   given: readonly string[] = [],
 ): Promise<AllowedOrigins> {
-  const { allowOrigins } = await readConfig(home);
-  const added = [...new Set([...given, ...allowOrigins].flatMap((each) => originOf(each) ?? []))];
-  const set = new Set(added);
+  let added: string[] = [];
+  let set = new Set<string>();
+  const take = (kept: readonly string[]) => {
+    added = [...new Set([...given, ...kept].flatMap((each) => originOf(each) ?? []))];
+    set = new Set(added);
+  };
+  take((await readConfig(home)).allowOrigins);
   return {
-    added,
+    get added() {
+      return added;
+    },
     has: (origin) => {
       if (origin === undefined || originOf(origin) !== origin) return false;
       return set.has(origin) || isLocalEditor(origin);
+    },
+    async reload() {
+      const config = await readConfig(home, true);
+      if (config) take(config.allowOrigins);
     },
   };
 }

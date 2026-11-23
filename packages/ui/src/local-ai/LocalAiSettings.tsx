@@ -22,6 +22,11 @@ export function whenText(time: number, now = Date.now()): string {
     : day.format(time);
 }
 
+/** Whether this browser connects to the AI tools on this computer: Chrome and Edge. */
+export const canConnectHere = () =>
+  typeof navigator !== "undefined" &&
+  (navigator as Navigator & { userAgentData?: unknown }).userAgentData !== undefined;
+
 /** Who is connected to the open project, and who changed it lately. */
 export function useToolActivity() {
   const { tools } = useWorkbench();
@@ -88,13 +93,16 @@ export function LocalAiGroup() {
           }
         />
       )}
-      <SettingRow id="localAi.autoConnect" help="">
-        <Toggle
-          label={t("settings.items.localAi.autoConnect.name")}
-          checked={auto}
-          onChange={(on) => autoConnect.set(on)}
-        />
-      </SettingRow>
+      {/* Only Chrome and Edge connect to AI tools on this computer. */}
+      {canConnectHere() && (
+        <SettingRow id="localAi.autoConnect" help="">
+          <Toggle
+            label={t("settings.items.localAi.autoConnect.name")}
+            checked={auto}
+            onChange={(on) => autoConnect.set(on)}
+          />
+        </SettingRow>
+      )}
       <SettingRow id="localAi.agentsFile" help="">
         <Toggle
           label={t("settings.items.localAi.agentsFile.name")}

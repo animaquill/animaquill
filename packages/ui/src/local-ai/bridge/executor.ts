@@ -242,7 +242,7 @@ export class BridgeExecutor {
     const store = this.#options.store();
     if (!store || signal.aborted) {
       return failed(
-        "error editor-not-open: the editor that took the call has no project open any more, so nothing was done.",
+        "error editor-not-open: the editor that took the call has no project open any more, so nothing was done. The call runs once the project is open in the editor again.",
       );
     }
     const open = this.#options.project?.();
@@ -252,7 +252,7 @@ export class BridgeExecutor {
       (open.key !== call.project.key || open.mode !== call.project.mode)
     ) {
       return failed(
-        `error editor-not-open: the editor that took the call has the project ${JSON.stringify(open.name)} open now, not the one the call was for, so nothing was done.`,
+        `error editor-not-open: the editor that took the call has the project ${JSON.stringify(open.name)} open now, not the one the call was for, so nothing was done. The call runs once that project is open in the editor again.`,
       );
     }
     const writes = WRITE_TOOLS.has(call.tool);

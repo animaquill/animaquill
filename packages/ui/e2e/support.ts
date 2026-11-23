@@ -211,8 +211,9 @@ export const test = base.extend<{
         // Looking for the relay of AI tools on this computer finds closed ports, which the browser
         // says in the console whatever the page does (local-ai/bridge/bridge.ts).
         if (/^WebSocket connection to 'ws:\/\/127\.0\.0\.1:\d+\/page\?/.test(text)) return;
-        // Which resource, where the browser only says that one failed.
         const { url } = message.location();
+        if (/^http:\/\/127\.0\.0\.1:\d+\/ping$/.test(url)) return;
+        // Which resource, where the browser only says that one failed.
         problems.push(text.startsWith("Failed to load resource") && url ? `${text} ${url}` : text);
       });
       // The console does not show every violation. This only finds something where the site sends
