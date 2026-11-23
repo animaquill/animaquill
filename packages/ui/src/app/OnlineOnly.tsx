@@ -28,7 +28,8 @@ export function OnlineOnly({
       className={className}
       aria-disabled="true"
       data-needs-online=""
-      title={t("online.needed.hint")}
+      // Where there is nothing to sign in to, as the editor of `npx animaquill`, it says so.
+      title={t(workbench.canGoOnline ? "online.needed.hint" : "online.needed.none")}
       {...(label !== undefined && { "aria-label": label })}
       onClick={() => void workbench.askToGoOnline(what)}
     >

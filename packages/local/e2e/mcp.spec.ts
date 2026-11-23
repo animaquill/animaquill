@@ -14,7 +14,7 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import type { Page } from "@playwright/test";
 import { footer, openDropped, projectOnDisk } from "../../ui/e2e/folder-support.ts";
-import { expect, test } from "../../ui/e2e/support.ts";
+import { chooseFromMenu, expect, test } from "../../ui/e2e/support.ts";
 
 const CLI = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
 
@@ -78,8 +78,7 @@ async function connectEditor(page: Page, tools: Tools): Promise<void> {
     (ports) => localStorage.setItem("animaquill.mcp.ports", ports),
     `${tools.ports.first}:${tools.ports.count}`,
   );
-  await page.getByRole("button", { name: "帮助" }).click();
-  await page.getByRole("menu").getByRole("menuitem", { name: "连接电脑上的 AI 工具" }).click();
+  await chooseFromMenu(page, "帮助", "连接电脑上的 AI 工具");
   await guide(page).getByTestId("local-ai-connect-button").click();
   await expect(guide(page).getByTestId("local-ai-connect")).toContainText(
     "已连接电脑上的 AI 工具",

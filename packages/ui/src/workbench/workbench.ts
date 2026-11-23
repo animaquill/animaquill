@@ -4570,7 +4570,13 @@ export class Workbench {
 
   /** Whether the settings have a group now: the account's only with a platform, see `visibleGroups`. */
   #hasSettingsGroup(group: string): boolean {
-    if (group === "account") return this.account !== undefined || this.mode === "offline";
+    // Offline, the way to sign in: only where the site has a backend to sign in to, which the
+    // editor of `npx animaquill` has none of yet.
+    if (group === "account") {
+      return (
+        this.account !== undefined || (this.mode === "offline" && this.#host.goOnline !== undefined)
+      );
+    }
     return true;
   }
 

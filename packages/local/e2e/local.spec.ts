@@ -105,7 +105,7 @@ test.describe("the editor on this computer", () => {
       offscreen: "function",
       encoder: "function",
     });
-    await expect(page.getByRole("button", { name: "新建项目" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "新建项目", exact: true })).toBeVisible();
   });
 
   test("keeps a file dropped on it before the editor is there from taking the page away", async ({
@@ -147,8 +147,9 @@ test.describe("the editor on this computer", () => {
   test("is where localhost leads", async ({ page }) => {
     const { port } = new URL(page.url());
     await page.goto(`http://localhost:${port}/`);
-    expect(page.url()).toBe(`http://animaquill.localhost:${port}/`);
-    await expect(page.getByRole("button", { name: "新建项目" })).toBeVisible();
+    // Without a backend there is only the offline mode, whose pages are under /offline.
+    expect(page.url()).toBe(`http://animaquill.localhost:${port}/offline`);
+    await expect(page.getByRole("button", { name: "新建项目", exact: true })).toBeVisible();
   });
 
   test("can be installed as an app", async ({ page }) => {
@@ -328,9 +329,9 @@ test.describe("the editor on this computer", () => {
         "aria-pressed",
         "true",
       );
-      const relay = route.getByRole("button", { name: "经平台转发" });
+      const relay = route.getByRole("button", { name: "经服务器转发" });
       await expect(relay).toBeDisabled();
-      await expect(relay).toHaveAttribute("title", "这里没有平台转发");
+      await expect(relay).toHaveAttribute("title", "这个网站没有在线模式，只能离线使用。");
       await page.screenshot({ path: test.info().outputPath("local.png") });
       await settings.getByRole("button", { name: "存储和数据", exact: true }).click();
       const keys = settings.getByTestId("ai-keys-where");

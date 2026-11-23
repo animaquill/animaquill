@@ -203,10 +203,16 @@ export function Button(props: {
   );
 }
 
-/** The groups there are now: the account's online, and grey offline, see `useLockedGroups`. */
+/**
+ * The groups there are now: the account's online, and grey offline where there is an online mode
+ * to go to, see `useLockedGroups`. The editor of `npx animaquill` has none yet: no account group.
+ */
 export function useGroups(): readonly SettingsGroup[] {
-  const { account, mode } = useWorkbench();
-  return visibleGroups({ account: account !== undefined || mode === "offline" });
+  const workbench = useWorkbench();
+  const { account, mode } = workbench;
+  return visibleGroups({
+    account: account !== undefined || (mode === "offline" && workbench.canGoOnline),
+  });
 }
 
 /**
