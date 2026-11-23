@@ -1,4 +1,9 @@
-import type { CloudCopyProblem, RepositoryStatus, RepositoryUnusable } from "@animaquill/host";
+import {
+  gitHubUrlOf,
+  type CloudCopyProblem,
+  type RepositoryStatus,
+  type RepositoryUnusable,
+} from "@animaquill/host";
 import type { TFunction } from "i18next";
 import type { CloudProjectsSnapshot, TakeBackState } from "./projects.ts";
 import {
@@ -415,9 +420,9 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
       row("repository", unusableLine(unusable, now, t), {
         notes: [unusableFix(unusable, t), t("cloud.unusable.readOnly"), t("cloud.unusable.ways")],
         tone: "attention",
-        ...(repository?.url &&
+        ...(gitHubUrlOf(repository) &&
           unusableKind(unusable) !== "deleted" && {
-            link: { label: t("cloud.panel.action.openOnGitHub"), url: repository.url },
+            link: { label: t("cloud.panel.action.openOnGitHub"), url: gitHubUrlOf(repository)! },
           }),
         actions: actions(ways),
       }),
@@ -442,8 +447,8 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
           }),
           {
             ...(isStale && { notes: [t("cloud.panel.repository.stale")] }),
-            ...(repository.url && {
-              link: { label: t("cloud.panel.action.openOnGitHub"), url: repository.url },
+            ...(gitHubUrlOf(repository) && {
+              link: { label: t("cloud.panel.action.openOnGitHub"), url: gitHubUrlOf(repository)! },
             }),
           },
         ),

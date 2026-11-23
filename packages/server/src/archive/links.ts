@@ -1,6 +1,12 @@
 import { and, eq, gt, inArray, isNotNull, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import type { Executor } from "../database.ts";
-import { projectRepos, type Diverged, type GoneCause, type PauseReason } from "../schema.ts";
+import {
+  projectRepos,
+  type Diverged,
+  type GoneCause,
+  type PauseReason,
+  type RepoProvider,
+} from "../schema.ts";
 
 /**
  * The link of a project to its repository, as the archive, the API and the webhook change it: paused
@@ -15,6 +21,30 @@ export type Link = typeof projectRepos.$inferSelect;
  * (rebuild.ts, `SyncHub.release`).
  */
 export const ARCHIVE_LOCK = 0x61712d72; // "aq-r"
+
+/** A project saved to a repository: its link, as long as it is to that one. */
+export interface LinkOf {
+  readonly projectId: string;
+  readonly provider: RepoProvider;
+  readonly repoId: number;
+}
+
+/** The row of a link while the project is still saved to the same repository, and no other. */
+export const sameLink = (link: LinkOf): SQL =>
+  and(
+    eq(projectRepos.projectId, link.projectId),
+    eq(projectRepos.provider, link.provider),
+    eq(projectRepos.repoId, link.repoId),
+  )!;
+
+/** The rows of repositories on GitHub of these numbers there, as webhooks and people name them. */
+export const onGitHub = (repoIds: number | readonly number[]): SQL =>
+  and(
+    eq(projectRepos.provider, "github"),
+    typeof repoIds === "number"
+      ? eq(projectRepos.repoId, repoIds)
+      : inArray(projectRepos.repoId, [...repoIds]),
+  )!;
 
 export const linkOf = async (db: Executor, projectId: string): Promise<Link | undefined> => {
   const [row] = await db.select().from(projectRepos).where(eq(projectRepos.projectId, projectId));
@@ -177,7 +207,7 @@ export const deleteAtOf = (since: Date, from: string | undefined): Date | undefi
  */
 export const pauseLink = async (
   db: Executor,
-  where: { readonly projectId: string; readonly repoId: number },
+  where: LinkOf,
   pause: {
     readonly reason: PauseReason;
     readonly detail: string;
@@ -211,7 +241,7 @@ export const pauseLink = async (
         : { unusableSince: null, recheckAt: null, rechecks: 0, recheckedAt: null }),
       ...(pause.goneCause !== undefined && { goneCause: pause.goneCause }),
     })
-    .where(and(eq(projectRepos.projectId, where.projectId), eq(projectRepos.repoId, where.repoId)));
+    .where(sameLink(where));
   await notifyLink(db, [where.projectId]);
 };
 

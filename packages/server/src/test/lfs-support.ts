@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { RepoHosts } from "../archive/repo-host.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -66,7 +67,7 @@ export const lfsWorld = async (
   const uploads = new LfsUploads({
     db: w.db,
     staging,
-    host: w.host,
+    hosts: RepoHosts.github(w.host),
     enqueue: async (upload) => {
       queued.push(upload);
     },
@@ -77,7 +78,7 @@ export const lfsWorld = async (
   });
   const downloads = new LfsDownloads({
     db: w.db,
-    host: w.host,
+    hosts: RepoHosts.github(w.host),
     log: options.downloadLog ?? quiet,
     fetch: w.github.fetch,
     plain: true,
@@ -87,7 +88,7 @@ export const lfsWorld = async (
   const p = await platform(w, { lfs: uploads, lfsDownloads: downloads });
   const pusher = new LfsPusher({
     db: w.db,
-    host: w.host,
+    hosts: RepoHosts.github(w.host),
     staging,
     log: quiet,
     fetch: w.github.fetch,

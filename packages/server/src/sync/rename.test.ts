@@ -1,4 +1,5 @@
 import { ProjectStore } from "@animaquill/core";
+import { RepoHosts } from "../archive/repo-host.ts";
 import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { OWNER_ONLY } from "../access.ts";
@@ -152,7 +153,7 @@ describe.skipIf(!TEST_DATABASE)("renaming a project from the start page, on a da
     await m.window.change({ type: "project.setTags", params: { tags: [] } });
     await pauseLink(
       t.db,
-      { projectId: m.project, repoId: m.repo.id },
+      { projectId: m.project, provider: "github", repoId: m.repo.id },
       { reason: "gone", detail: "gone", at: w.time.now },
     );
     expect(await rename("宣传片")).toMatchObject({ status: 409, json: { error: "unusable" } });
@@ -182,7 +183,7 @@ describe.skipIf(!TEST_DATABASE)("renaming a project from the start page, on a da
     await wakeCopy(t.db, m.project, { userId: w.userId, access: OWNER_ONLY }, w.time.now);
     const made = await new Rebuilder({
       db: t.db,
-      host: w.host,
+      hosts: RepoHosts.github(w.host),
       exporter: new ProjectExporter({ heapMb: 256 }),
       log: quiet,
       now: () => w.time.now,

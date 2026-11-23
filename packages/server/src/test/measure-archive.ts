@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { RepoHosts } from "../archive/repo-host.ts";
 import { join } from "node:path";
 import { ProjectStore, piecesOf, type CommandCall } from "@animaquill/core";
 import { createProject } from "@animaquill/schema";
@@ -246,7 +247,7 @@ const measureArchive = async (path: string, githubUrl: string) => {
     const app = new GitHubApp({ apiUrl, issuer: "Iv1.a1b2c3d4e5f60718", privateKey });
     const archiver = new Archiver({
       db: t.db,
-      host: new GitHubRepoHost(app, { apiUrl, webUrl: githubUrl }),
+      hosts: RepoHosts.github(new GitHubRepoHost(app, { apiUrl, webUrl: githubUrl })),
       exporter: new ProjectExporter({ heapMb: EXPORT_HEAP_MB }),
       log: { info() {}, warn: console.warn, error: console.error },
     });

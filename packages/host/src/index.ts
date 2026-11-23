@@ -1403,16 +1403,30 @@ export interface RepositoryUnusable {
 }
 
 /** The repository of a project, and how archiving into it goes. Times are milliseconds since 1970. */
+/** Where a repository is kept: on GitHub, or a Git repository of the server's own. */
+export type RepositoryPlace = "github" | "local";
+
+/**
+ * Where people see a repository on GitHub: only for one that is there, and only where the platform
+ * says. A repository of the server's own has no page.
+ */
+export const gitHubUrlOf = (
+  repository: RepositoryStatus["repository"] | undefined,
+): string | undefined =>
+  repository?.place === "github" && repository.url ? repository.url : undefined;
+
 export interface RepositoryStatus {
   readonly repository?: {
+    /** "github" from a server that does not say. */
+    readonly place: RepositoryPlace;
     readonly id: number;
     readonly owner: string;
     readonly name: string;
     readonly fullName: string;
     readonly private: boolean;
     readonly branch: string;
-    /** Where people see it. */
-    readonly url: string;
+    /** Where people see it, where they can: on GitHub. */
+    readonly url?: string;
     readonly createdHere: boolean;
     readonly linkedAt: number;
   };

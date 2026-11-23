@@ -1,5 +1,10 @@
 import type { ProjectStore } from "@animaquill/core";
-import type { RepositoryAccess, RepositoryConflict, RepositoryStatus } from "@animaquill/host";
+import {
+  gitHubUrlOf,
+  type RepositoryAccess,
+  type RepositoryConflict,
+  type RepositoryStatus,
+} from "@animaquill/host";
 import type { TFunction } from "i18next";
 import type { Dialogs } from "../workbench/dialogs.ts";
 import type { Notifications } from "../workbench/notifications.ts";
@@ -148,8 +153,11 @@ export class RepoMerges {
     // The list above names the files: a button names its file only where there are more.
     const named = (label: string, path: string) =>
       files.length > 1 ? `${label} · ${path}` : label;
+    const web = gitHubUrlOf(repository);
     const choices = files.flatMap(({ path }) => [
-      { id: `open:${path}`, label: named(`${t("repoMerge.blocked.openOnGitHub")} ↗`, path) },
+      ...(web === undefined
+        ? []
+        : [{ id: `open:${path}`, label: named(`${t("repoMerge.blocked.openOnGitHub")} ↗`, path) }]),
       {
         id: `use:${path}`,
         label: named(
@@ -171,8 +179,8 @@ export class RepoMerges {
     if (!answer) return;
     const [kind, ...rest] = answer.split(":");
     const path = rest.join(":");
-    if (kind === "open") {
-      this.#options.open(`${repository.url}/blob/${encodeURIComponent(repository.branch)}/${path}`);
+    if (kind === "open" && web !== undefined) {
+      this.#options.open(`${web}/blob/${encodeURIComponent(repository.branch)}/${path}`);
       return;
     }
     const isThere = has.has(path);

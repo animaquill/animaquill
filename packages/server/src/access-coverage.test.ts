@@ -1,4 +1,5 @@
 import { mkdtempSync } from "node:fs";
+import { RepoHosts } from "./archive/repo-host.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SYNC_CLOSE, SYNC_PROTOCOL } from "@animaquill/host/sync";
@@ -297,7 +298,7 @@ describe.skipIf(!TEST_DATABASE)("access to projects, route by route, on a databa
     const lfs = new LfsUploads({
       db: t.db,
       staging,
-      host: who.host,
+      hosts: RepoHosts.github(who.host),
       enqueue: async () => {},
       log: quiet,
       limits: { minChunkBytes: 1 },
@@ -305,7 +306,7 @@ describe.skipIf(!TEST_DATABASE)("access to projects, route by route, on a databa
     });
     const lfsDownloads = new LfsDownloads({
       db: t.db,
-      host: who.host,
+      hosts: RepoHosts.github(who.host),
       log: quiet,
       fetch: who.github.fetch,
       plain: true,

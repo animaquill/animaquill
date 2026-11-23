@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { backoffMs } from "../archive/links.ts";
-import { LfsQuota, RepoPaused, type RepoHost } from "../archive/repo-host.ts";
+import { LfsQuota, RepoPaused, placeOf, type RepoHosts } from "../archive/repo-host.ts";
 import { describeError, type Db, type Logger } from "../database.ts";
 import { GitHubUnavailable } from "../github/client.ts";
 import { lfsObjects, lfsUploads, projectRepos, projects, users } from "../schema.ts";
@@ -38,7 +38,8 @@ export type PushOutcome =
 
 export interface LfsPusherOptions {
   readonly db: Db;
-  readonly host: RepoHost;
+  /** The repositories, on whichever provider: see archive/repo-host.ts. */
+  readonly hosts: RepoHosts;
   readonly staging: Staging;
   readonly log: Logger;
   /** What reaches the storage's own addresses, for tests. */
@@ -79,7 +80,7 @@ export class LfsPusher {
   }
 
   async #push(id: string): Promise<PushOutcome> {
-    const { db, host, staging, log } = this.#options;
+    const { db, hosts, staging, log } = this.#options;
     const now = this.#now();
     // Taken: one push of an upload at a time, which the queue sees to; a push that stopped with
     // its worker leaves it "pushing", and the next one takes it over.
@@ -97,7 +98,13 @@ export class LfsPusher {
     if (!row) return { kind: "none" };
     try {
       const [link] = await db
-        .select({ installationId: projectRepos.installationId, disabledAt: users.disabledAt })
+        .select({
+          provider: projectRepos.provider,
+          repoId: projectRepos.repoId,
+          installationId: projectRepos.installationId,
+          localDir: projectRepos.localDir,
+          disabledAt: users.disabledAt,
+        })
         .from(projectRepos)
         .innerJoin(projects, eq(projects.id, projectRepos.projectId))
         .innerJoin(users, eq(users.id, projects.ownerId))
@@ -106,7 +113,7 @@ export class LfsPusher {
       // Nothing goes to GitHub for someone disabled: it waits, as far as it may.
       if (link.disabledAt !== null)
         return this.#later(row, "the account is disabled", DISABLED_WAIT_MS);
-      const session = host.open({ installationId: link.installationId, repoId: row.repoId });
+      const session = hosts.open(placeOf(link));
       const object = { oid: row.oid, size: row.size };
       // Every time: the addresses it gives out last a quarter of an hour.
       const [answer] = await session.lfsBatch("upload", [object]);

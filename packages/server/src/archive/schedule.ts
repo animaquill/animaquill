@@ -2,7 +2,7 @@ import { and, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import type { Db, Logger } from "../database.ts";
 import { describeError } from "../database.ts";
 import type { Jobs } from "../jobs.ts";
-import { projectRepos, projects, users } from "../schema.ts";
+import { projectRepos, projects, users, type RepoProvider } from "../schema.ts";
 import type { ArchiveKind, Archiver } from "./archiver.ts";
 import { readSetting } from "../settings.ts";
 import { CONTENT_REASONS } from "./links.ts";
@@ -91,8 +91,14 @@ export const isArchiveQueued = async (boss: Jobs, project: string): Promise<bool
 export const takeDue = async (
   db: Db,
   now: Date,
-  options: { readonly merging?: boolean } = {},
+  options: {
+    readonly merging?: boolean;
+    /** Only repositories on these: those the worker reaches. All unless said. */
+    readonly providers?: readonly RepoProvider[];
+  } = {},
 ): Promise<string[]> => {
+  if (options.providers?.length === 0) return [];
+  const reached = options.providers && inArray(projectRepos.provider, [...options.providers]);
   const at = now.toISOString();
   // Merges are on: what paused because files of the project changed on GitHub before they were
   // (`Diverged.merging` missing) goes on, and is looked at, which merges those changes now. What
@@ -136,6 +142,7 @@ export const takeDue = async (
     .where(
       and(
         eq(projectRepos.state, "ready"),
+        reached,
         isNull(users.disabledAt),
         or(
           isNotNull(projectRepos.requestedAt),
@@ -180,6 +187,8 @@ export const startArchiving = async (
     readonly archiver: Pick<Archiver, "run">;
     readonly log: Logger;
     readonly now?: () => Date;
+    /** The providers the worker reaches repositories on (`RepoHosts.providers`): all unless said. */
+    readonly providers?: readonly RepoProvider[];
   },
 ): Promise<void> => {
   const now = options.now ?? (() => new Date());
@@ -189,7 +198,10 @@ export const startArchiving = async (
     const merging = await readSetting(options.db, REPO_MERGE_SETTING)
       .then(({ enabled }) => enabled)
       .catch(() => false);
-    const due = await takeDue(options.db, now(), { merging });
+    const due = await takeDue(options.db, now(), {
+      merging,
+      ...(options.providers && { providers: options.providers }),
+    });
     for (const project of due) await enqueueArchive(boss, { project, kind: "auto" });
     if (due.length > 0) options.log.info({ projects: due.length }, "archives due");
   });

@@ -41,6 +41,7 @@ const sync = (more: Partial<CloudSnapshot> = {}): CloudSnapshot => ({
 });
 
 const REPOSITORY: NonNullable<RepositoryStatus["repository"]> = {
+  place: "github",
   id: 7,
   owner: "ada",
   name: "atom",

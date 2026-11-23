@@ -24,7 +24,7 @@ import { listProjects } from "../sync/list.ts";
 import { REBUILD_RETRY_MS, wakeCopy } from "../sync/wake.ts";
 import { ProjectExporter } from "./exporter.ts";
 import { Rebuilder } from "./rebuild.ts";
-import type { RepoHost } from "./repo-host.ts";
+import { RepoHosts, type RepoHost } from "./repo-host.ts";
 
 /**
  * Letting go of the working copy of a project, and making it again from its repository (the plan of
@@ -83,7 +83,7 @@ describe.skipIf(!TEST_DATABASE)(
     const rebuilder = (host: RepoHost = w.host) =>
       new Rebuilder({
         db: t.db,
-        host,
+        hosts: RepoHosts.github(host),
         exporter: new ProjectExporter({ heapMb: 256 }),
         log: quiet,
         now: () => w.time.now,

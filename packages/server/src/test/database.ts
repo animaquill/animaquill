@@ -1,4 +1,7 @@
 import { randomBytes } from "node:crypto";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import pg, { Client } from "pg";
 import type { Config } from "../config.ts";
 import { createDatabase, type Database, type MigrationSet } from "../database.ts";
@@ -86,4 +89,24 @@ export const connection = async (t: TestDatabase): Promise<pg.Client> => {
   });
   await client.connect();
   return client;
+};
+
+/**
+ * The first `count` migrations of a folder of them, in a folder of their own, as an older version
+ * had them: for databases of the version before, which take the newest migrations in a test. The
+ * caller takes the folder away.
+ */
+export const firstMigrations = (folder: string, count: number): string => {
+  const journal = JSON.parse(readFileSync(join(folder, "meta", "_journal.json"), "utf8")) as {
+    readonly entries: readonly { readonly tag: string }[];
+  };
+  if (journal.entries.length < count)
+    throw new Error(`${folder} has ${journal.entries.length} migrations, not ${count}`);
+  const entries = journal.entries.slice(0, count);
+  const target = mkdtempSync(join(tmpdir(), "aq-migrations-"));
+  mkdirSync(join(target, "meta"));
+  writeFileSync(join(target, "meta", "_journal.json"), JSON.stringify({ ...journal, entries }));
+  for (const entry of entries)
+    copyFileSync(join(folder, `${entry.tag}.sql`), join(target, `${entry.tag}.sql`));
+  return target;
 };

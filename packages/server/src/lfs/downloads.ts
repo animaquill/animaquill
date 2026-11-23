@@ -8,8 +8,10 @@ import {
   LfsQuota,
   RepoPaused,
   RepoRefused,
+  placeOf,
   type LfsAction,
-  type RepoHost,
+  type RepoHosts,
+  type RepoRow,
 } from "../archive/repo-host.ts";
 import { OPEN_LFS_STATES, lfsObjects, lfsUploads, projects } from "../schema.ts";
 import { readSetting, type Setting, type Settings } from "../settings.ts";
@@ -138,7 +140,7 @@ export type LookupAnswer =
 export interface DownloadsOptions {
   readonly db: Db;
   /** Undefined where there is no GitHub App: nothing can be downloaded. */
-  readonly host: RepoHost | undefined;
+  readonly hosts: RepoHosts | undefined;
   readonly log: Logger;
   /** What admins set, read every few seconds; undefined to read the database each time. */
   readonly settings?: () => Settings | undefined;
@@ -324,7 +326,7 @@ export class LfsDownloads {
     const link = await linkOf(db, projectId);
     if (!link) throw new DownloadRefused("notLinked", 409);
     if (isUnusable(link.pauseReason)) throw new DownloadRefused("gone", 409);
-    if (!this.#options.host) throw new DownloadRefused("unavailable", 503);
+    if (!this.#options.hosts?.has(link.provider)) throw new DownloadRefused("unavailable", 503);
     return link;
   }
 
@@ -358,14 +360,11 @@ export class LfsDownloads {
   /** Keeps the addresses of a batch of answers, and says what each object is. */
   async #ask(
     projectId: string,
-    link: { readonly installationId: number; readonly repoId: number },
+    link: RepoRow,
     objects: readonly { readonly oid: string; readonly size: number }[],
   ): Promise<readonly ("ready" | "absent" | "changed" | "unavailable")[]> {
-    const host = this.#options.host as RepoHost;
-    const session = host.open({
-      installationId: link.installationId,
-      repoId: link.repoId,
-    });
+    const hosts = this.#options.hosts as RepoHosts;
+    const session = hosts.open(placeOf(link));
     const answers = await this.#asking(projectId, () => session.lfsBatch("download", objects));
     const now = this.#now();
     return answers.map((answer, index) => {

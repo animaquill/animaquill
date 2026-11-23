@@ -61,6 +61,7 @@ function repositoryOf(platform: MemoryPlatform, project: string): FakeRepositori
   repository.autoArchive = true;
   repository.answer = {
     repository: {
+      place: "github",
       id: REPOSITORY.id,
       owner: REPOSITORY.owner,
       name: REPOSITORY.name,

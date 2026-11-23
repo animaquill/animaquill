@@ -15,7 +15,7 @@ import {
   type Person,
   type RepoHost,
   type RepoInfo,
-  type RepoPlace,
+  type GitHubPlace,
   type RepoSession,
   type TreeChange,
   type TreeEntry,
@@ -210,7 +210,7 @@ const repoInfoOf = (json: any): RepoInfo | undefined => {
 };
 
 class GitHubRepoSession implements RepoSession {
-  readonly #place: RepoPlace;
+  readonly #place: GitHubPlace;
   readonly #app: GitHubApp;
   readonly #rest: GitHubRest;
   readonly #webUrl: string;
@@ -230,7 +230,7 @@ class GitHubRepoSession implements RepoSession {
   #base: string | undefined;
 
   constructor(
-    place: RepoPlace,
+    place: GitHubPlace,
     app: GitHubApp,
     rest: GitHubRest,
     web: { readonly url: string; readonly api: string; readonly fetch: typeof fetch },
@@ -761,7 +761,7 @@ class GitHubRepoSession implements RepoSession {
   }
 }
 
-export class GitHubRepoHost implements RepoHost {
+export class GitHubRepoHost implements RepoHost<GitHubPlace> {
   readonly #app: GitHubApp;
   readonly #rest: GitHubRest;
   readonly #web: { readonly url: string; readonly api: string; readonly fetch: typeof fetch };
@@ -773,7 +773,10 @@ export class GitHubRepoHost implements RepoHost {
     this.#web = { url: options.webUrl, api: options.apiUrl, fetch: options.fetch ?? fetch };
   }
 
-  open(place: RepoPlace, options: { readonly signal?: AbortSignal | undefined } = {}): RepoSession {
+  open(
+    place: GitHubPlace,
+    options: { readonly signal?: AbortSignal | undefined } = {},
+  ): RepoSession {
     return new GitHubRepoSession(place, this.#app, this.#rest, this.#web, options.signal);
   }
 }

@@ -1,4 +1,5 @@
 import { OWNER_ONLY } from "../access.ts";
+import { RepoHosts } from "./repo-host.ts";
 import { ProjectStore, isProjectFile, mergeUpdates, type CommandCall } from "@animaquill/core";
 import { SYNC_CLOSE, SYNC_PROTOCOL } from "@animaquill/host/sync";
 import { and, desc, eq, gt } from "drizzle-orm";
@@ -188,7 +189,7 @@ describe.skipIf(!TEST_DATABASE)("making working copies again at random, on a dat
     });
     const rebuilder = new Rebuilder({
       db: t.db,
-      host: w.host,
+      hosts: RepoHosts.github(w.host),
       exporter: new ProjectExporter({ heapMb: 256 }),
       log: quiet,
       now: () => w.time.now,

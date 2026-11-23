@@ -176,6 +176,7 @@ function repositoryOf(platform: MemoryPlatform, project: string): FakeRepositori
   repository.autoArchive = true;
   repository.answer = {
     repository: {
+      place: "github",
       id: 7,
       owner: "ada",
       name: "atom",

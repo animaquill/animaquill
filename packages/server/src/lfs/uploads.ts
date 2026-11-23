@@ -7,8 +7,9 @@ import {
   LfsQuota,
   RepoPaused,
   RepoRefused,
+  placeOf,
   type LfsAnswer,
-  type RepoHost,
+  type RepoHosts,
 } from "../archive/repo-host.ts";
 import {
   OPEN_LFS_STATES,
@@ -142,8 +143,11 @@ type Row = typeof lfsUploads.$inferSelect;
 export interface LfsUploadsOptions {
   readonly db: Db;
   readonly staging: Staging;
-  /** The App's side, for asking GitHub whether it has a file. Undefined: nothing is taken. */
-  readonly host: RepoHost | undefined;
+  /**
+   * The repositories, for asking the storage whether it has a file. Undefined, or none on the
+   * project's provider: nothing is taken.
+   */
+  readonly hosts: RepoHosts | undefined;
   /** Puts an upload whose file is all there into the queue of the worker, see push.ts. */
   readonly enqueue: (upload: string) => Promise<void>;
   readonly log: Logger;
@@ -301,7 +305,7 @@ export class LfsUploads {
     projectId: string,
     file: { readonly oid: string; readonly size: number },
   ): Promise<{ readonly fresh: boolean; readonly answer: UploadAnswer }> {
-    const { db, staging, host, log } = this.#options;
+    const { db, staging, hosts, log } = this.#options;
     const { oid, size } = file;
     const [project] = await db
       .select({ id: projects.id })
@@ -340,8 +344,8 @@ export class LfsUploads {
     // Larger than the storage takes, as far as is known: GitHub is not asked, see `fileBytes`.
     if (size > this.#limits.fileBytes) throw new UploadRefused("tooLarge", 413);
     // GitHub has it, as from another project in the repository, or a push of Git LFS.
-    if (!host) throw new UploadRefused("unavailable", 503);
-    const session = host.open({ installationId: link.installationId, repoId });
+    if (!hosts?.has(link.provider)) throw new UploadRefused("unavailable", 503);
+    const session = hosts.open(placeOf(link));
     const [answer] = await this.#asking(projectId, () =>
       session.lfsBatch("upload", [{ oid, size }]),
     );

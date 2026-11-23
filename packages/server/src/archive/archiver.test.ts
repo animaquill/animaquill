@@ -23,7 +23,7 @@ import { SyncHub } from "../sync/hub.ts";
 import { Archiver, CONFIRM_AFTER_MS } from "./archiver.ts";
 import { ProjectExporter } from "./exporter.ts";
 import { ATTRIBUTES_END, ATTRIBUTES_START, trailersOf } from "./plan.ts";
-import { blobShaOf, bytesOf } from "./repo-host.ts";
+import { RepoHosts, blobShaOf, bytesOf } from "./repo-host.ts";
 import { takeDue } from "./schedule.ts";
 
 /**
@@ -971,7 +971,7 @@ describe.skipIf(!TEST_DATABASE)("what review found, on a database", () => {
     };
     const archiver = new Archiver({
       db: t.db,
-      host: w.host,
+      hosts: RepoHosts.github(w.host),
       exporter: new ProjectExporter({ heapMb: 256 }),
       log,
       now: () => w.time.now,
@@ -1023,5 +1023,32 @@ describe.skipIf(!TEST_DATABASE)("what review found, on a database", () => {
       w.github.onCall = undefined;
       hub.stop();
     }
+  });
+
+  test("a server not set up for GitHub archives nothing there, and notes nothing of it on the link", async () => {
+    const project = await newProject(w);
+    await edit(w, project, write("code/a.js", "a\n"));
+    const repo = w.github.addRepo(w.person, { name: "film", select: true });
+    await linkTo(w, project.id, repo);
+    const before = await linkOf(project.id);
+    const unhosted = new Archiver({
+      db: t.db,
+      hosts: new RepoHosts({}),
+      exporter: new ProjectExporter({ heapMb: 256 }),
+      log: quiet,
+      now: () => w.time.now,
+    });
+    expect(await unhosted.run(project.id, "first")).toEqual({ kind: "none" });
+    expect(w.github.history(repo.id)).toHaveLength(0);
+    expect(await linkOf(project.id)).toEqual(before);
+    expect(await archivesOf(project.id)).toEqual([]);
+    // Nor does the scan of the worker queue it, while one that reaches GitHub would.
+    w.time.later(60 * 60_000);
+    expect(await takeDue(t.db, w.time.now, { providers: [] })).toEqual([]);
+    expect(await takeDue(t.db, w.time.now, { providers: ["local"] })).toEqual([]);
+    expect(await takeDue(t.db, w.time.now, { providers: ["github"] })).toContain(project.id);
+    // The same project, once the server reaches GitHub.
+    expect(await w.archiver().run(project.id, "first")).toMatchObject({ kind: "archived" });
+    expect(await archivesOf(project.id)).toMatchObject([{ provider: "github", repoId: repo.id }]);
   });
 });

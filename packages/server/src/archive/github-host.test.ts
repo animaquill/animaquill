@@ -64,7 +64,7 @@ describe("archiving into GitHub, through its Git Data API", () => {
       webUrl: "https://github.test",
       fetch: github.fetch,
     });
-    session = host.open({ installationId: installation, repoId: repo.id });
+    session = host.open({ provider: "github", installationId: installation, repoId: repo.id });
   });
 
   test("starts an empty repository, then writes trees and commits that Git itself reads", async () => {
@@ -233,7 +233,7 @@ describe("archiving into GitHub, through its Git Data API", () => {
     await expect(app.token(installation, repo.id)).rejects.toMatchObject({ reason: "uninstalled" });
     // And for the archive, that is a pause.
     const paused = await host
-      .open({ installationId: installation, repoId: repo.id })
+      .open({ provider: "github", installationId: installation, repoId: repo.id })
       .info()
       .catch((error: unknown) => error);
     expect(paused).toBeInstanceOf(RepoPaused);
@@ -283,7 +283,7 @@ describe("archiving into GitHub, through its Git Data API", () => {
             : github.fetch(input, init),
       });
       const error = await odd
-        .open({ installationId: installation, repoId: repo.id })
+        .open({ provider: "github", installationId: installation, repoId: repo.id })
         .lfsBatch("upload", [{ oid: "a".repeat(64), size: 3 }])
         .catch((reason: unknown) => reason);
       expect(error, String(status)).toBeInstanceOf(RepoRefused);
@@ -299,7 +299,9 @@ describe("archiving into GitHub, through its Git Data API", () => {
     expect(gone).toMatchObject({ reason: "gone" });
     const empty = github.addRepo(OCTO, { name: "empty", select: true });
     expect(
-      await host.open({ installationId: installation, repoId: empty.id }).tip("main"),
+      await host
+        .open({ provider: "github", installationId: installation, repoId: empty.id })
+        .tip("main"),
     ).toBeUndefined();
   });
 
@@ -382,7 +384,7 @@ describe("what the large file storage of a repository has, as it says itself", (
       apiUrl: API,
       webUrl: "https://github.test",
       fetch: fetchIt,
-    }).open({ installationId: installation, repoId: repo.id });
+    }).open({ provider: "github", installationId: installation, repoId: repo.id });
   });
 
   test("says how large each object is that it has, in their order, and nothing of one it has not", async () => {
@@ -469,7 +471,7 @@ describe("what the large file storage of a repository has, as it says itself", (
           return new Response(text, { status: answer.status, headers: answer.headers });
         },
       },
-    ).open({ installationId: installation, repoId: repo.id });
+    ).open({ provider: "github", installationId: installation, repoId: repo.id });
     await expect(plain.lfsSizes([{ oid: oidOf(data), size: 100 }])).rejects.toBeInstanceOf(
       GitHubUnavailable,
     );

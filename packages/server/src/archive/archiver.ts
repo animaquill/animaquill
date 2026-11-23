@@ -33,7 +33,15 @@ import {
 } from "./exporter.ts";
 import { readSetting } from "../settings.ts";
 import { writeMergeInput, type MergeInput } from "../sync/batches.ts";
-import { ARCHIVE_LOCK, backoffMs, isUnusable, linkOf, pauseLink, type Link } from "./links.ts";
+import {
+  ARCHIVE_LOCK,
+  backoffMs,
+  isUnusable,
+  linkOf,
+  pauseLink,
+  sameLink,
+  type Link,
+} from "./links.ts";
 import {
   LOOKED_WHILE_PAUSED,
   MERGE_BYTES,
@@ -72,7 +80,8 @@ import {
   type CommitInfo,
   type LfsObject,
   type Person,
-  type RepoHost,
+  placeOf,
+  type RepoHosts,
   type RepoInfo,
   type RepoSession,
   type TreeEntry,
@@ -277,7 +286,8 @@ const refusalOf = (moved: "behind" | { readonly refused: string }) =>
 
 export interface ArchiverOptions {
   readonly db: Db;
-  readonly host: RepoHost;
+  /** The repositories, on whichever provider: see repo-host.ts. */
+  readonly hosts: RepoHosts;
   readonly exporter: ProjectExporter;
   readonly log: Logger;
   /** How long one archive may take: `ARCHIVE_DEADLINE_MS` unless said. */
@@ -306,7 +316,7 @@ export const ARCHIVE_DEADLINE_MS = 8 * 60_000;
 
 export class Archiver {
   readonly #db: Db;
-  readonly #host: RepoHost;
+  readonly #hosts: RepoHosts;
   readonly #exporter: ProjectExporter;
   readonly #log: Logger;
   readonly #now: () => Date;
@@ -317,7 +327,7 @@ export class Archiver {
 
   constructor(options: ArchiverOptions) {
     this.#db = options.db;
-    this.#host = options.host;
+    this.#hosts = options.hosts;
     this.#exporter = options.exporter;
     this.#log = options.log;
     this.#now = options.now ?? (() => new Date());
@@ -361,6 +371,8 @@ export class Archiver {
       link.pauseReason !== null &&
       LOOKED_WHILE_PAUSED.includes(link.pauseReason);
     if (link.state !== "ready" && !looksOnly) return { kind: "none" };
+    // A repository on a provider this server is not set up for: nothing goes there.
+    if (!this.#hosts.has(link.provider)) return { kind: "none" };
     // Nothing goes to GitHub for someone disabled, also from a job that was waiting before: the
     // changes wait, and go once they are enabled again, see `takeDue`.
     if (await this.#ownerDisabled(projectId)) return { kind: "none" };
@@ -373,10 +385,7 @@ export class Archiver {
     const stop = new AbortController();
     const timer = setTimeout(() => stop.abort(new Error("the deadline passed")), this.#deadlineMs);
     timer.unref?.();
-    const session = this.#host.open(
-      { installationId: link.installationId, repoId: link.repoId },
-      { signal: stop.signal },
-    );
+    const session = this.#hosts.open(placeOf(link), { signal: stop.signal });
     let exporting: ExportSession | undefined;
     const ended = () => void exporting?.close().catch(() => {});
     stop.signal.addEventListener("abort", ended, { once: true });
@@ -944,7 +953,13 @@ export class Archiver {
     const [last] = await this.#db
       .select()
       .from(repoMerges)
-      .where(and(eq(repoMerges.projectId, link.projectId), eq(repoMerges.repoId, link.repoId)))
+      .where(
+        and(
+          eq(repoMerges.projectId, link.projectId),
+          eq(repoMerges.provider, link.provider),
+          eq(repoMerges.repoId, link.repoId),
+        ),
+      )
       .orderBy(desc(repoMerges.createdAt), desc(repoMerges.id))
       .limit(1);
     if (last && last.toSha === tip && last.fromSha === from) {
@@ -1008,6 +1023,7 @@ export class Archiver {
         .insert(repoMerges)
         .values({
           projectId: link.projectId,
+          provider: link.provider,
           repoId: link.repoId,
           fromSha: from,
           toSha: tip,
@@ -1087,6 +1103,7 @@ export class Archiver {
       .where(
         and(
           eq(repoMerges.projectId, link.projectId),
+          eq(repoMerges.provider, link.provider),
           eq(repoMerges.repoId, link.repoId),
           eq(repoMerges.state, "applied"),
         ),
@@ -1201,6 +1218,7 @@ export class Archiver {
           .insert(repoMerges)
           .values({
             projectId: link.projectId,
+            provider: link.provider,
             repoId: link.repoId,
             fromSha: row.toSha,
             toSha: back,
@@ -1303,6 +1321,7 @@ export class Archiver {
         .insert(repoMerges)
         .values({
           projectId: link.projectId,
+          provider: link.provider,
           repoId: link.repoId,
           fromSha: tip,
           toSha: tip,
@@ -1557,6 +1576,7 @@ export class Archiver {
       .where(
         and(
           eq(repoMerges.projectId, link.projectId),
+          eq(repoMerges.provider, link.provider),
           eq(repoMerges.repoId, link.repoId),
           eq(repoMerges.state, "applied"),
           gt(repoMerges.seq, since),
@@ -1646,6 +1666,7 @@ export class Archiver {
       .where(
         and(
           eq(repoMerges.projectId, link.projectId),
+          eq(repoMerges.provider, link.provider),
           eq(repoMerges.repoId, link.repoId),
           eq(repoMerges.state, "applied"),
           sql`${repoMerges.result}->>'instructions' = ${blob}`,
@@ -2178,7 +2199,7 @@ export class Archiver {
 
   /** Updates of the link that only hold while it is the link this archive started with. */
   #same(link: Link) {
-    return and(eq(projectRepos.projectId, link.projectId), eq(projectRepos.repoId, link.repoId));
+    return sameLink(link);
   }
 
   /**
@@ -2263,6 +2284,7 @@ export class Archiver {
       if (!noted) throw new LinkChanged();
       await tx.insert(archives).values({
         projectId: link.projectId,
+        provider: link.provider,
         repoId: link.repoId,
         seq: pending.seq,
         sha,
@@ -2356,17 +2378,13 @@ export class Archiver {
     detail: string,
     more: { readonly diverged?: Diverged | undefined; readonly seq?: number | undefined },
   ) {
-    await pauseLink(
-      this.#db,
-      { projectId: link.projectId, repoId: link.repoId },
-      {
-        reason,
-        detail,
-        at: this.#now(),
-        ...(more.diverged && { diverged: more.diverged }),
-        ...(more.seq !== undefined && { seq: more.seq }),
-      },
-    );
+    await pauseLink(this.#db, link, {
+      reason,
+      detail,
+      at: this.#now(),
+      ...(more.diverged && { diverged: more.diverged }),
+      ...(more.seq !== undefined && { seq: more.seq }),
+    });
   }
 
   /**

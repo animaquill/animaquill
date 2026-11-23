@@ -9,11 +9,52 @@ import { createHash } from "node:crypto";
  * repositories later.
  */
 
-export interface RepoPlace {
+import { GitHubUnavailable } from "../github/client.ts";
+import type { RepoProvider } from "../schema.ts";
+
+export type { RepoProvider };
+
+/** A repository on GitHub, reached through an installation of the App. */
+export interface GitHubPlace {
+  readonly provider: "github";
   /** The installation of the App that covers the repository. */
   readonly installationId: number;
   readonly repoId: number;
 }
+
+/** A bare Git repository of the server's own, in its data folder. */
+export interface LocalPlace {
+  readonly provider: "local";
+  readonly repoId: number;
+  /** The folder of the repository, from the data folder of the server. */
+  readonly dir: string;
+}
+
+/** Where a repository is: one of the providers, each with what it takes to reach one there. */
+export type RepoPlace = GitHubPlace | LocalPlace;
+
+/** A repository of a project as `project_repos` keeps it. */
+export interface RepoRow {
+  readonly provider: RepoProvider;
+  readonly repoId: number;
+  readonly installationId: number | null;
+  readonly localDir: string | null;
+}
+
+/**
+ * The place of a repository a project is saved to, from its row: the one way from what the
+ * database keeps to a `RepoPlace`. The checks of `project_repos` keep a row from being anything
+ * else; one that still is, is a mistake of the server's.
+ */
+export const placeOf = (row: RepoRow): RepoPlace => {
+  if (row.provider === "github") {
+    if (row.installationId === null)
+      throw new Error(`the repository ${row.repoId} on GitHub has no installation`);
+    return { provider: "github", installationId: row.installationId, repoId: row.repoId };
+  }
+  if (row.localDir === null) throw new Error(`the repository ${row.repoId} here has no folder`);
+  return { provider: "local", repoId: row.repoId, dir: row.localDir };
+};
 
 export interface RepoInfo {
   readonly id: number;
@@ -190,13 +231,88 @@ export interface RepoSession {
   close(): Promise<void>;
 }
 
-export interface RepoHost {
+export interface RepoHost<Place extends RepoPlace = RepoPlace> {
   /**
    * A session of a repository. `signal`: every call of it stops once that says so, as for a piece
    * of work that ran out of its time, and rejects then as for GitHub that could not be reached.
    */
-  open(place: RepoPlace, options?: { readonly signal?: AbortSignal | undefined }): RepoSession;
+  open(place: Place, options?: { readonly signal?: AbortSignal | undefined }): RepoSession;
 }
+
+/** The host of each provider this server keeps repositories on: none for one it does not. */
+export interface RepoHostsOf {
+  readonly github?: RepoHost<GitHubPlace> | undefined;
+  readonly local?: RepoHost<LocalPlace> | undefined;
+}
+
+/**
+ * Every repository, whichever provider it is on: the one way archiving, making working copies
+ * again, and the large file storage reach one (archive/, lfs/). A provider this server is not set
+ * up for (GitHub without the App's key) has no repository to reach: nothing is archived there,
+ * and what asks anyway is told what it is told of GitHub that cannot be reached, so that nothing
+ * pauses or goes for it.
+ */
+export class RepoHosts implements RepoHost {
+  readonly #hosts: RepoHostsOf;
+
+  constructor(hosts: RepoHostsOf) {
+    this.#hosts = hosts;
+  }
+
+  /** Those of one host on GitHub, as most tests and the platform have them. */
+  static github(host: RepoHost<GitHubPlace> | undefined): RepoHosts {
+    return new RepoHosts({ github: host });
+  }
+
+  /** Whether repositories on this provider can be reached here. */
+  has(provider: RepoProvider): boolean {
+    return this.#hosts[provider] !== undefined;
+  }
+
+  /** The providers repositories can be reached on here. */
+  get providers(): readonly RepoProvider[] {
+    return (["github", "local"] as const).filter((provider) => this.has(provider));
+  }
+
+  /** The host on GitHub, for what only GitHub has (people's repositories, installations). */
+  get github(): RepoHost<GitHubPlace> | undefined {
+    return this.#hosts.github;
+  }
+
+  open(place: RepoPlace, options?: { readonly signal?: AbortSignal | undefined }): RepoSession {
+    if (place.provider === "github") {
+      const host = this.#hosts.github;
+      if (host) return host.open(place, options);
+    } else {
+      const host = this.#hosts.local;
+      if (host) return host.open(place, options);
+    }
+    return unhosted(place.provider);
+  }
+}
+
+/** A session of a repository on a provider this server is not set up for: every call fails. */
+const unhosted = (provider: RepoProvider): RepoSession => {
+  const fail = async (): Promise<never> => {
+    throw new GitHubUnavailable(`this server is not set up for repositories on ${provider}`);
+  };
+  return {
+    info: fail,
+    tip: fail,
+    commit: fail,
+    compare: fail,
+    tree: fail,
+    blob: fail,
+    files: fail,
+    writeTree: fail,
+    writeCommit: fail,
+    advance: fail,
+    start: fail,
+    lfsBatch: fail,
+    lfsSizes: fail,
+    close: async () => {},
+  };
+};
 
 /** Why archiving into a repository has to wait for people to do something. */
 export type RepoTrouble = "gone" | "uninstalled" | "suspended" | "archived";

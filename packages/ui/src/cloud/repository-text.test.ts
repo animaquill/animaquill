@@ -31,6 +31,7 @@ const t = i18n.t;
 const NOW = new Date(2026, 10, 10, 14, 5, 30).getTime();
 
 const REPOSITORY: NonNullable<RepositoryStatus["repository"]> = {
+  place: "github",
   id: 7,
   owner: "ada",
   name: "film",

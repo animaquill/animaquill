@@ -19,7 +19,7 @@ import { wakeCopy } from "../sync/wake.ts";
 import { Archiver } from "./archiver.ts";
 import { ProjectExporter } from "./exporter.ts";
 import { READ_MOST_BYTES, Rebuilder, sweepRestoring } from "./rebuild.ts";
-import type { RepoHost, RepoSession } from "./repo-host.ts";
+import { RepoHosts, type GitHubPlace, type RepoHost, type RepoSession } from "./repo-host.ts";
 
 /**
  * What keeps making working copies from repositories within bounds (the review of step RB): how
@@ -47,7 +47,7 @@ describe.skipIf(!TEST_DATABASE)("making working copies within bounds, on a datab
   });
 
   /** The host of the world, counting the bytes of files read for a copy. */
-  const counting = (): RepoHost => ({
+  const counting = (): RepoHost<GitHubPlace> => ({
     open: (place, options) => {
       const session = w.host.open(place, options);
       return new Proxy(session, {
@@ -67,7 +67,7 @@ describe.skipIf(!TEST_DATABASE)("making working copies within bounds, on a datab
   const rebuilder = (deadlineMs?: number) =>
     new Rebuilder({
       db: t.db,
-      host: counting(),
+      hosts: RepoHosts.github(counting()),
       exporter: new ProjectExporter({ heapMb: 256 }),
       log: quiet,
       now: () => w.time.now,
@@ -287,7 +287,7 @@ describe.skipIf(!TEST_DATABASE)("making working copies within bounds, on a datab
     w.github.faults.delayMs = 400;
     const archiver = new Archiver({
       db: t.db,
-      host: w.host,
+      hosts: RepoHosts.github(w.host),
       exporter: new ProjectExporter({ heapMb: 256 }),
       log: quiet,
       now: () => w.time.now,

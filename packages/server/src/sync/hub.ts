@@ -2176,10 +2176,15 @@ export class SyncHub {
       return { kind: "refused", reason };
     };
     const [link] = await this.#db
-      .select({ repoId: projectRepos.repoId, prefer: projectRepos.prefer })
+      .select({
+        provider: projectRepos.provider,
+        repoId: projectRepos.repoId,
+        prefer: projectRepos.prefer,
+      })
       .from(projectRepos)
       .where(eq(projectRepos.projectId, project.id));
-    if (!link || link.repoId !== merge.repoId) return refuse("another-repository");
+    if (!link || link.provider !== merge.provider || link.repoId !== merge.repoId)
+      return refuse("another-repository");
     const unusable = await unusableOf(this.#db, project.id);
     if (unusable) return { kind: "later", why: unusable.reason };
     const changes = readMergeInput(merge.input);

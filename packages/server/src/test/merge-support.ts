@@ -4,7 +4,7 @@ import { createProject } from "@animaquill/schema";
 import { and, asc, desc, eq, gt } from "drizzle-orm";
 import { Archiver, type ArchiveKind, type ArchiveOutcome } from "../archive/archiver.ts";
 import { ProjectExporter } from "../archive/exporter.ts";
-import type { RepoHost } from "../archive/repo-host.ts";
+import { RepoHosts, type RepoHost } from "../archive/repo-host.ts";
 import { RepositoryService } from "../archive/service.ts";
 import type { GitHubPersonRepos } from "../archive/github-host.ts";
 import {
@@ -235,7 +235,7 @@ export const mergeWorld = async (
     archiver: () =>
       new Archiver({
         db: w.db,
-        host: world.host,
+        hosts: RepoHosts.github(world.host),
         exporter: new ProjectExporter({ heapMb: 256 }),
         log: quiet,
         now: () => w.time.now,

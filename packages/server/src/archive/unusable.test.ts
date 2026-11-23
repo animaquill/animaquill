@@ -237,7 +237,7 @@ describe.skipIf(!TEST_DATABASE)("a project whose repository cannot be used, on a
       const other = await archived(`other-${reason}`);
       await pauseLink(
         t.db,
-        { projectId: other.project.id, repoId: other.repo.id },
+        { projectId: other.project.id, provider: "github", repoId: other.repo.id },
         {
           reason,
           detail: reason,
@@ -271,7 +271,7 @@ describe.skipIf(!TEST_DATABASE)("a project whose repository cannot be used, on a
     const { project, repo } = await archived("diverging");
     await pauseLink(
       t.db,
-      { projectId: project.id, repoId: repo.id },
+      { projectId: project.id, provider: "github", repoId: repo.id },
       {
         reason: "diverged",
         detail: "files changed",

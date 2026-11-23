@@ -13,6 +13,7 @@ import {
   smallint,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -649,10 +650,16 @@ export interface Diverged {
 }
 
 /**
- * The GitHub repository a project is saved to: by its number, as names change. The worker archives
- * the project into it (see archive/archiver.ts); `head_sha` is the last commit the platform knows
- * the branch to have of its own, and `pending_sha` one it made and is about to move the branch to,
- * so that a crash in between is told apart from a push elsewhere.
+ * Where the repositories of projects are kept: GitHub, or a Git repository of the server's own
+ * (`local_dir`), see archive/repo-host.ts.
+ */
+export type RepoProvider = "github" | "local";
+
+/**
+ * The repository a project is saved to: by its number on its provider, as names change. The worker
+ * archives the project into it (see archive/archiver.ts); `head_sha` is the last commit the
+ * platform knows the branch to have of its own, and `pending_sha` one it made and is about to move
+ * the branch to, so that a crash in between is told apart from a push elsewhere.
  */
 export const projectRepos = pgTable(
   "project_repos",
@@ -660,8 +667,10 @@ export const projectRepos = pgTable(
     projectId: text("project_id")
       .primaryKey()
       .references(() => projects.id, { onDelete: "cascade" }),
-    installationId: githubNumber("installation_id").notNull(),
-    repoId: githubNumber("repo_id").notNull().unique(),
+    /** The installation of the GitHub App that reaches the repository: only for GitHub. */
+    installationId: githubNumber("installation_id"),
+    /** Its number on `provider`: one project at most is saved to a repository. */
+    repoId: githubNumber("repo_id").notNull(),
     /** The account the repository is on, by its number: a login can change. */
     ownerId: githubNumber("owner_id").notNull(),
     /** Names as they were when last seen, for showing only. */
@@ -714,8 +723,13 @@ export const projectRepos = pgTable(
     nextAttemptAt: moment("next_attempt_at"),
     /** Pointers of large files that archives wrote, from step 14.2 on. */
     lfsPaths: jsonb("lfs_paths").$type<string[]>().notNull().default([]),
-    /** Which Git platform the repository is on. Only "github" so far: `repo_id` is its number there. */
-    provider: text("provider").notNull().default("github"),
+    /** Which Git platform the repository is on: `repo_id` is its number there. */
+    provider: text("provider").$type<RepoProvider>().notNull().default("github"),
+    /**
+     * For "local": the folder of the bare repository, from the data folder of the server. Null for
+     * any other.
+     */
+    localDir: text("local_dir"),
     /**
      * When the platform last looked at the repository on GitHub, as an archive or a check does: the
      * names and `private` are as they were then. Null: not since this was kept.
@@ -793,10 +807,21 @@ export const projectRepos = pgTable(
     check("project_repos_state", sql`${table.state} in ('ready', 'paused')`),
     check("project_repos_gone_cause", sql`${table.goneCause} in ('deleted', 'removed')`),
     check("project_repos_prefer", sql`${table.prefer} in ('editor', 'github')`),
+    unique("project_repos_provider_repo").on(table.provider, table.repoId),
+    check("project_repos_provider", sql`${table.provider} in ('github', 'local')`),
+    // Only GitHub has installations; only a repository of the server's own has a folder.
+    check(
+      "project_repos_installation",
+      sql`(${table.provider} = 'github') = (${table.installationId} is not null)`,
+    ),
+    check(
+      "project_repos_local_dir",
+      sql`(${table.provider} = 'local') = (${table.localDir} is not null)`,
+    ),
   ],
 );
 
-/** The archives of a project that went to GitHub, one commit each. */
+/** The archives of a project that went to its repository, one commit each. */
 export const archives = pgTable(
   "archives",
   {
@@ -806,6 +831,8 @@ export const archives = pgTable(
     projectId: text("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    /** The repository, as `project_repos` says it: `repo_id` is its number on `provider`. */
+    provider: text("provider").$type<RepoProvider>().notNull().default("github"),
     repoId: githubNumber("repo_id").notNull(),
     /** The update of the project it has. */
     seq: count("seq").notNull(),
@@ -825,7 +852,10 @@ export const archives = pgTable(
     }),
     createdAt: moment("created_at").notNull().defaultNow(),
   },
-  (table) => [index("archives_project").on(table.projectId, table.createdAt)],
+  (table) => [
+    index("archives_project").on(table.projectId, table.createdAt),
+    check("archives_provider", sql`${table.provider} in ('github', 'local')`),
+  ],
 );
 
 /** What became of a merge from GitHub, see `repoMerges`. */
@@ -878,6 +908,8 @@ export const repoMerges = pgTable(
     projectId: text("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    /** The repository, as `project_repos` says it: `repo_id` is its number on `provider`. */
+    provider: text("provider").$type<RepoProvider>().notNull().default("github"),
     repoId: githubNumber("repo_id").notNull(),
     fromSha: text("from_sha").notNull(),
     toSha: text("to_sha").notNull(),
@@ -900,6 +932,7 @@ export const repoMerges = pgTable(
       "repo_merges_state",
       sql`${table.state} in ('ready', 'applied', 'superseded', 'refused')`,
     ),
+    check("repo_merges_provider", sql`${table.provider} in ('github', 'local')`),
   ],
 );
 

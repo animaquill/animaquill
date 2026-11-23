@@ -108,6 +108,7 @@ export class LabRepositories implements RepositoryAccess {
     this.#platform.repositories.set(project, chosen);
     const status: RepositoryStatus = {
       repository: {
+        place: "github",
         id: chosen.id,
         owner: chosen.owner,
         name: chosen.name,
@@ -398,6 +399,7 @@ export function fakeCloud(account: AccountAccess): { cloud: CloudAccess; lab: Cl
           repositories.taken.add(repository.toLowerCase());
           repositories.statuses.set(id, {
             repository: {
+              place: "github",
               id: number,
               owner: USER,
               name: repository,

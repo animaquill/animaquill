@@ -10,10 +10,11 @@ import {
   recheckAfterMs,
   RECHECK_UNKNOWN_MS,
   resumeLinks,
+  sameLink,
   UNUSABLE_REASONS,
   type Link,
 } from "./links.ts";
-import { RepoPaused, type RepoHost } from "./repo-host.ts";
+import { RepoPaused, type GitHubPlace, type RepoHost } from "./repo-host.ts";
 
 /**
  * Asks GitHub whether the repository of a project that cannot be used (archive/links.ts,
@@ -47,15 +48,20 @@ const detailOf = (error: unknown) => String(describeError(error).message ?? "fai
 
 export const recheckLink = async (
   db: Db,
-  host: RepoHost,
+  host: RepoHost<GitHubPlace>,
   link: Link,
   now: Date,
   /** The App, to ask which installation the account has now. Without it, only what is known. */
   app?: Pick<GitHubApp, "installationOf">,
 ): Promise<Recheck> => {
+  // Only GitHub is asked again: a repository of the server's own is there, or the disk is not.
+  if (link.provider !== "github" || link.installationId === null)
+    return { kind: "unknown", detail: "not a repository on GitHub" };
   const ask = async (installationId: number): Promise<Recheck> => {
     try {
-      const info = await host.open({ installationId, repoId: link.repoId }).info();
+      const info = await host
+        .open({ provider: "github", installationId, repoId: link.repoId })
+        .info();
       return info.ownerId === link.ownerId
         ? { kind: "usable" }
         : { kind: "unusable", reason: "transferred" };
@@ -90,10 +96,7 @@ export const recheckLink = async (
       found = { kind: "unknown", detail: detailOf(error) };
     }
   }
-  const same = and(
-    eq(projectRepos.projectId, link.projectId),
-    eq(projectRepos.repoId, link.repoId),
-  );
+  const same = sameLink(link);
   if (found.kind === "usable") {
     await db.transaction(async (tx) => {
       if (installationId !== link.installationId)

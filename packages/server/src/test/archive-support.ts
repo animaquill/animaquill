@@ -9,7 +9,12 @@ import {
 } from "../archive/archiver.ts";
 import { ProjectExporter } from "../archive/exporter.ts";
 import { GitHubRepoHost } from "../archive/github-host.ts";
-import type { RepoHost, RepoPlace, RepoSession } from "../archive/repo-host.ts";
+import {
+  RepoHosts,
+  type RepoHost,
+  type RepoPlace,
+  type RepoSession,
+} from "../archive/repo-host.ts";
 import type { Db } from "../database.ts";
 import { GitHubApp } from "../github/app.ts";
 import { digestOf } from "../sync/hub.ts";
@@ -189,7 +194,7 @@ export const world = async (db: Db, time = clock()): Promise<World> => {
     archiver: (other, more) =>
       new Archiver({
         db,
-        host: other ?? host,
+        hosts: RepoHosts.github(other ?? host),
         exporter: new ProjectExporter({ heapMb: 256 }),
         log: quiet,
         now: () => time.now,

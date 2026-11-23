@@ -139,6 +139,7 @@ describe("RepositoryPicker", () => {
       project: "p1",
       name: "x",
       current: {
+        place: "github",
         id: 1,
         owner: "ada",
         name: "repo-1",

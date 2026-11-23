@@ -22,10 +22,19 @@ import {
   type MergePrefer,
   type PauseReason,
   type ReleasedFrom,
+  type RepoProvider,
 } from "../schema.ts";
 import { PROJECT_ID, SYNC_HUB_LIMITS, lockProject } from "../sync/hub.ts";
 import { GitHubPersonRepos, type PersonRepo } from "./github-host.ts";
-import { deleteAtOf, linkOf, notifyLink, unusableReasonOf, type Link } from "./links.ts";
+import {
+  deleteAtOf,
+  linkOf,
+  notifyLink,
+  onGitHub,
+  sameLink,
+  unusableReasonOf,
+  type Link,
+} from "./links.ts";
 import { DESCRIPTION_MOST } from "../sync/copies.ts";
 import {
   LOOKED_WHILE_PAUSED,
@@ -36,7 +45,7 @@ import {
 } from "./merging.ts";
 import { readSetting } from "../settings.ts";
 import { recheckLink } from "./recheck.ts";
-import { RepoPaused, type RepoHost } from "./repo-host.ts";
+import { RepoPaused, type GitHubPlace, type RepoHost } from "./repo-host.ts";
 import { dueAt, type ArchiveJob } from "./schedule.ts";
 import { notifyPerson } from "../me/events.ts";
 
@@ -123,13 +132,16 @@ export type CheckReason = (typeof CHECK_REASONS)[number];
 
 export interface RepositoryStatus {
   readonly repository?: {
+    /** Which provider it is on, see `project_repos.provider`. */
+    readonly place: RepoProvider;
     readonly id: number;
     readonly owner: string;
     readonly name: string;
     readonly fullName: string;
     readonly private: boolean;
     readonly branch: string;
-    readonly url: string;
+    /** Where people see it: only on GitHub. */
+    readonly url?: string;
     readonly createdHere: boolean;
     readonly linkedAt: number;
   };
@@ -259,8 +271,8 @@ export interface RepositoryServiceOptions {
    */
   readonly access?: AccessPolicy | undefined;
   readonly db: Db;
-  /** The App's side, for checking a repository as an archive will find it. */
-  readonly host: RepoHost | undefined;
+  /** The App's side, for checking a repository on GitHub as an archive will find it. */
+  readonly host: RepoHost<GitHubPlace> | undefined;
   readonly people: GitHubPersonRepos;
   /** A working token of a person, see auth/tokens.ts. */
   readonly tokenFor: ((userId: string, options?: TokenOptions) => Promise<string>) | undefined;
@@ -548,7 +560,7 @@ export class RepositoryService {
               })
               .from(projectRepos)
               .innerJoin(projects, eq(projects.id, projectRepos.projectId))
-              .where(inArray(projectRepos.repoId, ids))
+              .where(onGitHub(ids))
           ).map((row) => [row.repoId, row] as const),
     );
     const readable = new Set<string>();
@@ -739,7 +751,8 @@ export class RepositoryService {
             ...(elsewhere.project && { project: elsewhere.project }),
           });
         const now = await linkOf(this.#options.db, projectId);
-        if (now?.repoId === repo.id) return this.status(user, projectId);
+        if (now?.provider === "github" && now.repoId === repo.id)
+          return this.status(user, projectId);
         throw new RepositoryRefused("alreadyLinked", 409);
       }
       throw error;
@@ -826,7 +839,7 @@ export class RepositoryService {
       .select({ id: projects.id, name: projects.name, ownerId: projects.ownerId })
       .from(projectRepos)
       .innerJoin(projects, eq(projects.id, projectRepos.projectId))
-      .where(eq(projectRepos.repoId, repoId));
+      .where(onGitHub(repoId));
     if (!row || row.id === except) return undefined;
     return (await this.#mayRead(user, row)) ? { project: { id: row.id, name: row.name } } : {};
   }
@@ -915,7 +928,7 @@ export class RepositoryService {
     if (!host) throw new RepositoryRefused("unavailable", 503);
     // As an archive will find it, with the App's token for it.
     try {
-      const session = host.open({ installationId: installation, repoId: id });
+      const session = host.open({ provider: "github", installationId: installation, repoId: id });
       const info = await session.info();
       const tip = await session.tip(info.branch);
       if (tip !== undefined) {
@@ -983,7 +996,7 @@ export class RepositoryService {
     // What its animaquill.json says the project is, as the App will find it.
     let manifest: { readonly id: string; readonly name: string; readonly description: string };
     try {
-      const session = host.open({ installationId: installation, repoId: id });
+      const session = host.open({ provider: "github", installationId: installation, repoId: id });
       const info = await session.info();
       const tip = await session.tip(info.branch);
       const commit = tip === undefined ? undefined : await session.commit(tip);
@@ -1153,7 +1166,13 @@ export class RepositoryService {
     const [last] = await this.#options.db
       .select()
       .from(archives)
-      .where(and(eq(archives.projectId, projectId), eq(archives.repoId, link.repoId)))
+      .where(
+        and(
+          eq(archives.projectId, projectId),
+          eq(archives.provider, link.provider),
+          eq(archives.repoId, link.repoId),
+        ),
+      )
       .orderBy(desc(archives.createdAt), desc(archives.seq))
       .limit(1);
     const web = this.#options.webUrl;
@@ -1169,13 +1188,14 @@ export class RepositoryService {
     const unusable = unusableReasonOf(link);
     return {
       repository: {
+        place: link.provider,
         id: link.repoId,
         owner: link.ownerLogin,
         name: link.name,
         fullName: `${link.ownerLogin}/${link.name}`,
         private: link.private,
         branch: link.branch,
-        url: repoUrl,
+        ...(link.provider === "github" && { url: repoUrl }),
         createdHere: link.createdHere,
         linkedAt: link.linkedAt.getTime(),
       },
@@ -1257,6 +1277,7 @@ export class RepositoryService {
       .where(
         and(
           eq(repoMerges.projectId, link.projectId),
+          eq(repoMerges.provider, link.provider),
           eq(repoMerges.repoId, link.repoId),
           eq(repoMerges.state, "applied"),
         ),
@@ -1527,7 +1548,7 @@ export class RepositoryService {
       await this.#options.db
         .update(projectRepos)
         .set({ requestedAt: this.#now(), requestedBy: user.userId })
-        .where(and(eq(projectRepos.projectId, projectId), eq(projectRepos.repoId, link.repoId)));
+        .where(sameLink(link));
       await this.#options.enqueue({ project: projectId, kind: "manual", by: user.userId });
       return this.status(user, projectId);
     }
@@ -1559,7 +1580,7 @@ export class RepositoryService {
       throw new RepositoryRefused("busy", 429, "busy", { retryAfter: seconds });
     // Asked for, in the database first: whatever job of the project runs next does it, also where
     // the queue has one waiting already and drops this one, see `Archiver`.
-    const same = and(eq(projectRepos.projectId, projectId), eq(projectRepos.repoId, link.repoId));
+    const same = sameLink(link);
     const asked = { requestedAt: this.#now(), requestedBy: user.userId };
     const goesOn = {
       state: "ready",

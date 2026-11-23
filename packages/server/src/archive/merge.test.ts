@@ -22,7 +22,7 @@ import { changeSetting, readSetting } from "../settings.ts";
 import { sweepProjects } from "../sync/sweep.ts";
 import { REPO_MERGE_SETTING } from "./merging.ts";
 import { trailersOf } from "./plan.ts";
-import type { RepoHost, RepoSession } from "./repo-host.ts";
+import { RepoHosts, type RepoHost, type RepoSession } from "./repo-host.ts";
 import { takeDue } from "./schedule.ts";
 
 /**
@@ -79,7 +79,7 @@ describe.skipIf(!TEST_DATABASE)("merging changes on GitHub as archives go, on a 
       const { ProjectExporter } = await import("./exporter.ts");
       const archiver = new Archiver({
         db: t.db,
-        host: w.host,
+        hosts: RepoHosts.github(w.host),
         exporter: new ProjectExporter({ heapMb: 256 }),
         log: { info() {}, warn() {}, error() {} },
         enqueueMerge: async (merge) => {

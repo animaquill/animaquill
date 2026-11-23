@@ -146,6 +146,7 @@ export class FakeRepositories implements RepositoryAccess {
     });
     this.answer = {
       repository: {
+        place: "github",
         id: chosen.id,
         owner: chosen.owner,
         name: chosen.name,

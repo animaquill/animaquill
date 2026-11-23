@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { CloudSignedOut, RepositoryRefused } from "./index.ts";
+import { CloudSignedOut, gitHubUrlOf, RepositoryRefused } from "./index.ts";
 import { browserRepository, statusOf } from "./repository.ts";
 
 /** Saving projects to repositories through a platform's API, as a browser does it. */
@@ -32,6 +32,7 @@ const platform = (answer: (sent: Sent) => Response) => {
 
 const STATUS = {
   repository: {
+    place: "github",
     id: 7,
     owner: "octo",
     name: "film",
@@ -111,6 +112,21 @@ describe("repositories through the platform", () => {
       deleted: [],
     });
     expect(() => statusOf("nonsense")).toThrow();
+  });
+
+  test("reads where the repository is: on GitHub from a platform that does not say, with a page only there", () => {
+    const { place: _, ...older } = STATUS.repository;
+    const before = statusOf({ ...STATUS, repository: older });
+    expect(before.repository).toMatchObject({ place: "github", url: older.url });
+    expect(gitHubUrlOf(before.repository)).toBe(older.url);
+    const { url: __, ...here } = STATUS.repository;
+    const local = statusOf({ ...STATUS, repository: { ...here, place: "local" } });
+    expect(local.repository).toMatchObject({ place: "local", id: 7 });
+    expect(local.repository).not.toHaveProperty("url");
+    expect(gitHubUrlOf(local.repository)).toBeUndefined();
+    // A page said for one here is not taken for one on GitHub.
+    const said = statusOf({ ...STATUS, repository: { ...STATUS.repository, place: "local" } });
+    expect(gitHubUrlOf(said.repository)).toBeUndefined();
   });
 
   test("reads whether a repository that is gone was deleted, or is out of what the App may reach", () => {

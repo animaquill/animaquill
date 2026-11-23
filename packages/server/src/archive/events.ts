@@ -1,7 +1,7 @@
-import { and, eq, inArray, isNull, notInArray, or } from "drizzle-orm";
+import { and, eq, isNull, notInArray, or } from "drizzle-orm";
 import type { Executor, Logger } from "../database.ts";
 import { archives, projectRepos } from "../schema.ts";
-import { pauseLink, resumeLinks, UNUSABLE_REASONS } from "./links.ts";
+import { onGitHub, pauseLink, resumeLinks, sameLink, UNUSABLE_REASONS } from "./links.ts";
 import { readSetting } from "../settings.ts";
 import { LOOKED_WHILE_PAUSED, REPO_MERGE_SETTING } from "./merging.ts";
 import type { ArchiveJob } from "./schedule.ts";
@@ -77,7 +77,7 @@ export const repositoryEvent = async (
   if (event === "push") {
     const repoId = numberOf((payload.repository as { id?: unknown } | undefined)?.id);
     if (repoId === undefined) return [];
-    const [link] = await db.select().from(projectRepos).where(eq(projectRepos.repoId, repoId));
+    const [link] = await db.select().from(projectRepos).where(onGitHub(repoId));
     // Paused for what waits of merges, a push is merged all the same (see `LOOKED_WHILE_PAUSED`):
     // the archive only looks then, and only while merges are on.
     const looked =
@@ -109,9 +109,13 @@ export const repositoryEvent = async (
     const removed = repositoryIds(payload.repositories_removed);
     if (removed.length > 0) {
       const gone = await db
-        .select({ projectId: projectRepos.projectId, repoId: projectRepos.repoId })
+        .select({
+          projectId: projectRepos.projectId,
+          provider: projectRepos.provider,
+          repoId: projectRepos.repoId,
+        })
         .from(projectRepos)
-        .where(and(inArray(projectRepos.repoId, removed), usable));
+        .where(and(onGitHub(removed), usable));
       for (const link of gone) {
         await pauseLink(db, link, {
           reason: "gone",
@@ -124,7 +128,7 @@ export const repositoryEvent = async (
       await db
         .update(projectRepos)
         .set({ goneCause: "removed" })
-        .where(and(inArray(projectRepos.repoId, removed), isNull(projectRepos.goneCause)));
+        .where(and(onGitHub(removed), isNull(projectRepos.goneCause)));
     }
     const added = repositoryIds(payload.repositories_added);
     if (added.length === 0) return [];
@@ -135,13 +139,14 @@ export const repositoryEvent = async (
     const links = await db
       .select({
         projectId: projectRepos.projectId,
+        provider: projectRepos.provider,
         repoId: projectRepos.repoId,
         ownerId: projectRepos.ownerId,
         state: projectRepos.state,
         pauseReason: projectRepos.pauseReason,
       })
       .from(projectRepos)
-      .where(inArray(projectRepos.repoId, added));
+      .where(onGitHub(added));
     const back: ArchiveJob[] = [];
     for (const link of links) {
       if (link.ownerId !== accountId) {
@@ -154,12 +159,7 @@ export const repositoryEvent = async (
         continue;
       }
       // Back in what the App may touch: whatever was noted about why it was not is over.
-      await db
-        .update(projectRepos)
-        .set({ goneCause: null })
-        .where(
-          and(eq(projectRepos.projectId, link.projectId), eq(projectRepos.repoId, link.repoId)),
-        );
+      await db.update(projectRepos).set({ goneCause: null }).where(sameLink(link));
       // On the account it was linked on, and in what the App may touch: archiving goes on where
       // it paused because the repository was not there, or because it had moved to another account
       // and is back now, of which this can be all GitHub says. An archive looks whether it is so.
@@ -168,17 +168,8 @@ export const repositoryEvent = async (
         (link.pauseReason !== "gone" && link.pauseReason !== "transferred")
       )
         continue;
-      await db
-        .update(projectRepos)
-        .set({ installationId })
-        .where(
-          and(eq(projectRepos.projectId, link.projectId), eq(projectRepos.repoId, link.repoId)),
-        );
-      const resumed = await resumeLinks(
-        db,
-        and(eq(projectRepos.projectId, link.projectId), eq(projectRepos.repoId, link.repoId)),
-        ["gone", "transferred"],
-      );
+      await db.update(projectRepos).set({ installationId }).where(sameLink(link));
+      const resumed = await resumeLinks(db, sameLink(link), ["gone", "transferred"]);
       back.push(...resumed.map((project) => ({ project, kind: "check" as const })));
     }
     return back;
@@ -189,7 +180,11 @@ export const repositoryEvent = async (
     if (action === "deleted" || action === "suspend") {
       const reason = action === "deleted" ? "uninstalled" : "suspended";
       const affected = await db
-        .select({ projectId: projectRepos.projectId, repoId: projectRepos.repoId })
+        .select({
+          projectId: projectRepos.projectId,
+          provider: projectRepos.provider,
+          repoId: projectRepos.repoId,
+        })
         .from(projectRepos)
         .where(and(eq(projectRepos.installationId, installationId), usable));
       for (const link of affected) {
@@ -219,9 +214,17 @@ export const repositoryEvent = async (
         .update(projectRepos)
         .set({ installationId })
         .where(
-          and(eq(projectRepos.ownerId, accountId), eq(projectRepos.pauseReason, "uninstalled")),
+          and(
+            eq(projectRepos.provider, "github"),
+            eq(projectRepos.ownerId, accountId),
+            eq(projectRepos.pauseReason, "uninstalled"),
+          ),
         );
-      const back = await resumeLinks(db, eq(projectRepos.ownerId, accountId), ["uninstalled"]);
+      const back = await resumeLinks(
+        db,
+        and(eq(projectRepos.provider, "github"), eq(projectRepos.ownerId, accountId))!,
+        ["uninstalled"],
+      );
       return back.map((project) => ({ project, kind: "check" }));
     }
   }
@@ -254,13 +257,14 @@ const repositoryChanged = async (
   const [link] = await db
     .select({
       projectId: projectRepos.projectId,
+      provider: projectRepos.provider,
       repoId: projectRepos.repoId,
       ownerId: projectRepos.ownerId,
       state: projectRepos.state,
       pauseReason: projectRepos.pauseReason,
     })
     .from(projectRepos)
-    .where(eq(projectRepos.repoId, repoId));
+    .where(onGitHub(repoId));
   if (!link) return [];
   // What happened, for the log: renamed, moved, made public or private are kept for later (a
   // public project), and nothing of what is in the repository is said.
@@ -276,10 +280,7 @@ const repositoryChanged = async (
       { project: link.projectId, repo: repoId, action },
       "GitHub says the repository of a project changed",
     );
-  const same = and(
-    eq(projectRepos.projectId, link.projectId),
-    eq(projectRepos.repoId, link.repoId),
-  );
+  const same = sameLink(link);
   const check: ArchiveJob[] = [{ project: link.projectId, kind: "check" }];
 
   // Gone for good, whatever else was the matter with it: nothing is there to archive into.

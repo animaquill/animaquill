@@ -203,13 +203,14 @@ export const statusOf = (value: unknown): RepositoryStatus => {
       owner !== undefined &&
       name !== undefined && {
         repository: {
+          place: repository.place === "local" ? "local" : "github",
           id,
           owner,
           name,
           fullName: text(repository.fullName) ?? `${owner}/${name}`,
           private: repository.private === true,
           branch: text(repository.branch) ?? "main",
-          url: text(repository.url) ?? "",
+          ...optional("url", text(repository.url)),
           createdHere: repository.createdHere === true,
           linkedAt: count(repository.linkedAt) ?? 0,
         },

@@ -1,4 +1,5 @@
 import { OWNER_ONLY } from "../access.ts";
+import { RepoHosts } from "./repo-host.ts";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { clock, quiet, world, type World } from "../test/archive-support.ts";
 import { createTestDatabase, TEST_DATABASE, type TestDatabase } from "../test/database.ts";
@@ -45,7 +46,7 @@ describe.skipIf(!TEST_DATABASE)(
       await wakeCopy(t.db, m.project, { userId: w.userId, access: OWNER_ONLY }, w.time.now);
       return new Rebuilder({
         db: t.db,
-        host: w.host,
+        hosts: RepoHosts.github(w.host),
         exporter: new ProjectExporter({ heapMb: 256 }),
         log: quiet,
         now: () => w.time.now,

@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import { RepoHosts } from "./repo-host.ts";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import {
   Editor,
@@ -61,7 +62,7 @@ describe.skipIf(!TEST_DATABASE)("restoring repositories through the API, on a da
   const rebuilder = () =>
     new Rebuilder({
       db: t.db,
-      host: w.host,
+      hosts: RepoHosts.github(w.host),
       exporter: new ProjectExporter({ heapMb: 256 }),
       log: quiet,
       now: () => w.time.now,

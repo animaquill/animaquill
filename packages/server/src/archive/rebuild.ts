@@ -22,7 +22,9 @@ import { topFoldersOf } from "./pointers.ts";
 import {
   RepoPaused,
   type LfsObject,
-  type RepoHost,
+  placeOf,
+  type RepoHosts,
+  type RepoProvider,
   type RepoSession,
   type TreeEntry,
 } from "./repo-host.ts";
@@ -183,6 +185,7 @@ interface Began {
   readonly digest: string;
   readonly generation: number;
   readonly releasedFrom: ReleasedFrom | null;
+  readonly provider: RepoProvider;
   readonly repoId: number;
   /** People asked for the branch as it is, see `projects.rebuild_from_branch`. */
   readonly fromBranch: boolean;
@@ -192,7 +195,8 @@ interface Began {
 
 export interface RebuilderOptions {
   readonly db: Db;
-  readonly host: RepoHost;
+  /** The repositories, on whichever provider: see repo-host.ts. */
+  readonly hosts: RepoHosts;
   readonly exporter: ProjectExporter;
   readonly log: Logger;
   /** Has the repository looked at once the copy is here again, see above. */
@@ -206,7 +210,7 @@ export interface RebuilderOptions {
 
 export class Rebuilder {
   readonly #db: Db;
-  readonly #host: RepoHost;
+  readonly #hosts: RepoHosts;
   readonly #exporter: ProjectExporter;
   readonly #log: Logger;
   readonly #lookAgain: ((projectId: string) => Promise<void>) | undefined;
@@ -217,7 +221,7 @@ export class Rebuilder {
   constructor(options: RebuilderOptions) {
     this.#deadlineMs = options.deadlineMs ?? REBUILD_DEADLINE_MS;
     this.#db = options.db;
-    this.#host = options.host;
+    this.#hosts = options.hosts;
     this.#exporter = options.exporter;
     this.#log = options.log;
     this.#lookAgain = options.lookAgain;
@@ -281,6 +285,14 @@ export class Rebuilder {
     // Nothing comes from GitHub for someone disabled (admin/users.ts): it waits, as archives do.
     if (row.disabledAt !== null)
       return this.#failed(id, attempt, { code: "unavailable" }, "the person is disabled");
+    // A repository on a provider this server is not set up for: it waits, as for GitHub away.
+    if (!this.#hosts.has(link.provider))
+      return this.#failed(
+        id,
+        attempt,
+        { code: "unavailable" },
+        `this server is not set up for repositories on ${link.provider}`,
+      );
     const began: Began = {
       id,
       ownerId: row.ownerId,
@@ -289,6 +301,7 @@ export class Rebuilder {
       digest: row.digest,
       generation: row.generation,
       releasedFrom: row.releasedFrom,
+      provider: link.provider,
       repoId: link.repoId,
       fromBranch: row.fromBranch,
       attempt,
@@ -297,10 +310,7 @@ export class Rebuilder {
     const stop = new AbortController();
     const timer = setTimeout(() => stop.abort(new Error("the deadline passed")), this.#deadlineMs);
     timer.unref?.();
-    const session = this.#host.open(
-      { installationId: link.installationId, repoId: link.repoId },
-      { signal: stop.signal },
-    );
+    const session = this.#hosts.open(placeOf(link), { signal: stop.signal });
     const exporting = this.#exporter.open();
     const ended = () => void exporting.close().catch(() => {});
     stop.signal.addEventListener("abort", ended, { once: true });
@@ -488,7 +498,7 @@ export class Rebuilder {
           .where(eq(projects.id, began.id))
           .for("update");
         const [link] = await tx
-          .select({ repoId: projectRepos.repoId })
+          .select({ provider: projectRepos.provider, repoId: projectRepos.repoId })
           .from(projectRepos)
           .where(eq(projectRepos.projectId, began.id));
         if (
@@ -498,7 +508,8 @@ export class Rebuilder {
           now.generation !== began.generation ||
           JSON.stringify(now.releasedFrom) !== JSON.stringify(began.releasedFrom) ||
           now.fromBranch !== began.fromBranch ||
-          link?.repoId !== began.repoId
+          link?.provider !== began.provider ||
+          link.repoId !== began.repoId
         ) {
           this.#log.info({ project: began.id }, "the project changed while its copy was made");
           return { kind: "none" };
