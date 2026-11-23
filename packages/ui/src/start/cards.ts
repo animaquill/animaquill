@@ -208,7 +208,8 @@ export function composeCards(lists: StartLists, organized: Organized): ProjectCa
 
 // ---- what a card says
 
-export type StatusTone = "plain" | "warning";
+/** "busy": something people did is on its way, as a new name to the platform. */
+export type StatusTone = "plain" | "warning" | "busy";
 
 /**
  * Where a project is, for the small sign before its line in the offline mode: a folder of this
@@ -423,6 +424,11 @@ export interface CardContext {
   readonly covers?: boolean;
   /** People chose the cover the card shows, see `ProjectCover.chosen`. */
   readonly coverChosen?: boolean;
+  /**
+   * Projects of the platform are renamed there, see `OnlineNames`: also one that this browser has
+   * nothing of.
+   */
+  readonly renamesOnline?: boolean;
 }
 
 /** Where "在 GitHub 上打开" goes: only an https address. */
@@ -452,9 +458,9 @@ export function cardActions(card: ProjectCard, context: CardContext): CardAction
   const savable = when(platform !== undefined && hasContent, "saveToFolder");
   const common: CardAction[] = [
     "open",
-    // One that this browser has nothing of has to change on the platform: not yet. One that
-    // cannot be edited cannot be renamed either.
-    ...when(card.kind !== "cloudRemote" && !unusable, "rename"),
+    // One that this browser has nothing of changes on the platform only, where that renames. One
+    // that cannot be edited cannot be renamed either.
+    ...when((card.kind !== "cloudRemote" || context.renamesOnline === true) && !unusable, "rename"),
     ...when(card.marksKey !== undefined, card.starred ? "unstar" : "star", "moveToGroup"),
     // Not of one that cannot be edited, nor of another account's. Who of the people editing a
     // project together may choose its cover is for when projects are edited together.

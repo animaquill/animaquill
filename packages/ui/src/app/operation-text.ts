@@ -38,6 +38,11 @@ export function operationText(
     return operation.away
       ? t("operations.githubAway", { count, merges: operation.merges ?? 1 })
       : t("operations.github", { count });
+  if (source === "rename")
+    return t("operations.renamed", {
+      name: operation.label ?? "",
+      interpolation: { escapeValue: false },
+    });
   if (source === "other") return t("operations.other");
   if (commands.some((command) => PROPERTY_COMMANDS.has(command))) {
     const [only] = properties;

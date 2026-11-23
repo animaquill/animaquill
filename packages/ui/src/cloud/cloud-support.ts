@@ -688,6 +688,33 @@ export class MemoryPlatform {
     );
   }
 
+  /** A rename on the start page, as the platform writes it: a batch of its own ("rename"). */
+  renameFromStartPage(id: string, name: string, batch = "r1"): void {
+    const label = `在开始页改名为「${name}」`;
+    let known = this.batches.get(id);
+    if (!known) this.batches.set(id, (known = new Map()));
+    known.set(batch, {
+      id: batch,
+      kind: "rename",
+      label,
+      files: 1,
+      at: Date.now(),
+      undone: false,
+      steps: [],
+    });
+    this.#writeAsPlatform(
+      id,
+      (store) => {
+        const result = store.execute(
+          { type: "project.rename", params: { name } },
+          { origin: repoBatch(batch) },
+        );
+        if (!result.ok) throw new Error(`the rename did not go: ${JSON.stringify(result)}`);
+      },
+      { batch, kind: "rename", label, files: 1 },
+    );
+  }
+
   /**
    * A merge of what changed on GitHub taken back as a whole by the platform, or done again, as a
    * batch of its own (`step`) that says which one it is about (`undoes`).

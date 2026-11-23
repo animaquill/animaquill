@@ -378,6 +378,10 @@ export interface BrowserCloudOptions {
   readonly remove?: NonNullable<CloudAccess["remove"]>;
   /** Makes the working copy of a project again from its repository, see `CloudAccess.wake`. */
   readonly wake?: NonNullable<CloudAccess["wake"]>;
+  /** Renames a project without opening it, see `CloudAccess.rename`. */
+  readonly rename?: NonNullable<CloudAccess["rename"]>;
+  /** What changed of the person's list, at once, see `CloudAccess.events`. */
+  readonly events?: CloudAccess["events"];
   /** Saving its projects to repositories, where the platform does, see `browserRepository`. */
   readonly repository?: RepositoryAccess;
   /** Sending files of assets into the large file storage of repositories, see `browserLfs`. */
@@ -407,6 +411,8 @@ export function browserCloud(options: BrowserCloudOptions): CloudAccess {
     line: (key) => broadcastLine(`animaquill.cloud.${key}`),
     ...(options.remove && { remove: options.remove }),
     ...(options.wake && { wake: options.wake }),
+    ...(options.rename && { rename: options.rename }),
+    ...(options.events && { events: options.events }),
     ...(options.repository && { repository: options.repository }),
     ...(options.lfs && { lfs: options.lfs }),
     ...(options.lfsAccount && { lfsAccount: options.lfsAccount }),

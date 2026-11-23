@@ -66,6 +66,7 @@ import {
 import type { CoverTarget } from "../start/cover-choice.ts";
 import type { CardCover } from "../start/covers.ts";
 import type { RenameOutcome } from "../start/rename.ts";
+import type { OnlineRenameOutcome } from "../start/online-names.ts";
 import type { ProjectFoldersSnapshot, WaitingFolder } from "../workbench/project-folders.ts";
 import type { Workbench } from "../workbench/workbench.ts";
 import { useWorkbench } from "./context.ts";
@@ -709,7 +710,7 @@ interface CardsProps {
 interface CardActions {
   open(card: ProjectCard): void;
   run(card: ProjectCard, action: CardAction, at: HTMLElement | null): void;
-  rename(card: ProjectCard, name: string): Promise<RenameOutcome>;
+  rename(card: ProjectCard, name: string): Promise<RenameOutcome | OnlineRenameOutcome>;
   renaming: string | undefined;
   stopRenaming(): void;
   star(card: ProjectCard): void;
@@ -764,11 +765,27 @@ function CardItem({
   );
   const more = useRef<HTMLDivElement>(null);
   const [problem, setProblem] = useState<string | undefined>();
+  const names = useSyncExternalStore(
+    workbench.onlineNames.subscribe,
+    workbench.onlineNames.getSnapshot,
+  );
+  // A name on its way to the platform shows at once, and says so where the status is.
+  const pending = card.project === undefined ? undefined : names.pending.get(card.project);
+  const shown = pending?.name ?? card.name;
   const folder = card.key === undefined ? undefined : statuses.get(card.key);
-  const status = cardStatus(card, folder, t, now);
+  const status = pending
+    ? {
+        ...cardStatus(card, folder, t, now),
+        text: t(pending.state === "waking" ? "start.card.waking" : "start.card.renaming"),
+        tone: "busy" as const,
+        hint: undefined,
+      }
+    : cardStatus(card, folder, t, now);
+  // Renamed on the platform: not without a network.
+  const renamesOnline = isCloudKind(card.kind) && workbench.onlineNames.available;
   const at = time === "opened" ? card.openedAt : card.updatedAt;
   const when = at === undefined ? undefined : agoText(at, now, t);
-  const words = { name: card.name, ...plain };
+  const words = { name: shown, ...plain };
   const href = card.key === undefined ? undefined : workbench.linkTo(card.key);
   const isRenaming = actions.renaming === card.id;
   const groups = cardActions(card, {
@@ -776,6 +793,7 @@ function CardItem({
     copies: card.key === undefined ? 0 : (copies.get(card.key) ?? 0),
     covers: workbench.canChooseCovers,
     coverChosen: covers.get(card.id)?.chosen === true,
+    renamesOnline,
   });
   const menu = (): MenuItem[][] =>
     groups.map((group) =>
@@ -787,6 +805,9 @@ function CardItem({
         ),
         ...(DANGEROUS.has(action) && { danger: true }),
         ...(busy && action !== "openOnGitHub" && { disabled: true }),
+        ...(action === "rename" &&
+          renamesOnline &&
+          !names.online && { disabled: true, note: t("start.menu.renameOffline") }),
         run: () => actions.run(card, action, more.current),
       })),
     );
@@ -807,7 +828,7 @@ function CardItem({
       aria-hidden="true"
     >
       {picture === undefined ? (
-        <span className={styles.initial}>{initialOf(card.name)}</span>
+        <span className={styles.initial}>{initialOf(shown)}</span>
       ) : (
         <img className={styles.picture} src={picture} alt="" draggable={false} />
       )}
@@ -826,7 +847,7 @@ function CardItem({
     <NameInput
       className={styles.renameInput}
       label={t("start.card.renameLabel", words)}
-      initial={card.name}
+      initial={shown}
       problem={problem}
       onCancel={() => {
         setProblem(undefined);
@@ -844,8 +865,8 @@ function CardItem({
       }}
     />
   ) : (
-    <span className={styles.name} data-card-name="">
-      {card.name}
+    <span className={styles.name} data-card-name="" data-pending={pending ? "" : undefined}>
+      {shown}
     </span>
   );
   const statusLine = (
@@ -901,7 +922,7 @@ function CardItem({
             aria-hidden="true"
           >
             {picture === undefined ? (
-              initialOf(card.name)
+              initialOf(shown)
             ) : (
               <img className={styles.picture} src={picture} alt="" draggable={false} />
             )}
@@ -1073,6 +1094,38 @@ function useCardActions(
     }
     return workbench.openProject(source.summary.id);
   };
+  /**
+   * Renames a project of the platform there, see `OnlineNames`: the input closes at once, as the
+   * card shows the new name; where the platform does not take it, the old one is back and people
+   * are told why, with a way to try again. Without a network nothing goes: said where they typed.
+   */
+  const renameOnline = async (project: string, was: string, name: string) => {
+    const wanted = name.trim();
+    if (wanted === was) return "unchanged" as const;
+    if (!workbench.onlineNames.getSnapshot().online) return "offline" as const;
+    void workbench.onlineNames.rename(project, wanted).then((outcome) => {
+      if (outcome === "renamed") return;
+      workbench.notifications.push(
+        t("start.rename.notice", {
+          name: wanted,
+          why: t(`start.rename.${outcome}`),
+          ...plain,
+        }),
+        {
+          ...(outcome !== "missing" &&
+            outcome !== "invalid" && {
+              actions: [
+                {
+                  label: t("start.rename.retry"),
+                  run: () => void renameOnline(project, was, wanted),
+                },
+              ],
+            }),
+        },
+      );
+    });
+    return "renamed" as const;
+  };
   /** Opens the project, and does what can only be done to the open one. */
   const thenOpen = (card: ProjectCard, work: () => Promise<unknown>) =>
     run(async () => {
@@ -1087,6 +1140,10 @@ function useCardActions(
     renaming,
     stopRenaming: () => setRenaming(undefined),
     rename: async (card, name) => {
+      // A project of the platform is renamed there: the card shows the new name at once, and the
+      // old one again, with why, where the platform does not take it.
+      if (isCloudKind(card.kind) && card.project !== undefined && workbench.onlineNames.available)
+        return renameOnline(card.project, card.name, name);
       if (card.key === undefined) return "failed";
       return workbench.renameUnopened(card.key, name);
     },

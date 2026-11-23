@@ -79,6 +79,20 @@ export function OperationStatus() {
           run: () => workbench.batchUndo.takeBack(batches, direction, operation.count),
         };
       }
+      // A rename on the start page goes back as a whole on the platform too, without asking: it
+      // is one name.
+      case "rename": {
+        const { batches } = operation;
+        if (!batches || batches.length === 0) return {};
+        const { direction, why } = workbench.batchUndo.stateOf(batches, operation.undone);
+        if (!direction) return why === undefined ? {} : { why: t(batchWhyKey(why)) };
+        const label = direction === "redo" ? t("operations.redoThis") : t("operations.undoThis");
+        if (why !== undefined) return { label, off: true, why: t(batchWhyKey(why)) };
+        return {
+          label,
+          run: () => workbench.batchUndo.takeBack(batches, direction, 1, { asks: false }),
+        };
+      }
       case "ai":
       case "folder": {
         if (operation.origin === undefined) return { why: t("operations.why.originGone") };

@@ -3,7 +3,8 @@ import { Emitter } from "./emitter.ts";
 import type { RestoredUndo } from "./undo-keeper.ts";
 
 /** Who an operation comes from, as this window sees it. */
-export type OperationSource = "you" | "ai" | "folder" | "github" | "other";
+/** "rename": the project was renamed on the start page, here or on another computer. */
+export type OperationSource = "you" | "ai" | "folder" | "github" | "rename" | "other";
 
 /** One thing that changed the project, as the list of what happened shows it. */
 export interface Operation {
@@ -256,6 +257,28 @@ export class OperationLog {
   }
 
   /**
+   * What came from the platform just now was a rename on the start page (`SyncHub.rename` of the
+   * server), here or on another computer: one "在开始页改名" in place of "其他窗口", which the
+   * platform takes back as a whole as it does merges, see `BatchUndo`.
+   */
+  heardRename({ batch, name }: { readonly batch: string; readonly name: string }): void {
+    const store = this.#store;
+    const last = this.#lastOther;
+    if (!store || !last || last.revision !== store.revision) return;
+    const operation = this.#operations.find(({ id }) => id === last.id);
+    if (!operation) return;
+    this.#replace(operation, {
+      ...operation,
+      source: "rename",
+      label: name,
+      count: 1,
+      batches: [batch],
+    });
+    this.#lastOther = undefined;
+    this.#show();
+  }
+
+  /**
    * What came from the platform just now took merges of GitHub back as a whole, or did them again
    * (`BatchUndo`, here or anywhere else): the merges in the list say so, as an AI task taken back
    * does, in place of one more "其他窗口".
@@ -274,7 +297,10 @@ export class OperationLog {
       this.#lastOther = undefined;
     }
     for (const operation of this.#operations) {
-      if (operation.source !== "github" || !operation.batches?.some((id) => undoes.includes(id)))
+      if (
+        (operation.source !== "github" && operation.source !== "rename") ||
+        !operation.batches?.some((id) => undoes.includes(id))
+      )
         continue;
       this.#replace(operation, { ...operation, undone: direction === "undo" });
     }

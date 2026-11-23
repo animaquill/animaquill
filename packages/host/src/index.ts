@@ -56,6 +56,11 @@ export {
   type ModelCatalog,
 } from "./model-catalog.ts";
 export { MemoryCloudLinks } from "./cloud.ts";
+export type {
+  BrowserPersonEventsOptions,
+  EventSourceLike,
+  PersonEventsAccess,
+} from "./person-events.ts";
 export {
   groupNameKey,
   cleanGroupName,
@@ -117,6 +122,7 @@ export {
   setStorageScope,
   storageScope,
 } from "./scope.ts";
+import type { PersonEventsAccess } from "./person-events.ts";
 
 /** What the editor needs from the place it runs in: a browser, the desktop app or the platform. */
 export interface Host {
@@ -855,6 +861,20 @@ export type CloudWake =
   | { readonly copy: "missing" };
 
 /**
+ * What came of renaming a project of the platform without opening it, see `CloudAccess.rename`:
+ * renamed (also where it was called so already); not renamed, as it is locked or its repository
+ * cannot be used, or the name is none; on its way back from its repository first ("waking": ask
+ * again once `wake` says it is "live"), or it cannot be made from there, as `CloudWake` says; or not
+ * there, or not the person's.
+ */
+export type CloudRename =
+  | { readonly kind: "renamed"; readonly name: string; readonly batch?: string }
+  | { readonly kind: "refused"; readonly why: "locked" | "unusable" | "invalid" | "quota" }
+  | { readonly kind: "waking" }
+  | Extract<CloudWake, { readonly copy: "released" }>
+  | { readonly kind: "missing" };
+
+/**
  * Where projects sync to: a platform, as the host reaches it. The editor runs the protocol over the
  * connections, see `SyncClientMessage`, and keeps its records here.
  */
@@ -906,6 +926,17 @@ export interface CloudAccess {
    * signed in. Missing where the platform makes no copies again.
    */
   wake?(project: string, options?: { readonly fromBranch?: boolean }): Promise<CloudWake>;
+  /**
+   * Renames a project of the platform on the platform, without opening it, see `CloudRename`: its
+   * windows anywhere hear it at once, and the list says it. Rejects where the platform could not
+   * say, with a `CloudSignedOut` when nobody is signed in. Missing where the platform does not.
+   */
+  rename?(project: string, name: string): Promise<CloudRename>;
+  /**
+   * What changed of the person's list, as the platform says it at once, see `PersonEventsAccess`.
+   * Without it, the list is read again now and then only.
+   */
+  readonly events?: PersonEventsAccess;
   /**
    * Saving projects of the platform to a Git repository of the person, where the platform does that:
    * it archives what it has of a project into the repository by itself. Without it, there is none.

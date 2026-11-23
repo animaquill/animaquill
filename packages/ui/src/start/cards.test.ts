@@ -432,11 +432,17 @@ describe("what the menu of a card offers", () => {
       ["saveToFolder", "openOnGitHub"],
       ["deleteCloud"],
     ]);
-    // It cannot be renamed before the platform can change what it has without an editor on it.
+    // Nothing of it in this browser: renamed only where the platform renames it.
     expect(actions("年会开场")).toEqual([
       ["open", "star", "moveToGroup"],
       ["saveToFolder", "openOnGitHub"],
       ["deleteCloud"],
+    ]);
+    expect(actions("年会开场", { renamesOnline: true })[0]).toEqual([
+      "open",
+      "rename",
+      "star",
+      "moveToGroup",
     ]);
     expect(actions("旧项目")).toEqual([
       ["open", "rename", "star", "moveToGroup"],

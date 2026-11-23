@@ -15,6 +15,7 @@ import {
   type CloudProjectSummary,
   type CloudRemoveOptions,
   type CloudRemoveRefusal,
+  type CloudRename,
   type CloudWake,
 } from "./index.ts";
 
@@ -192,6 +193,7 @@ export function browserCloudProjects(options: BrowserCloudProjectsOptions): Pick
 > & {
   readonly remove: NonNullable<CloudAccess["remove"]>;
   readonly wake: NonNullable<CloudAccess["wake"]>;
+  readonly rename: NonNullable<CloudAccess["rename"]>;
 } {
   const request = options.fetch ?? ((input, init) => fetch(input, init));
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;
@@ -262,5 +264,47 @@ export function browserCloudProjects(options: BrowserCloudProjectsOptions): Pick
         if (!said) throw new Error(`The platform answered ${response.status}`);
         return said;
       }),
+    rename: (project, name) =>
+      withinTime(timeoutMs, async (signal) => {
+        const response = await request(
+          options.api(`/projects/${encodeURIComponent(project)}/name`),
+          {
+            method: "PUT",
+            cache: "no-store",
+            headers: { ...options.changeHeaders, "content-type": "application/json" },
+            body: JSON.stringify({ name }),
+            signal,
+          },
+        );
+        const answer: unknown = await response.json().catch(() => undefined);
+        if (response.status === 401 || (isObject(answer) && answer.error === "signedOut"))
+          throw new CloudSignedOut("Nobody is signed in");
+        const said = renameOf(response.status, answer, Number(response.headers.get("retry-after")));
+        if (!said) throw new Error(`The platform answered ${response.status}`);
+        return said;
+      }),
   };
 }
+
+/** What renaming a project came to, see `CloudAccess.rename`: only in the platform's own words. */
+export const renameOf = (
+  status: number,
+  answer: unknown,
+  retryAfter: number,
+): CloudRename | undefined => {
+  const said = isObject(answer) ? answer : {};
+  if (status === 200 && typeof said.name === "string")
+    return {
+      kind: "renamed",
+      name: said.name,
+      ...optional("batch", typeof said.batch === "string" ? said.batch : undefined),
+    };
+  if (status === 404 && said.error === "notFound") return { kind: "missing" };
+  if (status === 400 && said.error === "invalid") return { kind: "refused", why: "invalid" };
+  if (status === 413 && said.error === "quota") return { kind: "refused", why: "quota" };
+  if (status === 409 && (said.error === "locked" || said.error === "unusable"))
+    return { kind: "refused", why: said.error };
+  if (status === 409 && said.error === "waking") return { kind: "waking" };
+  const woke = wakeOf(status, answer, retryAfter);
+  return woke?.copy === "released" ? woke : undefined;
+};

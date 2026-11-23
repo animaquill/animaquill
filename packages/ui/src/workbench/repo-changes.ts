@@ -44,6 +44,8 @@ export interface RepoChangesOptions {
     readonly undoes: readonly string[];
     readonly direction: "undo" | "redo";
   }) => void;
+  /** ...that the project was renamed on the start page, see `OperationLog.heardRename`. */
+  readonly heardRename?: (renamed: { readonly batch: string; readonly name: string }) => void;
   /** "撤销这次" of merges, see `BatchUndo`: undefined where the platform does not take them back. */
   readonly undo?: (batches: readonly string[], files: number) => void;
   /** Asks the platform how archiving goes, see `RepositoryWatch.refresh`. */
@@ -123,6 +125,12 @@ export class RepoChanges {
   /** Merges of what changed on GitHub came in, see `CloudBatchNote`. */
   heard(note: CloudBatchNote): void {
     this.#heardMerges(note);
+    // Renamed on the start page: the list says so, as what it is, and the title follows by itself.
+    for (const batch of note.batches) {
+      if (batch.kind !== "rename") continue;
+      const name = this.#options.store()?.getState().manifest.name ?? "";
+      this.#options.heardRename?.({ batch: batch.batch, name });
+    }
     // Merges taken back as a whole, or done again: the list says so, nothing else changes. After
     // the merges of the same note, which take the place of "其他窗口" first.
     for (const direction of ["undo", "redo"] as const) {

@@ -364,3 +364,43 @@ describe("taking a project of the platform away", () => {
     await expect(projects.remove("p1")).rejects.toBeInstanceOf(NoAnswer);
   });
 });
+
+describe("renaming a project of the platform", () => {
+  test("asks with the headers of a change, and goes only by what the platform says", async () => {
+    const answers = [
+      Response.json({ name: "宣传片", batch: "b1", seq: 3 }),
+      Response.json({ name: "宣传片" }),
+      Response.json({ error: "locked" }, { status: 409 }),
+      Response.json({ error: "unusable" }, { status: 409 }),
+      Response.json({ error: "waking", copy: "restoring" }, { status: 409 }),
+      Response.json({ error: "noRepository", copy: "released" }, { status: 409 }),
+      Response.json({ error: "notFound" }, { status: 404 }),
+      Response.json({ error: "invalid" }, { status: 400 }),
+      Response.json({ error: "quota" }, { status: 413 }),
+      // As from a gateway, or a page to sign in on: no answer.
+      new Response("<html>", { status: 200 }),
+      Response.json({ error: "signedOut" }, { status: 401 }),
+    ];
+    const { projects, sent } = platform(() => answers.shift() as Response);
+    expect(await projects.rename("p/1", "宣传片")).toEqual({
+      kind: "renamed",
+      name: "宣传片",
+      batch: "b1",
+    });
+    expect(sent[0]).toMatchObject({
+      url: "https://platform.example/api/projects/p%2F1/name",
+      method: "PUT",
+      headers: { "x-animaquill": "1", "content-type": "application/json" },
+    });
+    expect(await projects.rename("p", "宣传片")).toEqual({ kind: "renamed", name: "宣传片" });
+    expect(await projects.rename("p", "x")).toEqual({ kind: "refused", why: "locked" });
+    expect(await projects.rename("p", "x")).toEqual({ kind: "refused", why: "unusable" });
+    expect(await projects.rename("p", "x")).toEqual({ kind: "waking" });
+    expect(await projects.rename("p", "x")).toEqual({ copy: "released", refused: "noRepository" });
+    expect(await projects.rename("p", "x")).toEqual({ kind: "missing" });
+    expect(await projects.rename("p", "x")).toEqual({ kind: "refused", why: "invalid" });
+    expect(await projects.rename("p", "x")).toEqual({ kind: "refused", why: "quota" });
+    await expect(projects.rename("p", "x")).rejects.toThrow(/answered 200/);
+    await expect(projects.rename("p", "x")).rejects.toBeInstanceOf(CloudSignedOut);
+  });
+});

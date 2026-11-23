@@ -1075,6 +1075,7 @@ describe("merges of what changed on GitHub, as the window takes them in", async 
       },
       store: () => window.store,
       heard: (merges) => operations.heardRepo(merges),
+      heardRename: (renamed) => operations.heardRename(renamed),
       heardTakenBack: (taken) => operations.heardTakenBack(taken),
       undo: (batches, files) => undone.push({ batches, files }),
       refresh: () => {},
@@ -1123,6 +1124,29 @@ describe("merges of what changed on GitHub, as the window takes them in", async 
     await time.advance(100);
     await Promise.resolve();
     expect(operations.getSnapshot()[0]?.source).toBe("other");
+  });
+
+  it("tells a rename on the start page as what it is, which goes back as a whole", async () => {
+    const time = new TestTime();
+    const { platform, a } = await start(time);
+    const { operations, notifications, changes } = watch(a);
+    platform.renameFromStartPage(CLOUD_ID, "宣传片", "r1");
+    await time.advance(100);
+    await Promise.resolve();
+    expect(a.store.getState().manifest.name).toBe("宣传片");
+    const [operation] = operations.getSnapshot();
+    expect(operation).toMatchObject({ source: "rename", label: "宣传片", batches: ["r1"] });
+    expect(operationText(t, operation as Operation)).toBe("在开始页改名为“宣传片”");
+    // Nothing of GitHub's: no notice, no marks.
+    expect(notifications.getSnapshot()).toEqual([]);
+    expect(changes.getSnapshot().marked.size).toBe(0);
+    platform.takeBackFromRepository(CLOUD_ID, "r1");
+    await time.advance(100);
+    await Promise.resolve();
+    expect(a.store.getState().manifest.name).not.toBe("宣传片");
+    expect(operations.getSnapshot().find(({ source }) => source === "rename")).toMatchObject({
+      undone: true,
+    });
   });
 
   it("offers to take a merge back from its notice, and says it taken back, here and in every window", async () => {

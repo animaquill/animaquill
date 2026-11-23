@@ -144,11 +144,13 @@ export class BatchUndo {
     batches: readonly string[],
     direction: "undo" | "redo",
     files: number,
+    /** Whether people are asked first: for merges of GitHub, which the next archive takes back too. */
+    { asks = true }: { readonly asks?: boolean } = {},
   ): Promise<void> {
     const { t, dialogs, notifications } = this.#options;
     const target = this.#target();
     if (!target?.access.undoBatch || batches.length === 0 || this.#busy) return;
-    if (direction === "undo") {
+    if (direction === "undo" && asks) {
       const sure = await dialogs.confirm({
         title: t("repoMerge.undo.title", { count: files }),
         message: t("repoMerge.undo.message"),
@@ -207,6 +209,7 @@ export class BatchUndo {
               again.map(({ batch }) => batch),
               "redo",
               files,
+              { asks },
             )
         : undefined,
     );

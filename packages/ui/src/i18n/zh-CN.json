@@ -1569,7 +1569,8 @@
       "ai": "AI",
       "folder": "外部文件",
       "other": "其他窗口",
-      "github": "GitHub"
+      "github": "GitHub",
+      "rename": "开始页"
     },
     "ai": "AI：改了 {{count}} 处",
     "aiLabel": "AI：“{{label}}”改了 {{count}} 处",
@@ -1687,7 +1688,8 @@
     },
     "github": "GitHub 上的改动（{{count}} 个文件）",
     "githubAway": "你不在时合并了 GitHub 上的改动（{{merges}} 次，{{count}} 个文件）",
-    "dropped": "按你的选择从项目里去掉了 {{count}} 个文件"
+    "dropped": "按你的选择从项目里去掉了 {{count}} 个文件",
+    "renamed": "在开始页改名为“{{name}}”"
   },
   "input": {
     "label": "输入方式",
@@ -4329,7 +4331,9 @@
       "star": "收藏“{{name}}”",
       "unstar": "取消收藏“{{name}}”",
       "duration": "时长 {{duration}}",
-      "renameLabel": "“{{name}}”的新名字"
+      "renameLabel": "“{{name}}”的新名字",
+      "renaming": "正在改名",
+      "waking": "正在从 GitHub 取回"
     },
     "info": {
       "opened": "上次打开：{{when}}"
@@ -4356,7 +4360,8 @@
       "switchRepository": "换一个仓库…",
       "setCover": "设置封面…",
       "autoCover": "恢复自动封面",
-      "saveToFolder": "保存到文件夹…"
+      "saveToFolder": "保存到文件夹…",
+      "renameOffline": "连上以后才能改"
     },
     "cover": {
       "notPicture": "“{{file}}”不是图片。请选 JPEG、PNG、WebP、GIF 或 AVIF 图片。",
@@ -4390,7 +4395,16 @@
       "unreadable": "项目读不出来，没有改名。",
       "tooNew": "这个项目是更新版本的编辑器做的，这一版不能改它的名字。请刷新页面更新编辑器。",
       "failed": "没能改名，请稍后再试。",
-      "locked": "这个项目锁定了，不能改名。打开项目解除锁定以后再改。"
+      "locked": "这个项目锁定了，不能改名。打开项目解除锁定以后再改。",
+      "offline": "连上网络以后才能改名。",
+      "unusable": "这个项目的仓库用不了，不能改名。",
+      "invalid": "名字不能是空的。",
+      "quota": "空间不够了，没能改名。",
+      "notBack": "这个项目暂时从 GitHub 取不回来，没有改名。",
+      "missing": "平台上已经没有这个项目了。",
+      "signedOut": "登录过期了，重新登录以后再改名。",
+      "notice": "“{{name}}”没改成名字：{{why}}",
+      "retry": "再试"
     },
     "list": {
       "name": "名称",

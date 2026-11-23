@@ -218,6 +218,7 @@ import { StartOrganizer } from "../start/organize.ts";
 import { signOutThen } from "./sign-out.ts";
 import { cloudMarksKey } from "../start/cards.ts";
 import { renameUnopened, type RenameOutcome } from "../start/rename.ts";
+import { OnlineNames } from "../start/online-names.ts";
 import { PanelRegistry, type PanelDefinition } from "./panels.ts";
 
 /** What every window of the editor is in, as a project, see `Workbench.clearThisComputer`. */
@@ -383,6 +384,8 @@ export class Workbench {
   readonly start: StartList;
   /** How people organise their projects on the start page, see `StartOrganizer`. */
   readonly organizer: StartOrganizer;
+  /** Names of projects of the platform on their way there from the start page, see `OnlineNames`. */
+  readonly onlineNames: OnlineNames;
   /** How each view of the start page is sorted and shown, see `StartHabits`. */
   readonly startHabits: StartHabits;
   /** The covers on the cards of the start page, see `StartCovers`. */
@@ -1220,6 +1223,21 @@ export class Workbench {
       organizer: host.organizer,
       offline: () => this.notifications.push(t("online.readOnly")),
     });
+    this.#followPerson(cloud);
+    this.onlineNames = new OnlineNames({
+      cloud: () => cloud,
+      refresh: () => this.start.refresh(),
+      ...(typeof navigator === "object" &&
+        typeof addEventListener === "function" && {
+          network: {
+            get onLine() {
+              return navigator.onLine;
+            },
+            addEventListener: (type, listener) => addEventListener(type, listener),
+            removeEventListener: (type, listener) => removeEventListener(type, listener),
+          },
+        }),
+    });
     this.startCovers = new StartCovers({
       ...(host.covers && { covers: host.covers }),
       ...(cloud?.cover && { cloud: cloud.cover }),
@@ -1311,6 +1329,10 @@ export class Workbench {
       heard: (merges) => {
         this.operations.heardRepo(merges);
         // What can be taken back changes with every merge: older ones may go out of reach.
+        this.batchUndo.forget();
+      },
+      heardRename: (renamed) => {
+        this.operations.heardRename(renamed);
         this.batchUndo.forget();
       },
       heardTakenBack: (taken) => {
@@ -2835,6 +2857,32 @@ export class Workbench {
   /**
    * Says to the windows of this browser which project this one has open.
    */
+  /**
+   * What changed of the person's list on any computer, as the platform says it at once
+   * (`CloudAccess.events`): the start page reads its list and how projects are organised again.
+   * While the platform cannot be heard so, it reads them every minute, and as people come back to
+   * the page.
+   */
+  #followPerson(cloud: CloudAccess | undefined): void {
+    const events = cloud?.events;
+    if (!events) return;
+    let live = false;
+    const read = () => {
+      void this.start.refresh();
+      void this.organizer.refresh();
+    };
+    events.watch(read, (now) => {
+      live = now;
+    });
+    const timer = setInterval(() => {
+      if (!live) read();
+    }, 60_000);
+    (timer as { unref?: () => void }).unref?.();
+    globalThis.document?.addEventListener("visibilitychange", () => {
+      if (!live && globalThis.document?.visibilityState === "visible") read();
+    });
+  }
+
   #keepPresence(host: Host): void {
     const { presence } = host;
     if (!presence) return;

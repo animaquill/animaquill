@@ -634,6 +634,32 @@
   color: var(--aq-local);
 }
 
+/* A new name on its way to the platform: the name as it will be, a little quieter until it is. */
+.name[data-pending] {
+  color: var(--aq-text);
+}
+
+.status[data-tone="busy"] .statusText {
+  color: var(--aq-accent);
+  animation: renaming 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes renaming {
+  from {
+    opacity: 1;
+  }
+
+  to {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status[data-tone="busy"] .statusText {
+    animation: none;
+  }
+}
+
 .status[data-tone="warning"] .statusText,
 .status[data-tone="warning"] .placeIcon {
   --place-folder: var(--aq-warning);
