@@ -1,5 +1,13 @@
 import { randomBytes } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type pg from "pg";
@@ -278,6 +286,91 @@ describe.skipIf(!TEST_DATABASE)("the data of the server, out and in again", () =
     const client = await connection(from);
     try {
       await expect(exportData(client, dir, { server: "test" })).rejects.toThrow(/not empty/);
+    } finally {
+      await client.end();
+    }
+  });
+
+  test("takes the repositories of the server's own along, after the tables, and the numbers of the sequences", async () => {
+    // Repositories as the server keeps them, with what a crash leaves half written.
+    const dataDir = mkdtempSync(join(tmpdir(), "aq-data-dir-"));
+    const repos = join(dataDir, "repos");
+    mkdirSync(join(repos, "p1.git", "refs", "heads"), { recursive: true });
+    mkdirSync(join(repos, "p1.git", "objects", "ab"), { recursive: true });
+    mkdirSync(join(repos, "broken", "p0-20261110T080000Z.git"), { recursive: true });
+    writeFileSync(join(repos, ".animaquill-repos"), "mark\n");
+    writeFileSync(join(repos, "p1.git", "HEAD"), "ref: refs/heads/main\n");
+    writeFileSync(join(repos, "p1.git", "refs", "heads", "main"), `${"a".repeat(40)}\n`);
+    writeFileSync(join(repos, "p1.git", "refs", "heads", "main.lock"), "");
+    writeFileSync(join(repos, "p1.git", "objects", "ab", "cdef"), randomBytes(100));
+    writeFileSync(join(repos, "p1.git", "objects", "ab", "tmp_obj_123"), "half");
+    writeFileSync(join(repos, "broken", "p0-20261110T080000Z.git", "HEAD"), "x");
+    writeFileSync(join(dataDir, ".tmp-abc"), "not a repository");
+    for (let n = 0; n < 3; n++) await from.query("select nextval('local_repo_ids')");
+
+    const dir = tempDir();
+    const client = await connection(from);
+    let manifest;
+    try {
+      manifest = await exportData(client, dir, { server: "test", dataDir });
+    } finally {
+      await client.end();
+    }
+    expect(manifest.sequences?.["public.local_repo_ids"]).toBeGreaterThanOrEqual(3);
+    expect(manifest.repos).toMatchObject({ files: 5 });
+    const list = JSON.parse(readFileSync(join(dir, "repos.json"), "utf8")) as {
+      files: { path: string }[];
+    };
+    const paths = list.files.map((file) => file.path);
+    // What names commits first, the objects last; nothing half written.
+    expect(paths.at(-1)).toBe("p1.git/objects/ab/cdef");
+    expect(paths).not.toContain("p1.git/refs/heads/main.lock");
+    expect(paths.some((path) => path.includes("tmp_obj_"))).toBe(false);
+    expect(paths).toContain("broken/p0-20261110T080000Z.git/HEAD");
+
+    // Into a server without any: the same files, and the sequence goes on from where it was.
+    const into = await fresh();
+    const otherDir = mkdtempSync(join(tmpdir(), "aq-data-dir-"));
+    const inClient = await connection(into);
+    try {
+      await importData(inClient, dir, { dataDir: otherDir });
+    } finally {
+      await inClient.end();
+    }
+    expect(readFileSync(join(otherDir, "repos", "p1.git", "objects", "ab", "cdef"))).toEqual(
+      readFileSync(join(repos, "p1.git", "objects", "ab", "cdef")),
+    );
+    expect(existsSync(join(otherDir, "repos", ".animaquill-repos"))).toBe(true);
+    const next = await into.query("select nextval('local_repo_ids') as id");
+    expect(Number(next.rows[0].id)).toBe(manifest.sequences!["public.local_repo_ids"]! + 1);
+
+    // Not over repositories that are there, nor from a file that was changed: nothing goes in.
+    const again = await fresh();
+    const againClient = await connection(again);
+    try {
+      await expect(importData(againClient, dir, { dataDir: otherDir })).rejects.toBeInstanceOf(
+        DataRefused,
+      );
+      const third = mkdtempSync(join(tmpdir(), "aq-data-dir-"));
+      writeFileSync(join(dir, "repos", "p1.git", "HEAD"), "changed");
+      await expect(importData(againClient, dir, { dataDir: third })).rejects.toBeInstanceOf(
+        DataRefused,
+      );
+      expect(existsSync(join(third, "repos"))).toBe(false);
+      const users = await again.query("select count(*)::int as n from users");
+      expect(users.rows[0].n).toBe(0);
+    } finally {
+      await againClient.end();
+    }
+  });
+
+  test("without the repositories, as people can ask: none in the export", async () => {
+    const dir = tempDir();
+    const client = await connection(from);
+    try {
+      const manifest = await exportData(client, dir, { server: "test" });
+      expect(manifest.repos).toBeUndefined();
+      expect(existsSync(join(dir, "repos.json"))).toBe(false);
     } finally {
       await client.end();
     }

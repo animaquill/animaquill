@@ -2,12 +2,15 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   createReadStream,
+  existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
 import { readMigrationFiles } from "drizzle-orm/migrator";
 import type pg from "pg";
@@ -81,6 +84,18 @@ export interface Manifest {
   readonly secrets: string;
   readonly leftOut: readonly string[];
   readonly tables: readonly TableOfManifest[];
+  /**
+   * Where the sequences of the database were (schema.name: the last value it gave, or null for
+   * none yet), which an import sets again: the numbers of repositories of the server's own
+   * (`local_repo_ids`). Missing in an export of a database without sequences.
+   */
+  readonly sequences?: Readonly<Record<string, number | null>>;
+  /**
+   * The repositories of the server's own (`repos/` of the data folder), copied into `repos/` here
+   * after the tables, with every file and its SHA-256 in `repos.json`: missing where there were
+   * none, or the export was told to leave them out.
+   */
+  readonly repos?: { readonly files: number; readonly bytes: number; readonly sha256: string };
 }
 
 /** For each record of migrations (a table of the schema `drizzle`): how many ran, and the last. */
@@ -413,7 +428,8 @@ export class TableWriter {
 /** The manifest of an export, written last: an export without one is no export. */
 export const finishExport = (
   dir: string,
-  of: Pick<Manifest, "server" | "exportedAt" | "scope" | "migrations" | "tables">,
+  of: Pick<Manifest, "server" | "exportedAt" | "scope" | "migrations" | "tables"> &
+    Pick<Partial<Manifest>, "sequences" | "repos">,
 ): Manifest => {
   const manifest: Manifest = {
     format: FORMAT,
@@ -430,6 +446,8 @@ export const finishExport = (
       "what is not in the database, such as the pictures of conversations in the object storage",
     ],
     tables: of.tables,
+    ...(of.sequences && Object.keys(of.sequences).length > 0 && { sequences: of.sequences }),
+    ...(of.repos && { repos: of.repos }),
   };
   writePrivate(join(dir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
@@ -449,12 +467,18 @@ export const exportData = async (
     readonly scope?: DataScope;
     /** The migrations of the code, which the database has to have: see `sameMigrations`. */
     readonly migrations?: Migrations;
+    /**
+     * The data folder of the server, whose repositories of its own (`repos/`) go along, after the
+     * tables: none where it has none, or unless said.
+     */
+    readonly dataDir?: string | undefined;
   },
 ): Promise<Manifest> => {
   const scope = options.scope ?? SERVER_SCOPE;
   await sameMigrations(client, scope, options.migrations);
   startExport(dir);
   await client.query("begin isolation level repeatable read read only");
+  let of: Parameters<typeof finishExport>[1];
   try {
     await settle(client);
     const migrations = await migrationsOf(client, scope);
@@ -465,16 +489,135 @@ export const exportData = async (
         writer.add(row);
       tables.push(writer.finish());
     }
-    return finishExport(dir, {
+    of = {
       server: options.server,
       exportedAt: (options.now ?? new Date()).toISOString(),
       scope,
       migrations,
       tables,
-    });
+      sequences: await sequencesOf(client, scope),
+    };
   } finally {
     await client.query("rollback");
   }
+  // After the snapshot of the tables: a repository newer than the database that comes back with
+  // it is merged as changes in the repository, never one older that misses what it has.
+  const repos = options.dataDir === undefined ? undefined : exportRepos(options.dataDir, dir);
+  return finishExport(dir, { ...of, ...(repos && { repos }) });
+};
+
+/** Where the sequences of the schemas are: the last value each gave, or null for none yet. */
+const sequencesOf = async (client: pg.ClientBase, scope: DataScope) => {
+  const { rows } = await client.query<{ schema: string; name: string; last: string | null }>(
+    `select schemaname as schema, sequencename as name, last_value::text as last
+       from pg_sequences where schemaname = any($1) order by 1, 2`,
+    [scope.schemas],
+  );
+  return Object.fromEntries(
+    rows.map((row) => [`${row.schema}.${row.name}`, row.last === null ? null : Number(row.last)]),
+  );
+};
+
+/** What `repos.json` of an export says: each file of `repos/`, by its path there. */
+interface ReposList {
+  readonly files: readonly {
+    readonly path: string;
+    readonly size: number;
+    readonly sha256: string;
+  }[];
+}
+
+/** A file of `repos/` whose name says it is half written, as a crash leaves one. */
+const isTemporary = (name: string) =>
+  name.startsWith(".tmp-") || name.startsWith("tmp_obj_") || name.endsWith(".lock");
+
+/**
+ * Copies the repositories of the server's own into `repos/` of an export, as Git can be copied
+ * while it is written: what names commits first (refs, packed-refs, HEAD, config, logs), then the
+ * objects, which are only ever added, so that every commit a branch of the copy names is in it.
+ * Half-written files stay behind. Undefined where the data folder has no repositories.
+ */
+export const exportRepos = (
+  dataDir: string,
+  dir: string,
+): { files: number; bytes: number; sha256: string } | undefined => {
+  const from = join(dataDir, "repos");
+  if (!existsSync(join(from, ".animaquill-repos"))) return undefined;
+  const all: string[] = [];
+  const walk = (folder: string, prefix: string) => {
+    for (const entry of readdirSync(folder, { withFileTypes: true }).toSorted((a, b) =>
+      a.name < b.name ? -1 : 1,
+    )) {
+      if (isTemporary(entry.name)) continue;
+      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(join(folder, entry.name), path);
+      else if (entry.isFile()) all.push(path);
+    }
+  };
+  walk(from, "");
+  const isObject = (path: string) => /(^|\/)objects\//.test(path);
+  const ordered = [...all.filter((path) => !isObject(path)), ...all.filter(isObject)];
+  const files: { path: string; size: number; sha256: string }[] = [];
+  let bytes = 0;
+  for (const path of ordered) {
+    const content = readFileSync(join(from, path));
+    const target = join(dir, "repos", path);
+    mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+    writeFileSync(target, content, { mode: 0o600 });
+    files.push({
+      path,
+      size: content.length,
+      sha256: createHash("sha256").update(content).digest("hex"),
+    });
+    bytes += content.length;
+  }
+  const list = `${JSON.stringify({ files } satisfies ReposList)}\n`;
+  writePrivate(join(dir, "repos.json"), list);
+  return { files: files.length, bytes, sha256: createHash("sha256").update(list).digest("hex") };
+};
+
+/**
+ * Puts the repositories of an export into the data folder of this server, each file checked
+ * against its SHA-256: only where it has none yet (nothing in `repos/` but its mark). All or
+ * nothing: they go into a folder of their own first, which becomes `repos/` once whole.
+ */
+export const importRepos = (dir: string, dataDir: string, manifest: Manifest): number => {
+  if (!manifest.repos) return 0;
+  const listText = readFileSync(join(dir, "repos.json"), "utf8");
+  if (createHash("sha256").update(listText).digest("hex") !== manifest.repos.sha256)
+    throw new DataRefused("repos.json is not what was exported");
+  const list = JSON.parse(listText) as ReposList;
+  const to = join(dataDir, "repos");
+  if (existsSync(to) && readdirSync(to).some((name) => name !== ".animaquill-repos"))
+    throw new DataRefused(`${to} has repositories already: import only into a server without any`);
+  const building = join(dataDir, `.repos-importing-${process.pid}-${Date.now()}`);
+  mkdirSync(building, { recursive: true, mode: 0o755 });
+  try {
+    for (const file of list.files) {
+      if (
+        file.path.split("/").some((part) => part === ".." || part === "") ||
+        isAbsolute(file.path)
+      )
+        throw new DataRefused(`${file.path} is no file of a repository`);
+      const content = readFileSync(join(dir, "repos", file.path));
+      if (createHash("sha256").update(content).digest("hex") !== file.sha256)
+        throw new DataRefused(`repos/${file.path} is not what was exported`);
+      const target = join(building, file.path);
+      mkdirSync(dirname(target), { recursive: true, mode: 0o755 });
+      writeFileSync(target, content, { mode: 0o644 });
+    }
+    if (!existsSync(join(building, ".animaquill-repos")))
+      writeFileSync(
+        join(building, ".animaquill-repos"),
+        "AnimaQuill keeps repositories in here.\n",
+      );
+    rmSync(to, { recursive: true, force: true });
+    renameSync(building, to);
+  } catch (error) {
+    rmSync(building, { recursive: true, force: true });
+    throw error;
+  }
+  return list.files.length;
 };
 
 export const readManifest = (dir: string): Manifest => {
@@ -562,10 +705,22 @@ export async function* linesOf(dir: string, chunk: TableOfManifest["chunks"][num
 export const importData = async (
   client: pg.ClientBase,
   dir: string,
-  options: { readonly scope?: DataScope } = {},
+  options: {
+    readonly scope?: DataScope;
+    /**
+     * The data folder of this server, where the repositories of the export go (`importRepos`),
+     * before the tables, and away again where the tables do not go in. Left where they are unless
+     * said.
+     */
+    readonly dataDir?: string | undefined;
+  } = {},
 ): Promise<Manifest> => {
   const manifest = readManifest(dir);
   const scope = options.scope ?? SERVER_SCOPE;
+  const repos =
+    options.dataDir !== undefined && manifest.repos !== undefined
+      ? (importRepos(dir, options.dataDir, manifest), join(options.dataDir, "repos"))
+      : undefined;
   if (!sameScope(scope, manifest.scope))
     throw new DataRefused(
       `the export is of other schemas (${manifest.scope.schemas.join(", ")}) than this server (${scope.schemas.join(", ")})`,
@@ -631,6 +786,22 @@ export const importData = async (
         }
       await put();
     }
+    // The sequences go on from where they were, as the numbers they gave are in the rows.
+    for (const [name, last] of Object.entries(manifest.sequences ?? {})) {
+      const [schema, sequence] = name.split(".") as [string, string];
+      if (!scope.schemas.includes(schema)) throw new DataRefused(`${name} is of no schema here`);
+      const { rows } = await client.query<{ there: boolean }>(
+        "select exists (select 1 from pg_sequences where schemaname = $1 and sequencename = $2) as there",
+        [schema, sequence],
+      );
+      if (!rows[0]?.there) throw new DataRefused(`the database has no sequence ${name}`);
+      await client.query(
+        last === null
+          ? "select setval($1::regclass, 1, false)"
+          : "select setval($1::regclass, $2, true)",
+        last === null ? [tableName(schema, sequence)] : [tableName(schema, sequence), last],
+      );
+    }
     const differences = await differencesFrom(client, manifest);
     if (differences.length > 0)
       throw new DataRefused(`what went in is not what was exported: ${differences.join("; ")}`);
@@ -638,6 +809,8 @@ export const importData = async (
     return manifest;
   } catch (error) {
     await client.query("rollback").catch(() => {});
+    // What this put in goes again: nothing of the export is left half in.
+    if (repos !== undefined) rmSync(repos, { recursive: true, force: true });
     throw error;
   }
 };
