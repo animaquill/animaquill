@@ -267,7 +267,7 @@ describe("what is wrong with a repository", () => {
     const entry = (await session.tree(tree)).find((item) => item.path === "a.txt")!;
     const path = join(gitdir(), "objects", entry.sha.slice(0, 2), entry.sha.slice(2));
     const bytes = readFileSync(path);
-    bytes[bytes.length - 3] ^= 0xff;
+    bytes[bytes.length - 3] = (bytes[bytes.length - 3] ?? 0) ^ 0xff;
     writeFileSync(path, bytes);
     await expect(host.verify(PLACE)).rejects.toMatchObject({ reason: "broken" });
     await expect(host.open(PLACE).blob(entry.sha)).rejects.toBeInstanceOf(RepoPaused);

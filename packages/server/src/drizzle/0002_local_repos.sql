@@ -1,0 +1,2 @@
+CREATE SEQUENCE "public"."local_repo_ids" INCREMENT BY 1 MINVALUE 1 MAXVALUE 9223372036854775807 START WITH 1 CACHE 1;--> statement-breakpoint
+ALTER TABLE "project_repos" ADD COLUMN "verified_at" timestamp with time zone;

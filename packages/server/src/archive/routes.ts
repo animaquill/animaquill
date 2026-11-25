@@ -31,7 +31,9 @@ import {
  *   minute, unavailable (503), and the link is made all the same once GitHub is done: asked again,
  *   it is there, or busy a little longer.
  * - `GET /api/projects/:id/repository`: the repository, and how archiving goes; also for one without
- *   a repository (`state: "none"`). Always `copy` (whether the platform has the working copy:
+ *   a repository (`state: "none"`). `repository.place` is "github" or "local" (a repository of the
+ *   server's own, archive/local/), which has no `url` (nor have its archives and merges) and has
+ *   `clone`, its folder for `git clone`; `failure: "diskFull"` while archives fail for want of room. Always `copy` (whether the platform has the working copy:
  *   live, released, restoring), `generation` (which copy it is), `copyProblem?` (`{code, at,
  *   files?, reason?}`, why making it from the repository failed the last time), and, once the copy
  *   was made again, `rebuiltFrom: {generation, archivedSeq}`: which copy was before, and the update

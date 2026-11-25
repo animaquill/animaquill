@@ -5,6 +5,8 @@ import { GitHubPersonRepos, GitHubRepoHost } from "./archive/github-host.ts";
 import type { Link } from "./archive/links.ts";
 import { recheckLink } from "./archive/recheck.ts";
 import { enqueueRebuild, setUpRebuildQueues } from "./archive/rebuild.ts";
+import type { LocalGitRepoHost } from "./archive/local/host.ts";
+import { startLocalRepos } from "./archive/local/links.ts";
 import { RepoHosts } from "./archive/repo-host.ts";
 import {
   enqueueArchive,
@@ -86,6 +88,11 @@ export interface ServerParts {
   readonly prepared?: ((ready: ServerReady) => Promise<void>) | undefined;
   /** What a deployment tidies up every hour with accounts, see `scheduleCleanup`. */
   readonly cleanUp?: ((db: Db) => Promise<Record<string, number>>) | undefined;
+  /**
+   * The repositories of the server's own (archive/local/): as the settings say unless said
+   * (`startLocalRepos`); a deployment that never keeps any says undefined.
+   */
+  readonly local?: LocalGitRepoHost | undefined;
 }
 
 export interface Server {
@@ -183,21 +190,23 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
    * as an archive will find them, and people's tokens for what only those can do.
    */
   const repositoryService = (
-    host: GitHubRepoHost | undefined,
+    found: GitHubRepoHost | undefined,
     githubApp: GitHubApp | undefined,
+    local: LocalGitRepoHost | undefined,
   ): RepositoryService | undefined => {
     const { github } = config;
     const tokenFor = accounts.githubTokenFor;
-    if (!host || !tokenFor) {
+    const host = tokenFor ? found : undefined;
+    if (!host)
       app.log.warn("Saving to GitHub is off: the App's private key or client id is not set");
-      return undefined;
-    }
+    if (!host && !local) return undefined;
     const queue = jobs as Jobs;
     return new RepositoryService({
       access,
       db: database.db,
       host,
-      people: new GitHubPersonRepos({ apiUrl: github.apiUrl }),
+      people: host && new GitHubPersonRepos({ apiUrl: github.apiUrl }),
+      local,
       tokenFor,
       enqueue,
       rebuild,
@@ -245,6 +254,14 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
         await setUpArchiveQueues(jobs);
         await setUpLfsQueues(jobs);
         await setUpRebuildQueues(jobs);
+        const local = "local" in parts ? parts.local : await startLocalRepos(config, log);
+        const githubApp = appOf();
+        const github =
+          githubApp &&
+          new GitHubRepoHost(githubApp, {
+            apiUrl: config.github.apiUrl,
+            webUrl: config.github.webUrl,
+          });
         const hub = new SyncHub({
           db: database.db,
           log,
@@ -257,6 +274,8 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
           rebuild,
           // A merge from the repository changed the project: it goes back with the next archive.
           merged: (project) => enqueue({ project, kind: "auto" }),
+          // Without GitHub every new project is saved to a repository of the server's own.
+          linkLocal: local !== undefined && github === undefined,
         });
         // Changes in repositories that the worker found, merged into the working copies here.
         await workRepoMerges(jobs, hub, log);
@@ -267,15 +286,8 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
         // ...and of people's lists, whichever process changed them.
         await people?.stop().catch(() => {});
         people = listenForPeople(database.db, events, log);
-        const githubApp = appOf();
-        const github =
-          githubApp &&
-          new GitHubRepoHost(githubApp, {
-            apiUrl: config.github.apiUrl,
-            webUrl: config.github.webUrl,
-          });
-        const hosts = RepoHosts.github(github);
-        repositories = repositoryService(github, githubApp);
+        const hosts = new RepoHosts({ github, local });
+        repositories = repositoryService(github, githubApp, local);
         lfs = await lfsUploads(hosts);
         // Out of the large file storage needs no staging: what comes is passed on as it comes.
         lfsDownloads =

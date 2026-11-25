@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 
 import { GitHubUnavailable } from "../github/client.ts";
 import type { RepoProvider } from "../schema.ts";
+import type { LocalGitRepoHost } from "./local/host.ts";
 
 export type { RepoProvider };
 
@@ -55,6 +56,18 @@ export const placeOf = (row: RepoRow): RepoPlace => {
   if (row.localDir === null) throw new Error(`the repository ${row.repoId} here has no folder`);
   return { provider: "local", repoId: row.repoId, dir: row.localDir };
 };
+
+/**
+ * What a repository is called where the project says where the files of its assets are (the `repo`
+ * of a place in Git LFS, core/src/places.ts): its number on GitHub, as ever; `local:<number>` for
+ * one of the server's own, which no number on GitHub can be.
+ */
+export const hereOf = (link: {
+  readonly provider: RepoProvider;
+  readonly repoId: number;
+}): { readonly repo: string } => ({
+  repo: link.provider === "github" ? String(link.repoId) : `local:${link.repoId}`,
+});
 
 export interface RepoInfo {
   readonly id: number;
@@ -242,7 +255,7 @@ export interface RepoHost<Place extends RepoPlace = RepoPlace> {
 /** The host of each provider this server keeps repositories on: none for one it does not. */
 export interface RepoHostsOf {
   readonly github?: RepoHost<GitHubPlace> | undefined;
-  readonly local?: RepoHost<LocalPlace> | undefined;
+  readonly local?: LocalGitRepoHost | undefined;
 }
 
 /**
@@ -275,7 +288,7 @@ export class RepoHosts implements RepoHost {
   }
 
   /** The repositories of the server's own, for what only they have (making one, restoring). */
-  get local(): RepoHost<LocalPlace> | undefined {
+  get local(): LocalGitRepoHost | undefined {
     return this.#hosts.local;
   }
 

@@ -322,6 +322,9 @@ export class LfsUploads {
     if (!prefs?.at) throw new UploadRefused("notAcknowledged", 409);
     const link = await linkOf(db, projectId);
     if (!link) throw new UploadRefused("notLinked", 409);
+    // Repositories of the server's own have no large file storage yet (O8b): nothing is noted for
+    // one, as `lfs_objects` and `lfs_uploads` know repositories on GitHub only.
+    if (link.provider !== "github") throw new UploadRefused("unsupported", 409);
     const repoId = link.repoId;
 
     const [known] = await db

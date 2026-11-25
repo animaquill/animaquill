@@ -7,6 +7,7 @@ import {
   SIGNUP_MS,
   type Accounts,
   type LoginResult,
+  type SavesTo,
 } from "./accounts.ts";
 import {
   clearCookie,
@@ -59,6 +60,8 @@ export interface AuthRoutesOptions {
   readonly signedOut?: (session: string) => void;
   /** The way into the admin site, when there is one. */
   readonly admin?: AdminHandoff | undefined;
+  /** Where projects are saved, see `RepositoryService.savesTo`: GitHub unless said. */
+  readonly savesTo?: () => SavesTo;
   readonly now?: () => number;
 }
 
@@ -313,7 +316,7 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
         const seconds = (signedIn.expiresAt.getTime() - now()) / 1000;
         reply.header("set-cookie", setCookie(SESSION_COOKIE, id, seconds));
       }
-      return describeSignedIn(signedIn);
+      return describeSignedIn(signedIn, options.savesTo?.() ?? "github");
     },
   );
 

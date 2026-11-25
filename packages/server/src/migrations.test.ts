@@ -138,7 +138,7 @@ describe.skipIf(!TEST_DATABASE)("a database of the version before", () => {
     await database.migrate();
 
     // Nothing of what was there changed: only the new columns are new.
-    expect(await rowsOf("project_repos", ["local_dir"])).toEqual(before.repos);
+    expect(await rowsOf("project_repos", ["local_dir", "verified_at"])).toEqual(before.repos);
     expect(await rowsOf("archives", ["provider"])).toEqual(before.archives);
     expect(await rowsOf("repo_merges", ["provider"])).toEqual(before.merges);
     const providers = await direct.query(`
@@ -175,5 +175,13 @@ describe.skipIf(!TEST_DATABASE)("a database of the version before", () => {
     expect(await fails(repo("gitlab", "null", 9001, "'repos/p-three.git'"))).toBe("23514");
     expect(await fails(repo("local", "null", 9001, "'repos/p-three.git'"))).toBeUndefined();
     await direct.query("rollback");
+  });
+
+  test("0002_local_repos: numbers of repositories of the server's own, one after the other; none read through yet", async () => {
+    const first = await direct.query("select nextval('local_repo_ids') as id");
+    const second = await direct.query("select nextval('local_repo_ids') as id");
+    expect(Number(second.rows[0].id)).toBe(Number(first.rows[0].id) + 1);
+    const verified = await direct.query("select verified_at from project_repos");
+    for (const row of verified.rows) expect(row.verified_at).toBeNull();
   });
 });

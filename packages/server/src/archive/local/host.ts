@@ -261,6 +261,15 @@ export class LocalGitRepoHost implements RepoHost<LocalPlace> {
     return `${REPOS_FOLDER}/broken/${basename(to)}`;
   }
 
+  /** What the branch of a repository has now, unchecked: undefined where it cannot be read. */
+  async tipOf(place: { readonly dir: string }): Promise<string | undefined> {
+    try {
+      return await readRef(this.#disk, this.#gitdir(place), MAIN_REF);
+    } catch {
+      return undefined;
+    }
+  }
+
   /** The repositories in `repos/`, each with what it says of itself. */
   async list(): Promise<LocalRepo[]> {
     await this.#usable();

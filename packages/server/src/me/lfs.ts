@@ -1,5 +1,5 @@
 import { OWNER_ONLY, type AccessPolicy } from "../access.ts";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "../database.ts";
 import { lfsObjects, projectRepos, projects, userPrefs } from "../schema.ts";
 import { lockPrefs } from "./cloud.ts";
@@ -73,7 +73,11 @@ export const readLfs = async (
     })
     .from(projects)
     .innerJoin(projectRepos, eq(projectRepos.projectId, projects.id))
-    .innerJoin(lfsObjects, eq(lfsObjects.repoId, projectRepos.repoId))
+    // `lfs_objects` knows repositories on GitHub only (O8b brings the server's own).
+    .innerJoin(
+      lfsObjects,
+      and(eq(lfsObjects.repoId, projectRepos.repoId), eq(projectRepos.provider, "github")),
+    )
     .where(access.visible(userId))
     .groupBy(
       projectRepos.repoId,

@@ -22,7 +22,8 @@ import { UploadRefused, type LfsUploads, type UploadAnswer } from "./uploads.ts"
  * - `GET /api/lfs/uploads/:id`, and `DELETE` to give it up.
  *
  * Answers are the upload as it is; errors `{error: <code>}`: tooLarge, busy (with Retry-After),
- * notLinked, gone, githubQuota, offset (with `received`), slow, notFound, invalid, unavailable,
+ * notLinked, unsupported (the repository is one of the server's own, which has no large file
+ * storage yet), gone, githubQuota, offset (with `received`), slow, notFound, invalid, unavailable,
  * signedOut, forbidden. A file that is not what it was said to be fails as an upload
  * (`error: "changed"`). Only the person whose project it is, and what changes something only from
  * pages of this site.

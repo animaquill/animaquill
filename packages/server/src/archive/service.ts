@@ -45,6 +45,7 @@ import {
 } from "./merging.ts";
 import { readSetting } from "../settings.ts";
 import { recheckLink } from "./recheck.ts";
+import type { LocalGitRepoHost } from "./local/host.ts";
 import { RepoPaused, type GitHubPlace, type RepoHost } from "./repo-host.ts";
 import { dueAt, type ArchiveJob } from "./schedule.ts";
 import { notifyPerson } from "../me/events.ts";
@@ -144,6 +145,8 @@ export interface RepositoryStatus {
     readonly url?: string;
     readonly createdHere: boolean;
     readonly linkedAt: number;
+    /** For one of the server's own: its folder as the server has it, for `git clone`. */
+    readonly clone?: string;
   };
   /** "none": no repository; "ready": archiving as it should; "paused": see `reason`. */
   readonly state: "none" | "ready" | "paused";
@@ -168,6 +171,8 @@ export interface RepositoryStatus {
   };
   /** A short word about the pause or the last failure. */
   readonly detail?: string;
+  /** Why archives fail now, where it is something people know a word for: the disk is full. */
+  readonly failure?: "diskFull";
   /** An archive is waiting or running. */
   readonly archiving: boolean;
   readonly lastArchive?: {
@@ -177,7 +182,8 @@ export interface RepositoryStatus {
     readonly kind: string;
     readonly changed: number;
     readonly removed: number;
-    readonly url: string;
+    /** Where people see the commit: only on GitHub. */
+    readonly url?: string;
   };
   /** Documents the last archive could not write: the repository has an older version of them. */
   readonly kept?: readonly string[];
@@ -214,7 +220,8 @@ export interface RepositoryStatus {
     readonly at: number;
     readonly sha: string;
     readonly files: number;
-    readonly url: string;
+    /** Where people see the commit: only on GitHub. */
+    readonly url?: string;
   };
   /** Conflicts with GitHub that wait for people, see `RepositoryService.conflicts`. */
   readonly conflicts?: number;
@@ -273,7 +280,13 @@ export interface RepositoryServiceOptions {
   readonly db: Db;
   /** The App's side, for checking a repository on GitHub as an archive will find it. */
   readonly host: RepoHost<GitHubPlace> | undefined;
-  readonly people: GitHubPersonRepos;
+  /** People's repositories on GitHub, as their tokens see them: undefined where there is no GitHub. */
+  readonly people: GitHubPersonRepos | undefined;
+  /**
+   * The repositories of the server's own (archive/local/), where it keeps those: for the command
+   * that clones one, starting archiving over, and restoring one.
+   */
+  readonly local?: LocalGitRepoHost | undefined;
   /** A working token of a person, see auth/tokens.ts. */
   readonly tokenFor: ((userId: string, options?: TokenOptions) => Promise<string>) | undefined;
   readonly enqueue: (job: ArchiveJob) => Promise<void>;
@@ -485,6 +498,13 @@ export class RepositoryService {
     this.#deletesFrom = options.deletesFrom;
   }
 
+  /** People's repositories on GitHub: "unavailable" where the server is not set up for GitHub. */
+  get #people(): GitHubPersonRepos {
+    const people = this.#options.people;
+    if (!people) throw new RepositoryRefused("unavailable", 503);
+    return people;
+  }
+
   /** Runs `work` with the person's token, with a new one where GitHub turns the first down. */
   async #withToken<T>(userId: string, work: (token: string) => Promise<T>): Promise<T> {
     const tokenFor = this.#options.tokenFor;
@@ -529,6 +549,15 @@ export class RepositoryService {
     return project;
   }
 
+  /**
+   * Where new projects are saved: to GitHub where the App is set up (people choose a repository),
+   * else to repositories of the server's own, which the hub links each new project to.
+   */
+  get savesTo(): "github" | "local" | "none" {
+    if (this.#options.host) return "github";
+    return this.#options.local ? "local" : "none";
+  }
+
   /** The policy of access the service goes by, which the routes have to go by too (app.ts). */
   get access(): AccessPolicy {
     return this.#options.access ?? OWNER_ONLY;
@@ -543,7 +572,7 @@ export class RepositoryService {
   async list(user: SignedIn, page: number) {
     const installation = await this.#installation(user);
     const { total, repositories } = await this.#withToken(user.userId, (token) =>
-      this.#options.people.ofInstallation(token, installation, page, PAGE),
+      this.#people.ofInstallation(token, installation, page, PAGE),
     );
     const ids = repositories.map((repo) => repo.id);
     // The project each is saved to, and whose that is.
@@ -611,7 +640,7 @@ export class RepositoryService {
         const name = choice.create.name;
         if (!isRepoName(name)) throw new RepositoryRefused("invalidName", 400);
         const taken = await this.#withToken(user.userId, async (token) => {
-          const there = await this.#options.people.byName(token, user.login, name);
+          const there = await this.#people.byName(token, user.login, name);
           if (there === undefined) return false;
           // One a project is saved to is not what a try left, however new and empty it is, as
           // before its first archive: linking would not take it either.
@@ -862,7 +891,7 @@ export class RepositoryService {
         : there.description === description) &&
       there.createdAt !== undefined &&
       this.#now().getTime() - there.createdAt < JUST_MADE_MS &&
-      (await this.#options.people.isEmpty(token, there))
+      (await this.#people.isEmpty(token, there))
     );
   }
 
@@ -880,18 +909,18 @@ export class RepositoryService {
     return this.#withToken(user.userId, async (token) => {
       let made: Awaited<ReturnType<GitHubPersonRepos["create"]>>;
       try {
-        made = await this.#options.people.create(token, { name, description });
+        made = await this.#people.create(token, { name, description });
       } catch (error) {
         // The answer did not come back: the repository may be there all the same.
         if (!(error instanceof GitHubUnavailable) || error.retryAfterMs !== undefined) throw error;
-        made = await this.#options.people.create(token, { name, description });
+        made = await this.#people.create(token, { name, description });
       }
       if (made.kind === "made") return made.repo;
       if (made.kind === "refused") {
         if (made.status === 403) throw new RepositoryRefused("notInstalled", 409);
         throw new RepositoryRefused("unavailable", 503, made.message);
       }
-      const there = await this.#options.people.byName(token, user.login, name);
+      const there = await this.#people.byName(token, user.login, name);
       if (there && there.id === current?.repoId) return there;
       if (!there || !(await this.#madeJustNow(token, there, description)))
         throw new RepositoryRefused("nameTaken", 409);
@@ -911,9 +940,7 @@ export class RepositoryService {
     confirmPublic: boolean,
   ): Promise<PersonRepo> {
     if (!Number.isSafeInteger(id) || id <= 0) throw new RepositoryRefused("notFound", 404);
-    const repo = await this.#withToken(user.userId, (token) =>
-      this.#options.people.byId(token, id),
-    );
+    const repo = await this.#withToken(user.userId, (token) => this.#people.byId(token, id));
     // Only the person's own account: organizations come later.
     if (!repo || repo.ownerType !== "User" || repo.ownerId !== user.githubId)
       throw new RepositoryRefused("notFound", 404);
@@ -981,9 +1008,7 @@ export class RepositoryService {
     const installation = await this.#installation(user);
     const id = choice.existing.id;
     if (!Number.isSafeInteger(id) || id <= 0) throw new RepositoryRefused("notFound", 404);
-    const repo = await this.#withToken(user.userId, (token) =>
-      this.#options.people.byId(token, id),
-    );
+    const repo = await this.#withToken(user.userId, (token) => this.#people.byId(token, id));
     if (!repo || repo.ownerType !== "User" || repo.ownerId !== user.githubId)
       throw new RepositoryRefused("notFound", 404);
     if (!repo.pushable || repo.archived) throw new RepositoryRefused("notPushable", 409);
@@ -1176,11 +1201,13 @@ export class RepositoryService {
       .orderBy(desc(archives.createdAt), desc(archives.seq))
       .limit(1);
     const web = this.#options.webUrl;
-    const repoUrl = `${web}/${link.ownerLogin}/${link.name}`;
+    const repoUrl =
+      link.provider === "github" ? `${web}/${link.ownerLogin}/${link.name}` : undefined;
     const gone =
-      link.state === "paused" && link.pauseReason === "gone"
+      link.provider === "github" && link.state === "paused" && link.pauseReason === "gone"
         ? await this.#goneAs(user, link)
         : undefined;
+    const local = this.#options.local;
     const next =
       link.state === "ready"
         ? dueAt(project.updatedAt, project.dirtySince, link.nextAttemptAt)
@@ -1195,9 +1222,12 @@ export class RepositoryService {
         fullName: `${link.ownerLogin}/${link.name}`,
         private: link.private,
         branch: link.branch,
-        ...(link.provider === "github" && { url: repoUrl }),
+        ...(repoUrl !== undefined && { url: repoUrl }),
         createdHere: link.createdHere,
         linkedAt: link.linkedAt.getTime(),
+        ...(link.provider === "local" &&
+          local &&
+          link.localDir !== null && { clone: local.pathOf({ dir: link.localDir }) }),
       },
       state: link.state === "paused" ? "paused" : "ready",
       ...(link.pauseReason && { reason: link.pauseReason }),
@@ -1214,6 +1244,7 @@ export class RepositoryService {
         },
       }),
       ...(link.detail && { detail: link.detail }),
+      ...(link.transientSince && link.detail === "diskFull" && { failure: "diskFull" as const }),
       archiving: link.requestedAt !== null || (await this.#options.isQueued(projectId)),
       ...(last && {
         lastArchive: {
@@ -1223,7 +1254,7 @@ export class RepositoryService {
           kind: last.kind,
           changed: last.changed,
           removed: last.removed,
-          url: `${repoUrl}/commit/${last.sha}`,
+          ...(repoUrl !== undefined && { url: `${repoUrl}/commit/${last.sha}` }),
         },
         ...(last.kept.length > 0 && { kept: last.kept }),
       }),
@@ -1253,7 +1284,12 @@ export class RepositoryService {
     const at = link.checkedAt?.getTime();
     if (!looks || (at !== undefined && this.#now().getTime() - at < LOOK_SOON_MS)) return;
     try {
-      if (!(await readSetting(this.#options.db, REPO_MERGE_SETTING)).enabled) return;
+      // A repository of the server's own always merges: the switch is about GitHub.
+      if (
+        link.provider === "github" &&
+        !(await readSetting(this.#options.db, REPO_MERGE_SETTING)).enabled
+      )
+        return;
       if (await this.#options.isQueued(link.projectId)) return;
       await this.#options.enqueue({ project: link.projectId, kind: "check" });
     } catch (error) {
@@ -1265,7 +1301,7 @@ export class RepositoryService {
   }
 
   /** What a status says of merges, see `RepositoryStatus.merge`. */
-  async #mergeOf(link: Link, repoUrl: string) {
+  async #mergeOf(link: Link, repoUrl: string | undefined) {
     const db = this.#options.db;
     const [last] = await db
       .select({
@@ -1294,7 +1330,7 @@ export class RepositoryService {
           at: last.appliedAt.getTime(),
           sha: last.toSha,
           files: last.result?.files?.length ?? 0,
-          url: `${repoUrl}/commit/${last.toSha}`,
+          ...(repoUrl !== undefined && { url: `${repoUrl}/commit/${last.toSha}` }),
         },
       }),
       conflicts: open?.count ?? 0,
@@ -1348,7 +1384,8 @@ export class RepositoryService {
       value === null || value === undefined ? 0 : Buffer.byteLength(JSON.stringify(value), "utf8");
     const large =
       cut && sizeOf(row.ours) + sizeOf(row.theirs) + sizeOf(row.lines) > CONFLICT_VALUE_MOST;
-    const repoUrl = link && `${this.#options.webUrl}/${link.ownerLogin}/${link.name}`;
+    const repoUrl =
+      link?.provider === "github" && `${this.#options.webUrl}/${link.ownerLogin}/${link.name}`;
     return {
       id: row.id,
       file: row.file,
@@ -1719,7 +1756,7 @@ export class RepositoryService {
     let seen: Seen | undefined;
     try {
       const repo = await this.#withToken(user.userId, (token) =>
-        this.#options.people.byId(token, link.repoId),
+        this.#people.byId(token, link.repoId),
       );
       seen = repo ? { private: repo.private, ownerId: repo.ownerId } : "missing";
     } catch {

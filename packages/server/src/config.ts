@@ -59,6 +59,16 @@ export interface Config {
    * Undefined: the default of lfs/uploads.ts, 30.
    */
   readonly stagingFloorGb: number | undefined;
+  /**
+   * AQ_DATA_DIR: the data folder of the server, a whole path; the repositories of its own are in
+   * `repos/` there (archive/local/). `/var/lib/animaquill` unless said.
+   */
+  readonly dataDir: string;
+  /**
+   * AQ_LOCAL_REPOS: "on" keeps repositories of the server's own also where the GitHub App is set up,
+   * "off" never; unless said, they are kept only where it is not (see `localReposOn`).
+   */
+  readonly localRepos: "on" | "off" | undefined;
 }
 
 export interface RelayConfig {
@@ -312,6 +322,34 @@ const stagingDirOf = (env: Env, problems: string[]): string => {
   return STAGING_DIR;
 };
 
+export const DATA_DIR = "/var/lib/animaquill";
+
+/** AQ_DATA_DIR, a folder by its whole path: anything else leaves the default. */
+const dataDirOf = (env: Env, problems: string[]): string => {
+  const text = plain(env, "AQ_DATA_DIR");
+  if (text === undefined) return DATA_DIR;
+  if (isAbsolute(text) && !text.includes("\0")) return text;
+  problems.push(`AQ_DATA_DIR has to be a whole path like ${DATA_DIR}`);
+  return DATA_DIR;
+};
+
+/** AQ_LOCAL_REPOS: on, off, or nothing said. */
+const localReposOf = (env: Env, problems: string[]): "on" | "off" | undefined => {
+  const text = plain(env, "AQ_LOCAL_REPOS");
+  if (text === undefined) return undefined;
+  if (text === "on" || text === "off") return text;
+  problems.push("AQ_LOCAL_REPOS has to be on or off");
+  return undefined;
+};
+
+/**
+ * Whether the server keeps repositories of its own: where it is not set up for GitHub (no App
+ * key), or where AQ_LOCAL_REPOS says "on"; never where it says "off".
+ */
+export const localReposOn = (config: Config): boolean =>
+  config.localRepos === "on" ||
+  (config.localRepos === undefined && (!config.github.privateKey || !config.github.clientId));
+
 /** What a deployment has for itself where the environment says nothing. */
 export interface ConfigDefaults {
   /** The site of the editor, for PUBLIC_ORIGIN: `LOCAL_ORIGIN` unless said. */
@@ -352,6 +390,8 @@ export const loadConfig = (
     library: loadLibraryConfig(env, (name) => secret(env, name, read)),
     stagingDir,
     stagingFloorGb,
+    dataDir: dataDirOf(env, problems),
+    localRepos: localReposOf(env, problems),
   };
 };
 
@@ -383,4 +423,6 @@ export const describeConfig = (config: Config) => ({
   library: describeLibrary(config.library),
   stagingDir: config.stagingDir,
   ...(config.stagingFloorGb !== undefined && { stagingFloorGb: config.stagingFloorGb }),
+  dataDir: config.dataDir,
+  localRepos: localReposOn(config),
 });

@@ -8,6 +8,7 @@ import {
   index,
   integer,
   jsonb,
+  pgSequence,
   pgTable,
   primaryKey,
   smallint,
@@ -736,6 +737,11 @@ export const projectRepos = pgTable(
      */
     localDir: text("local_dir"),
     /**
+     * For "local": when the repository was last read through from its tip, every object checked
+     * (archive/local/), which is done once a week. Null: not yet.
+     */
+    verifiedAt: moment("verified_at"),
+    /**
      * When the platform last looked at the repository on GitHub, as an archive or a check does: the
      * names and `private` are as they were then. Null: not since this was kept.
      */
@@ -825,6 +831,9 @@ export const projectRepos = pgTable(
     ),
   ],
 );
+
+/** The numbers of the repositories of the server's own (`project_repos.repo_id` of "local"). */
+export const localRepoIds = pgSequence("local_repo_ids");
 
 /** The archives of a project that went to its repository, one commit each. */
 export const archives = pgTable(

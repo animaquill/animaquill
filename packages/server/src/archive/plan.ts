@@ -369,12 +369,16 @@ export function commitMessage(archive: {
   readonly kept: readonly string[];
   readonly project: string;
   readonly seq: number;
+  /** The repository is one of the server's own: changes "in it", not "on GitHub". */
+  readonly local?: boolean;
 }): string {
   const title =
     archive.kind === "auto"
       ? "自动存档"
       : archive.kind === "merge"
-        ? "存档（合并了 GitHub 上的改动）"
+        ? archive.local
+          ? "存档（合并了仓库里的改动）"
+          : "存档（合并了 GitHub 上的改动）"
         : archive.kind === "before-merge"
           ? "合并前的存档"
           : "存档";

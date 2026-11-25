@@ -5,6 +5,7 @@ import {
   describeConfig,
   forgetSecrets,
   loadConfig,
+  localReposOn,
   privateKeyProblem,
   secret,
 } from "./config.ts";
@@ -233,5 +234,27 @@ describe("uploads into Git LFS", () => {
       expect(config.stagingFloorGb, value).toBeUndefined();
       expect(config.problems.join(), value).toContain(name);
     }
+  });
+});
+
+describe("repositories of the server's own", () => {
+  test("are on where the GitHub App is not set up, or where AQ_LOCAL_REPOS says so; in the data folder", () => {
+    const plainly = loadConfig({}, files({}));
+    expect(plainly.dataDir).toBe("/var/lib/animaquill");
+    expect(localReposOn(plainly)).toBe(true);
+    const github = {
+      GITHUB_APP_ID: "1",
+      GITHUB_CLIENT_ID: "Iv1.0000000000000000",
+      GITHUB_APP_PRIVATE_KEY: key,
+    };
+    expect(localReposOn(loadConfig(github, files({})))).toBe(false);
+    expect(localReposOn(loadConfig({ ...github, AQ_LOCAL_REPOS: "on" }, files({})))).toBe(true);
+    expect(localReposOn(loadConfig({ AQ_LOCAL_REPOS: "off" }, files({})))).toBe(false);
+    const told = loadConfig({ AQ_DATA_DIR: "/data/aq" }, files({}));
+    expect(describeConfig(told)).toMatchObject({ dataDir: "/data/aq", localRepos: true });
+    const wrong = loadConfig({ AQ_DATA_DIR: "data", AQ_LOCAL_REPOS: "yes" }, files({}));
+    expect(wrong.dataDir).toBe("/var/lib/animaquill");
+    expect(wrong.localRepos).toBeUndefined();
+    expect(wrong.problems.join(" ")).toMatch(/AQ_DATA_DIR.*AQ_LOCAL_REPOS/);
   });
 });

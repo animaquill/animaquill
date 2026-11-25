@@ -22,6 +22,7 @@ import { topFoldersOf } from "./pointers.ts";
 import {
   RepoPaused,
   type LfsObject,
+  hereOf,
   placeOf,
   type RepoHosts,
   type RepoProvider,
@@ -433,7 +434,7 @@ export class Rebuilder {
         `${total} bytes of files`,
       );
     const files = await session.files(sha, entries);
-    const built = await build(files, { repo: String(link.repoId) });
+    const built = await build(files, hereOf(link));
     if (!built.ok) {
       this.#log.warn(
         { project: began.id, code: built.code, files: built.files, problems: built.problems },
@@ -704,7 +705,8 @@ export class Rebuilder {
    */
   async #noteLfs(session: RepoSession, link: Link, pointers: readonly LfsObject[]): Promise<void> {
     const byOid = new Map(pointers.map((object) => [object.oid, object]));
-    if (byOid.size === 0) return;
+    // Repositories of the server's own have no large file storage yet: nothing to note.
+    if (byOid.size === 0 || link.provider !== "github") return;
     try {
       const known = new Set<string>();
       const oids = [...byOid.keys()];

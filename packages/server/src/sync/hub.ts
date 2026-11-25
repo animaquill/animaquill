@@ -41,6 +41,8 @@ import {
   type Tx,
 } from "../database.ts";
 import { ARCHIVE_LOCK, recheckSoon, unusableOf, unusableReasonOf } from "../archive/links.ts";
+import { hereOf } from "../archive/repo-host.ts";
+import { linkLocal } from "../archive/local/links.ts";
 import {
   LOOKED_WHILE_PAUSED,
   MERGE_BYTES,
@@ -461,6 +463,11 @@ export interface SyncHubOptions {
   readonly rebuild?: ((projectId: string) => Promise<void>) | undefined;
   /** Has a project archived soon, as after a merge from GitHub changed it, see `mergeRepo`. */
   readonly merged?: ((projectId: string) => Promise<void>) | undefined;
+  /**
+   * New projects are saved to repositories of the server's own (archive/local/), linked as they
+   * are made: where the server keeps those and is not set up for GitHub.
+   */
+  readonly linkLocal?: boolean | undefined;
 }
 
 /**
@@ -950,6 +957,7 @@ export class SyncHub {
   readonly #holds: ProjectHolds;
   readonly #access: AccessPolicy;
   readonly #lookAgain: ((projectId: string) => Promise<void>) | undefined;
+  readonly #linkLocal: boolean;
   readonly #rebuild: ((projectId: string) => Promise<void>) | undefined;
   readonly #merged: ((projectId: string) => Promise<void>) | undefined;
 
@@ -962,6 +970,7 @@ export class SyncHub {
     this.#access = options.access ?? OWNER_ONLY;
     this.#lookAgain = options.lookAgain;
     this.#rebuild = options.rebuild;
+    this.#linkLocal = options.linkLocal === true;
     this.#merged = options.merged;
     this.#limits = { ...SYNC_HUB_LIMITS, ...limits };
     this.#copies = new WorkingCopies({
@@ -2206,13 +2215,13 @@ export class SyncHub {
     const label =
       drops !== undefined
         ? `按你的选择从项目里去掉了 ${drops.length} 个文件`
-        : `GitHub 上的改动 ${merge.toSha.slice(0, 7)}`;
+        : `${merge.provider === "local" ? "本机仓库里的改动" : "GitHub 上的改动"} ${merge.toSha.slice(0, 7)}`;
     let merged: Merged;
     try {
       merged = await this.#copies.merge(project.id, {
         changes,
         batch: id,
-        here: { repo: String(merge.repoId) },
+        here: hereOf(merge),
         prefer: link.prefer,
         seq: oursSeq + 1,
         watched: this.#limits.batchesWatched,
@@ -3156,6 +3165,8 @@ export class SyncHub {
           madeAt: at,
           createdAt: at,
         });
+        if (this.#linkLocal)
+          await linkLocal(tx, { projectId: message.project, userId: connection.who.userId, at });
       }, READ_COMMITTED);
     } catch (error) {
       await this.#copies.drop(message.project);

@@ -32,6 +32,8 @@ describe.skipIf(!TEST_DATABASE)("the worker", () => {
   test("starts without GitHub: the queues and the schedules are there, and it stops", async () => {
     const config = loadConfig(
       {
+        // Nor repositories of its own: nothing reaches a repository at all.
+        AQ_LOCAL_REPOS: "off",
         DATABASE_HOST: t.config.host,
         DATABASE_PORT: String(t.config.port),
         DATABASE_NAME: t.config.name,
@@ -80,5 +82,60 @@ describe.skipIf(!TEST_DATABASE)("the worker", () => {
     }
     expect(await rowsOf()).toEqual(before);
     await worker.stop();
+  });
+
+  test("without GitHub, keeps repositories of its own: says where, and links projects without one", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "aq-worker-data-"));
+    try {
+      const config = loadConfig(
+        {
+          DATABASE_HOST: t.config.host,
+          DATABASE_PORT: String(t.config.port),
+          DATABASE_NAME: t.config.name,
+          DATABASE_USER: t.config.user,
+          DATABASE_PASSWORD: t.config.password,
+          LFS_STAGING_DIR: staging,
+          LFS_MIN_FREE_GB: "0",
+          AQ_DATA_DIR: dataDir,
+        },
+        () => undefined,
+      );
+      await t.query(`
+        insert into users (id, github_id, login) values ('0190a000-0000-7000-8000-000000000002', 102, 'grace');
+        insert into projects (id, owner_id, project_id, name) values
+          ('p-here', '0190a000-0000-7000-8000-000000000002', 'm2', '二');`);
+      const said: string[] = [];
+      const log = {
+        ...quiet,
+        info: (_: object, message?: string) => void said.push(message ?? ""),
+      };
+      const worker = startWorker(config, { log });
+      await worker.ready;
+      expect(said).toContain(
+        "repositories here are on, in a folder made now: it has to be on a volume that stays",
+      );
+      expect(said).toContain("projects linked to repositories here");
+      const link = await t.query(
+        "select provider, local_dir from project_repos where project_id = 'p-here'",
+      );
+      expect(link.rows).toEqual([{ provider: "local", local_dir: "repos/p-here.git" }]);
+      const schedules = await t.query("select name from pgboss.schedule");
+      expect(schedules.rows.map((row: { name: string }) => row.name)).toEqual(
+        expect.arrayContaining(["local-repos-look", "local-repos-verify"]),
+      );
+      await worker.stop();
+
+      // A deployment that keeps none says so, whatever is set.
+      const none: string[] = [];
+      const other = startWorker(config, {
+        log: { ...quiet, info: (_: object, message?: string) => void none.push(message ?? "") },
+        local: undefined,
+      });
+      await other.ready;
+      expect(none.join(" ")).not.toContain("repositories here are on");
+      await other.stop();
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
   });
 });

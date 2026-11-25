@@ -67,8 +67,10 @@ export const UNUSABLE_REASONS: readonly PauseReason[] = [
   "suspended",
 ];
 
-export const isUnusable = (reason: PauseReason | null | undefined): boolean =>
-  reason != null && UNUSABLE_REASONS.includes(reason);
+export const isUnusable = (
+  reason: PauseReason | null | undefined,
+  provider: RepoProvider = "github",
+): boolean => provider === "github" && reason != null && UNUSABLE_REASONS.includes(reason);
 
 /** How long a project whose repository cannot be used is kept, from when that was first found. */
 export const UNUSABLE_KEPT_MS = 7 * 24 * 3600_000;
@@ -230,7 +232,9 @@ export const pauseLink = async (
       nextAttemptAt: null,
       transientSince: null,
       unusableSeenAt: null,
-      ...(isUnusable(pause.reason)
+      // A repository of the server's own that is gone or broken leaves the project to be edited,
+      // and never takes it away: its working copy is what people have, the repository a copy.
+      ...(isUnusable(pause.reason, where.provider)
         ? {
             unusableSince: sql`coalesce(${projectRepos.unusableSince}, ${pause.at.toISOString()}::timestamptz)`,
             // First found: GitHub is asked again a few minutes on, see `RECHECK_FIRST_MS`.

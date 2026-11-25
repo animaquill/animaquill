@@ -1,3 +1,4 @@
+import type { LocalGitRepoHost } from "./local/host.ts";
 import { describe, expect, test } from "vitest";
 import { GitHubUnavailable } from "../github/client.ts";
 import {
@@ -21,7 +22,7 @@ describe("RepoHosts", () => {
   test("goes to the host of the place's provider", async () => {
     const hosts = new RepoHosts({
       github: naming<GitHubPlace>("on GitHub"),
-      local: naming<LocalPlace>("here"),
+      local: naming<LocalPlace>("here") as unknown as LocalGitRepoHost,
     });
     expect(hosts.providers).toEqual(["github", "local"]);
     const github = hosts.open({ provider: "github", installationId: 1, repoId: 7 });

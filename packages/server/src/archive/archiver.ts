@@ -80,6 +80,7 @@ import {
   type CommitInfo,
   type LfsObject,
   type Person,
+  hereOf,
   placeOf,
   type RepoHosts,
   type RepoInfo,
@@ -363,7 +364,9 @@ export class Archiver {
   ): Promise<ArchiveOutcome> {
     const link = await linkOf(this.#db, projectId);
     if (!link) return { kind: "none" };
-    const merging = await this.#merging();
+    // A repository of the server's own always merges what people push into it themselves: the
+    // switch of the admin site is about GitHub.
+    const merging = link.provider === "local" || (await this.#merging());
     // Paused for what waits of merges, a push is still looked at, and merged: it only looks.
     const looksOnly =
       link.state === "paused" &&
@@ -385,7 +388,21 @@ export class Archiver {
     const stop = new AbortController();
     const timer = setTimeout(() => stop.abort(new Error("the deadline passed")), this.#deadlineMs);
     timer.unref?.();
-    const session = this.#hosts.open(placeOf(link), { signal: stop.signal });
+    const place = placeOf(link);
+    // A repository of the server's own is made by the first archive into it: one that never had an
+    // archive and is not there yet. One that had is "gone" where it is not there.
+    if (place.provider === "local" && link.headSha === null && link.pendingSha === null) {
+      try {
+        const project = await this.#readOwner(projectId);
+        await this.#hosts.local?.create(place, project.name, {
+          owner: project.ownerId,
+          project: projectId,
+        });
+      } catch (error) {
+        return this.#fail(link, error);
+      }
+    }
+    const session = this.#hosts.open(place, { signal: stop.signal });
     let exporting: ExportSession | undefined;
     const ended = () => void exporting?.close().catch(() => {});
     stop.signal.addEventListener("abort", ended, { once: true });
@@ -416,7 +433,11 @@ export class Archiver {
       // Not there to the App, or the App not installed or suspended, as GitHub answers now: said
       // only where the next archive a few minutes on finds the same, as GitHub can answer so for a
       // while for anything. A webhook that says so is another matter, see events.ts.
-      if (error instanceof RepoPaused && isUnusable(error.reason) && !this.#confirms(link))
+      if (
+        error instanceof RepoPaused &&
+        isUnusable(error.reason, link.provider) &&
+        !this.#confirms(link)
+      )
         return this.#suspect(link, error);
       if (error instanceof Pause || error instanceof RepoPaused) {
         const reason = error.reason;
@@ -456,8 +477,7 @@ export class Archiver {
     const project = await this.#readProject(link.projectId);
     /** The project as files, with where the files of its assets are as this repository has them. */
     let exporting: Promise<ExportResult> | undefined;
-    const exportProject = () =>
-      (exporting ??= exporter().export(project.parts, { repo: String(link.repoId) }));
+    const exportProject = () => (exporting ??= exporter().export(project.parts, hereOf(link)));
     /**
      * Of the files that changed on GitHub, those that stop an archive. AGENTS.md does not while the
      * project has none or only the opening a new project starts with: an archive leaves the one on
@@ -659,6 +679,7 @@ export class Archiver {
         tree,
         parents: [base],
         message: commitMessage({
+          local: link.provider === "local",
           kind: archiveKind,
           changed: plan.changed,
           removed: plan.removed,
@@ -805,6 +826,7 @@ export class Archiver {
         tree,
         parents: before === undefined ? [tip] : [tip, before],
         message: commitMessage({
+          local: link.provider === "local",
           kind: archiveKind,
           changed: plan.changed,
           removed: plan.removed,
@@ -1595,7 +1617,7 @@ export class Archiver {
     if (!snapshot) return undefined;
     const knownCommit = await session.commit(state.known);
     if (!knownCommit) return undefined;
-    const exported = await w.exporter().export([snapshot.state], { repo: String(link.repoId) });
+    const exported = await w.exporter().export([snapshot.state], hereOf(link));
     if (exported.invalid.has("animaquill.json")) return undefined;
     const top = await session.tree(knownCommit.tree);
     const attributes = await this.#attributesOf(session, top);
@@ -1628,6 +1650,7 @@ export class Archiver {
       tree,
       parents: [state.known],
       message: commitMessage({
+        local: link.provider === "local",
         kind: "before-merge",
         changed: plan.changed,
         removed: plan.removed,
@@ -1862,6 +1885,8 @@ export class Archiver {
     pointed: readonly LfsObject[],
     looked: Looked,
   ): Promise<{ stored: Map<string, number>; unknown: Set<string> }> {
+    // Repositories of the server's own have no large file storage yet: nothing is in one.
+    if (link.provider !== "github") return { stored: new Map(), unknown: new Set() };
     // Each object as large as it is said to be: two assets can say two sizes of one oid, and a
     // storage that minds the size has it under one of them only.
     const fresh = new Map<string, LfsObject[]>();
@@ -2149,6 +2174,16 @@ export class Archiver {
   }
 
   /** The working copy, all of one moment: the last snapshot, and every update after it, in order. */
+  /** Whose a project is, and its name, as a repository of the server's own is made for it. */
+  async #readOwner(projectId: string): Promise<{ ownerId: string; name: string }> {
+    const [row] = await this.#db
+      .select({ ownerId: projects.ownerId, name: projects.name })
+      .from(projects)
+      .where(eq(projects.id, projectId));
+    if (!row) throw new LinkChanged();
+    return row;
+  }
+
   async #readProject(projectId: string): Promise<ProjectAt> {
     return this.#db.transaction(
       async (tx) => {

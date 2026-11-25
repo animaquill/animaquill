@@ -325,7 +325,9 @@ export class LfsDownloads {
     if (!there) throw new DownloadRefused("notFound", 404);
     const link = await linkOf(db, projectId);
     if (!link) throw new DownloadRefused("notLinked", 409);
-    if (isUnusable(link.pauseReason)) throw new DownloadRefused("gone", 409);
+    if (isUnusable(link.pauseReason, link.provider)) throw new DownloadRefused("gone", 409);
+    // Repositories of the server's own have no large file storage yet (O8b).
+    if (link.provider !== "github") throw new DownloadRefused("unavailable", 503);
     if (!this.#options.hosts?.has(link.provider)) throw new DownloadRefused("unavailable", 503);
     return link;
   }

@@ -242,6 +242,7 @@ export const buildApp = (
       relaying.closeSession(session);
     },
     admin: platform.handoff,
+    savesTo: () => (platform.ready() ? (platform.repositories?.()?.savesTo ?? "none") : "github"),
   });
 
   // Syncing projects.

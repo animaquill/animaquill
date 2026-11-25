@@ -2,6 +2,9 @@ import { Archiver } from "./archive/archiver.ts";
 import { EXPORT_HEAP_MB, ProjectExporter } from "./archive/exporter.ts";
 import { GitHubRepoHost } from "./archive/github-host.ts";
 import { Rebuilder, setUpRebuildQueues, startRebuilding } from "./archive/rebuild.ts";
+import { scheduleLocalChecks } from "./archive/local/checks.ts";
+import type { LocalGitRepoHost } from "./archive/local/host.ts";
+import { linkUnlinked, startLocalRepos } from "./archive/local/links.ts";
 import { RepoHosts } from "./archive/repo-host.ts";
 import { STOP_WAIT_MS, enqueueArchive, startArchiving } from "./archive/schedule.ts";
 import type { Config } from "./config.ts";
@@ -52,6 +55,11 @@ export interface WorkerParts {
   readonly applicationName?: string;
   /** The repositories on GitHub: from the App's key in the settings unless said, as for tests. */
   readonly github?: GitHubRepoHost | undefined;
+  /**
+   * The repositories of the server's own (archive/local/): as the settings say unless said
+   * (`startLocalRepos`); a deployment that never keeps any says undefined.
+   */
+  readonly local?: LocalGitRepoHost | undefined;
 }
 
 export interface Worker {
@@ -91,7 +99,8 @@ export const startWorker = (config: Config, parts: WorkerParts): Worker => {
     parts.applicationName ?? "animaquill-worker",
     parts.migrations ?? [],
   );
-  const hosts = new RepoHosts({ github: "github" in parts ? parts.github : gitHubOf(config, log) });
+  const github = "github" in parts ? parts.github : gitHubOf(config, log);
+  let hosts = new RepoHosts({ github });
 
   /**
    * Uploads into the large file storage, where the staging folder is there: pushes, and the sweep
@@ -121,6 +130,8 @@ export const startWorker = (config: Config, parts: WorkerParts): Worker => {
       try {
         await parts.beforeMigrate?.(database.db);
         await database.migrate();
+        const local = "local" in parts ? parts.local : await startLocalRepos(config, log);
+        hosts = new RepoHosts({ github, local });
         jobs = await startJobs(config.database, log);
         // What an archive finds changed in the repository, the API merges into the working copy.
         await setUpRepoMergeQueue(jobs);
@@ -166,6 +177,16 @@ export const startWorker = (config: Config, parts: WorkerParts): Worker => {
             db: database.db,
             rebuilder: { run: (project) => inTurn(() => rebuilder.run(project)) },
             log,
+          });
+        }
+        if (local) {
+          // Without GitHub every project is saved here: those from before have a repository now.
+          if (!github) await linkUnlinked(database.db, new Date(), log);
+          await scheduleLocalChecks(queue, {
+            db: database.db,
+            host: local,
+            log,
+            look: (project) => enqueueArchive(queue, { project, kind: "check" }),
           });
         }
         log.info({ providers: hosts.providers }, "archiving");

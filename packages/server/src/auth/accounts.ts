@@ -593,8 +593,15 @@ export const revokedOnGitHub = async (db: Executor, githubId: number): Promise<v
  * the person on this platform, which the editor tells its links to projects here apart by: whose a
  * project in the browser is, where another person signs in.
  */
-export const describeSignedIn = (signedIn: SignedIn) => ({
+export const describeSignedIn = (signedIn: SignedIn, savesTo: SavesTo = "github") => ({
   status: "signedIn" as const,
   user: { id: signedIn.userId, login: signedIn.login, avatarUrl: signedIn.avatarUrl },
   app: { installed: signedIn.installed },
+  repositories: savesTo,
 });
+
+/**
+ * Where the projects of this server are saved: to GitHub (people choose a repository), to
+ * repositories of the server's own (each project has one from the start), or nowhere.
+ */
+export type SavesTo = "github" | "local" | "none";

@@ -77,7 +77,10 @@ export interface ProjectSummary {
     readonly name: string;
     readonly fullName: string;
     readonly private: boolean;
-    readonly url: string;
+    /** Which provider it is on: missing for GitHub, as before there was another. */
+    readonly place?: "local";
+    /** Where people see it: only on GitHub. */
+    readonly url?: string;
     readonly state: "ready" | "paused";
     /** Why archiving paused. */
     readonly reason?: string;
@@ -193,6 +196,7 @@ export const listProjects = async (
       stats: projects.stats,
       head: projects.head,
       repoId: projectRepos.repoId,
+      provider: projectRepos.provider,
       ownerLogin: projectRepos.ownerLogin,
       repoName: projectRepos.name,
       private: projectRepos.private,
@@ -277,7 +281,9 @@ export const listProjects = async (
         name: row.repoName,
         fullName: `${row.ownerLogin}/${row.repoName}`,
         private: row.private === true,
-        url: `${options.webUrl}/${row.ownerLogin}/${row.repoName}`,
+        ...(row.provider === "local"
+          ? { place: "local" as const }
+          : { url: `${options.webUrl}/${row.ownerLogin}/${row.repoName}` }),
         state,
         ...(state === "paused" && row.pauseReason && { reason: row.pauseReason }),
         ...(checkedAt !== undefined && { checkedAt }),
