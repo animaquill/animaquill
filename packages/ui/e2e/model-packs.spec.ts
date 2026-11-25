@@ -43,6 +43,33 @@ async function removeOpen(page: Page, name: string, users: string) {
 const chat = (page: Page) => content(page, "chat");
 const settings = settingsOf;
 
+/**
+ * What models.dev says, as the test has it: the real answer changes from day to day (the name of
+ * deepseek-chat was a different one in the evening of 2026-11-25 than at noon), so no test here may
+ * depend on it. The browser would otherwise ask the real one.
+ */
+test.beforeEach(async ({ page }) => {
+  await page.route("https://models.dev/api.json", (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { "access-control-allow-origin": "*", "content-type": "application/json" },
+      body: JSON.stringify({
+        "nano-gpt": {
+          name: "NanoGPT",
+          models: {
+            "deepseek-chat": {
+              id: "deepseek-chat",
+              name: "DeepSeek V3/Deepseek Chat",
+              limit: { context: 128000, output: 8192 },
+              cost: { input: 0.3, output: 1.2 },
+            },
+          },
+        },
+      }),
+    }),
+  );
+});
+
 /** Anthropic with a key and one model on, as people set it up; then the page of model packs. */
 async function setUpService(page: Page, model: string) {
   await addAnthropic(page, KEY, model);
