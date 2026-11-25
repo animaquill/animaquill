@@ -57,8 +57,8 @@ const parts = (page: Page) =>
 test("the title bar: nothing over anything else at any width, every menu within reach", async ({
   page,
 }) => {
-  // Every width from 320 to 1440, with every menu opened: over two minutes on a slow runner (CI).
-  test.setTimeout(300_000);
+  // Every width from 320 to 1440, with every menu opened: a quarter of a minute where it is quick.
+  test.setTimeout(120_000);
   await offlineWithProject(page);
   await expect(page.locator("header").getByRole("button", { name: "登录" })).toBeVisible();
   for (const width of WIDTHS) {
@@ -87,17 +87,21 @@ test("the title bar: nothing over anything else at any width, every menu within 
     } else {
       expect(width).toBeLessThanOrEqual(560);
       await page.locator("header").getByRole("button", { name: "菜单" }).click();
-      await page
-        .getByRole("menu", { name: "菜单" })
-        .getByRole("menuitem", { name: "帮助" })
-        .click();
+      // By the keyboard: where it is this narrow, the menu of the help opens over the item that
+      // opens it as soon as the pointer is on it, so a click would land on what is in the menu, or,
+      // as it did on a slow runner (CI), wait for ever for the item that is now covered.
+      const item = page.getByRole("menu", { name: "菜单" }).getByRole("menuitem", { name: "帮助" });
+      await item.focus();
+      await page.keyboard.press("ArrowRight");
       await expect(page.getByRole("menu", { name: "帮助" })).toBeVisible();
       await page.screenshot({
         path: test.info().outputPath(`title-${width}-menus.png`),
         clip: { x: 0, y: 0, width, height: 400 },
       });
     }
-    await page.keyboard.press("Escape");
+    // From a menu inside another, the first Escape goes back to it.
+    for (let escapes = 0; escapes < 3 && (await page.getByRole("menu").count()) > 0; escapes++)
+      await page.keyboard.press("Escape");
     await expect(page.getByRole("menu")).toHaveCount(0);
     await page.locator("header").getByRole("button", { name: "命令面板" }).click();
     await expect(page.getByRole("combobox", { name: "命令面板" })).toBeVisible();

@@ -383,6 +383,9 @@ test.describe("the start page in a browser without folders", () => {
       }),
     );
     await page.evaluate(() => (window as unknown as { aqSave: () => Promise<void> }).aqSave());
+    // The lock is in the log of the project before the project is let go: a rename asks the log,
+    // and on a slow runner (CI) it came first and found nothing locked.
+    await expect.poll(() => updatesIn(page), { timeout: 20_000 }).toBeGreaterThan(before + 1);
     await close(page);
     await cardMenu(page, "开场", "重命名…");
     await page.getByRole("textbox", { name: "“开场”的新名字" }).fill("改不了");

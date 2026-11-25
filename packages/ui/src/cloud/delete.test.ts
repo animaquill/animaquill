@@ -168,7 +168,10 @@ describe("deleting a project of the platform that is saved to a repository", () 
     expect(platform.projects.has(project)).toBe(true);
     expect(here.library.summaries.has(project)).toBe(true);
     expect((await here.browser.links.get(project))?.project).toBe(project);
-  });
+    // It goes through the minutes it waits for the platform in many steps, which is 3.5 seconds
+    // here and more where the machine is slow (CI, a full run): the 5 seconds of every test are not
+    // enough.
+  }, 30_000);
 
   it("sends the changes of a copy that is not open first, and only then deletes it", async () => {
     const { time, platform, project, here } = await withCopy();

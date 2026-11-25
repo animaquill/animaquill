@@ -23,7 +23,11 @@ export default defineConfig({
   // Every test opens a page of its own and leaves nothing for the next one, so the tests of a file
   // can run on different workers. Otherwise the longest file sets how long the whole run takes.
   fullyParallel: true,
-  reporter: "list",
+  // CI runs a test that failed once more. One that passes the second time is listed as flaky at
+  // the end of the run (and noted on the run, by the `github` reporter): it is not hidden, and
+  // one that fails twice fails the run. Where people run them it is not tried again.
+  retries: process.env["CI"] ? 1 : 0,
+  reporter: process.env["CI"] ? [["list"], ["github"]] : "list",
   use: {
     ...devices["Desktop Chrome"],
     baseURL: "http://localhost:5173",

@@ -1074,6 +1074,7 @@ export class FakeGitHub {
 
   /** Addresses that run out early, see `lfsExpireEarly` and `lfsExpireDownloads`. */
   readonly #lfsRevoked = new Set<string>();
+  #lfsLastExpires = 0;
 
   /** What signs the addresses of the large file storage, which nobody else knows. */
   readonly #lfsSecret = randomBytes(16).toString("hex");
@@ -1086,8 +1087,11 @@ export class FakeGitHub {
 
   /** An address of the storage, signed, which works until `expires`, with a header of its own. */
   #lfsAction(origin: string, op: string, repo: FakeRepo, oid: string, size: number) {
+    // Every address gets an `expires` of its own, as it is what tells them apart: the revoked one
+    // and the one that asking again gives, in the same millisecond on a fast machine, must differ.
+    this.#lfsLastExpires = Math.max(this.#lfsLastExpires + 1, Date.now() + 900_000);
     const expires =
-      this.faults.lfsExpireEarly > 0 && op === "upload" ? Date.now() - 1000 : Date.now() + 900_000;
+      this.faults.lfsExpireEarly > 0 && op === "upload" ? Date.now() - 1000 : this.#lfsLastExpires;
     if (this.faults.lfsExpireEarly > 0 && op === "upload") this.faults.lfsExpireEarly -= 1;
     // Said to last, and taken back early all the same, as an address that is revoked.
     if (this.faults.lfsExpireDownloads > 0 && op === "download") {

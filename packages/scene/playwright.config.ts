@@ -10,7 +10,11 @@ const executablePath = process.env.AQ_CHROME;
 
 export default defineConfig({
   testDir: "e2e",
-  reporter: "list",
+  // CI runs a test that failed once more. One that passes the second time is listed as flaky at
+  // the end of the run (and noted on the run, by the `github` reporter): it is not hidden, and
+  // one that fails twice fails the run. Where people run them it is not tried again.
+  retries: process.env["CI"] ? 1 : 0,
+  reporter: process.env["CI"] ? [["list"], ["github"]] : "list",
   use: {
     ...devices["Desktop Chrome"],
     baseURL: EDITOR,

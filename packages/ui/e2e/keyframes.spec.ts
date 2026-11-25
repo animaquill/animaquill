@@ -79,16 +79,19 @@ async function deselect(page: Page) {
  * after it shows or moves, and the list of keys follows the view a moment after that.
  */
 async function settled<T>(read: () => Promise<T>): Promise<T> {
+  // Three readings alike in a row: the list follows the view a moment after it stops, and on a
+  // slow runner (CI) one moment of the same is no more than the wait before it follows.
   let before = JSON.stringify(await read());
+  let alike = 0;
   await expect
     .poll(
       async () => {
         const now = JSON.stringify(await read());
-        const same = now === before;
+        alike = now === before ? alike + 1 : 0;
         before = now;
-        return same;
+        return alike >= 2;
       },
-      { intervals: [150] },
+      { intervals: [200] },
     )
     .toBe(true);
   return JSON.parse(before) as T;
@@ -1308,7 +1311,10 @@ for (const [how, hide] of Object.entries(hidingTimeline)) {
       // Showing all again would go back to where it was before.
       await button("放大").click();
       await showAll(page);
-      const all = await gap();
+      // Again: what the first one fitted to is the width the tab had by then, which on a slow
+      // runner (CI) may be one it left a moment later.
+      await showAll(page);
+      const all = (await settled(async () => [await gap()]))[0] ?? 0;
       await button("放大").click();
       await expect.poll(gap).toBeGreaterThan(all * 1.3);
       await showAll(page);

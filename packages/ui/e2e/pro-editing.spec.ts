@@ -529,6 +529,23 @@ async function placeVideo(page: Page) {
   await stage(page).focus();
   // Wider, so that their names and what they say fit.
   for (let index = 0; index < 3; index++) await page.keyboard.press("Equal");
+  // The list of clips follows the view a moment after it stops, and a slow runner (CI) is later
+  // than that: where the first clip is, once it is the same in four readings in a row, is where
+  // the tests measure from.
+  let alike = 0;
+  let before = "";
+  await expect
+    .poll(
+      async () => {
+        const first = picture(page).first();
+        const now = `${await leftOf(first)}:${await rightOf(first)}`;
+        alike = now === before ? alike + 1 : 0;
+        before = now;
+        return alike >= 3;
+      },
+      { intervals: [200] },
+    )
+    .toBe(true);
 }
 
 /** A click on a clip, with keys held down: the clips on the canvas are what takes it. */
