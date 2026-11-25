@@ -5053,6 +5053,7 @@
         "hereBrowserNote": "清理浏览器数据会丢，换电脑、别人、云端 AI 都拿不到。",
         "waiting": "等你确认后上传",
         "put": "放进 GitHub 大文件存储",
+        "put_local": "放进项目仓库",
         "change": "更改…",
         "needsCloud": "登录后可用",
         "uploading": "正在放进 GitHub 大文件存储",
@@ -5071,6 +5072,7 @@
         "failed": "没传上去：{{reason}}",
         "elsewhere": "只在另一台电脑上",
         "elsewhereNote": "到那台电脑上打开这个项目，把它放进 GitHub 大文件存储。",
+        "elsewhereNote_local": "到那台电脑上打开这个项目，把它另存一份带过来。",
         "seeOnGitHub": "在 GitHub 上看",
         "otherWindow": "在另一个窗口里传"
       },
@@ -5124,7 +5126,8 @@
         "noRepository": "要先选一个 GitHub 仓库，上传先停着",
         "repository": "项目的 GitHub 仓库现在用不了，上传先停着",
         "signedOut": "要重新登录才能接着传",
-        "unsupported": "服务器现在不收素材"
+        "unsupported": "服务器现在不收素材",
+        "unsupported_local": "本机仓库还不能放素材，素材先留在这个浏览器里"
       },
       "menu": {
         "placeIn": "放在…",

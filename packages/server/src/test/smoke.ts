@@ -162,5 +162,45 @@ step("listed");
 
 const repository = await fetch(`${api}/api/projects/${id}/repository`, { headers });
 step(`repository: ${repository.status} ${await repository.text()}`);
+
+// Without GitHub, the server saves the project to a repository of its own: the first archive
+// goes there by itself within a minute or two (SMOKE_LOCAL=1); where the disk of its data is full
+// (SMOKE_LOCAL=full), the archive says so, and waits.
+const local = process.env["SMOKE_LOCAL"];
+if (local === "full") {
+  let said: { failure?: string; lastArchive?: unknown } = {};
+  for (let turn = 0; turn < 180 && said.failure !== "diskFull"; turn++) {
+    if (turn > 0) await new Promise((resolve) => setTimeout(resolve, 1000));
+    said = (await (
+      await fetch(`${api}/api/projects/${id}/repository`, { headers })
+    ).json()) as typeof said;
+  }
+  if (said.failure !== "diskFull" || said.lastArchive !== undefined)
+    throw new Error(`the full disk is not what the status says: ${JSON.stringify(said)}`);
+  step("the disk is full, and the status says so");
+}
+if (local === "1") {
+  const said = (await (await fetch(`${api}/api/auth/session`, { headers })).json()) as {
+    repositories?: string;
+  };
+  if (said.repositories !== "local")
+    throw new Error(`the server does not say it saves here: ${JSON.stringify(said)}`);
+  let status: {
+    repository?: { place?: string; clone?: string };
+    lastArchive?: { sha: string };
+  } = {};
+  for (let turn = 0; turn < 180 && !status.lastArchive; turn++) {
+    if (turn > 0) await new Promise((resolve) => setTimeout(resolve, 1000));
+    status = (await (
+      await fetch(`${api}/api/projects/${id}/repository`, { headers })
+    ).json()) as typeof status;
+  }
+  if (status.repository?.place !== "local" || !status.repository.clone || !status.lastArchive)
+    throw new Error(`not archived into a repository here: ${JSON.stringify(status)}`);
+  step(`archived here: ${status.lastArchive.sha}`);
+  process.stdout.write(
+    `SMOKE_CLONE=${status.repository.clone}\nSMOKE_SHA=${status.lastArchive.sha}\n`,
+  );
+}
 step("done");
 process.exit(0);

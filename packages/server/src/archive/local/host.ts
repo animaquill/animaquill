@@ -35,8 +35,7 @@ import { hasAnyRef, moveRef, readRef } from "./refs.ts";
  * The repositories of the server's own (`provider` "local"): one bare Git repository a project, in
  * `<data folder>/repos/<project>.git`, written on its branch `main` only, which `git clone` takes
  * out of there as from anywhere else, and which a `git push` of people's own goes into (merged as
- * changes in the repository, as on GitHub). See docs/design/online-offline.md 4.3 of AnimaQuill
- * Cloud and its O8 design.
+ * changes in the repository, as on GitHub).
  *
  * The folder `repos/` is only used where it has the mark `.animaquill-repos`, which the server puts
  * there the first time it makes the folder (`prepare`): a volume that is not mounted is a folder

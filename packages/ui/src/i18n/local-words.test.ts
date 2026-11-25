@@ -43,6 +43,8 @@ const SAID_OF_REPOSITORIES = [
   "start.new.",
   "projectProps.storage.",
   "storage.uploads.properties.",
+  "storage.uploads.blocked.unsupported",
+  "storage.uploads.row.put",
 ];
 
 /** What only GitHub has, which a server without it never shows. */
