@@ -55,6 +55,16 @@ import {
  *   GitHub could not be asked; busy (429, with Retry-After) more than once a minute for a project;
  *   notLinked (404) for one that has no repository.
  *
+ * Repositories of the server's own (archive/local/):
+ *
+ * - `GET /api/local-repositories`: `{repositories: [{dir, name, project}]}`, those no project is saved
+ *   to, made for this person or for nobody known, that have a project ("从本机仓库恢复…").
+ * - `POST /api/projects/restore` with `{local:{dir}}`: restores one of them as `existing` does a
+ *   repository on GitHub, in its folder as it is: notFound (404) for one not listed.
+ * - `POST /api/projects/:id/repository/restart` ("重新建一个", "从项目重新开始存档"): for a repository
+ *   here that is gone or broken, what is there is put into `repos/broken/`, and archiving starts
+ *   over into a new one; notBroken (409) for any other; busy (429) while an archive runs.
+ *
  * - `POST /api/projects/restore` with `{existing:{id}, confirmPublic?}` ("从这个仓库恢复成云端项目"):
  *   a repository of the person's that has a project at its top (which linking turns away as
  *   "hasProject") becomes a new project of theirs, saved to it, made from the last commit of its
@@ -94,7 +104,7 @@ import {
  *
  * Errors are `{error: <code>}`: signedOut, notInstalled, nameTaken, hasProject, linkedElsewhere
  * (with `project`, where the repository is of a project of the person's own), notPushable, public;
- * and notFound, invalidName, alreadyLinked, notLinked, diverged, behind, notBlocked, notRewritten,
+ * and notFound, invalidName, alreadyLinked, notLinked, diverged, behind, notBlocked, notRewritten, notBroken,
  * noCommonBase, busy, invalid, unavailable, and nothing else. What changes something takes requests from pages of this site only, see guard.ts;
  * so does the check, which asks GitHub in the person's name.
  */
@@ -226,6 +236,23 @@ export const repositoryRoutes = async (app: FastifyInstance, options: Repository
     },
   );
 
+  app.get(
+    "/api/local-repositories",
+    {
+      config: {
+        access: {
+          inside: "list",
+          why: "repositories of the server's own that no project is saved to, made for this person or for nobody known",
+        },
+      },
+    },
+    async (request, reply) => {
+      const who = await signedIn(request, reply, limits.read);
+      if (!who) return reply;
+      return answer(reply, () => who.service.localRepositories(who.user));
+    },
+  );
+
   /** The repository a request chooses, a new one or one people have: undefined for neither. */
   const choiceOf = (body: unknown): RepositoryChoice | undefined => {
     const said = body as
@@ -274,6 +301,14 @@ export const repositoryRoutes = async (app: FastifyInstance, options: Repository
     async (request, reply) => {
       const who = await signedIn(request, reply, limits.change);
       if (!who) return reply;
+      const local = (request.body as { local?: { dir?: unknown } } | undefined)?.local?.dir;
+      if (typeof local === "string") {
+        if (local.length > 300) return reply.code(400).send({ error: "invalid" });
+        return answer(reply, async () => {
+          const restored = await who.service.restoreLocal(who.user, local);
+          return reply.code(restored.copy === "live" ? 201 : 202).send(restored);
+        });
+      }
       const choice = choiceOf(request.body);
       if (!choice || !("existing" in choice)) return reply.code(400).send({ error: "invalid" });
       return answer(reply, async () => {
@@ -459,6 +494,16 @@ export const repositoryRoutes = async (app: FastifyInstance, options: Repository
           checkNow.take(project) ? undefined : checkNow.retryAfter(project),
         ),
       );
+    },
+  );
+
+  app.post<{ Params: Params }>(
+    "/api/projects/:id/repository/restart",
+    { config: { access: { project: "id", action: "edit" } }, preHandler: guard },
+    async (request, reply) => {
+      const who = await signedIn(request, reply, limits.change);
+      if (!who) return reply;
+      return answer(reply, () => who.service.restart(who.user, request.params.id));
     },
   );
 };

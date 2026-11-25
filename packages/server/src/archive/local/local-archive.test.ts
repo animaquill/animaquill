@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProjectStore, type CommandCall } from "@animaquill/core";
@@ -252,6 +252,88 @@ describe.skipIf(!TEST_DATABASE || !hasGit)(
       expect(await t.db.select().from(archives).where(eq(archives.projectId, m.project))).toEqual(
         [],
       );
+    });
+
+    test("starting over puts the repository aside, never away, and archives the project into a new one", async () => {
+      const m = await made();
+      await archiver().run(m.project, "first");
+      await expect(service().restart(user(), m.project)).rejects.toMatchObject({
+        code: "notBroken",
+      });
+      const tree = git(m.gitdir, "rev-parse", "main^{tree}").trim();
+      const path = join(m.gitdir, "objects", tree.slice(0, 2), tree.slice(2));
+      const bytes = readFileSync(path);
+      bytes[bytes.length - 2] = (bytes[bytes.length - 2] ?? 0) ^ 0xff;
+      writeFileSync(path, bytes);
+      await verifyDue(t.db, host, w.time.now, quiet);
+      const before = await linkRow(m.project);
+      expect(before.pauseReason).toBe("broken");
+
+      const status = await service().restart(user(), m.project);
+      expect(status).toMatchObject({ state: "ready", repository: { place: "local" } });
+      const after = await linkRow(m.project);
+      expect(after.repoId).not.toBe(before.repoId);
+      expect(after).toMatchObject({ localDir: before.localDir, headSha: null, archivedSeq: 0 });
+      const aside = readdirSync(join(dataDir, "repos", "broken"));
+      expect(aside).toHaveLength(1);
+      expect(aside[0]).toMatch(new RegExp(`^${m.project}-\\d{8}T\\d{6}Z\\.git$`));
+
+      expect(await archiver().run(m.project, "first")).toMatchObject({ kind: "archived" });
+      git(m.gitdir, "fsck", "--strict", "--no-dangling");
+      expect(git(m.gitdir, "log", "--format=%s", "main").trim().split("\n")).toHaveLength(2);
+      // What was put aside is still there, as it was.
+      expect(readdirSync(join(dataDir, "repos", "broken"))).toEqual(aside);
+    });
+
+    test("a repository no project is saved to any more is listed for its person, and restored", async () => {
+      const m = await made();
+      await archiver().run(m.project, "first");
+      m.window.peer.connection.close();
+      await m.hub.idle();
+      await t.db.delete(projects).where(eq(projects.id, m.project));
+      expect(await host.exists(m.place)).toBe(true);
+
+      const rebuilt: string[] = [];
+      const restoring = new RepositoryService({
+        db: t.db,
+        host: undefined,
+        people: undefined,
+        local: host,
+        tokenFor: undefined,
+        enqueue: async () => {},
+        isQueued: async () => false,
+        webUrl: "https://github.test",
+        log: quiet,
+        restoreWaitMs: 50,
+        rebuild: async (id) => {
+          rebuilt.push(id);
+        },
+      });
+      const listed = await restoring.localRepositories(user());
+      expect(listed.repositories).toEqual([
+        { dir: `repos/${m.project}.git`, name: "片子", project: expect.any(String) },
+      ]);
+      const someoneElse = { userId: "0190a000-0000-7000-8000-0000000000ff" } as SignedIn;
+      expect((await restoring.localRepositories(someoneElse)).repositories).toEqual([]);
+      await expect(
+        restoring.restoreLocal(someoneElse, `repos/${m.project}.git`),
+      ).rejects.toMatchObject({ code: "notFound" });
+
+      const restored = await restoring.restoreLocal(user(), `repos/${m.project}.git`);
+      expect(restored).toMatchObject({ project: { name: "片子" }, copy: "restoring" });
+      expect(rebuilt).toEqual([restored.project.id]);
+      const link = await linkRow(restored.project.id);
+      expect(link).toMatchObject({ provider: "local", localDir: `repos/${m.project}.git` });
+      const rebuilder = new Rebuilder({
+        db: t.db,
+        hosts: hosts(),
+        exporter: new ProjectExporter({ heapMb: 256 }),
+        log: quiet,
+        now: () => w.time.now,
+        lookAgain: async () => {},
+      });
+      expect(await rebuilder.run(restored.project.id)).toMatchObject({ kind: "rebuilt" });
+      expect((await restoring.localRepositories(user())).repositories).toEqual([]);
     });
   },
 );

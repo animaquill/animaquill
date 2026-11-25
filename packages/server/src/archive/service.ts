@@ -5,7 +5,7 @@ import { MANIFEST_FILE } from "@animaquill/schema";
 import { and, asc, count, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { SignedIn } from "../auth/accounts.ts";
 import { SignInNeeded, type TokenOptions } from "../auth/tokens.ts";
-import { describeError, type Db, type Logger, type Tx } from "../database.ts";
+import { describeError, withLock, type Db, type Logger, type Tx } from "../database.ts";
 import type { GitHubApp } from "../github/app.ts";
 import { GitHubUnauthorized, GitHubUnavailable } from "../github/client.ts";
 import {
@@ -27,6 +27,7 @@ import {
 import { PROJECT_ID, SYNC_HUB_LIMITS, lockProject } from "../sync/hub.ts";
 import { GitHubPersonRepos, type PersonRepo } from "./github-host.ts";
 import {
+  ARCHIVE_LOCK,
   deleteAtOf,
   linkOf,
   notifyLink,
@@ -46,7 +47,8 @@ import {
 import { readSetting } from "../settings.ts";
 import { recheckLink } from "./recheck.ts";
 import type { LocalGitRepoHost } from "./local/host.ts";
-import { RepoPaused, type GitHubPlace, type RepoHost } from "./repo-host.ts";
+import { linkLocal } from "./local/links.ts";
+import { RepoPaused, type GitHubPlace, type RepoHost, type RepoSession } from "./repo-host.ts";
 import { dueAt, type ArchiveJob } from "./schedule.ts";
 import { notifyPerson } from "../me/events.ts";
 
@@ -262,6 +264,15 @@ export interface RepositoryStatus {
      */
     readonly commonBase: boolean;
   };
+}
+
+/** A repository of the server's own that people can restore, see `localRepositories`. */
+export interface LocalRepositoryShown {
+  /** Its folder, from the data folder: what restoring names it by. */
+  readonly dir: string;
+  /** The project it has, as its animaquill.json says. */
+  readonly name: string;
+  readonly project: string;
 }
 
 /** A repository restored as a project of the platform, see `RepositoryService.restore`. */
@@ -1022,39 +1033,55 @@ export class RepositoryService {
     let manifest: { readonly id: string; readonly name: string; readonly description: string };
     try {
       const session = host.open({ provider: "github", installationId: installation, repoId: id });
-      const info = await session.info();
-      const tip = await session.tip(info.branch);
-      const commit = tip === undefined ? undefined : await session.commit(tip);
-      const top = commit ? await session.tree(commit.tree) : [];
-      const entry = top.find((each) => each.path === MANIFEST_FILE && each.type === "blob");
-      if (!entry) throw new RepositoryRefused("noProject", 409);
-      // Read into the API only as large as a manifest is.
-      if (entry.size === undefined || entry.size > MANIFEST_MOST_BYTES)
-        throw new RepositoryRefused("tooLarge", 413, "tooLarge", { files: [MANIFEST_FILE] });
-      const text = Buffer.from(await session.blob(entry.sha)).toString("utf8");
-      const said = (() => {
-        try {
-          return JSON.parse(text) as { id?: unknown; name?: unknown; description?: unknown };
-        } catch {
-          return undefined;
-        }
-      })();
-      if (typeof said?.id !== "string" || !PROJECT_ID.test(said.id))
-        throw new RepositoryRefused("unreadable", 422, "unreadable", { files: [MANIFEST_FILE] });
-      manifest = {
-        id: said.id,
-        name: typeof said.name === "string" ? said.name.slice(0, 200) : repo.name,
-        description:
-          typeof said.description === "string"
-            ? [...said.description].slice(0, DESCRIPTION_MOST).join("")
-            : "",
-      };
+      manifest = await this.#manifestIn(session, repo.name);
     } catch (error) {
       if (error instanceof RepositoryRefused) throw error;
       if (error instanceof RepoPaused) throw new RepositoryRefused("notInstalled", 409);
       if (error instanceof GitHubUnavailable) throw new RepositoryRefused("unavailable", 503);
       throw error;
     }
+    return this.#restoreAs(user, manifest, rebuild, {
+      repo: repo.id,
+      link: (tx, projectId, now) =>
+        tx.insert(projectRepos).values({
+          projectId,
+          installationId: installation,
+          repoId: repo.id,
+          ownerId: repo.ownerId,
+          ownerLogin: repo.owner,
+          name: repo.name,
+          branch: repo.branch,
+          private: repo.private,
+          createdHere: false,
+          linkedBy: user.userId,
+          linkedAt: now,
+          checkedAt: now,
+        }),
+      taken: async () => {
+        const taken = await this.#linkedTo(id, user, undefined);
+        return new RepositoryRefused("linkedElsewhere", 409, "linkedElsewhere", {
+          ...(taken?.project && { project: taken.project }),
+        });
+      },
+    });
+  }
+
+  /**
+   * A new project of the person, saved to a repository already (`how.link`, in the transaction that
+   * makes it), made from the last commit of its branch by the worker: what restoring from GitHub
+   * and from a repository of the server's own share. `how.taken`: what is said where another
+   * project took the repository meanwhile.
+   */
+  async #restoreAs(
+    user: SignedIn,
+    manifest: { readonly id: string; readonly name: string; readonly description: string },
+    rebuild: (projectId: string) => Promise<void>,
+    how: {
+      readonly repo: number | string;
+      readonly link: (tx: Tx, projectId: string, now: Date) => Promise<unknown>;
+      readonly taken: () => Promise<RepositoryRefused>;
+    },
+  ): Promise<Restored> {
     const projectId = randomBytes(16).toString("base64url");
     const now = this.#now();
     const most = this.#options.projectsPerUser ?? SYNC_HUB_LIMITS.projectsPerUser;
@@ -1086,33 +1113,15 @@ export class RepositoryService {
           linkingUntil: until,
         });
         await notifyPerson(tx, [user.userId]);
-        await tx.insert(projectRepos).values({
-          projectId,
-          installationId: installation,
-          repoId: repo.id,
-          ownerId: repo.ownerId,
-          ownerLogin: repo.owner,
-          name: repo.name,
-          branch: repo.branch,
-          private: repo.private,
-          createdHere: false,
-          linkedBy: user.userId,
-          linkedAt: now,
-          checkedAt: now,
-        });
+        await how.link(tx, projectId, now);
       });
     } catch (error) {
       if (error instanceof RepositoryRefused) throw error;
-      if (codeOf(error) === "23505") {
-        // Another project took the repository meanwhile, as the same request twice.
-        const taken = await this.#linkedTo(id, user, undefined);
-        throw new RepositoryRefused("linkedElsewhere", 409, "linkedElsewhere", {
-          ...(taken?.project && { project: taken.project }),
-        });
-      }
+      // Another project took the repository meanwhile, as the same request twice.
+      if (codeOf(error) === "23505") throw await how.taken();
       throw error;
     }
-    this.#options.log?.info({ project: projectId, repo: repo.id }, "a repository is restored");
+    this.#options.log?.info({ project: projectId, repo: how.repo }, "a repository is restored");
     try {
       await rebuild(projectId);
     } catch (error) {
@@ -1145,6 +1154,176 @@ export class RepositoryService {
         .where(and(eq(projects.id, projectId), eq(projects.linkingUntil, until)))
         .catch(() => {});
     }
+  }
+
+  /** The manifest of the project a repository has at the top of its branch, as restoring reads it. */
+  async #manifestIn(
+    session: RepoSession,
+    fallback: string,
+  ): Promise<{ readonly id: string; readonly name: string; readonly description: string }> {
+    const info = await session.info();
+    const tip = await session.tip(info.branch);
+    const commit = tip === undefined ? undefined : await session.commit(tip);
+    const top = commit ? await session.tree(commit.tree) : [];
+    const entry = top.find((each) => each.path === MANIFEST_FILE && each.type === "blob");
+    if (!entry) throw new RepositoryRefused("noProject", 409);
+    // Read into the API only as large as a manifest is.
+    if (entry.size === undefined || entry.size > MANIFEST_MOST_BYTES)
+      throw new RepositoryRefused("tooLarge", 413, "tooLarge", { files: [MANIFEST_FILE] });
+    const text = Buffer.from(await session.blob(entry.sha)).toString("utf8");
+    const said = (() => {
+      try {
+        return JSON.parse(text) as { id?: unknown; name?: unknown; description?: unknown };
+      } catch {
+        return undefined;
+      }
+    })();
+    if (typeof said?.id !== "string" || !PROJECT_ID.test(said.id))
+      throw new RepositoryRefused("unreadable", 422, "unreadable", { files: [MANIFEST_FILE] });
+    return {
+      id: said.id,
+      name: typeof said.name === "string" ? said.name.slice(0, 200) : fallback,
+      description:
+        typeof said.description === "string"
+          ? [...said.description].slice(0, DESCRIPTION_MOST).join("")
+          : "",
+    };
+  }
+
+  /**
+   * The repositories of the server's own that no project is saved to (a project deleted, or a
+   * database from before), whose project people can restore ("从本机仓库恢复…"): those made for
+   * this person, or for nobody known. Each with the project it has; one without a project at the
+   * top of its branch, or that does not read, is not listed.
+   */
+  async localRepositories(user: SignedIn): Promise<{ repositories: LocalRepositoryShown[] }> {
+    const local = this.#options.local;
+    if (!local) return { repositories: [] };
+    let found: Awaited<ReturnType<LocalGitRepoHost["list"]>>;
+    try {
+      found = await local.list();
+    } catch (error) {
+      if (error instanceof GitHubUnavailable) throw new RepositoryRefused("unavailable", 503);
+      throw error;
+    }
+    const mine = found.filter((repo) => repo.owner === undefined || repo.owner === user.userId);
+    if (mine.length === 0) return { repositories: [] };
+    const linked = new Set(
+      (
+        await this.#options.db
+          .select({ dir: projectRepos.localDir })
+          .from(projectRepos)
+          .where(eq(projectRepos.provider, "local"))
+      ).map((row) => row.dir),
+    );
+    const repositories: LocalRepositoryShown[] = [];
+    for (const repo of mine) {
+      if (linked.has(repo.dir)) continue;
+      const session = local.open({ provider: "local", repoId: 0, dir: repo.dir });
+      try {
+        const manifest = await this.#manifestIn(session, repo.dir);
+        repositories.push({ dir: repo.dir, name: manifest.name, project: manifest.id });
+      } catch {
+        // Nothing to restore of it, or it does not read: not listed.
+      } finally {
+        await session.close();
+      }
+    }
+    return { repositories };
+  }
+
+  /**
+   * Restores the project of a repository of the server's own that no project is saved to (see
+   * `localRepositories`), as `restore` does one on GitHub: a new project, saved to that repository
+   * in its folder as it is, made from the last commit of its branch.
+   */
+  async restoreLocal(user: SignedIn, dir: string): Promise<Restored> {
+    const rebuild = this.#options.rebuild;
+    const local = this.#options.local;
+    if (!rebuild || !local) throw new RepositoryRefused("unavailable", 503);
+    const listed = (await this.localRepositories(user)).repositories.find(
+      (repo) => repo.dir === dir,
+    );
+    if (!listed) throw new RepositoryRefused("notFound", 404);
+    const session = local.open({ provider: "local", repoId: 0, dir });
+    let manifest: { readonly id: string; readonly name: string; readonly description: string };
+    try {
+      manifest = await this.#manifestIn(session, listed.name);
+    } catch (error) {
+      if (error instanceof RepositoryRefused) throw error;
+      if (error instanceof RepoPaused) throw new RepositoryRefused("notFound", 404);
+      if (error instanceof GitHubUnavailable) throw new RepositoryRefused("unavailable", 503);
+      throw error;
+    } finally {
+      await session.close();
+    }
+    return this.#restoreAs(user, manifest, rebuild, {
+      repo: dir,
+      link: async (tx, projectId, now) => {
+        // Not another project's meanwhile, as the same request twice.
+        const [other] = await tx
+          .select({ id: projectRepos.projectId })
+          .from(projectRepos)
+          .where(and(eq(projectRepos.provider, "local"), eq(projectRepos.localDir, dir)))
+          .for("update");
+        if (other) throw new RepositoryRefused("linkedElsewhere", 409);
+        await linkLocal(tx, { projectId, userId: user.userId, at: now, dir, createdHere: false });
+      },
+      taken: async () => new RepositoryRefused("linkedElsewhere", 409),
+    });
+  }
+
+  /**
+   * Starts archiving over into a new repository of the server's own, for one that is gone or
+   * broken ("重新建一个", "从项目重新开始存档"): what is there is put aside into `repos/broken/`,
+   * which nothing takes away by itself; the link is made anew, in the same folder, with a number of
+   * its own; and the first archive writes the project as it is now. Only while no archive of the
+   * project runs (busy otherwise).
+   */
+  async restart(user: SignedIn, projectId: string): Promise<RepositoryStatus> {
+    await this.#project(user, projectId);
+    const local = this.#options.local;
+    const link = await linkOf(this.#options.db, projectId);
+    if (!link) throw new RepositoryRefused("notLinked", 404);
+    if (
+      link.provider !== "local" ||
+      link.localDir === null ||
+      link.state !== "paused" ||
+      (link.pauseReason !== "gone" && link.pauseReason !== "broken")
+    )
+      throw new RepositoryRefused("notBroken", 409);
+    if (!local) throw new RepositoryRefused("unavailable", 503);
+    const dir = link.localDir;
+    const done = await withLock(this.#options.db, ARCHIVE_LOCK, projectId, async () => {
+      const now = this.#now();
+      try {
+        await local.putAside({ dir }, now);
+      } catch (error) {
+        this.#options.log?.warn({ project: projectId, err: describeError(error) }, "not put aside");
+        throw new RepositoryRefused("unavailable", 503);
+      }
+      await this.#options.db.transaction(async (tx) => {
+        await tx.delete(projectRepos).where(sameLink(link));
+        await linkLocal(tx, { projectId, userId: user.userId, at: now, dir });
+        // Nothing of the repository before waits for people any more.
+        await tx
+          .update(repoConflicts)
+          .set({ state: "ours", resolvedBy: user.userId, resolvedAt: now })
+          .where(and(eq(repoConflicts.projectId, projectId), eq(repoConflicts.state, "open")));
+        await tx
+          .update(repoMerges)
+          .set({ state: "superseded", input: null })
+          .where(and(eq(repoMerges.projectId, projectId), eq(repoMerges.state, "ready")));
+        await notifyLink(tx, [projectId]);
+      });
+      this.#options.log?.warn(
+        { project: projectId },
+        "archiving starts over in a new repository here",
+      );
+    });
+    if (!done.held) throw new RepositoryRefused("busy", 429, "busy", { retryAfter: 10 });
+    await this.#options.enqueue({ project: projectId, kind: "first", by: user.userId });
+    return this.status(user, projectId);
   }
 
   /**

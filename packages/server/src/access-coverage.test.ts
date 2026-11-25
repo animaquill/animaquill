@@ -207,6 +207,12 @@ const PROJECT_ROUTES: readonly ProjectRoute[] = [
   },
   {
     method: "POST",
+    route: "/api/projects/:id/repository/restart",
+    action: "edit",
+    url: (f) => `/api/projects/${f.id}/repository/restart`,
+  },
+  {
+    method: "POST",
     route: "/api/projects/:id/lfs/objects",
     action: "edit",
     url: (f) => `/api/projects/${f.id}/lfs/objects`,
@@ -257,6 +263,7 @@ const INSIDE_ROUTES = [
   "GET /api/github/repositories",
   "POST /api/github/repositories/check",
   "POST /api/projects/restore",
+  "GET /api/local-repositories",
 ];
 
 describe.skipIf(!TEST_DATABASE)("access to projects, route by route, on a database", () => {
