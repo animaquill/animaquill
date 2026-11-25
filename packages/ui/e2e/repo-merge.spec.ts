@@ -276,7 +276,16 @@ test.describe("merges of what changed on GitHub", () => {
       },
       id,
     );
-    await openCard(page, "二");
+    // The only project, by its card: the start page read its list as the project closed, before the
+    // merges, and may show the name of before until it reads it again (on a slow runner, 2026-11-25).
+    await page
+      .getByRole("main")
+      .locator("li[data-project]")
+      .first()
+      .locator("a, button")
+      .first()
+      .click();
+    await expect(page).toHaveTitle("二 - AnimaQuill");
     const said = "你不在时合并了 GitHub 上的改动（2 次，4 个文件）";
     await expect(page.locator("[data-notifications]").getByText(said)).toHaveCount(1);
     // ...and in the list of operations, as one.

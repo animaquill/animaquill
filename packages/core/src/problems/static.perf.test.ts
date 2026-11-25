@@ -37,7 +37,9 @@ describe("the problems that the project alone tells", () => {
       files: { "scenes/a/index.html": "<p>a</p>" },
     });
     const inputs = { describe: (each: ClipState) => describeClip(state, each, undefined) };
-    expect(staticProblems(state, inputs).length).toBeGreaterThan(100);
+    // Enough problems for the work to count: since the volume and the pan of sound are done (M2),
+    // those clips say nothing any more, and the scenes and the drafts still do (2026-11-25).
+    expect(staticProblems(state, inputs).length).toBeGreaterThan(40);
     const times: number[] = [];
     for (let round = 0; round < 15; round += 1) {
       const started = performance.now();

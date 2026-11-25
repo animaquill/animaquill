@@ -57,7 +57,8 @@ const parts = (page: Page) =>
 test("the title bar: nothing over anything else at any width, every menu within reach", async ({
   page,
 }) => {
-  test.setTimeout(120_000);
+  // Every width from 320 to 1440, with every menu opened: over two minutes on a slow runner (CI).
+  test.setTimeout(300_000);
   await offlineWithProject(page);
   await expect(page.locator("header").getByRole("button", { name: "登录" })).toBeVisible();
   for (const width of WIDTHS) {
