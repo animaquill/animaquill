@@ -2684,16 +2684,18 @@
       "failingLong": "已经连续 {{hours}} 个多小时没能存进去（GitHub 暂时连不上、限流，或者服务器出了错）",
       "failingLong_local": "已经连续 {{hours}} 个多小时没能存进去（服务器的磁盘或者服务器出了错）",
       "detail": "：{{detail}}",
-      "diskFull": "服务器磁盘快满了，存档先停着"
+      "diskFull": "服务器磁盘快满了，存档先停着",
+      "reposUnreachable": "服务器上放存档的文件夹读不到（数据盘没挂上？）"
     },
     "fix": {
       "noRepository": "点“选仓库…”选一个仓库，选好以后会自动存进去。",
-      "noRepository_local": "服务器启动时会自动给它建一个本机仓库。",
+      "noRepository_local": "服务器的后台进程下次启动时会自动给它建一个本机仓库。",
       "kept": "在编辑器里改好这些文件以后会自动接着存。",
       "failingLong": "服务器会一直自动重试；也可以点“现在存档”再试一次，或者换一个仓库。",
       "failingLong_local": "服务器会一直自动重试；也可以点“现在存档”再试一次。",
       "open": "打开项目，在在线面板里处理。",
-      "diskFull": "腾出服务器的磁盘空间以后会自动接着存。"
+      "diskFull": "项目的改动都还在服务器上；腾出服务器的磁盘空间以后会自动接着存。",
+      "reposUnreachable": "项目的改动都还在服务器上；文件夹挂上以后会自动接着存。"
     },
     "about": {
       "error": "存进 GitHub 失败：{{reason}}。{{fix}}",
@@ -4234,7 +4236,7 @@
       "disabled": "这个账号已停用，不能登录。"
     },
     "goOffline": "切换到离线模式",
-    "offlineHint": "离线模式。登录后项目存在服务器上，存进你的 GitHub 仓库。",
+    "offlineHint": "离线模式。登录后项目存在服务器上，换一台电脑也能接着做。",
     "signOutWaitingTitle": "还有对话没存到服务器",
     "signOutWaiting": "{{count}} 个对话还没存到服务器（现在连不上）。退出登录会把它们从这个浏览器删掉，找不回来。"
   },
@@ -4778,7 +4780,7 @@
       "retryAt": "{{count}} 分钟后可以再试。",
       "later": "服务器过一会儿会自动再试，改动都留在本机。",
       "fixed": "在 GitHub 上修好以后，可以按 GitHub 上现在的样子取回。",
-      "fixed_local": "把仓库修好以后，可以按仓库现在的样子取回。",
+      "fixed_local": "仓库恢复以后，可以按仓库现在的样子取回。",
       "retry": "再试一次",
       "notAllowed": "上次取回不是因为仓库里的内容失败的，不能按 GitHub 上现在的样子取回。",
       "notAllowed_local": "上次取回不是因为仓库里的内容失败的，不能按仓库现在的样子取回。",
@@ -4890,7 +4892,9 @@
       "loading": "正在查…",
       "empty": "没有可以恢复的本机仓库。",
       "failed": "现在查不了，请稍后再试。",
-      "confirm": "恢复"
+      "confirm": "恢复",
+      "choice": "{{name}} · {{time}}存档 · {{size}}",
+      "choiceNever": "{{name}} · 还没存过档 · {{size}}"
     }
   },
   "repository": {
@@ -4995,7 +4999,7 @@
       "diverged": "为了不盖掉这些改动，存档先停下。可以以编辑器的内容接着存，GitHub 上的那一版会留在存档历史里；也可以换一个仓库。",
       "diverged_local": "为了不盖掉这些改动，存档先停下。可以以编辑器的内容接着存，仓库里的那一版会留在存档历史里。",
       "gone": "在 GitHub 上把仓库加回 App 的授权范围后点“现在存档”，或者换一个仓库。",
-      "gone_local": "点“重新建一个”，会用项目现在的内容建一个新的本机仓库接着存；服务器上的项目都还在。",
+      "gone_local": "点“重新建一个”，会用项目现在的内容建一个新的本机仓库接着存，存档历史从这次重新算；服务器上的项目都还在。",
       "goneDeleted": "换一个仓库，项目会重新存一份进去。服务器的项目和本机的内容都还在。",
       "goneUnauthorized": "在 GitHub 上把这个仓库加回 AnimaQuill 的授权范围，加回以后会自动接着存，也可以点“现在存档”；或者换一个仓库。",
       "uninstalled": "重新安装后会自动接着存。",
@@ -5013,7 +5017,7 @@
       "rewritten": "",
       "too-large": "",
       "unmerged": "",
-      "broken": "点“从项目重新开始存档”：坏的仓库会原样挪到服务器数据目录的 repos/broken/ 里留着，用项目现在的内容建一个新的接着存。"
+      "broken": "点“从项目重新开始存档”：坏的仓库会原样挪到服务器数据目录的 repos/broken/ 里留着（旧的存档历史在那里），用项目现在的内容建一个新的接着存，存档历史从这次重新算。"
     },
     "replaceTitle": "以编辑器的内容接着存？",
     "replaceMessage": "存档会接在 GitHub 上的这一版后面，用编辑器的内容写项目的文件。GitHub 上的那一版留在存档历史里，可以找回。项目以外的文件不会动。",
@@ -5030,8 +5034,9 @@
     "archiveWait": "1 分钟内只能存一次档，{{count}} 秒后自动存。",
     "restore": "从这个仓库恢复",
     "restarted": "已经重新开始存档，第一次存档马上开始。",
-    "cloneCopied": "克隆命令已复制",
-    "cloneFailed": "没能复制。克隆命令是：{{command}}"
+    "cloneCopied": "克隆命令已复制。要在放着服务器数据的那台机器上运行。",
+    "cloneFailed": "没能复制。克隆命令是：{{command}}",
+    "cloneWhere": "克隆命令要在放着服务器数据的那台机器上运行；服务器在 Docker 里时，把路径换成数据卷挂载出来的路径。"
   },
   "storage": {
     "download": {
@@ -5042,6 +5047,7 @@
     },
     "uploads": {
       "lfs": "GitHub 大文件存储",
+      "lfs_local": "本机仓库",
       "cloudSpace": "云端空间",
       "ownStorage": "我的存储",
       "comingSoon": "在做",
@@ -5053,7 +5059,7 @@
         "hereBrowserNote": "清理浏览器数据会丢，换电脑、别人、云端 AI 都拿不到。",
         "waiting": "等你确认后上传",
         "put": "放进 GitHub 大文件存储",
-        "put_local": "放进项目仓库",
+        "put_local": "放进本机仓库",
         "change": "更改…",
         "needsCloud": "登录后可用",
         "uploading": "正在放进 GitHub 大文件存储",
@@ -5127,17 +5133,19 @@
         "repository": "项目的 GitHub 仓库现在用不了，上传先停着",
         "signedOut": "要重新登录才能接着传",
         "unsupported": "服务器现在不收素材",
-        "unsupported_local": "本机仓库还不能放素材，素材先留在这个浏览器里"
+        "unsupported_local": "这一版本机仓库还不放素材，素材先只在这个浏览器里：清理浏览器数据会丢，换电脑、别人、云端 AI 都拿不到。"
       },
       "menu": {
         "placeIn": "放在…",
         "here": "只在这个浏览器里",
         "lfs": "GitHub 大文件存储…",
+        "lfs_local": "本机仓库…",
         "count": "{{count}} 个 · {{size}}",
         "choose": "选素材放在哪…"
       },
       "badge": {
         "lfs": "已在 GitHub 大文件存储",
+        "lfs_local": "已在本机仓库",
         "uploading": "正在放进 GitHub 大文件存储：{{percent}}%",
         "failed": "没传上去：{{reason}}",
         "waiting": "等你确认后上传"
@@ -5151,6 +5159,7 @@
         "doneToday": "今天传完 {{count}} 个",
         "doneEarlier": "传完 {{count}} 个",
         "summary": "已在 GitHub 大文件存储：{{count}} 个，{{size}} · 只在这个浏览器里：{{here}} 个",
+        "summary_local": "已在本机仓库：{{count}} 个，{{size}} · 只在这个浏览器里：{{here}} 个",
         "bar": "↑ 素材 {{percent}}%",
         "barFailed": "↑ 素材没传上去",
         "elsewhere": "这个项目的素材在另一个窗口里上传，这里只看进度；暂停、取消会转给那个窗口。"
@@ -5158,6 +5167,7 @@
       "dialog": {
         "title": "素材放在哪",
         "about": "放进 GitHub 大文件存储的素材，换一台电脑打开这个项目时会自动下载。这个浏览器里的原片照样留着。",
+        "about_local": "放进本机仓库的素材，换一台电脑打开这个项目时会自动下载。这个浏览器里的原片照样留着。",
         "quick": "快速选：",
         "all": "全部",
         "used": "用到的",
@@ -5178,13 +5188,16 @@
         "hereOnly": "只在这个浏览器里",
         "noFile": "这台电脑上没有这个文件",
         "total": "GitHub 大文件存储：新放进 {{count}} 个，共 {{size}}",
+        "total_local": "本机仓库：新放进 {{count}} 个，共 {{size}}",
         "repository": "仓库 {{repo}}",
         "cost": "免费账号每月 10 GiB 存储、10 GiB 下载，以 GitHub 为准；绑了付款方式的账号超出后会收费。",
         "seeQuota": "在 GitHub 上看我的额度",
         "kinds": "几种放法有什么区别（只在这台电脑上 / GitHub 大文件存储 / 云端空间 / 我的存储）",
+        "kinds_local": "几种放法有什么区别（只在这台电脑上 / 本机仓库 / 云端空间 / 我的存储）",
         "kind": {
           "here": "只在这台电脑上：不上传，不花钱。换电脑、在别的电脑上直接打开在线项目、云端 AI 都拿不到这个文件；硬盘坏了就没了。",
           "lfs": "GitHub 大文件存储：经服务器中转存进你的 GitHub 仓库，和项目放在一起，换一台电脑打开时自动下载。占你 GitHub 账号的大文件额度：免费账号每月 10 GiB 存储、10 GiB 下载流量，以 GitHub 为准；绑了付款方式的账号超出后会被收费，默认没有上限。单个文件最大 2 GB。存进去以后不能单独删掉，只能删整个仓库。要经过服务器中转，比直传慢。",
+          "lfs_local": "本机仓库：存进服务器上这个项目的本机 Git 仓库，和项目放在一起。这一版本机仓库还不放素材。",
           "platform": "云端空间（在做）：放在 AnimaQuill 的存储里，换电脑能下载，云端 AI 能直接读。同一个文件在你所有项目里只存一份。内测期由管理员开通，没有备份，本机还留着原片。",
           "remote": "我的存储（在做）：放进你自己设置的存储桶，费用由存储服务收，服务器不收费。浏览器直接上传，不经过服务器。"
         },
@@ -5226,23 +5239,23 @@
       "properties": {
         "default": "默认存储空间",
         "lfs": "GitHub 大文件存储",
-        "lfs_local": "项目仓库",
+        "lfs_local": "本机仓库",
         "lfsAt": "GitHub 大文件存储 · {{repo}}",
-        "lfsAt_local": "项目仓库",
+        "lfsAt_local": "本机仓库",
         "local": "只在这台电脑上",
         "signIn": "登录后可用",
         "unsupported": "这个服务器没有",
-        "unsupported_local": "本机仓库还不能放素材",
+        "unsupported_local": "这一版本机仓库还不放素材",
         "noRepository": "项目还没有仓库",
         "localOnline": "新素材只放在这个浏览器里：清理浏览器数据会丢，换电脑、别人、云端 AI 都拿不到。",
         "localOffline": "素材放在项目文件夹里。",
         "lfsHelp": "新导入的素材传进这个项目的 GitHub 仓库，换电脑能自动下载。这个浏览器里的原片照样留着。",
         "lfsHelp_local": "新导入的素材放进这个项目的本机仓库，换电脑能自动下载。这个浏览器里的原片照样留着。",
         "fellBack": "默认是 GitHub 大文件存储，这里用不了（{{why}}），新素材{{where}}。",
-        "fellBack_local": "默认是项目仓库，这里还用不了（{{why}}），新素材{{where}}。",
+        "fellBack_local": "默认是本机仓库，这一版还不放素材，新素材{{where}}：清理浏览器数据会丢，换电脑、别人、云端 AI 都拿不到。",
         "existing": "已有的：{{parts}}",
         "existingLfs": "{{count}} 个在 GitHub 大文件存储（{{size}}）",
-        "existingLfs_local": "{{count}} 个在项目仓库（{{size}}）",
+        "existingLfs_local": "{{count}} 个在本机仓库（{{size}}）",
         "existingHere": "{{count}} 个只在这个浏览器里",
         "localBrowser": "只在这个浏览器里",
         "moveExisting": "把已有的也换过去…"
@@ -5360,6 +5373,7 @@
     },
     "storedIn": {
       "lfs": "GitHub 大文件存储",
+      "lfs_local": "本机仓库",
       "platform": "云端空间",
       "remote": "{{host}}",
       "remoteUnknown": "它的网址"
@@ -5750,7 +5764,7 @@
       "asking": "正在问服务器…",
       "notSaid": "服务器没有给出",
       "localRepository": "服务器上的本机 Git 仓库",
-      "localRepositoryHelp": "可以用 git clone 取出来；自己 git push 进去的改动会合并进项目。"
+      "localRepositoryHelp": "可以用 git clone 取出来（要在放着服务器数据的那台机器上运行，Docker 里换成挂载出来的路径）；自己 git push 进去的改动会合并进项目。"
     }
   },
   "localAi": {

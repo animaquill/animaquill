@@ -54,7 +54,9 @@ export type GitHubCause =
   | "unfinished"
   | "unusable"
   /** A repository of the server's own: its disk is full, and archives wait. */
-  | "diskFull";
+  | "diskFull"
+  /** ...or the folder of its repositories cannot be read, as a volume that is not mounted. */
+  | "reposUnreachable";
 
 export interface GitHubState {
   readonly kind: GitHubKind;
@@ -138,8 +140,12 @@ function githubOf(input: StatusInput, given: TFunction): GitHubState {
       return error("blocked", reason, fix);
     return error("paused", detail ? `${reason}（${detail}）` : reason, fix);
   }
-  if (status.failure === "diskFull" && (status.failures ?? 0) > 0)
-    return error("diskFull", t("github.reason.diskFull"), t("github.fix.diskFull"));
+  if (status.failure !== undefined && (status.failures ?? 0) > 0)
+    return error(
+      status.failure,
+      t(`github.reason.${status.failure}`),
+      t(`github.fix.${status.failure}`),
+    );
   if (isFailingLong(status.failingSince, now))
     return failingLong(status.failingSince as number, now, status.detail, t);
   const kept = keptText(status, t);
@@ -215,7 +221,8 @@ export function githubText(state: GitHubState, given: TFunction): string {
     state.cause === "unusable" ||
     state.cause === "noRepository" ||
     state.cause === "unfinished" ||
-    state.cause === "diskFull"
+    state.cause === "diskFull" ||
+    state.cause === "reposUnreachable"
   )
     return state.reason ?? t("github.text.error");
   if (state.cause === "conflicts" && state.count !== undefined && state.count > 0)

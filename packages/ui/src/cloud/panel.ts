@@ -451,7 +451,10 @@ export function cloudPanel(input: PanelInput, given: TFunction): CloudPanel {
       const isStale = watch.trouble !== undefined && watch.trouble !== "signedOut";
       rows.push(
         row("repository", t("cloud.panel.repository.local"), {
-          ...(isStale && { notes: [t("cloud.panel.repository.stale")] }),
+          notes: [
+            ...(isStale ? [t("cloud.panel.repository.stale")] : []),
+            ...(repository.clone ? [t("repository.cloneWhere")] : []),
+          ],
           actions: repository.clone ? [action("copyClone")] : [],
         }),
       );

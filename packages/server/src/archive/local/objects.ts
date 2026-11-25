@@ -33,6 +33,8 @@ export interface CommitObject {
   readonly tree: string;
   readonly parents: readonly string[];
   readonly message: string;
+  /** When it was made, as its committer line says: milliseconds since 1970. */
+  readonly at?: number;
 }
 
 /** The tree with nothing in it, which every Git knows by this name. */
@@ -101,14 +103,24 @@ export const parseCommit = (data: Buffer, sha: string): CommitObject => {
   const split = text.indexOf("\n\n");
   const head = (split < 0 ? text : text.slice(0, split)).split("\n");
   let tree: string | undefined;
+  let at: number | undefined;
   const parents: string[] = [];
   for (const line of head) {
     if (line.startsWith("tree ")) tree ??= line.slice(5);
     else if (line.startsWith("parent ")) parents.push(line.slice(7));
+    else if (line.startsWith("committer ")) {
+      const seconds = / (\d+) [+-]\d{4}$/.exec(line)?.[1];
+      if (seconds !== undefined) at = Number(seconds) * 1000;
+    }
   }
   if (tree === undefined || !SHA.test(tree) || parents.some((parent) => !SHA.test(parent)))
     throw new RepoPaused("broken", `the commit ${sha} does not read as a commit`);
-  return { tree, parents, message: split < 0 ? "" : text.slice(split + 2) };
+  return {
+    tree,
+    parents,
+    message: split < 0 ? "" : text.slice(split + 2),
+    ...(at !== undefined && { at }),
+  };
 };
 
 /**

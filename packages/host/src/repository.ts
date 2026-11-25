@@ -223,7 +223,9 @@ export const statusOf = (value: unknown): RepositoryStatus => {
     ...optional("gone", goneOf(value.gone)),
     ...optional("unusable", unusableOf(value.unusable)),
     ...optional("detail", text(value.detail)),
-    ...(value.failure === "diskFull" && { failure: "diskFull" as const }),
+    ...((value.failure === "diskFull" || value.failure === "reposUnreachable") && {
+      failure: value.failure,
+    }),
     archiving: value.archiving === true,
     ...(last &&
       sha !== undefined && {
@@ -468,7 +470,15 @@ export function browserRepository(options: BrowserRepositoryOptions): Repository
         const name = text(item.name);
         const project = text(item.project);
         return dir !== undefined && name !== undefined && project !== undefined
-          ? [{ dir, name, project }]
+          ? [
+              {
+                dir,
+                name,
+                project,
+                ...optional("archivedAt", count(item.archivedAt)),
+                ...optional("bytes", count(item.bytes)),
+              },
+            ]
           : [];
       });
     },

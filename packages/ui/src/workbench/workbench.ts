@@ -2124,7 +2124,8 @@ export class Workbench {
     }
     if (snapshot.status !== "signedIn") return;
     const words = { name: snapshot.name, interpolation: { escapeValue: false } };
-    if (snapshot.appInstalled) {
+    // A server that saves projects to repositories of its own has no App to install.
+    if (snapshot.appInstalled || snapshot.repositories === "local") {
       this.notifications.push(t("account.signedIn", words));
       return;
     }

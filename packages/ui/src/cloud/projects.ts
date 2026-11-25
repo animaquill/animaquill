@@ -29,6 +29,7 @@ import {
 import { isSameHash } from "@animaquill/media";
 import type { TFunction } from "i18next";
 import { placedT } from "../i18n/i18n.ts";
+import { formatSize } from "../transfer/transfer.ts";
 import type { Dialogs } from "../workbench/dialogs.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import type { Notifications } from "../workbench/notifications.ts";
@@ -41,6 +42,7 @@ import {
   connectRepositoryName,
   copyProblemText,
   divergedOutcome,
+  momentText,
   pathList,
   pauseText,
 } from "./repository-text.ts";
@@ -1928,7 +1930,20 @@ export class CloudProjects {
       stacked: true,
       choices: list.map((repository, index) => ({
         id: repository.dir,
-        label: repository.name,
+        // Two of one name are told apart by when they were archived into, and their size.
+        label: t(
+          repository.archivedAt === undefined
+            ? "cloud.restoreLocal.choiceNever"
+            : "cloud.restoreLocal.choice",
+          {
+            name: repository.name,
+            size: formatSize(repository.bytes ?? 0),
+            ...(repository.archivedAt !== undefined && {
+              time: momentText(repository.archivedAt, Date.now(), t),
+            }),
+            interpolation: { escapeValue: false },
+          },
+        ),
         ...(index === 0 && { kind: "primary" as const }),
       })),
     });

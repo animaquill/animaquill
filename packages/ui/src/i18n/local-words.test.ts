@@ -45,6 +45,11 @@ const SAID_OF_REPOSITORIES = [
   "storage.uploads.properties.",
   "storage.uploads.blocked.unsupported",
   "storage.uploads.row.put",
+  "storage.uploads.panel.summary",
+  "storage.uploads.menu.lfs",
+  "storage.uploads.badge.lfs",
+  "storage.uploads.dialog.",
+  "storage.storedIn.",
 ];
 
 /** What only GitHub has, which a server without it never shows. */
@@ -64,6 +69,11 @@ const ONLY_GITHUB = new Set([
   "repository.fix.protected",
   "repoMerge.blocked.openOnGitHub",
   "cloud.delete.unusable",
+  // The cost of GitHub's large file storage, and its limit: never asked of a repository here.
+  "storage.uploads.dialog.tooLarge",
+  "storage.uploads.dialog.cost",
+  "storage.uploads.dialog.seeQuota",
+  "storage.uploads.dialog.acknowledge",
 ]);
 
 describe("words of repositories of the server's own", () => {

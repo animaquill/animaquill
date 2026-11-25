@@ -1461,7 +1461,7 @@ export interface RepositoryStatus {
   /** The repository cannot be used, and the project cannot be edited: see `RepositoryUnusable`. */
   readonly unusable?: RepositoryUnusable;
   /** Why archives fail now, where people know a word for it: the server's disk is full. */
-  readonly failure?: "diskFull";
+  readonly failure?: "diskFull" | "reposUnreachable";
   /** A short word about the pause, or about the last failure, from the platform. */
   readonly detail?: string;
   /** An archive is waiting or running. */
@@ -1664,6 +1664,9 @@ export interface LocalRepository {
   /** The project it has, as its animaquill.json says. */
   readonly name: string;
   readonly project: string;
+  /** When it was last archived into, milliseconds since 1970, and how large it is. */
+  readonly archivedAt?: number;
+  readonly bytes?: number;
 }
 
 /**

@@ -179,7 +179,8 @@ export class LocalGitRepoHost implements RepoHost<LocalPlace> {
   /** Rejects as for a repository that cannot be reached now where `repos/` is not as it was made. */
   async #usable(): Promise<void> {
     if (!(await this.#disk.stat(join(this.#root, REPOS_MARK))))
-      throw new GitHubUnavailable(`${this.#root} is not there, or not the folder of repositories`);
+      // Its message is what the status says (`failure`), and what archives note.
+      throw new GitHubUnavailable("reposUnreachable");
   }
 
   #gitdir(place: { readonly dir: string }): string {
@@ -275,6 +276,29 @@ export class LocalGitRepoHost implements RepoHost<LocalPlace> {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * What a repository has: when its branch was last written (its commit), and how large its
+   * folder is. Undefined of what cannot be read.
+   */
+  async summaryOf(place: { readonly dir: string }): Promise<{ at?: number; bytes: number }> {
+    const gitdir = this.#gitdir(place);
+    let bytes = 0;
+    const walk = async (folder: string) => {
+      for (const name of await this.#disk.readdir(folder).catch(() => [] as string[])) {
+        const stat = await this.#disk.stat(join(folder, name)).catch(() => undefined);
+        if (stat?.isDirectory()) await walk(join(folder, name));
+        else if (stat) bytes += stat.size;
+      }
+    };
+    await walk(gitdir);
+    const tip = await this.tipOf(place);
+    const commit =
+      tip === undefined
+        ? undefined
+        : await new Objects(gitdir, this.#disk, this.#platform).commit(tip).catch(() => undefined);
+    return { ...(commit?.at !== undefined && { at: commit.at }), bytes };
   }
 
   /** The repositories in `repos/`, each with what it says of itself. */

@@ -174,7 +174,7 @@ export interface RepositoryStatus {
   /** A short word about the pause or the last failure. */
   readonly detail?: string;
   /** Why archives fail now, where it is something people know a word for: the disk is full. */
-  readonly failure?: "diskFull";
+  readonly failure?: "diskFull" | "reposUnreachable";
   /** An archive is waiting or running. */
   readonly archiving: boolean;
   readonly lastArchive?: {
@@ -277,6 +277,9 @@ export interface LocalRepositoryShown {
   /** The project it has, as its animaquill.json says. */
   readonly name: string;
   readonly project: string;
+  /** When it was last archived into (its last commit), milliseconds since 1970, and its size. */
+  readonly archivedAt?: number;
+  readonly bytes: number;
 }
 
 /** A repository restored as a project of the platform, see `RepositoryService.restore`. */
@@ -1226,7 +1229,14 @@ export class RepositoryService {
       const session = local.open({ provider: "local", repoId: 0, dir: repo.dir });
       try {
         const manifest = await this.#manifestIn(session, repo.dir);
-        repositories.push({ dir: repo.dir, name: manifest.name, project: manifest.id });
+        const summary = await local.summaryOf(repo);
+        repositories.push({
+          dir: repo.dir,
+          name: manifest.name,
+          project: manifest.id,
+          ...(summary.at !== undefined && { archivedAt: summary.at }),
+          bytes: summary.bytes,
+        });
       } catch {
         // Nothing to restore of it, or it does not read: not listed.
       } finally {
@@ -1436,7 +1446,10 @@ export class RepositoryService {
         },
       }),
       ...(link.detail && { detail: link.detail }),
-      ...(link.transientSince && link.detail === "diskFull" && { failure: "diskFull" as const }),
+      ...(link.transientSince &&
+        (link.detail === "diskFull" || link.detail === "reposUnreachable") && {
+          failure: link.detail,
+        }),
       archiving: link.requestedAt !== null || (await this.#options.isQueued(projectId)),
       ...(last && {
         lastArchive: {

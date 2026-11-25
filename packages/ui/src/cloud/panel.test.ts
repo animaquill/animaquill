@@ -714,7 +714,9 @@ describe("a repository of the server's own", () => {
   it("is said so, offers the command that clones it, and no other repository to choose", () => {
     const panel = cloudPanel(local(), t);
     expect(panel.local).toBe(true);
-    expect(line(rowOf(panel, "repository"))).toBe("仓库  服务器上的本机 Git 仓库 [复制克隆命令]");
+    expect(line(rowOf(panel, "repository"))).toBe(
+      "仓库  服务器上的本机 Git 仓库 · 克隆命令要在放着服务器数据的那台机器上运行；服务器在 Docker 里时，把路径换成数据卷挂载出来的路径。 [复制克隆命令]",
+    );
     expect(ids(panel).bottom).not.toContain("switchRepository");
     expect(githubText(panel.github!, t)).toBe("已同步");
   });
@@ -738,6 +740,16 @@ describe("a repository of the server's own", () => {
     );
     expect(panel.github).toMatchObject({ kind: "error", cause: "diskFull", local: true });
     expect(githubText(panel.github!, t)).toBe("服务器磁盘快满了，存档先停着");
+  });
+
+  it("a folder of repositories that cannot be read says so: the data volume, not the project", () => {
+    const panel = cloudPanel(
+      local({ failure: "reposUnreachable", failures: 1, retryAt: NOW + MINUTE }),
+      t,
+    );
+    expect(panel.github).toMatchObject({ kind: "error", cause: "reposUnreachable" });
+    expect(githubText(panel.github!, t)).toBe("服务器上放存档的文件夹读不到（数据盘没挂上？）");
+    expect(panel.github?.fix).toContain("项目的改动都还在服务器上");
   });
 
   it("a repository on GitHub says what it always said", () => {

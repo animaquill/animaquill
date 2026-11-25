@@ -6,7 +6,7 @@ import {
   CloudOff,
   Download,
   GitBranch,
-  HardDrive,
+  Server,
   Pause,
   RefreshCw,
   TriangleAlert,
@@ -775,7 +775,7 @@ function SaveStatuses({
                 {isError ? (
                   <CircleAlert size={12} aria-hidden="true" />
                 ) : panel.local ? (
-                  <HardDrive size={12} aria-hidden="true" />
+                  <Server size={12} aria-hidden="true" />
                 ) : (
                   <GitBranch size={12} aria-hidden="true" />
                 )}

@@ -112,7 +112,8 @@ export function GitHubRow({ before }: { readonly before?: () => Promise<unknown>
   const installed = who.status === "signedIn" && who.appInstalled;
   const repositories = useRepositoryCount(installed);
   const [busy, setBusy] = useState(false);
-  if (who.status !== "signedIn") return null;
+  // Not on a server that saves projects to repositories of its own: there is no App there.
+  if (who.status !== "signedIn" || who.repositories === "local") return null;
   const name = who.name;
   const install = async () => {
     setBusy(true);

@@ -16,6 +16,7 @@ import {
   Settings,
   Star,
   TriangleAlert,
+  Server,
 } from "lucide-react";
 import {
   useCallback,
@@ -673,7 +674,7 @@ function NewCards({
           {(situation.localRepositories ?? 0) > 0 &&
             card(
               "restoreLocal",
-              HardDrive,
+              Server,
               t("start.menu.restoreLocal"),
               t("start.new.restoreLocalAbout", { count: situation.localRepositories }),
             )}

@@ -312,7 +312,13 @@ describe.skipIf(!TEST_DATABASE || !hasGit)(
       });
       const listed = await restoring.localRepositories(user());
       expect(listed.repositories).toEqual([
-        { dir: `repos/${m.project}.git`, name: "片子", project: expect.any(String) },
+        {
+          dir: `repos/${m.project}.git`,
+          name: "片子",
+          project: expect.any(String),
+          archivedAt: expect.any(Number),
+          bytes: expect.any(Number),
+        },
       ]);
       const someoneElse = { userId: "0190a000-0000-7000-8000-0000000000ff" } as SignedIn;
       expect((await restoring.localRepositories(someoneElse)).repositories).toEqual([]);

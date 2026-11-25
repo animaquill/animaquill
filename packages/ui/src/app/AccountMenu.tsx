@@ -45,13 +45,23 @@ export function AccountMenu({ account }: { readonly account: AccountAccess }) {
       groups={() => [
         [
           { id: "account.name", label: t("account.name", words), run: () => {}, disabled: true },
-          snapshot.appInstalled
-            ? { id: "account.app", label: t("account.appInstalled"), run: () => {}, disabled: true }
-            : {
-                id: "account.app",
-                label: t("account.installApp"),
-                run: () => void workbench.installApp(),
-              },
+          // A server that saves projects to repositories of its own has no App to install.
+          ...(snapshot.repositories === "local"
+            ? []
+            : [
+                snapshot.appInstalled
+                  ? {
+                      id: "account.app",
+                      label: t("account.appInstalled"),
+                      run: () => {},
+                      disabled: true,
+                    }
+                  : {
+                      id: "account.app",
+                      label: t("account.installApp"),
+                      run: () => void workbench.installApp(),
+                    },
+              ]),
         ],
         [
           {
