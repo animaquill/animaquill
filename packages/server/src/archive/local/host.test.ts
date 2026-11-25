@@ -145,6 +145,23 @@ describe.skipIf(!hasGit)("with a real Git", () => {
     expect(head.status).toBe("identical");
   });
 
+  test("a session that read a pack reads on after git gc put the objects into another", async () => {
+    const session = host.open(PLACE);
+    const { sha: first } = await archive(session, { "a.txt": "a" });
+    git(gitdir(), "gc", "--quiet", "--prune=now");
+    const reader = host.open(PLACE);
+    const firstTree = (await reader.commit(first))!.tree;
+    expect((await reader.tree(firstTree)).length).toBeGreaterThan(0);
+    // More archives, packed again: the pack the reader knows goes away.
+    const { sha: second } = await archive(host.open(PLACE), { "b.txt": "b" });
+    git(gitdir(), "repack", "-a", "-d", "--quiet");
+    git(gitdir(), "prune-packed");
+    const secondTree = (await reader.commit(second))!.tree;
+    expect(
+      (await reader.tree(secondTree, { recursive: true })).map((entry) => entry.path),
+    ).toContain("b.txt");
+  });
+
   test("a lock Git holds keeps the branch as it is; one left by a crash goes", async () => {
     const session = host.open(PLACE);
     const { sha } = await archive(session, { "animaquill.json": "{}" });
@@ -237,6 +254,32 @@ describe("a disk that fails", () => {
     const { moved } = await archive(busy.open(PLACE), { "a.txt": "a" });
     expect(moved).toBe("moved");
     expect(refusals).toBeLessThan(0);
+  });
+
+  test("a lock that cannot be made for another reason than being there is left as it is", async () => {
+    const { sha: base } = await archive(host.open(PLACE), { "a.txt": "a" });
+    // Someone else's lock, and a disk that refuses (as Windows does while another program has it).
+    const lock = join(gitdir(), "refs/heads/main.lock");
+    writeFileSync(lock, "");
+    const refusing = new LocalGitRepoHost({
+      dataDir,
+      log: quiet,
+      disk: failing((op, path) =>
+        op === "writeFile" && path.endsWith("main.lock") ? errno("EPERM") : undefined,
+      ),
+    });
+    const session = refusing.open(PLACE);
+    const tree = (await session.commit(base))!.tree;
+    const next = await session.writeCommit({
+      tree,
+      parents: [base],
+      message: "x",
+      author: AUTHOR,
+      at: AT,
+    });
+    await expect(session.advance("main", next)).rejects.toMatchObject({ code: "EPERM" });
+    expect(existsSync(lock)).toBe(true);
+    expect(await host.open(PLACE).tip("main")).toBe(base);
   });
 
   test("two sessions moving the branch at once: one moves it, the other is behind", async () => {

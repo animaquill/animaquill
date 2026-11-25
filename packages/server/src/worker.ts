@@ -130,7 +130,8 @@ export const startWorker = (config: Config, parts: WorkerParts): Worker => {
       try {
         await parts.beforeMigrate?.(database.db);
         await database.migrate();
-        const local = "local" in parts ? parts.local : await startLocalRepos(config, log);
+        const local =
+          "local" in parts ? parts.local : await startLocalRepos(config, log, database.db);
         hosts = new RepoHosts({ github, local });
         jobs = await startJobs(config.database, log);
         // What an archive finds changed in the repository, the API merges into the working copy.

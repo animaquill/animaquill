@@ -111,15 +111,29 @@ export const parseCommit = (data: Buffer, sha: string): CommitObject => {
   return { tree, parents, message: split < 0 ? "" : text.slice(split + 2) };
 };
 
-/** A failure of reading that the disk had now, not the repository: tried again later. */
-const TRANSIENT = new Set(["EIO", "EMFILE", "ENFILE", "EAGAIN", "EBUSY", "ETIMEDOUT", "ENOMEM"]);
+/**
+ * A failure of reading that the disk or the server had now, not the repository: tried again later.
+ * Not being let read (EACCES, EPERM) is a matter of who owns the files, which people put right.
+ */
+const TRANSIENT = new Set([
+  "EIO",
+  "EMFILE",
+  "ENFILE",
+  "EAGAIN",
+  "EBUSY",
+  "ETIMEDOUT",
+  "ENOMEM",
+  "EACCES",
+  "EPERM",
+]);
 
 /** The objects of one repository, for one session: packs read once are kept meanwhile. */
 export class Objects {
   readonly #gitdir: string;
   readonly #disk: Disk;
   readonly #platform: NodeJS.Platform;
-  readonly #cache: object = {};
+  /** What isomorphic-git keeps of the packs it read: new after a pack went, as `git gc` does. */
+  #cache: object = {};
   /** What this session read already, checked. */
   readonly #read = new Map<string, GitObject>();
 
@@ -138,14 +152,25 @@ export class Objects {
     const known = this.#read.get(sha);
     if (known) return known;
     let found: { type?: string; object: unknown };
-    try {
-      found = await readObject({
+    const read = () =>
+      readObject({
         fs: nodeFs,
         gitdir: this.#gitdir,
         oid: sha,
         format: "content",
         cache: this.#cache,
       });
+    try {
+      try {
+        found = await read();
+      } catch (error) {
+        // A pack that went meanwhile, as `git gc` puts objects into a new one: read again, with
+        // the packs as they are now.
+        if (codeOf(error) !== "ENOENT" && (error as { code?: unknown }).code !== "NotFoundError")
+          throw error;
+        this.#cache = {};
+        found = await read();
+      }
     } catch (error) {
       if ((error as { code?: unknown }).code === "NotFoundError") return undefined;
       const code = codeOf(error);

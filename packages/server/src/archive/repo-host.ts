@@ -60,7 +60,8 @@ export const placeOf = (row: RepoRow): RepoPlace => {
 /**
  * What a repository is called where the project says where the files of its assets are (the `repo`
  * of a place in Git LFS, core/src/places.ts): its number on GitHub, as ever; `local:<number>` for
- * one of the server's own, which no number on GitHub can be.
+ * one of the server's own, which no number on GitHub can be. The editor says it the same way
+ * (`repoHereOf` of @animaquill/host, which this does not import: it is of the browser).
  */
 export const hereOf = (link: {
   readonly provider: RepoProvider;

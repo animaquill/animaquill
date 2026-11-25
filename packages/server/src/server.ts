@@ -254,7 +254,8 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
         await setUpArchiveQueues(jobs);
         await setUpLfsQueues(jobs);
         await setUpRebuildQueues(jobs);
-        const local = "local" in parts ? parts.local : await startLocalRepos(config, log);
+        const local =
+          "local" in parts ? parts.local : await startLocalRepos(config, log, database.db);
         const githubApp = appOf();
         const github =
           githubApp &&

@@ -24,6 +24,7 @@ import {
   type StoragePersistence,
   type WindowMemory,
   type LocalRepository,
+  repoHereOf,
 } from "@animaquill/host";
 import { isSameHash } from "@animaquill/media";
 import type { TFunction } from "i18next";
@@ -299,7 +300,7 @@ const sameRepository = (
 ): boolean =>
   a === b ||
   (a !== null && a !== undefined && b !== null && b !== undefined
-    ? a.id === b.id && a.fullName === b.fullName
+    ? a.id === b.id && a.fullName === b.fullName && a.place === b.place
     : false);
 
 export class CloudProjects {
@@ -678,7 +679,14 @@ export class CloudProjects {
       }
       const { repository: saved } = status;
       // What a list says about it while the platform cannot be asked.
-      if (saved) this.#remember(link, { repository: { id: saved.id, fullName: saved.fullName } });
+      if (saved)
+        this.#remember(link, {
+          repository: {
+            id: saved.id,
+            fullName: saved.fullName,
+            ...(saved.place === "local" && { place: "local" as const }),
+          },
+        });
       else if (status.state === "none") this.#remember(link, { repository: null });
     });
     this.#stopSession = () => {
@@ -2295,7 +2303,7 @@ export class CloudProjects {
   #hereOf(link: CloudLink): Here {
     const who = this.#options.account?.getSnapshot();
     return {
-      repo: link.repository ? String(link.repository.id) : undefined,
+      repo: link.repository ? repoHereOf(link.repository) : undefined,
       owner: link.owner ?? (who?.status === "signedIn" ? who.id : undefined),
     };
   }

@@ -113,6 +113,11 @@ const metaOf = (config: string): LocalRepoMeta => {
   return meta;
 };
 
+/** `repos/` is not there, where projects were archived into it: see `prepare`. */
+export class ReposMissing extends Error {
+  override name = "ReposMissing";
+}
+
 export class LocalGitRepoHost implements RepoHost<LocalPlace> {
   readonly dataDir: string;
   readonly #log: Logger;
@@ -143,11 +148,14 @@ export class LocalGitRepoHost implements RepoHost<LocalPlace> {
    * only while it is empty (and marked then), as a folder of repositories without the mark is not
    * known to be the one the server wrote. Resolves to what it found, or rejects with why not.
    */
-  async prepare(): Promise<"made" | "found"> {
+  async prepare(options: { readonly mayMake?: boolean } = {}): Promise<"made" | "found"> {
     const root = this.#root;
     const mark = join(root, REPOS_MARK);
     if (await this.#disk.stat(mark)) return "found";
     const there = await this.#disk.stat(root);
+    // Repositories are known to be here, and the folder is not: a volume that is not there yet.
+    if (!there && options.mayMake === false)
+      throw new ReposMissing(`${root} is not there, and projects were archived into it`);
     if (there) {
       const names = (await this.#disk.readdir(root)).filter((name) => name !== REPOS_MARK);
       if (names.length > 0)

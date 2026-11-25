@@ -266,6 +266,10 @@ export interface RepositoryStatus {
   };
 }
 
+/** Whether two rows of `project_repos` are of the same repository. */
+const sameAs = (a: Link, b: Link) =>
+  a.provider === b.provider && a.repoId === b.repoId && a.localDir === b.localDir;
+
 /** A repository of the server's own that people can restore, see `localRepositories`. */
 export interface LocalRepositoryShown {
   /** Its folder, from the data folder: what restoring names it by. */
@@ -1295,6 +1299,15 @@ export class RepositoryService {
     if (!local) throw new RepositoryRefused("unavailable", 503);
     const dir = link.localDir;
     const done = await withLock(this.#options.db, ARCHIVE_LOCK, projectId, async () => {
+      // As it is now that nothing else works on it: put right meanwhile, it stays as it is.
+      const still = await linkOf(this.#options.db, projectId);
+      if (
+        !still ||
+        !sameAs(still, link) ||
+        still.state !== "paused" ||
+        (still.pauseReason !== "gone" && still.pauseReason !== "broken")
+      )
+        throw new RepositoryRefused("notBroken", 409);
       const now = this.#now();
       try {
         await local.putAside({ dir }, now);
@@ -1303,7 +1316,7 @@ export class RepositoryService {
         throw new RepositoryRefused("unavailable", 503);
       }
       await this.#options.db.transaction(async (tx) => {
-        await tx.delete(projectRepos).where(sameLink(link));
+        await tx.delete(projectRepos).where(sameLink(still));
         await linkLocal(tx, { projectId, userId: user.userId, at: now, dir });
         // Nothing of the repository before waits for people any more.
         await tx

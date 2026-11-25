@@ -56,6 +56,7 @@ import {
   memoryChatImages,
   memoryKeys,
   newSyncId,
+  repoHereOf,
   type LeftOver,
   type DownloadStore,
   type ProjectSummary,
@@ -296,11 +297,13 @@ export class Workbench {
    */
   readonly here: HereOf = () => {
     const cloud = this.cloud?.getSnapshot();
-    const id =
-      cloud?.kind === "linked" ? cloud.repository?.getSnapshot().status?.repository?.id : undefined;
-    if (id === undefined) return undefined;
-    // The same object while it is the same, as what is worked out from it is kept by it.
-    if (this.#here?.repo !== String(id)) this.#here = { repo: String(id) };
+    const repository =
+      cloud?.kind === "linked" ? cloud.repository?.getSnapshot().status?.repository : undefined;
+    if (repository === undefined) return undefined;
+    // The same object while it is the same, as what is worked out from it is kept by it, and as
+    // the server says it (`local:<number>` for a repository of its own).
+    const repo = repoHereOf(repository);
+    if (this.#here?.repo !== repo) this.#here = { repo };
     return this.#here;
   };
   #here: { readonly repo: string } | undefined;

@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   existsSync,
@@ -25,9 +26,11 @@ import {
 } from "../test/database.ts";
 import { openedOf } from "./sealed.ts";
 import { SERVER_MIGRATIONS } from "../database.ts";
+import { LocalGitRepoHost } from "../archive/local/host.ts";
 import {
   DataRefused,
   exportData,
+  exportRepos,
   importData,
   migrationsOfCode,
   readManifest,
@@ -291,16 +294,40 @@ describe.skipIf(!TEST_DATABASE)("the data of the server, out and in again", () =
     }
   });
 
+  /** A data folder with a repository of the server's own that has a commit, as archives make. */
+  const withRepository = async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "aq-data-dir-"));
+    const host = new LocalGitRepoHost({ dataDir, log: { info() {}, warn() {}, error() {} } });
+    await host.prepare();
+    const place = { provider: "local" as const, repoId: 1, dir: "repos/p1.git" };
+    await host.create(place, "p1", {});
+    const session = host.open(place);
+    const author = { name: "a", email: "a@example.com" };
+    await session.start({ path: "animaquill.json", text: "{}" }, "开始存档", author, new Date());
+    /** Another archive: a tree on the tip's, a commit, the branch moved. */
+    const archive = async (text: string) => {
+      const tip = (await session.tip("main"))!;
+      const tree = await session.writeTree((await session.commit(tip))!.tree, [
+        { path: "code/a.js", text },
+      ]);
+      const sha = await session.writeCommit({
+        tree,
+        parents: [tip],
+        message: "存档",
+        author,
+        at: new Date(),
+      });
+      expect(await session.advance("main", sha)).toBe("moved");
+      return sha;
+    };
+    return { dataDir, repos: join(dataDir, "repos"), gitdir: host.pathOf(place), archive };
+  };
+
   test("takes the repositories of the server's own along, after the tables, and the numbers of the sequences", async () => {
     // Repositories as the server keeps them, with what a crash leaves half written.
-    const dataDir = mkdtempSync(join(tmpdir(), "aq-data-dir-"));
-    const repos = join(dataDir, "repos");
-    mkdirSync(join(repos, "p1.git", "refs", "heads"), { recursive: true });
+    const { dataDir, repos } = await withRepository();
     mkdirSync(join(repos, "p1.git", "objects", "ab"), { recursive: true });
     mkdirSync(join(repos, "broken", "p0-20261110T080000Z.git"), { recursive: true });
-    writeFileSync(join(repos, ".animaquill-repos"), "mark\n");
-    writeFileSync(join(repos, "p1.git", "HEAD"), "ref: refs/heads/main\n");
-    writeFileSync(join(repos, "p1.git", "refs", "heads", "main"), `${"a".repeat(40)}\n`);
     writeFileSync(join(repos, "p1.git", "refs", "heads", "main.lock"), "");
     writeFileSync(join(repos, "p1.git", "objects", "ab", "cdef"), randomBytes(100));
     writeFileSync(join(repos, "p1.git", "objects", "ab", "tmp_obj_123"), "half");
@@ -317,13 +344,15 @@ describe.skipIf(!TEST_DATABASE)("the data of the server, out and in again", () =
       await client.end();
     }
     expect(manifest.sequences?.["public.local_repo_ids"]).toBeGreaterThanOrEqual(3);
-    expect(manifest.repos).toMatchObject({ files: 5 });
+    expect(manifest.repos?.files).toBeGreaterThan(5);
     const list = JSON.parse(readFileSync(join(dir, "repos.json"), "utf8")) as {
       files: { path: string }[];
     };
     const paths = list.files.map((file) => file.path);
     // What names commits first, the objects last; nothing half written.
-    expect(paths.at(-1)).toBe("p1.git/objects/ab/cdef");
+    const firstObject = paths.findIndex((path) => path.includes("/objects/"));
+    expect(paths.slice(firstObject).every((path) => path.includes("/objects/"))).toBe(true);
+    expect(paths).toContain("p1.git/refs/heads/main");
     expect(paths).not.toContain("p1.git/refs/heads/main.lock");
     expect(paths.some((path) => path.includes("tmp_obj_"))).toBe(false);
     expect(paths).toContain("broken/p0-20261110T080000Z.git/HEAD");
@@ -373,6 +402,66 @@ describe.skipIf(!TEST_DATABASE)("the data of the server, out and in again", () =
       expect(existsSync(join(dir, "repos.json"))).toBe(false);
     } finally {
       await client.end();
+    }
+  });
+
+  test("an archive while the repositories are copied: the copy has what its branch names, and Git reads it", async () => {
+    const { dataDir, gitdir, archive } = await withRepository();
+    const before = await archive("a\n");
+    const dir = join(mkdtempSync(join(tmpdir(), "aq-data-")), "export");
+    mkdirSync(dir, { mode: 0o700 });
+    let after: string | undefined;
+    await exportRepos(dataDir, dir, {
+      afterRefs: async () => {
+        after = await archive("b\n");
+      },
+    });
+    expect(after).toBeDefined();
+    const copy = join(dir, "repos", "p1.git");
+    expect(readFileSync(join(copy, "refs", "heads", "main"), "utf8").trim()).toBe(before);
+    expect(readFileSync(join(gitdir, "refs", "heads", "main"), "utf8").trim()).toBe(after);
+    if (spawnSync("git", ["--version"]).status === 0) {
+      const fsck = spawnSync("git", ["-C", copy, "fsck", "--strict", "--no-dangling"], {
+        encoding: "utf8",
+      });
+      expect(fsck.status, fsck.stderr).toBe(0);
+    }
+  });
+
+  test("a copy whose branch names what is not in it fails the export, and says which", async () => {
+    const { dataDir, repos } = await withRepository();
+    writeFileSync(join(repos, "p1.git", "refs", "heads", "main"), `${"b".repeat(40)}\n`);
+    const dir = join(mkdtempSync(join(tmpdir(), "aq-data-")), "export");
+    mkdirSync(dir, { mode: 0o700 });
+    await expect(exportRepos(dataDir, dir)).rejects.toThrow(/repos\/p1\.git \(main b+\)/);
+  });
+
+  test("an import refused for anything about the database leaves no repositories behind", async () => {
+    const { dataDir } = await withRepository();
+    const dir = tempDir();
+    const client = await connection(from);
+    try {
+      await exportData(client, dir, { server: "test", dataDir });
+    } finally {
+      await client.end();
+    }
+    const target = mkdtempSync(join(tmpdir(), "aq-data-dir-"));
+    // Another scope, and a database that is not empty.
+    const into = await fresh();
+    const inClient = await connection(into);
+    try {
+      await expect(
+        importData(inClient, dir, {
+          dataDir: target,
+          scope: { schemas: ["public", "other"], migrations: ["__drizzle_migrations"] },
+        }),
+      ).rejects.toBeInstanceOf(DataRefused);
+      expect(existsSync(join(target, "repos"))).toBe(false);
+      await inClient.query("insert into users (github_id, login) values (1, 'here')");
+      await expect(importData(inClient, dir, { dataDir: target })).rejects.toThrow(/not empty/);
+      expect(existsSync(join(target, "repos"))).toBe(false);
+    } finally {
+      await inClient.end();
     }
   });
 });

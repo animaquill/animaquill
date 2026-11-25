@@ -1417,6 +1417,16 @@ export type RepositoryPlace = "github" | "local";
  * Where people see a repository on GitHub: only for one that is there, and only where the platform
  * says. A repository of the server's own has no page.
  */
+/**
+ * What a repository is called where a project says where the files of its assets are (the `repo`
+ * of a place in Git LFS, `Here`): its number on GitHub; `local:<number>` for one of the server's
+ * own, which no number on GitHub can be. The server says it the same way.
+ */
+export const repoHereOf = (repository: {
+  readonly place?: RepositoryPlace | undefined;
+  readonly id: number;
+}): string => (repository.place === "local" ? `local:${repository.id}` : String(repository.id));
+
 export const gitHubUrlOf = (
   repository: RepositoryStatus["repository"] | undefined,
 ): string | undefined =>
@@ -2096,6 +2106,8 @@ export interface CloudLinkRepository {
   /** Its number on the Git platform, which stays as it is renamed. */
   readonly id: number;
   readonly fullName: string;
+  /** "local": a repository of the server's own. Missing: on GitHub. */
+  readonly place?: "local";
 }
 
 /** How a link moves forward, and what it remembers from now on, see `CloudLinks.update`. */

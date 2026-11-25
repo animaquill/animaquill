@@ -13,6 +13,9 @@ import {
 import { dirname, isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
 import { readMigrationFiles } from "drizzle-orm/migrator";
+import { nodeDisk } from "../archive/local/disk.ts";
+import { Objects, isTreeMode } from "../archive/local/objects.ts";
+import { readRef } from "../archive/local/refs.ts";
 import type pg from "pg";
 
 /**
@@ -502,7 +505,7 @@ export const exportData = async (
   }
   // After the snapshot of the tables: a repository newer than the database that comes back with
   // it is merged as changes in the repository, never one older that misses what it has.
-  const repos = options.dataDir === undefined ? undefined : exportRepos(options.dataDir, dir);
+  const repos = options.dataDir === undefined ? undefined : await exportRepos(options.dataDir, dir);
   return finishExport(dir, { ...of, ...(repos && { repos }) });
 };
 
@@ -533,34 +536,58 @@ const isTemporary = (name: string) =>
 
 /**
  * Copies the repositories of the server's own into `repos/` of an export, as Git can be copied
- * while it is written: what names commits first (refs, packed-refs, HEAD, config, logs), then the
- * objects, which are only ever added, so that every commit a branch of the copy names is in it.
- * Half-written files stay behind. Undefined where the data folder has no repositories.
+ * while it is written: first what names commits (HEAD, refs, packed-refs, config, logs), then the
+ * objects, listed only after that, which are only ever added, so that every commit a branch of
+ * the copy names is in it. Half-written files stay behind. Last, the branch `main` of each
+ * repository in the copy is read from its commit down, and the export fails, saying which, where
+ * anything of it is not there (as after a `git gc` that packed objects away meanwhile). Undefined
+ * where the data folder has no repositories. `afterRefs`: for tests, what happens between the two.
  */
-export const exportRepos = (
+export const exportRepos = async (
   dataDir: string,
   dir: string,
-): { files: number; bytes: number; sha256: string } | undefined => {
+  hooks: { readonly afterRefs?: () => Promise<void> } = {},
+): Promise<{ files: number; bytes: number; sha256: string } | undefined> => {
   const from = join(dataDir, "repos");
   if (!existsSync(join(from, ".animaquill-repos"))) return undefined;
-  const all: string[] = [];
-  const walk = (folder: string, prefix: string) => {
-    for (const entry of readdirSync(folder, { withFileTypes: true }).toSorted((a, b) =>
-      a.name < b.name ? -1 : 1,
-    )) {
-      if (isTemporary(entry.name)) continue;
-      const path = prefix ? `${prefix}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) walk(join(folder, entry.name), path);
-      else if (entry.isFile()) all.push(path);
-    }
+  const isObjects = (path: string) => /(^|\/)objects$/.test(path);
+  /** The files of `repos/`, by their paths there: the objects, or all but them. */
+  const listed = (objects: boolean): string[] => {
+    const all: string[] = [];
+    const walk = (folder: string, prefix: string, inObjects: boolean) => {
+      let entries;
+      try {
+        entries = readdirSync(folder, { withFileTypes: true });
+      } catch (error) {
+        // A folder of objects that `git gc` took away meanwhile.
+        if ((error as { code?: unknown }).code === "ENOENT" && inObjects) return;
+        throw error;
+      }
+      for (const entry of entries.toSorted((a, b) => (a.name < b.name ? -1 : 1))) {
+        if (isTemporary(entry.name)) continue;
+        const path = prefix ? `${prefix}/${entry.name}` : entry.name;
+        const within = inObjects || (entry.isDirectory() && isObjects(path));
+        // Not into the objects while listing the rest; through everything else for the objects.
+        if (entry.isDirectory()) {
+          if (objects || !within) walk(join(folder, entry.name), path, within);
+        } else if (entry.isFile() && within === objects) all.push(path);
+      }
+    };
+    walk(from, "", false);
+    return all;
   };
-  walk(from, "");
-  const isObject = (path: string) => /(^|\/)objects\//.test(path);
-  const ordered = [...all.filter((path) => !isObject(path)), ...all.filter(isObject)];
   const files: { path: string; size: number; sha256: string }[] = [];
   let bytes = 0;
-  for (const path of ordered) {
-    const content = readFileSync(join(from, path));
+  const copy = (path: string, mayBeGone: boolean) => {
+    let content: Buffer;
+    try {
+      content = readFileSync(join(from, path));
+    } catch (error) {
+      // A loose object `git gc` packed meanwhile: the pack it went into is listed too, or the
+      // check below says what is missing.
+      if (mayBeGone && (error as { code?: unknown }).code === "ENOENT") return;
+      throw error;
+    }
     const target = join(dir, "repos", path);
     mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
     writeFileSync(target, content, { mode: 0o600 });
@@ -570,7 +597,40 @@ export const exportRepos = (
       sha256: createHash("sha256").update(content).digest("hex"),
     });
     bytes += content.length;
+  };
+  for (const path of listed(false)) copy(path, false);
+  await hooks.afterRefs?.();
+  for (const path of listed(true)) copy(path, true);
+  // Each repository of the copy: its branch names a commit that is there, with all of its tree.
+  const copied = join(dir, "repos");
+  const missing: string[] = [];
+  for (const name of readdirSync(copied).filter((each) => each.endsWith(".git"))) {
+    const gitdir = join(copied, name);
+    const tip = await readRef(nodeDisk(), gitdir, "refs/heads/main").catch(() => undefined);
+    if (tip === undefined) continue;
+    const objects = new Objects(gitdir, nodeDisk(), process.platform);
+    const whole = async (): Promise<boolean> => {
+      const commit = await objects.commit(tip);
+      if (!commit) return false;
+      const walk = async (tree: string): Promise<boolean> => {
+        if (!(await objects.find(tree))) return false;
+        for (const item of await objects.tree(tree)) {
+          if (item.mode === "160000") continue;
+          if (isTreeMode(item.mode)) {
+            if (!(await walk(item.sha))) return false;
+          } else if (!(await objects.find(item.sha))) return false;
+        }
+        return true;
+      };
+      return walk(commit.tree);
+    };
+    const ok = await whole().catch(() => false);
+    if (!ok) missing.push(`repos/${name} (main ${tip})`);
   }
+  if (missing.length > 0)
+    throw new DataRefused(
+      `the copy of these repositories misses what their branch names, as when Git rewrote them meanwhile: ${missing.join(", ")}; export again`,
+    );
   const list = `${JSON.stringify({ files } satisfies ReposList)}\n`;
   writePrivate(join(dir, "repos.json"), list);
   return { files: files.length, bytes, sha256: createHash("sha256").update(list).digest("hex") };
@@ -708,19 +768,17 @@ export const importData = async (
   options: {
     readonly scope?: DataScope;
     /**
-     * The data folder of this server, where the repositories of the export go (`importRepos`),
-     * before the tables, and away again where the tables do not go in. Left where they are unless
-     * said.
+     * The data folder of this server, where the repositories of the export go (`importRepos`):
+     * once everything about the database is checked, before the rows go in, and away again where
+     * they do not. Left where they are unless said.
      */
     readonly dataDir?: string | undefined;
   } = {},
 ): Promise<Manifest> => {
   const manifest = readManifest(dir);
   const scope = options.scope ?? SERVER_SCOPE;
-  const repos =
-    options.dataDir !== undefined && manifest.repos !== undefined
-      ? (importRepos(dir, options.dataDir, manifest), join(options.dataDir, "repos"))
-      : undefined;
+  /** The repositories this put into the data folder, which go again where the rest does not. */
+  let repos: string | undefined;
   if (!sameScope(scope, manifest.scope))
     throw new DataRefused(
       `the export is of other schemas (${manifest.scope.schemas.join(", ")}) than this server (${scope.schemas.join(", ")})`,
@@ -751,6 +809,11 @@ export const importData = async (
       );
       if (rows[0]?.any)
         throw new DataRefused(`${name} is not empty: import only into an empty database`);
+    }
+    // Only now that the database takes the export: what is put here goes again on any failure.
+    if (options.dataDir !== undefined && manifest.repos !== undefined) {
+      importRepos(dir, options.dataDir, manifest);
+      repos = join(options.dataDir, "repos");
     }
     const byName = new Map(manifest.tables.map((table) => [nameOf(table), table]));
     for (const name of await orderOf(client, [...here.keys()])) {

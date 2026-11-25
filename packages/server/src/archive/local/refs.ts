@@ -114,14 +114,19 @@ export const moveRef = async (
       await disk.writeFile(lock, new Uint8Array(), { exclusive: true });
       break;
     } catch (error) {
-      if (codeOf(error) !== "EEXIST") {
-        await disk.unlink(lock).catch(() => {});
-        throw diskError(error);
-      }
+      // Not made: it is someone else's, or not there, and either way not this one's to take away.
+      if (codeOf(error) !== "EEXIST") throw diskError(error);
+      if (attempt > LOCK_WAITS_MS.length * 2) return "behind";
       const stat = await disk.stat(lock);
       if (stat && now() - stat.mtimeMs > STALE_LOCK_MS) {
-        options.log.warn({ lock }, "a lock left behind by a crash goes");
-        await disk.unlink(lock).catch(() => {});
+        // Only the lock that was looked at: another writer can have taken it away and made one
+        // of its own meanwhile, which is not left behind.
+        const again = await disk.stat(lock);
+        if (again && again.ino === stat.ino && again.mtimeMs === stat.mtimeMs) {
+          options.log.warn({ lock }, "a lock left behind by a crash goes");
+          await disk.unlink(lock).catch(() => {});
+        }
+        // Made exclusively again: whoever gets it first has it.
         continue;
       }
       if (attempt >= LOCK_WAITS_MS.length) return "behind";

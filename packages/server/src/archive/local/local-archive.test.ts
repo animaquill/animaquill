@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ProjectStore, type CommandCall } from "@animaquill/core";
@@ -27,7 +27,8 @@ import { RepoHosts, type LocalPlace } from "../repo-host.ts";
 import { RepositoryService } from "../service.ts";
 import { pushedHere, verifyDue } from "./checks.ts";
 import { LocalGitRepoHost } from "./host.ts";
-import { linkUnlinked } from "./links.ts";
+import { linkUnlinked, startLocalRepos } from "./links.ts";
+import { loadConfig } from "../../config.ts";
 
 /**
  * Projects saved to repositories of the server's own, on a database: linked as they are made,
@@ -334,6 +335,33 @@ describe.skipIf(!TEST_DATABASE || !hasGit)(
       });
       expect(await rebuilder.run(restored.project.id)).toMatchObject({ kind: "rebuilt" });
       expect((await restoring.localRepositories(user())).repositories).toEqual([]);
+    });
+
+    test("projects were archived here and repos/ is not there: nothing is made in its place", async () => {
+      const m = await made();
+      await archiver().run(m.project, "first");
+      rmSync(join(dataDir, "repos"), { recursive: true, force: true });
+      const said: string[] = [];
+      const log = {
+        ...quiet,
+        error: (_: object, message?: string) => void said.push(message ?? ""),
+      };
+      const config = loadConfig({ AQ_DATA_DIR: dataDir }, () => undefined);
+      const started = await startLocalRepos(config, log, t.db);
+      expect(started).toBeDefined();
+      expect(existsSync(join(dataDir, "repos"))).toBe(false);
+      expect(said.join(" ")).toContain("is the data volume mounted");
+      // Archives wait, as for a repository that cannot be reached now: never "gone".
+      const archiving = new Archiver({
+        db: t.db,
+        hosts: new RepoHosts({ local: started }),
+        exporter: new ProjectExporter({ heapMb: 256 }),
+        log: quiet,
+        now: () => w.time.now,
+      });
+      await m.window.change({ type: "file.write", params: { path: "code/c.js", text: "c\n" } });
+      expect(await archiving.run(m.project, "auto")).toMatchObject({ kind: "failed" });
+      expect(await linkRow(m.project)).toMatchObject({ state: "ready", pauseReason: null });
     });
   },
 );

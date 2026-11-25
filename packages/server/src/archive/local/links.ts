@@ -1,8 +1,8 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { localReposOn, type Config } from "../../config.ts";
 import type { Db, Executor, Logger } from "../../database.ts";
 import { projectRepos, projects } from "../../schema.ts";
-import { LocalGitRepoHost, localDirOf } from "./host.ts";
+import { LocalGitRepoHost, ReposMissing, localDirOf } from "./host.ts";
 
 /**
  * Projects saved to repositories of the server's own (`provider` "local"), where it keeps those and
@@ -93,14 +93,26 @@ export const linkUnlinked = async (db: Db, at: Date, log: Logger): Promise<numbe
 export const startLocalRepos = async (
   config: Config,
   log: Logger,
+  db?: Db,
 ): Promise<LocalGitRepoHost | undefined> => {
   if (!localReposOn(config)) {
     log.info({}, "repositories here are off: projects are saved to GitHub only");
     return undefined;
   }
   const host = new LocalGitRepoHost({ dataDir: config.dataDir, log });
+  // Projects were archived here: a folder that is not there is a volume that is not, never one to
+  // make anew, which would turn every repository into one that is gone.
+  const archivedHere =
+    db !== undefined &&
+    (
+      await db
+        .select({ id: projectRepos.projectId })
+        .from(projectRepos)
+        .where(and(eq(projectRepos.provider, "local"), isNotNull(projectRepos.headSha)))
+        .limit(1)
+    ).length > 0;
   try {
-    const found = await host.prepare();
+    const found = await host.prepare({ mayMake: !archivedHere });
     log.info(
       { repos: host.pathOf({ dir: "repos" }), found },
       found === "made"
@@ -109,6 +121,14 @@ export const startLocalRepos = async (
     );
     return host;
   } catch (error) {
+    if (error instanceof ReposMissing) {
+      // Kept on, so that archives say "cannot be reached now" until the volume is there.
+      log.error(
+        { repos: host.pathOf({ dir: "repos" }), err: String(error) },
+        "the folder of repositories here is not there: is the data volume mounted? Archives wait",
+      );
+      return host;
+    }
     log.error(
       { repos: host.pathOf({ dir: "repos" }), err: String(error) },
       "repositories here are off: the folder of repositories cannot be used",
