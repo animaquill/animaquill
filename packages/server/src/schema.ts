@@ -542,6 +542,11 @@ export type PauseReason =
   | "diverged"
   /** The repository is not there any more, or the App may not touch it now. */
   | "gone"
+  /**
+   * A repository of the server's own does not read as Git: an object is not what its name says, or
+   * not there (archive/local/). It is put aside as people start archiving over.
+   */
+  | "broken"
   /** The App is not installed on the account any more. */
   | "uninstalled"
   | "suspended"

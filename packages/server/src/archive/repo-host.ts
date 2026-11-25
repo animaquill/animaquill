@@ -67,8 +67,8 @@ export interface RepoInfo {
   readonly private: boolean;
   /** Archived on GitHub: read-only. */
   readonly archived: boolean;
-  /** Where people see it. */
-  readonly url: string;
+  /** Where people see it: only on GitHub. */
+  readonly url?: string;
 }
 
 export interface TreeEntry {
@@ -274,6 +274,11 @@ export class RepoHosts implements RepoHost {
     return (["github", "local"] as const).filter((provider) => this.has(provider));
   }
 
+  /** The repositories of the server's own, for what only they have (making one, restoring). */
+  get local(): RepoHost<LocalPlace> | undefined {
+    return this.#hosts.local;
+  }
+
   /** The host on GitHub, for what only GitHub has (people's repositories, installations). */
   get github(): RepoHost<GitHubPlace> | undefined {
     return this.#hosts.github;
@@ -315,7 +320,7 @@ const unhosted = (provider: RepoProvider): RepoSession => {
 };
 
 /** Why archiving into a repository has to wait for people to do something. */
-export type RepoTrouble = "gone" | "uninstalled" | "suspended" | "archived";
+export type RepoTrouble = "gone" | "uninstalled" | "suspended" | "archived" | "broken";
 
 /** The repository cannot be written now, and will not be until someone does something. */
 export class RepoPaused extends Error {
