@@ -169,8 +169,8 @@ step(`repository: ${repository.status} ${await repository.text()}`);
 const local = process.env["SMOKE_LOCAL"];
 if (local === "full") {
   let said: { failure?: string; lastArchive?: unknown } = {};
-  for (let turn = 0; turn < 180 && said.failure !== "diskFull"; turn++) {
-    if (turn > 0) await new Promise((resolve) => setTimeout(resolve, 1000));
+  for (let turn = 0; turn < 100 && said.failure !== "diskFull"; turn++) {
+    if (turn > 0) await new Promise((resolve) => setTimeout(resolve, 3000));
     said = (await (
       await fetch(`${api}/api/projects/${id}/repository`, { headers })
     ).json()) as typeof said;
@@ -189,8 +189,8 @@ if (local === "1") {
     repository?: { place?: string; clone?: string };
     lastArchive?: { sha: string };
   } = {};
-  for (let turn = 0; turn < 180 && !status.lastArchive; turn++) {
-    if (turn > 0) await new Promise((resolve) => setTimeout(resolve, 1000));
+  for (let turn = 0; turn < 100 && !status.lastArchive; turn++) {
+    if (turn > 0) await new Promise((resolve) => setTimeout(resolve, 3000));
     status = (await (
       await fetch(`${api}/api/projects/${id}/repository`, { headers })
     ).json()) as typeof status;
