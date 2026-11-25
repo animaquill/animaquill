@@ -4,13 +4,16 @@ import { LOCAL_NAMES } from "@animaquill/web/sites";
 
 /**
  * Which pages may take the calls of AI tools on this computer (docs/design/online-offline.md of
- * AnimaQuill Cloud, 5.2): the editor of `npx animaquill`, and editors people add, with
+ * AnimaQuill Cloud, 5.2): the editor of `npx animaquill`, the official site, and editors people add, with
  * `--allow-origin` or `animaquill mcp allow-origin <address>`, which keeps it in `mcp.json`. The
  * browser sends `Origin` and no page can make it say another. Only the editor itself: scenes run on
  * sites of their own next to it (`animaquill-scene-0.localhost`), and their code is the project's.
  */
 
 export const CONFIG_FILE = "mcp.json";
+
+/** The official editor site: taken without `allow-origin`, as that exact origin and no other. */
+export const OFFICIAL_EDITOR = "https://app.animaquill.com";
 
 /** The origin of an address, or undefined for one that is no http(s) site. */
 export function originOf(address: string): string | undefined {
@@ -89,7 +92,7 @@ export async function allowedOrigins(
     },
     has: (origin) => {
       if (origin === undefined || originOf(origin) !== origin) return false;
-      return set.has(origin) || isLocalEditor(origin);
+      return set.has(origin) || origin === OFFICIAL_EDITOR || isLocalEditor(origin);
     },
     async reload() {
       const config = await readConfig(home, true);

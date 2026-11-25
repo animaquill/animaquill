@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { WebSocket } from "ws";
 import { IdentityRefused, KEY_FILE, loadIdentity, type RelayIdentity } from "./identity.ts";
 import { ElectedLink } from "./link.ts";
-import { allowOrigin, allowedOrigins } from "./origins.ts";
+import { OFFICIAL_EDITOR, allowOrigin, allowedOrigins } from "./origins.ts";
 import { openCommand } from "../open-browser.ts";
 import { peerProof } from "./peer.ts";
 import { rememberOrigin } from "./state.ts";
@@ -90,6 +90,17 @@ describe("who the relay lets in", () => {
     expect(allowed.has("http://localhost:7651")).toBe(false);
     expect(allowed.has("null")).toBe(false);
     expect(allowed.has(undefined)).toBe(false);
+  });
+
+  it("takes the official editor site by default, that exact origin and nothing around it", async () => {
+    const allowed = await allowedOrigins(tempFolder());
+    const host = new URL(OFFICIAL_EDITOR).host;
+    expect(allowed.has(OFFICIAL_EDITOR)).toBe(true);
+    expect(allowed.has(`https://evil.${host}`)).toBe(false);
+    expect(allowed.has(`https://${host}.evil.test`)).toBe(false);
+    expect(allowed.has(`http://${host}`)).toBe(false);
+    expect(allowed.has(`${OFFICIAL_EDITOR}:8443`)).toBe(false);
+    expect(allowed.added).toEqual([]);
   });
 
   it("keeps an origin that people allow, for every process after", async () => {

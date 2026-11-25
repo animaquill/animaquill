@@ -75,7 +75,7 @@ Codex 默认只等服务器启动 10 秒，第一次要下载时可能来不及�
 
 - 编辑器要开着这个项目、连着电脑上的 AI 工具；没开时工具回一个错误，说要打开哪个项目。
 - AI 的改动马上出现在编辑器里，一个工具连续改的算一批，可以整批撤销。
-- 自己部署的编辑器要先让 AI 工具认它：`npx -y animaquill@latest mcp allow-origin <编辑器的网址>`（记在 `~/.animaquill/mcp.json`）。`npx animaquill` 的编辑器不用。
+- 官方站点和 `npx animaquill` 的编辑器不用先做什么；自己部署的编辑器要先让 AI 工具认它：`npx -y animaquill@latest mcp allow-origin <编辑器的网址>`（记在 `~/.animaquill/mcp.json`）。
 - 时间轴、片段和关键帧经 AnimaQuill 的工具改（它们检查格式和别人的改动）。离线项目的场景代码也可以直接用 AI 工具自己的文件工具改，编辑器会并入。新建的项目里有一份 `AGENTS.md`，Claude Code 和 Codex 打开文件夹时会读它。
 - 编辑器在后台标签页时读和改照常，看画面要把它切到前台。
 - `~/.animaquill/mcp-key` 是这台电脑上 `animaquill mcp` 的身份，编辑器靠它认出连过来的是你允许过的那个；只有你自己能读。
