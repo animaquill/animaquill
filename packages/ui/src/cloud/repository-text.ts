@@ -29,6 +29,7 @@ const PAUSES: ReadonlySet<string> = new Set<RepositoryPause>([
   "rewritten",
   "too-large",
   "unmerged",
+  "broken",
 ]);
 
 /**

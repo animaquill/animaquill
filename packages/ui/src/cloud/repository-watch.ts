@@ -334,6 +334,24 @@ export class RepositoryWatch {
    * Archives now. `replace`: for a pause because files changed on GitHub, the commit people saw
    * them on, which the archive goes on top of with the editor's content.
    */
+  /**
+   * Starts archiving over into a new repository of the server's own, for one gone or broken, see
+   * `RepositoryAccess.restart`.
+   */
+  async restart(): Promise<RestartOutcome> {
+    if (this.#closed) return { kind: "refused", code: "unavailable" };
+    const restart = this.#access.restart?.bind(this.#access);
+    if (!restart) return { kind: "refused", code: "unavailable" };
+    try {
+      this.take(await restart(this.project), { hurry: true });
+      return { kind: "started" };
+    } catch (error) {
+      if (this.#closed) return { kind: "refused", code: "unavailable" };
+      void this.refresh();
+      return { kind: "refused", code: troubleOf(error) };
+    }
+  }
+
   async archiveNow(options: { readonly replace?: string } = {}): Promise<ArchiveNowOutcome> {
     if (this.#closed) return { kind: "refused", code: "unavailable" };
     this.#env.clearTimeout(this.#archiveTimer);
@@ -363,6 +381,10 @@ export class RepositoryWatch {
     }
   }
 }
+
+/** What came of starting archiving over into a new repository of the server's own. */
+export type RestartOutcome =
+  { readonly kind: "started" } | { readonly kind: "refused"; readonly code: RepositoryTrouble };
 
 const troubleOf = (error: unknown): RepositoryTrouble => {
   if (error instanceof CloudSignedOut) return "signedOut";

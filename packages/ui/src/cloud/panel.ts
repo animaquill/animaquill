@@ -5,6 +5,7 @@ import {
   type RepositoryUnusable,
 } from "@animaquill/host";
 import type { TFunction } from "i18next";
+import { placedT } from "../i18n/i18n.ts";
 import type { CloudProjectsSnapshot, TakeBackState } from "./projects.ts";
 import {
   BRANCH_MENDS,
@@ -91,7 +92,12 @@ export type PanelActionId =
   | "wakeAsItIs"
   | "resolveStuck"
   /** Saves a copy of the project as a file, see `exportProject`. */
-  | "saveCopy";
+  | "saveCopy"
+  /** Copies what clones a repository of the server's own (`git clone …`). */
+  | "copyClone"
+  /** Archiving starts over into a new repository of the server's own, one gone or broken. */
+  | "recreateLocal"
+  | "restartLocal";
 
 export interface PanelAction {
   readonly id: PanelActionId;
@@ -137,6 +143,8 @@ export interface CloudPanel {
   /** How syncing and archiving are, as the status says them to whatever reads the page. */
   readonly sync: CloudState | undefined;
   readonly archive: RepositoryStatus["state"] | undefined;
+  /** The repository is one of the server's own, see `RepositoryStatus.repository.place`. */
+  readonly local?: true;
 }
 
 export interface PanelInput {
@@ -309,8 +317,10 @@ function archiveText(
   return before ?? next ?? t("cloud.panel.archive.never");
 }
 
-export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
+export function cloudPanel(input: PanelInput, given: TFunction): CloudPanel {
   const { now } = input;
+  // Said of a repository of the server's own once it is known to be one, see below.
+  let t = given;
   const title = t("cloud.panel.title", { name: input.name, ...plain });
   const action = (
     id: PanelActionId,
@@ -370,6 +380,8 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
   const watch = input.archive;
   const status = watch?.status;
   const repository = status?.repository;
+  const isLocal = repository?.place === "local";
+  t = placedT(given, isLocal ? "local" : undefined);
   const isStuck = state === "paused";
   const isPaused = status?.state === "paused";
   // One from before every project of the platform had a repository, or one whose connecting
@@ -433,6 +445,14 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
         row("repository", t("cloud.panel.repository.unfinished"), {
           notes: [t("cloud.panel.repository.unfinishedNote")],
           tone: "attention",
+        }),
+      );
+    } else if (repository && isLocal) {
+      const isStale = watch.trouble !== undefined && watch.trouble !== "signedOut";
+      rows.push(
+        row("repository", t("cloud.panel.repository.local"), {
+          ...(isStale && { notes: [t("cloud.panel.repository.stale")] }),
+          actions: repository.clone ? [action("copyClone")] : [],
         }),
       );
     } else if (repository) {
@@ -538,9 +558,14 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
       const detail = pauseDetail(status, t);
       const kept = keptText(status, t);
       // A repository that was deleted takes no archive again: another one is the way out.
-      const helps =
-        goneKind(status) === "deleted"
-          ? (["switchRepository"] as const)
+      const helps: readonly PanelActionId[] = isLocal
+        ? status.reason === "gone"
+          ? ["recreateLocal"]
+          : status.reason === "broken"
+            ? ["restartLocal"]
+            : (PAUSE_ACTIONS[knownPause(status.reason) ?? ""] ?? ["archiveNow"])
+        : goneKind(status) === "deleted"
+          ? ["switchRepository"]
           : (PAUSE_ACTIONS[knownPause(status.reason) ?? ""] ?? ["archiveNow"]);
       rows.push(
         row("archive", t("cloud.panel.archive.paused", { reason, ...plain }), {
@@ -608,7 +633,9 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
     actions: [
       // Another repository at any time, not only where archiving paused: here, unless a row
       // says so already, as the way out of what it says.
+      // Not for a repository of the server's own: there is no other to choose (yet).
       ...(repository &&
+      !isLocal &&
       !rows.some((each) => each.actions.some((offered) => offered.id === "switchRepository"))
         ? [action("switchRepository")]
         : []),
@@ -620,5 +647,6 @@ export function cloudPanel(input: PanelInput, t: TFunction): CloudPanel {
     ],
     sync: state,
     archive: status?.state,
+    ...(isLocal && { local: true as const }),
   };
 }

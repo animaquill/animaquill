@@ -177,6 +177,49 @@ describe("making a project of the platform", () => {
     await expectNothingOnlyHere(world);
   });
 
+  it("on a server that saves projects to repositories of its own, asks nothing of one", async () => {
+    const world = await setUp();
+    const { time, repository, here, createOf } = world;
+    (here.who as unknown as { set(next: unknown): void }).set({
+      status: "signedIn",
+      id: "user-ada",
+      name: "ada",
+      appInstalled: false,
+      repositories: "local",
+    });
+    // The server links it as it makes it: what it says of the project is all there is.
+    repository.answer = {
+      repository: {
+        place: "local",
+        id: 1,
+        owner: "",
+        name: "p",
+        fullName: "/p",
+        private: true,
+        branch: "main",
+        clone: "/var/lib/animaquill/repos/p.git",
+        createdHere: true,
+        linkedAt: 1,
+      },
+      state: "ready",
+      archiving: true,
+      head: 1,
+      archivedSeq: 0,
+    };
+    const create = createOf();
+    expect(create.savesLocally).toBe(true);
+    expect(create.getSnapshot().need).toBeUndefined();
+    create.setName("Atom");
+    await time.advance(100);
+    expect(repository.checked).toEqual([]);
+    expect(create.canSubmit).toBe(true);
+    await submit(create, time);
+    expect(repository.links).toEqual([]);
+    expect(onPlatform(world)).toHaveLength(1);
+    expect(create.getSnapshot().linked?.repository?.place).toBe("local");
+    expect(stepsOf(create)).toBe("done done done running");
+  });
+
   it("says when a name is taken before anything is made", async () => {
     const world = await setUp();
     const { time, repository, createOf } = world;

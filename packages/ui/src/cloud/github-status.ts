@@ -31,6 +31,7 @@ import type { CloudProjectSummary, RepositoryStatus, RepositoryUnusable } from "
 import type { TFunction } from "i18next";
 import { keptText, pauseDetail, pauseText } from "./repository-text.ts";
 import { unusableFix, unusableTitle } from "./unusable.ts";
+import { placedT } from "../i18n/i18n.ts";
 
 /** An archive failing this long for GitHub's or the platform's sake is an error for people too. */
 export const FAILING_LONG_MS = 60 * 60_000;
@@ -51,7 +52,9 @@ export type GitHubCause =
   | "blocked"
   | "noRepository"
   | "unfinished"
-  | "unusable";
+  | "unusable"
+  /** A repository of the server's own: its disk is full, and archives wait. */
+  | "diskFull";
 
 export interface GitHubState {
   readonly kind: GitHubKind;
@@ -61,6 +64,8 @@ export interface GitHubState {
   /** For an error: why, in words, and what helps. */
   readonly reason?: string;
   readonly fix?: string;
+  /** The repository is one of the server's own, which its words say. */
+  readonly local?: true;
 }
 
 const plain = { interpolation: { escapeValue: false } } as const;
@@ -104,8 +109,15 @@ export interface StatusInput {
 }
 
 /** How the open project stands with its repository, by what the platform says of it. */
-export function githubOfStatus(input: StatusInput, t: TFunction): GitHubState {
+export function githubOfStatus(input: StatusInput, given: TFunction): GitHubState {
+  const state = githubOf(input, given);
+  return input.status?.repository?.place === "local" ? { ...state, local: true } : state;
+}
+
+function githubOf(input: StatusInput, given: TFunction): GitHubState {
   const { status, unusable, unfinished, now } = input;
+  // Said of a repository of the server's own where it is one.
+  const t = placedT(given, status?.repository?.place);
   if (unusable) return error("unusable", unusableTitle(unusable, t), unusableFix(unusable, t));
   if (unfinished)
     return error(
@@ -126,6 +138,8 @@ export function githubOfStatus(input: StatusInput, t: TFunction): GitHubState {
       return error("blocked", reason, fix);
     return error("paused", detail ? `${reason}（${detail}）` : reason, fix);
   }
+  if (status.failure === "diskFull" && (status.failures ?? 0) > 0)
+    return error("diskFull", t("github.reason.diskFull"), t("github.fix.diskFull"));
   if (isFailingLong(status.failingSince, now))
     return failingLong(status.failingSince as number, now, status.detail, t);
   const kept = keptText(status, t);
@@ -147,8 +161,14 @@ export type ListedArchive = Pick<
 >;
 
 /** How a project of the list stands with its repository, for the start page. */
-export function githubOfListed(summary: ListedArchive, now: number, t: TFunction): GitHubState {
+export function githubOfListed(summary: ListedArchive, now: number, given: TFunction): GitHubState {
+  const state = listedOf(summary, now, given);
+  return summary.repository?.place === "local" ? { ...state, local: true } : state;
+}
+
+function listedOf(summary: ListedArchive, now: number, given: TFunction): GitHubState {
   const { attention, repository, archive } = summary;
+  const t = placedT(given, repository?.place);
   if (repository?.unusable)
     return error(
       "unusable",
@@ -189,8 +209,14 @@ export function githubOfListed(summary: ListedArchive, now: number, t: TFunction
 }
 
 /** The word of the status bar and of a card. */
-export function githubText(state: GitHubState, t: TFunction): string {
-  if (state.cause === "unusable" || state.cause === "noRepository" || state.cause === "unfinished")
+export function githubText(state: GitHubState, given: TFunction): string {
+  const t = placedT(given, state.local ? "local" : undefined);
+  if (
+    state.cause === "unusable" ||
+    state.cause === "noRepository" ||
+    state.cause === "unfinished" ||
+    state.cause === "diskFull"
+  )
     return state.reason ?? t("github.text.error");
   if (state.cause === "conflicts" && state.count !== undefined && state.count > 0)
     return t("github.text.conflicts", { count: state.count });
@@ -201,7 +227,8 @@ export function githubText(state: GitHubState, t: TFunction): string {
  * What hovering says, and the panel too: for an error, that saving into GitHub failed, why, and
  * what helps.
  */
-export function githubAbout(state: GitHubState, t: TFunction): string {
+export function githubAbout(state: GitHubState, given: TFunction): string {
+  const t = placedT(given, state.local ? "local" : undefined);
   if (state.kind === "error")
     return t("github.about.error", {
       reason: (state.reason ?? "").replace(/。$/, ""),

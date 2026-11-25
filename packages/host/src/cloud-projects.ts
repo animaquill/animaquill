@@ -61,6 +61,7 @@ const repositoryOf = (value: unknown): Repository | undefined => {
     fullName: text(value.fullName) ?? `${owner}/${name}`,
     private: value.private === true,
     url: text(value.url) ?? "",
+    ...(value.place === "local" && { place: "local" as const }),
     state: value.state === "paused" ? "paused" : "ready",
     ...optional("reason", text(value.reason)),
     ...optional("checkedAt", count(value.checkedAt)),

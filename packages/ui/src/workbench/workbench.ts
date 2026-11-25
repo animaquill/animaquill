@@ -17,6 +17,7 @@ import type {
   SignInOutcome,
   StoragePersistence,
   WindowMemory,
+  LocalRepository,
 } from "@animaquill/host";
 import { MixLevels } from "../mixer/levels.ts";
 import type { TFunction } from "i18next";
@@ -2669,6 +2670,33 @@ export class Workbench {
       case "reload":
         location.reload();
         break;
+      case "recreateLocal":
+      case "restartLocal":
+        void cloud.restartArchive();
+        break;
+      case "copyClone":
+        void this.copyCloneCommand();
+        break;
+    }
+  }
+
+  /**
+   * Copies what clones the repository of the open project, where it is one of the server's own
+   * (`git clone "<folder>" "<name>"`), and says so; where the browser does not let it, says the
+   * command instead.
+   */
+  async copyCloneCommand(): Promise<void> {
+    const { t } = this;
+    const name = this.session.store?.getState().manifest.name ?? "";
+    const command = this.cloud?.cloneCommand(name);
+    if (!command) return;
+    try {
+      await navigator.clipboard.writeText(command);
+      this.notifications.push(t("repository.cloneCopied"));
+    } catch {
+      this.notifications.push(
+        t("repository.cloneFailed", { command, interpolation: { escapeValue: false } }),
+      );
     }
   }
 
@@ -3366,8 +3394,12 @@ export class Workbench {
     const blocked = ((): UploadBlock | undefined => {
       if (!cloud.made) return "notMade";
       if (!this.#platform?.lfs) return "unsupported";
-      if (this.account?.getSnapshot().status === "signedOut") return "signedOut";
+      const who = this.account?.getSnapshot();
+      if (who?.status === "signedOut") return "signedOut";
       const status = cloud.repository?.getSnapshot().status;
+      // Repositories of the server's own have no large file storage yet (O8b): nothing goes up.
+      if (who?.status === "signedIn" && who.repositories === "local") return "unsupported";
+      if (status?.repository?.place === "local") return "unsupported";
       if (status?.state === "none") return "noRepository";
       if (status?.unusable !== undefined) return "repository";
       if (status?.state === "paused" && LFS_STOPPING.has(status.reason ?? "")) return "repository";
@@ -3765,6 +3797,22 @@ export class Workbench {
    * `CloudCreate`: no new project is only in this browser. Only a browser that cannot write folders
    * imports at all: elsewhere a project folder opens as it is.
    */
+  /**
+   * The repositories of the server's own that no project is saved to, where the platform saves
+   * every project to one: what "从本机仓库恢复…" offers. None where it does not, or cannot say.
+   */
+  async localRepositories(): Promise<readonly LocalRepository[]> {
+    const who = this.account?.getSnapshot();
+    if (this.mode !== "online" || who?.status !== "signedIn" || who.repositories !== "local")
+      return [];
+    return (await this.cloud?.localRepositories().catch(() => [])) ?? [];
+  }
+
+  /** "从本机仓库恢复…", see `CloudProjects.restoreLocalRepository`. */
+  async restoreLocalRepository(): Promise<void> {
+    await this.cloud?.restoreLocalRepository();
+  }
+
   async importProject(): Promise<void> {
     if (this.#platform && !this.#projectsHere) {
       await this.#importToCloud();

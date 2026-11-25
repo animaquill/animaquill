@@ -63,6 +63,7 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
       imported: request.imported === true,
       putOff,
       kept,
+      local: create.savesLocally,
     },
     t,
   );
@@ -269,18 +270,26 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
           </fieldset>
         )}
 
-        {view.body === "result" && snapshot.linked?.repository && (
+        {view.body === "result" && snapshot.linked?.repository?.place === "local" && (
           <p className={styles.result}>
             <span>{t("cloud.connect.repository")}</span>
-            {t("cloud.panel.repository.value", {
-              name: snapshot.linked.repository.fullName,
-              visibility: t(
-                snapshot.linked.repository.private ? "repository.private" : "repository.public",
-              ),
-              interpolation: { escapeValue: false },
-            })}
+            {t("cloud.panel.repository.local")}
           </p>
         )}
+        {view.body === "result" &&
+          snapshot.linked?.repository?.place !== "local" &&
+          snapshot.linked?.repository && (
+            <p className={styles.result}>
+              <span>{t("cloud.connect.repository")}</span>
+              {t("cloud.panel.repository.value", {
+                name: snapshot.linked.repository.fullName,
+                visibility: t(
+                  snapshot.linked.repository.private ? "repository.private" : "repository.public",
+                ),
+                interpolation: { escapeValue: false },
+              })}
+            </p>
+          )}
 
         {view.steps.length > 0 && (
           <ol className={styles.steps} aria-label={t("newProject.stepsLabel")}>

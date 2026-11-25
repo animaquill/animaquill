@@ -4,7 +4,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./app/App.tsx";
 import { watchPage } from "./diagnostics/errors.ts";
-import { createI18n } from "./i18n/i18n.ts";
+import { createI18n, sayLocalRepositories } from "./i18n/i18n.ts";
 import { builtinPanels } from "./panels/builtin.tsx";
 import type { PanelDefinition } from "./workbench/panels.ts";
 import { Workbench } from "./workbench/workbench.ts";
@@ -135,6 +135,14 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
     // The same for making smaller copies of large videos for the preview.
     proxyMaker: workerProxyMaker({ frameMs: options.proxyFrameMs }),
   });
+  // A platform that saves every project to repositories of its own says so in every text of them.
+  const account = options.host.account;
+  const followAccount = () => {
+    const who = account?.getSnapshot();
+    if (who?.status === "signedIn" && who.repositories === "local") sayLocalRepositories(i18n);
+  };
+  account?.subscribe(followAccount);
+  followAccount();
   // Before anything else runs, so that whatever fails from here on is caught.
   const stopWatching = watchPage(workbench.errors, workbench.diagnostics, options.compositorUrl);
   await workbench.load();

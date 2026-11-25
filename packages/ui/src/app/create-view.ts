@@ -56,6 +56,8 @@ export interface CreateViewInput {
   readonly putOff: boolean;
   /** Giving up found that the project has a repository after all. */
   readonly kept: boolean;
+  /** The platform saves projects to repositories of its own: nothing to choose. */
+  readonly local?: boolean;
 }
 
 const STEPS: readonly CreateStepId[] = ["upload", "repository", "place", "archive"];
@@ -71,7 +73,9 @@ export function createView(input: CreateViewInput, t: TFunction): CreateView {
       ? "result"
       : need !== undefined
         ? "need"
-        : "choice";
+        : input.local
+          ? "plain"
+          : "choice";
   const hasBegun = isCloud && (phase !== "choosing" || STEPS.some((id) => steps[id] !== "waiting"));
   const asksAboutCancel = snapshot.unconfirmed && !input.putOff && !cancelling && !isOver;
 
@@ -98,7 +102,7 @@ export function createView(input: CreateViewInput, t: TFunction): CreateView {
     steps: hasBegun
       ? STEPS.map((id) => ({
           id,
-          text: createStepText(id, mode, t),
+          text: createStepText(id, mode, t, input.local === true),
           state: steps[id],
           stateText: t(`cloud.connect.stepState.${steps[id]}`),
         }))

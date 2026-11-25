@@ -1,5 +1,5 @@
 import { StorageSpace } from "../storage/StorageSpace.tsx";
-import type { FolderStatus } from "@animaquill/host";
+import type { FolderStatus, LocalRepository } from "@animaquill/host";
 import {
   ChevronDown,
   Clock,
@@ -642,7 +642,10 @@ function NewCards({
   large,
   onNew,
 }: {
-  situation: Situation;
+  situation: Situation & {
+    /** Repositories of the server's own that no project is saved to, see `localRepositories`. */
+    readonly localRepositories?: number;
+  };
   large: boolean;
   onNew: (kind: NewKind) => void;
 }) {
@@ -667,6 +670,13 @@ function NewCards({
         <>
           {card("new", Plus, t("start.new.project"), t("start.new.onlineAbout"))}
           {card("import", FolderInput, t("start.new.import"), t("start.new.importAbout"))}
+          {(situation.localRepositories ?? 0) > 0 &&
+            card(
+              "restoreLocal",
+              HardDrive,
+              t("start.menu.restoreLocal"),
+              t("start.new.restoreLocalAbout", { count: situation.localRepositories }),
+            )}
         </>
       ) : canFolders ? (
         <>
@@ -683,8 +693,11 @@ function NewCards({
   );
 }
 
-/** What a card of the new ones does: a new project, one opened from a folder, or one imported. */
-type NewKind = "new" | "open" | "import";
+/**
+ * What a card of the new ones does: a new project, one opened from a folder, one imported, or one
+ * restored from a repository of the server's own.
+ */
+type NewKind = "new" | "open" | "import" | "restoreLocal";
 
 // ---- the projects
 
@@ -1290,6 +1303,17 @@ export function StartPage() {
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [refresh]);
+  // Repositories of the server's own to restore, where it saves every project to one: asked once.
+  const [localRepositories, setLocalRepositories] = useState<readonly LocalRepository[]>([]);
+  useEffect(() => {
+    let isCurrent = true;
+    void workbench.localRepositories().then((found) => {
+      if (isCurrent) setLocalRepositories(found);
+    });
+    return () => {
+      isCurrent = false;
+    };
+  }, [workbench]);
   // Looking at a folder can take a while, as on a network: the page does not wait for it.
   useEffect(() => {
     if (!projectFolders) return;
@@ -1307,10 +1331,11 @@ export function StartPage() {
     };
   }, [projectFolders, lists.local]);
 
-  const situation: Situation = {
+  const situation = {
     mode: workbench.mode,
     canFolders: workbench.canFolders,
     canGoOnline: workbench.canGoOnline,
+    localRepositories: localRepositories.length,
   };
   const cards = useMemo(() => composeCards(lists, organized), [lists, organized]);
   const sections = sectionsOf({
@@ -1395,7 +1420,9 @@ export function StartPage() {
         ? workbench.openFolder()
         : kind === "import"
           ? workbench.importProject()
-          : workbench.newProject();
+          : kind === "restoreLocal"
+            ? workbench.restoreLocalRepository()
+            : workbench.newProject();
     void work.then(async () => {
       const key = workbench.session.key;
       if (into !== undefined && key !== undefined && key !== before && kind !== "open") {

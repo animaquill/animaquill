@@ -1,3 +1,4 @@
+import { placedT } from "../i18n/i18n.ts";
 import { ExternalLink } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
@@ -51,7 +52,9 @@ export function CloudPanelBody({
   /** The part that the status people clicked is about: it is where people look first. */
   readonly focus?: PanelSection;
 }) {
-  const { t } = useTranslation();
+  const { t: given } = useTranslation();
+  // A repository of the server's own is said so.
+  const t = placedT(given, panel.local ? "local" : undefined);
   const parts = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!focus) return;

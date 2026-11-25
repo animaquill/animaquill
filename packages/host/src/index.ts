@@ -778,8 +778,10 @@ export interface CloudProjectSummary {
     readonly name: string;
     readonly fullName: string;
     readonly private: boolean;
-    /** Where people see it. */
+    /** Where people see it: empty for a repository of the server's own. */
     readonly url: string;
+    /** "local": a repository of the server's own. Missing: on GitHub. */
+    readonly place?: "local";
     readonly state: "ready" | "paused";
     /** Why archiving paused, see `RepositoryPause`. */
     readonly reason?: string;
@@ -1384,7 +1386,12 @@ export type RepositoryPause =
    * After a rewritten history: what it took away cannot be told apart from the project, see
    * `RepositoryStatus.diverged`: those files were taken away on GitHub, and would be written back.
    */
-  | "unmerged";
+  | "unmerged"
+  /**
+   * A repository of the server's own does not read as Git any more: archiving starts over into a
+   * new one, see `RepositoryAccess.restart`.
+   */
+  | "broken";
 
 /**
  * The repository of a project cannot be used: deleted, taken out of what the platform may touch,
@@ -1427,6 +1434,8 @@ export interface RepositoryStatus {
     readonly branch: string;
     /** Where people see it, where they can: on GitHub. */
     readonly url?: string;
+    /** For a repository of the server's own: its folder on the server, for `git clone`. */
+    readonly clone?: string;
     readonly createdHere: boolean;
     readonly linkedAt: number;
   };
@@ -1441,6 +1450,8 @@ export interface RepositoryStatus {
   readonly gone?: "deleted" | "unauthorized";
   /** The repository cannot be used, and the project cannot be edited: see `RepositoryUnusable`. */
   readonly unusable?: RepositoryUnusable;
+  /** Why archives fail now, where people know a word for it: the server's disk is full. */
+  readonly failure?: "diskFull";
   /** A short word about the pause, or about the last failure, from the platform. */
   readonly detail?: string;
   /** An archive is waiting or running. */
@@ -1620,6 +1631,29 @@ export interface RepositoryAccess {
     readonly existing: { readonly id: number };
     readonly confirmPublic?: boolean;
   }): Promise<RepositoryRestored>;
+  /**
+   * The repositories of the server's own that no project is saved to (its project deleted, or a
+   * database from before), made for this person: what "从本机仓库恢复…" lists. Missing where the
+   * platform has none.
+   */
+  localRepositories?(): Promise<readonly LocalRepository[]>;
+  /** Restores one of `localRepositories` as `restore` does one on GitHub. */
+  restoreLocal?(dir: string): Promise<RepositoryRestored>;
+  /**
+   * For a repository of the server's own that is gone or broken: what is there is put aside, never
+   * taken away, and archiving starts over into a new one with the project as it is ("notBroken" for
+   * any other, "busy" while an archive runs).
+   */
+  restart?(project: string): Promise<RepositoryStatus>;
+}
+
+/** A repository of the server's own that no project is saved to, see `localRepositories`. */
+export interface LocalRepository {
+  /** Its folder on the server, which restoring names it by. */
+  readonly dir: string;
+  /** The project it has, as its animaquill.json says. */
+  readonly name: string;
+  readonly project: string;
 }
 
 /**
@@ -1742,6 +1776,8 @@ export type RepositoryRefusal =
   | "behind"
   /** The file does not wait any more, see `RepositoryAccess.useEditor`. */
   | "notBlocked"
+  /** Starting archiving over: the repository of the server's own is not gone or broken. */
+  | "notBroken"
   /** The history on GitHub is not rewritten (any more), see `RepositoryAccess.mergeNow`. */
   | "notRewritten"
   | "noCommonBase"
@@ -2260,6 +2296,12 @@ export type AccountSnapshot =
       readonly picture?: string;
       /** Whether the GitHub App is installed on the account, which saving projects to GitHub needs. */
       readonly appInstalled: boolean;
+      /**
+       * Where the projects of this platform are saved: to GitHub (people choose a repository), to
+       * repositories of the server's own (each project has one from the start), or nowhere.
+       * Missing: GitHub, as from a platform that does not say.
+       */
+      readonly repositories?: "github" | "local" | "none";
     };
 
 /**

@@ -697,3 +697,55 @@ describe("a project of the platform only in this browser, and what the browser k
     ).toEqual([]);
   });
 });
+
+describe("a repository of the server's own", () => {
+  const LOCAL: NonNullable<RepositoryStatus["repository"]> = {
+    ...REPOSITORY,
+    place: "local",
+    owner: "",
+    name: "p1",
+    fullName: "/p1",
+    url: undefined as never,
+    clone: "/var/lib/animaquill/repos/p1.git",
+  };
+  const local = (more: Partial<RepositoryStatus> = {}) =>
+    linked({ archive: watch(status({ repository: LOCAL, ...more })) });
+
+  it("is said so, offers the command that clones it, and no other repository to choose", () => {
+    const panel = cloudPanel(local(), t);
+    expect(panel.local).toBe(true);
+    expect(line(rowOf(panel, "repository"))).toBe("仓库  服务器上的本机 Git 仓库 [复制克隆命令]");
+    expect(ids(panel).bottom).not.toContain("switchRepository");
+    expect(githubText(panel.github!, t)).toBe("已同步");
+  });
+
+  it("gone: made anew from the project; broken: started over; neither takes the project away", () => {
+    const gone = cloudPanel(local({ state: "paused", reason: "gone" }), t);
+    expect(line(rowOf(gone, "archive"))).toContain("存档先停着：本机仓库找不到了");
+    expect(ids(gone).rows["archive"]).toEqual(["recreateLocal"]);
+    expect(ids(gone).bottom).not.toContain("switchRepository");
+    expect(gone.github && githubText(gone.github, t)).toBe("同步失败");
+    const broken = cloudPanel(local({ state: "paused", reason: "broken" }), t);
+    expect(line(rowOf(broken, "archive"))).toContain("本机仓库坏了");
+    expect(line(rowOf(broken, "archive"))).toContain("repos/broken/");
+    expect(ids(broken).rows["archive"]).toEqual(["restartLocal"]);
+  });
+
+  it("a full disk says so, and waits by itself", () => {
+    const panel = cloudPanel(
+      local({ failure: "diskFull", failures: 2, retryAt: NOW + MINUTE, detail: "diskFull" }),
+      t,
+    );
+    expect(panel.github).toMatchObject({ kind: "error", cause: "diskFull", local: true });
+    expect(githubText(panel.github!, t)).toBe("服务器磁盘快满了，存档先停着");
+  });
+
+  it("a repository on GitHub says what it always said", () => {
+    const panel = cloudPanel(
+      linked({ archive: watch(status({ state: "paused", reason: "gone" })) }),
+      t,
+    );
+    expect(line(rowOf(panel, "archive"))).toContain("GitHub App");
+    expect(panel.local).toBeUndefined();
+  });
+});

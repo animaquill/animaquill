@@ -1569,7 +1569,8 @@
       "ai": "AI",
       "folder": "外部文件",
       "other": "其他窗口",
-      "github": "GitHub"
+      "github": "GitHub",
+      "github_local": "本机仓库"
     },
     "ai": "AI：改了 {{count}} 处",
     "aiLabel": "AI：“{{label}}”改了 {{count}} 处",
@@ -1594,10 +1595,12 @@
       "age": "撤销记录只留 30 天",
       "elsewhere": "在做这次改动的那台电脑上能撤销",
       "rebuilt": "服务器上的项目后来从 GitHub 重建过，这次撤不了了",
+      "rebuilt_local": "服务器上的项目后来从本机仓库重建过，这次撤不了了",
       "format": "项目格式升级过，这次撤不了了",
       "locked": "项目锁着，解锁以后才能撤销",
       "unusable": "仓库现在用不了，项目改不了",
       "history": "GitHub 上改写历史时去掉了这次的内容，重做会把它带回来",
+      "history_local": "本机仓库改写历史时去掉了这次的内容，重做会把它带回来",
       "drop": "这次的文件后来按你的选择从项目里去掉了，重做会把它们带回来"
     },
     "command": {
@@ -1686,7 +1689,9 @@
       }
     },
     "github": "GitHub 上的改动（{{count}} 个文件）",
+    "github_local": "仓库里的改动（{{count}} 个文件）",
     "githubAway": "你不在时合并了 GitHub 上的改动（{{merges}} 次，{{count}} 个文件）",
+    "githubAway_local": "你不在时合并了仓库里的改动（{{merges}} 次，{{count}} 个文件）",
     "dropped": "按你的选择从项目里去掉了 {{count}} 个文件",
     "renamed": "在开始页改名为“{{name}}”"
   },
@@ -2677,26 +2682,37 @@
     },
     "reason": {
       "failingLong": "已经连续 {{hours}} 个多小时没能存进去（GitHub 暂时连不上、限流，或者服务器出了错）",
-      "detail": "：{{detail}}"
+      "failingLong_local": "已经连续 {{hours}} 个多小时没能存进去（服务器的磁盘或者服务器出了错）",
+      "detail": "：{{detail}}",
+      "diskFull": "服务器磁盘快满了，存档先停着"
     },
     "fix": {
       "noRepository": "点“选仓库…”选一个仓库，选好以后会自动存进去。",
+      "noRepository_local": "服务器启动时会自动给它建一个本机仓库。",
       "kept": "在编辑器里改好这些文件以后会自动接着存。",
       "failingLong": "服务器会一直自动重试；也可以点“现在存档”再试一次，或者换一个仓库。",
-      "open": "打开项目，在在线面板里处理。"
+      "failingLong_local": "服务器会一直自动重试；也可以点“现在存档”再试一次。",
+      "open": "打开项目，在在线面板里处理。",
+      "diskFull": "腾出服务器的磁盘空间以后会自动接着存。"
     },
     "about": {
       "error": "存进 GitHub 失败：{{reason}}。{{fix}}",
+      "error_local": "存进本机仓库失败：{{reason}}。{{fix}}",
       "pending": "有改动还没存进 GitHub，服务器会自动存进去（停手 5 分钟，或连续编辑 30 分钟存一次），不用管。",
+      "pending_local": "有改动还没存进本机仓库，服务器会自动存进去（停手 5 分钟，或连续编辑 30 分钟存一次），不用管。",
       "retrying": "上次没能存进 GitHub（GitHub 暂时连不上或限流），服务器会自动重试，不用管。",
+      "retrying_local": "上次没能存进本机仓库，服务器会自动重试，不用管。",
       "unknown": "还不知道 GitHub 仓库的情况，正在查。",
-      "synced": "改动都已存进 GitHub 仓库。"
+      "unknown_local": "还不知道本机仓库的情况，正在查。",
+      "synced": "改动都已存进 GitHub 仓库。",
+      "synced_local": "改动都已存进本机仓库。"
     }
   },
   "saveStatus": {
     "local": "本地",
     "sync": "同步",
     "github": "GitHub 仓库",
+    "github_local": "本机仓库",
     "label": "{{what}}：{{state}}",
     "browser": "浏览器",
     "place": {
@@ -4254,19 +4270,23 @@
     "hint": {
       "repository": "仓库的存档停下了。打开项目，在在线面板里处理。",
       "conflicts": "GitHub 上的改动和项目里的改动冲突了。打开项目处理。",
+      "conflicts_local": "仓库里的改动和项目里的改动冲突了。打开项目处理。",
       "blocked": "GitHub 上有文件没能并进来。打开项目处理。",
+      "blocked_local": "仓库里有文件没能并进来。打开项目处理。",
       "other": "有问题要处理。打开项目，在在线面板里看。",
       "noRepository": "这个项目已经在服务器上，还没选仓库。打开项目接着选。",
       "otherAccount": "它连着的在线项目属于另一个账号。换回那个账号登录才能同步，本机的内容照常能编辑。",
       "stale": "服务器的列表读不出来，这是这个浏览器上次记下的情况。",
       "onlyHere": "浏览器清理数据时会丢。在菜单里可以另存一份。",
       "pending": "服务器上有改动还没存进 GitHub，服务器会自动存进去，不用管。",
+      "pending_local": "服务器上有改动还没存进本机仓库，服务器会自动存进去，不用管。",
       "unusable": "仓库用不了，这个在线项目现在不能编辑，到期后服务器会自动删除。点开看原因和能做的事。",
       "missing": "服务器的列表里没有这个项目，可能已经删除。打开项目后可以保存到文件夹。"
     },
     "status": {
       "notHere": "这台电脑还没打开过",
       "fromGitHub": "打开时从 GitHub 取回",
+      "fromGitHub_local": "打开时从本机仓库取回",
       "attention": "要处理",
       "noRepository": "还差一步：选仓库",
       "otherAccount": "是另一个账号的",
@@ -4275,7 +4295,9 @@
       "inBrowser": "在这个浏览器里",
       "githubPending": "待同步",
       "githubFailed": "GitHub 同步失败",
-      "restoreFailed": "上次从 GitHub 取回没成功"
+      "githubFailed_local": "存进本机仓库失败",
+      "restoreFailed": "上次从 GitHub 取回没成功",
+      "restoreFailed_local": "上次从本机仓库取回没成功"
     },
     "place": {
       "local": "本地 · {{folder}}",
@@ -4298,6 +4320,7 @@
       "label": "新建",
       "project": "新建项目",
       "onlineAbout": "存在服务器上，自动存进你的 GitHub 仓库，换一台电脑接着做。",
+      "onlineAbout_local": "存在服务器上，自动存进服务器的本机 Git 仓库，换一台电脑接着做。",
       "localAbout": "选一个文件夹，项目就放在那里。",
       "browserAbout": "项目存在这个浏览器里。",
       "open": "打开文件夹",
@@ -4305,7 +4328,8 @@
       "import": "从文件夹导入",
       "importAbout": "把电脑上的项目文件夹复制成在线项目，带上素材。",
       "importHere": "导入项目文件夹",
-      "importHereAbout": "把一个项目文件夹复制到这个浏览器里。"
+      "importHereAbout": "把一个项目文件夹复制到这个浏览器里。",
+      "restoreLocalAbout": "服务器上有 {{count}} 个本机仓库没有对应的项目，选一个恢复成在线项目。"
     },
     "welcome": "欢迎使用 AnimaQuill",
     "welcomeAbout": "新建一个项目开始，或者打开电脑上已有的项目文件夹。",
@@ -4332,7 +4356,8 @@
       "duration": "时长 {{duration}}",
       "renameLabel": "“{{name}}”的新名字",
       "renaming": "正在改名",
-      "waking": "正在从 GitHub 取回"
+      "waking": "正在从 GitHub 取回",
+      "waking_local": "正在从本机仓库取回"
     },
     "info": {
       "opened": "上次打开：{{when}}"
@@ -4360,7 +4385,8 @@
       "setCover": "设置封面…",
       "autoCover": "恢复自动封面",
       "saveToFolder": "保存到文件夹…",
-      "renameOffline": "连上以后才能改"
+      "renameOffline": "连上以后才能改",
+      "restoreLocal": "从本机仓库恢复…"
     },
     "cover": {
       "notPicture": "“{{file}}”不是图片。请选 JPEG、PNG、WebP、GIF 或 AVIF 图片。",
@@ -4399,6 +4425,7 @@
       "invalid": "名字不能是空的。",
       "quota": "空间不够了，没能改名。",
       "notBack": "这个项目暂时从 GitHub 取不回来，没有改名。",
+      "notBack_local": "这个项目暂时从本机仓库取不回来，没有改名。",
       "missing": "平台上已经没有这个项目了。",
       "signedOut": "登录过期了，重新登录以后再改名。",
       "notice": "没能把“{{from}}”改名为“{{name}}”：{{why}}",
@@ -4447,6 +4474,7 @@
       "missing": "服务器找不到这个项目，或者它不是你的。改动都留在本机。",
       "diverged": "本机和服务器的内容对不上，同步已暂停。改动都留在本机。",
       "rebuilt": "服务器的这个项目已经从 GitHub 重新取回，这台电脑上的改动要先接回去。接回之前只能看、不能改。",
+      "rebuilt_local": "服务器的这个项目已经从本机仓库重新取回，这台电脑上的改动要先接回去。接回之前只能看、不能改。",
       "unsupported": "这个浏览器存不了同步需要的记录，不能同步。",
       "deleted": "这个在线项目已经在服务器上删除了。改动都留在本机。",
       "unusable": "仓库用不了，这个在线项目现在不能编辑。出问题之前的改动都留在本机。",
@@ -4474,9 +4502,13 @@
       "failed": "读不出这个浏览器里的记录，没能打开在线项目，请稍后再试。",
       "busy": "这个在线项目正在另一个窗口里打开，稍等一下再试。",
       "notLive": "这个在线项目现在没法从 GitHub 取回，请稍后再试。",
+      "notLive_local": "这个在线项目现在没法从本机仓库取回，请稍后再试。",
       "restoring": "正在从 GitHub 取回…",
+      "restoring_local": "正在从本机仓库取回…",
       "restoringReleased": "正在从 GitHub 取回…",
+      "restoringReleased_local": "正在从本机仓库取回…",
       "restoringLong": "从 GitHub 取回花的时间比预期长，好了以后再打开。",
+      "restoringLong_local": "从本机仓库取回花的时间比预期长，好了以后再打开。",
       "gone": "服务器的列表里已经没有这个项目了。"
     },
     "download": {
@@ -4500,12 +4532,15 @@
     "delete": {
       "title": "删除在线项目“{{name}}”？",
       "withRepository": "服务器上不再有这个在线项目。GitHub 仓库 {{repository}} 留着，里面的存档不动。",
+      "withRepository_local": "服务器上不再有这个在线项目。本机仓库留着，里面的存档不动，以后可以“从本机仓库恢复”。",
       "noRepository": "服务器上不再有这个在线项目，不能恢复。它没有仓库，服务器之外没有存档。",
       "unusable": "{{what}}。服务器上的这份和清单里的这一项会删掉，GitHub 那边什么都不动。",
       "unsavedGo": "服务器上还有改动没存进 GitHub，删除后服务器上的这份就没有了。想留下可以先“保存到文件夹”。",
+      "unsavedGo_local": "服务器上还有改动没存进本机仓库，删除后服务器上的这份就没有了。想留下可以先“保存到文件夹”。",
       "browserGoes": "这个浏览器里的那一份会清掉（还有没同步的改动、只在这里的素材时留下）。",
       "browserStays": "这个浏览器里的那一份留下，以后只在这个浏览器里。",
       "archiveFirst": "删除之前先把最新的改动存进 GitHub。",
+      "archiveFirst_local": "删除之前先把最新的改动存进本机仓库。",
       "confirm": "删除在线项目",
       "signedOut": "登录已过期，重新登录后再删除。",
       "unreadable": "现在读不到服务器的项目列表，没有删除。联网后再试。",
@@ -4517,14 +4552,18 @@
       "offline": "连不上服务器。",
       "syncSlow": "同步太久了，请稍后再试。",
       "archiving": "正在把“{{name}}”存进 GitHub…",
+      "archiving_local": "正在把“{{name}}”存进本机仓库…",
       "archiveSlow": "存档太久了还没存完",
       "archiveFailed": "存档没有成功",
       "archiveFailedSaid": "存档没有成功（{{detail}}）",
       "cannotArchive": "现在存不进 GitHub",
+      "cannotArchive_local": "现在存不进本机仓库",
       "keepsChanging": "一直有新改动进来，存不完",
       "uploading": "还有 {{count}} 个素材文件没传完",
       "notArchived": "最新的改动没能存进 GitHub：{{why}}。可以取消，等能存了再删；也可以仍然删除，最后这些改动就不会进 GitHub。",
+      "notArchived_local": "最新的改动没能存进本机仓库：{{why}}。可以取消，等能存了再删；也可以仍然删除，最后这些改动就不会进仓库。",
       "discard": "仍然删除（最后的改动不会进 GitHub）",
+      "discard_local": "仍然删除（最后的改动不会进仓库）",
       "failed": "没能删除在线项目，请稍后再试。",
       "done": "已删除在线项目“{{name}}”。",
       "doneBrowser": "这个浏览器里的那一份已清掉。",
@@ -4533,7 +4572,8 @@
         "open": "它在别的窗口还开着",
         "unsynced": "还有没同步的改动、只在这里的素材，或者没保存的试改和代码",
         "unread": "读不出它有没有只在这里的内容",
-        "notArchived": "删除前没有全部存进 GitHub，它可能有别处没有的改动"
+        "notArchived": "删除前没有全部存进 GitHub，它可能有别处没有的改动",
+        "notArchived_local": "删除前没有全部存进本机仓库，它可能有别处没有的改动"
       }
     },
     "connect": {
@@ -4603,12 +4643,14 @@
       "repository": {
         "value": "{{name}}（{{visibility}}）",
         "none": "还差一步：选仓库",
+        "none_local": "还没有本机仓库",
         "unfinished": "还没连接完",
         "unfinishedNote": "项目还没传到服务器，也还没有仓库。联网后会自动接着传。",
         "checking": "正在查…",
         "signedOut": "登录后才能看到",
         "unknown": "暂时查不到",
-        "stale": "暂时查不到最新的情况，这是之前查到的。"
+        "stale": "暂时查不到最新的情况，这是之前查到的。",
+        "local": "服务器上的本机 Git 仓库"
       },
       "sync": {
         "online": "在线，改动都已发送",
@@ -4632,7 +4674,8 @@
         "paused": "存档先停着：{{reason}}",
         "archiveAt": "1 分钟内只能存一次档，{{count}} 秒后自动存",
         "notSent": "还有改动没发到服务器，发过去以后才会存。",
-        "merged": "合并了 GitHub 上的改动（{{count}} 个文件），{{archive}}"
+        "merged": "合并了 GitHub 上的改动（{{count}} 个文件），{{archive}}",
+        "merged_local": "合并了仓库里的改动（{{count}} 个文件），{{archive}}"
       },
       "local": {
         "browser": "没有文件夹，项目放在这个浏览器里",
@@ -4641,7 +4684,8 @@
       "section": {
         "local": "本地",
         "sync": "同步",
-        "github": "GitHub 仓库"
+        "github": "GitHub 仓库",
+        "github_local": "本机仓库"
       },
       "action": {
         "switchRepository": "换一个仓库…",
@@ -4662,9 +4706,13 @@
         "deleteCloud": "删除项目…",
         "takeBack": "接回",
         "wakeAsItIs": "我已在 GitHub 上修好，按现在的样子取回",
+        "wakeAsItIs_local": "按本机仓库现在的样子取回",
         "resolveMerge": "处理…",
         "showBlocked": "查看…",
-        "saveToFolder": "保存到文件夹…"
+        "saveToFolder": "保存到文件夹…",
+        "recreateLocal": "重新建一个",
+        "restartLocal": "从项目重新开始存档",
+        "copyClone": "复制克隆命令"
       }
     },
     "onlyHere": {
@@ -4720,28 +4768,37 @@
     },
     "wake": {
       "failedTitle": "没能从 GitHub 取回“{{name}}”",
+      "failedTitle_local": "没能从本机仓库取回“{{name}}”",
       "noRepository": "这个项目没有仓库，服务器上的内容已经没了，没法取回。",
       "unusable": "仓库用不了，没法从 GitHub 取回。",
+      "unusable_local": "仓库用不了，没法从本机仓库取回。",
       "missing": "服务器的列表里已经没有这个项目了。",
       "unavailable": "现在连不上服务器，请稍后再试。",
       "busy": "上次取回没成功：{{why}}",
       "retryAt": "{{count}} 分钟后可以再试。",
       "later": "服务器过一会儿会自动再试，改动都留在本机。",
       "fixed": "在 GitHub 上修好以后，可以按 GitHub 上现在的样子取回。",
+      "fixed_local": "把仓库修好以后，可以按仓库现在的样子取回。",
       "retry": "再试一次",
       "notAllowed": "上次取回不是因为仓库里的内容失败的，不能按 GitHub 上现在的样子取回。",
+      "notAllowed_local": "上次取回不是因为仓库里的内容失败的，不能按仓库现在的样子取回。",
       "fromGitHub": "我已在 GitHub 上修好，按现在的样子取回",
-      "fromGitHubNote": "按 GitHub 上现在的样子取回时，分不清这台电脑上哪些是新改的，两边不一样的文件会让你逐个选。"
+      "fromGitHub_local": "按本机仓库现在的样子取回",
+      "fromGitHubNote": "按 GitHub 上现在的样子取回时，分不清这台电脑上哪些是新改的，两边不一样的文件会让你逐个选。",
+      "fromGitHubNote_local": "按仓库现在的样子取回时，分不清这台电脑上哪些是新改的，两边不一样的文件会让你逐个选。"
     },
     "copyProblem": {
       "unreadable": "GitHub 仓库里有读不懂的文件：{{files}}",
+      "unreadable_local": "本机仓库里有读不懂的文件：{{files}}",
       "notProject": "GitHub 仓库的根目录里没有 AnimaQuill 项目",
+      "notProject_local": "本机仓库的根目录里没有 AnimaQuill 项目",
       "tooLarge": "仓库里的项目太大，超过了在线项目的上限",
       "tooNew": "仓库里的项目是更新的编辑器做的，刷新页面更新编辑器后再试",
       "identity": "仓库里现在是另一个项目",
       "quota": "你的在线项目数量或空间已经满了",
       "unusable": "仓库用不了",
       "unavailable": "GitHub 或服务器暂时出了问题",
+      "unavailable_local": "服务器暂时出了问题",
       "other": "出了问题（{{code}}）"
     },
     "restore": {
@@ -4750,12 +4807,14 @@
       "confirmMessageOther": "当前的项目不会变，恢复好以后会打开恢复出来的那个。",
       "confirm": "恢复",
       "running": "正在从 GitHub 取回…",
+      "running_local": "正在从本机仓库取回…",
       "long": "恢复花的时间比预期长，好了以后会出现在“在线项目”里。",
       "gone": "从仓库恢复没有成功，什么都没留下，可以再试一次。",
       "failedTitle": "没能从仓库 {{repository}} 恢复",
       "failure": {
         "noProject": "仓库的根目录里没有 AnimaQuill 项目。",
         "unreadable": "仓库里有读不懂的文件：{{files}}。在 GitHub 上修好以后再试。",
+        "unreadable_local": "仓库里有读不懂的文件：{{files}}。修好以后再试。",
         "tooLarge": "仓库里的项目太大，超过了在线项目的上限。",
         "tooNew": "仓库里的项目是更新的编辑器做的。刷新页面更新编辑器后再试。",
         "quota": "你的在线项目数量或空间已经满了。",
@@ -4763,8 +4822,10 @@
         "linkedProject": "这个仓库已经是你的在线项目“{{name}}”的了。",
         "public": "这是公开仓库，要先确认。",
         "notFound": "找不到这个仓库，可能已经删了或不在授权范围里。",
+        "notFound_local": "找不到这个仓库，可能已经被挪走或者已经恢复过了。",
         "notInstalled": "GitHub App 没装在这个仓库所在的账号上。",
         "unavailable": "GitHub 或服务器暂时出了问题，什么都没留下，可以再试一次。",
+        "unavailable_local": "服务器暂时出了问题，什么都没留下，可以再试一次。",
         "busy": "操作太频繁，稍后再试。",
         "signedOut": "登录已过期，请先登录。",
         "other": "服务器没有恢复（{{code}}）。",
@@ -4775,7 +4836,9 @@
     "takeBack": {
       "title": "接回“{{name}}”",
       "message": "服务器的这个项目已经从 GitHub 重新取回。这台电脑上还有没进 GitHub 的改动，下面 {{count}} 个文件服务器也改了同一处，请选用哪一边：",
+      "message_local": "服务器的这个项目已经从本机仓库重新取回。这台电脑上还有没进仓库的改动，下面 {{count}} 个文件服务器也改了同一处，请选用哪一边：",
       "messageNoBase": "服务器的这个项目已经从 GitHub 重新取回，分不清这台电脑上的哪些是新改的。下面 {{count}} 个文件两边不一样，请选用哪一边：",
+      "messageNoBase_local": "服务器的这个项目已经从本机仓库重新取回，分不清这台电脑上的哪些是新改的。下面 {{count}} 个文件两边不一样，请选用哪一边：",
       "merged": "另外有 {{count}} 个文件只有这台电脑改过，会自动并回去。",
       "both": "两边不一样",
       "newerHere": "这台电脑和服务器都改了同一处",
@@ -4799,10 +4862,15 @@
       "carryDeclined": "这个窗口里没来得及存进浏览器的改动没有并到接回后的“{{name}}”上：你没有选。",
       "carryFailed": "这个窗口里有改动没来得及存进浏览器，也没能并到接回后的“{{name}}”上。",
       "waiting": "服务器已从 GitHub 重新取回这个项目，正在把这台电脑上的改动接回去…",
+      "waiting_local": "服务器已从本机仓库重新取回这个项目，正在把这台电脑上的改动接回去…",
       "cancelled": "服务器已从 GitHub 重新取回这个项目，这台电脑上的改动还没接回。接回之前这个项目只能看、不能改。",
+      "cancelled_local": "服务器已从本机仓库重新取回这个项目，这台电脑上的改动还没接回。接回之前这个项目只能看、不能改。",
       "signedOut": "服务器已从 GitHub 重新取回这个项目，登录以后才能把这台电脑上的改动接回去。接回之前这个项目只能看、不能改。",
+      "signedOut_local": "服务器已从本机仓库重新取回这个项目，登录以后才能把这台电脑上的改动接回去。接回之前这个项目只能看、不能改。",
       "missing": "服务器已从 GitHub 重新取回这个项目，但服务器说现在登录的账号没有它，或者还取不到它的内容，这台电脑上的改动没法接回。请用这个项目的账号登录，或者稍后再试。",
+      "missing_local": "服务器已从本机仓库重新取回这个项目，但服务器说现在登录的账号没有它，或者还取不到它的内容，这台电脑上的改动没法接回。请用这个项目的账号登录，或者稍后再试。",
       "unavailable": "服务器已从 GitHub 重新取回这个项目，可是现在连不上服务器，这台电脑上的改动还没接回，会自动再试，也可以现在再试。接回之前这个项目只能看、不能改。",
+      "unavailable_local": "服务器已从本机仓库重新取回这个项目，可是现在连不上服务器，这台电脑上的改动还没接回，会自动再试，也可以现在再试。接回之前这个项目只能看、不能改。",
       "moved": "接回没完成：接回时服务器的这个项目一直有新的改动进来，请再试一次。接回之前这个项目只能看、不能改。",
       "failedTitle": "“{{name}}”没有接回",
       "failed": {
@@ -4815,7 +4883,15 @@
       },
       "noteKept": "这台电脑上原来的内容在接回的改动同步到服务器之前一直留在这个浏览器里。"
     },
-    "connectUndone": "服务器没有建成这个项目。项目还在这个浏览器里，内容没有动。"
+    "connectUndone": "服务器没有建成这个项目。项目还在这个浏览器里，内容没有动。",
+    "restoreLocal": {
+      "title": "从本机仓库恢复",
+      "message": "这些本机仓库没有对应的在线项目（项目删了，或者服务器的数据是更早的）。选一个恢复成在线项目，以后照常存回这个仓库。",
+      "loading": "正在查…",
+      "empty": "没有可以恢复的本机仓库。",
+      "failed": "现在查不了，请稍后再试。",
+      "confirm": "恢复"
+    }
   },
   "repository": {
     "switchTitle": "换一个仓库",
@@ -4873,18 +4949,24 @@
       "signedOut": "登录已过期，重新登录后再试。",
       "busy": "操作太频繁了，稍后再试。",
       "unavailable": "暂时连不上服务器或 GitHub，稍后再试。",
-      "other": "没有成功（{{code}}），稍后再试。"
+      "unavailable_local": "暂时连不上服务器，稍后再试。",
+      "other": "没有成功（{{code}}），稍后再试。",
+      "notBroken": "仓库现在没坏，不用重新开始。"
     },
     "linked": "已存到 GitHub：{{name}}。第一次存档马上开始。",
     "status": {
       "justNow": "刚刚",
       "kept": "这些文件这次没存进去，GitHub 上还是旧的一版：{{files}}",
+      "kept_local": "这些文件这次没存进去，本机仓库里还是旧的一版：{{files}}",
       "said": "GitHub 的原话：{{detail}}",
+      "said_local": "服务器的原话：{{detail}}",
       "detail": "详情：{{detail}}"
     },
     "pause": {
       "diverged": "GitHub 上有人改了项目的 {{count}} 个文件",
+      "diverged_local": "本机仓库里有人改了项目的 {{count}} 个文件",
       "gone": "仓库不见了，或者 GitHub App 不能再访问它",
+      "gone_local": "本机仓库找不到了",
       "goneDeleted": "仓库在 GitHub 上被删除了",
       "goneUnauthorized": "AnimaQuill 不能再访问这个仓库",
       "uninstalled": "GitHub App 已经从你的账号上卸载",
@@ -4896,15 +4978,24 @@
       "invalid": "要存的文件读出来不是一个完整的项目",
       "other": "{{reason}}",
       "conflicts": "有 {{count}} 处和 GitHub 上的改动冲突",
+      "conflicts_local": "有 {{count}} 处和仓库里的改动冲突",
       "blocked": "GitHub 上的 {{files}} 没有并进来",
+      "blocked_local": "仓库里的 {{files}} 没有并进来",
       "locked": "项目锁着，GitHub 上的改动没有并进来",
+      "locked_local": "项目锁着，仓库里的改动没有并进来",
       "rewritten": "GitHub 上的历史被改写了",
+      "rewritten_local": "本机仓库的历史被改写了",
       "too-large": "GitHub 上改了 {{count}} 个文件，一次并不进来",
-      "unmerged": "GitHub 上去掉的 {{count}} 个文件还在项目里"
+      "too-large_local": "仓库里改了 {{count}} 个文件，一次并不进来",
+      "unmerged": "GitHub 上去掉的 {{count}} 个文件还在项目里",
+      "unmerged_local": "仓库里去掉的 {{count}} 个文件还在项目里",
+      "broken": "本机仓库坏了"
     },
     "fix": {
       "diverged": "为了不盖掉这些改动，存档先停下。可以以编辑器的内容接着存，GitHub 上的那一版会留在存档历史里；也可以换一个仓库。",
+      "diverged_local": "为了不盖掉这些改动，存档先停下。可以以编辑器的内容接着存，仓库里的那一版会留在存档历史里。",
       "gone": "在 GitHub 上把仓库加回 App 的授权范围后点“现在存档”，或者换一个仓库。",
+      "gone_local": "点“重新建一个”，会用项目现在的内容建一个新的本机仓库接着存；服务器上的项目都还在。",
       "goneDeleted": "换一个仓库，项目会重新存一份进去。服务器的项目和本机的内容都还在。",
       "goneUnauthorized": "在 GitHub 上把这个仓库加回 AnimaQuill 的授权范围，加回以后会自动接着存，也可以点“现在存档”；或者换一个仓库。",
       "uninstalled": "重新安装后会自动接着存。",
@@ -4915,23 +5006,32 @@
       "manifest": "在编辑器里改好以后会自动接着存。",
       "invalid": "在编辑器里改好以后会自动接着存。",
       "other": "可以点“现在存档”再试，或者换一个仓库。",
+      "other_local": "可以点“现在存档”再试。",
       "conflicts": "",
       "blocked": "",
       "locked": "解锁以后会自动再合并。",
       "rewritten": "",
       "too-large": "",
-      "unmerged": ""
+      "unmerged": "",
+      "broken": "点“从项目重新开始存档”：坏的仓库会原样挪到服务器数据目录的 repos/broken/ 里留着，用项目现在的内容建一个新的接着存。"
     },
     "replaceTitle": "以编辑器的内容接着存？",
     "replaceMessage": "存档会接在 GitHub 上的这一版后面，用编辑器的内容写项目的文件。GitHub 上的那一版留在存档历史里，可以找回。项目以外的文件不会动。",
+    "replaceMessage_local": "存档会接在本机仓库里的这一版后面，用编辑器的内容写项目的文件。仓库里的那一版留在存档历史里，可以找回。项目以外的文件不会动。",
     "replaceConfirm": "接着存",
     "replaceOverwritten": "会被覆盖的文件",
     "replaceRemoved": "会被删除的文件（GitHub 上有，项目里没有）",
+    "replaceRemoved_local": "会被删除的文件（仓库里有，项目里没有）",
     "replaceRestored": "会写回去的文件（GitHub 上删掉了，项目里还有）",
+    "replaceRestored_local": "会写回去的文件（仓库里删掉了，项目里还有）",
     "replaceChanged": "GitHub 上的文件又变了，请再看一下再决定。",
+    "replaceChanged_local": "仓库里的文件又变了，请再看一下再决定。",
     "archiveFailed": "没能开始存档：{{reason}}",
     "archiveWait": "1 分钟内只能存一次档，{{count}} 秒后自动存。",
-    "restore": "从这个仓库恢复"
+    "restore": "从这个仓库恢复",
+    "restarted": "已经重新开始存档，第一次存档马上开始。",
+    "cloneCopied": "克隆命令已复制",
+    "cloneFailed": "没能复制。克隆命令是：{{command}}"
   },
   "storage": {
     "download": {
@@ -5123,17 +5223,23 @@
       "properties": {
         "default": "默认存储空间",
         "lfs": "GitHub 大文件存储",
+        "lfs_local": "项目仓库",
         "lfsAt": "GitHub 大文件存储 · {{repo}}",
+        "lfsAt_local": "项目仓库",
         "local": "只在这台电脑上",
         "signIn": "登录后可用",
         "unsupported": "这个服务器没有",
+        "unsupported_local": "本机仓库还不能放素材",
         "noRepository": "项目还没有仓库",
         "localOnline": "新素材只放在这个浏览器里：清理浏览器数据会丢，换电脑、别人、云端 AI 都拿不到。",
         "localOffline": "素材放在项目文件夹里。",
         "lfsHelp": "新导入的素材传进这个项目的 GitHub 仓库，换电脑能自动下载。这个浏览器里的原片照样留着。",
+        "lfsHelp_local": "新导入的素材放进这个项目的本机仓库，换电脑能自动下载。这个浏览器里的原片照样留着。",
         "fellBack": "默认是 GitHub 大文件存储，这里用不了（{{why}}），新素材{{where}}。",
+        "fellBack_local": "默认是项目仓库，这里还用不了（{{why}}），新素材{{where}}。",
         "existing": "已有的：{{parts}}",
         "existingLfs": "{{count}} 个在 GitHub 大文件存储（{{size}}）",
+        "existingLfs_local": "{{count}} 个在项目仓库（{{size}}）",
         "existingHere": "{{count}} 个只在这个浏览器里",
         "localBrowser": "只在这个浏览器里",
         "moveExisting": "把已有的也换过去…"
@@ -5267,7 +5373,8 @@
     "retry": "再试一次",
     "step": {
       "upload": "在服务器上建项目",
-      "browser": "放进这个浏览器"
+      "browser": "放进这个浏览器",
+      "localRepository": "关联本机仓库"
     },
     "place": {
       "browser": "项目已经建好，但没能放进这个浏览器。可以在开始页上打开它。"
@@ -5603,6 +5710,7 @@
       "kindHelp": {
         "folder": "项目就是电脑上的一个文件夹，改动直接写进去。",
         "cloudBrowser": "项目在服务器上，存进你的 GitHub 仓库；这个浏览器里有一份，断线时照常编辑，回来再同步。",
+        "cloudBrowser_local": "项目在服务器上，存进服务器的本机 Git 仓库；这个浏览器里有一份，断线时照常编辑，回来再同步。",
         "browser": "项目只存在这个浏览器里，清理浏览器数据时会丢。记得经常另存一份。"
       },
       "openPanel": "打开在线面板",
@@ -5613,6 +5721,7 @@
       "sizeValue": "文档 {{documents}} · 素材 {{count}} 个 {{assets}}",
       "duration": "时长（主时间轴）",
       "repository": "GitHub 仓库",
+      "repository_local": "本机仓库",
       "repositoryPrivate": "{{name}}（私有）",
       "repositoryPublic": "{{name}}（公开）",
       "archivedAt": "最后存进仓库",
@@ -5636,7 +5745,9 @@
       "noFolderBrowser": "项目只在这个浏览器里，没有文件夹。清理浏览器数据时会丢，记得经常另存一份。",
       "sync": "同步和存档",
       "asking": "正在问服务器…",
-      "notSaid": "服务器没有给出"
+      "notSaid": "服务器没有给出",
+      "localRepository": "服务器上的本机 Git 仓库",
+      "localRepositoryHelp": "可以用 git clone 取出来；自己 git push 进去的改动会合并进项目。"
     }
   },
   "localAi": {
@@ -5816,29 +5927,40 @@
   "repoMerge": {
     "notice": {
       "merged": "合并了 GitHub 上的改动：{{count}} 个文件",
+      "merged_local": "合并了仓库里的改动：{{count}} 个文件",
       "away": "你不在时合并了 GitHub 上的改动（{{merges}} 次，{{count}} 个文件）",
+      "away_local": "你不在时合并了仓库里的改动（{{merges}} 次，{{count}} 个文件）",
       "show": "查看",
       "conflicts": "GitHub 上的改动和这里有 {{count}} 处冲突",
+      "conflicts_local": "仓库里的改动和这里有 {{count}} 处冲突",
       "resolve": "处理…",
       "dropped": "按你的选择从项目里去掉了 {{count}} 个文件"
     },
     "showTitle": "GitHub 上的改动（{{count}} 个文件）",
+    "showTitle_local": "仓库里的改动（{{count}} 个文件）",
     "changes": "改了什么",
     "undo": {
       "title": "撤销 GitHub 上合并进来的改动（{{count}} 个文件）",
+      "title_local": "撤销从仓库合并进来的改动（{{count}} 个文件）",
       "message": "下次存档时，GitHub 上也会改回来。",
+      "message_local": "下次存档时，本机仓库里也会改回来。",
       "confirm": "撤销",
       "failed": "没能撤销，请再试一次"
     },
     "list": {
       "title": "和 GitHub 上的改动冲突的地方（{{count}} 处）",
+      "title_local": "和仓库里的改动冲突的地方（{{count}} 处）",
       "titleDone": "和 GitHub 上的改动冲突的地方",
+      "titleDone_local": "和仓库里的改动冲突的地方",
       "keepAll": "全部保留这里的",
       "takeAll": "全部换成 GitHub 的",
+      "takeAll_local": "全部换成仓库里的",
       "here": "这里",
       "github": "GitHub 上",
+      "github_local": "仓库里",
       "using": "现在用",
       "take": "换成 GitHub 的",
+      "take_local": "换成仓库里的",
       "keep": "保留这里的",
       "deleteToo": "也删掉",
       "locate": "定位",
@@ -5848,9 +5970,11 @@
       "handled": "已处理 {{count}} 处",
       "stale": "后来又改过",
       "tookTheirs": "换成了 GitHub 的",
+      "tookTheirs_local": "换成了仓库里的",
       "keptOurs": "保留了这里的",
       "done": "都处理好了",
       "archiving": "正在存进 GitHub…",
+      "archiving_local": "正在存进本机仓库…",
       "loading": "正在读…",
       "failed": "读不出来",
       "retry": "重试",
@@ -5870,25 +5994,33 @@
       "close": "关闭",
       "takeHere": "换成这里的",
       "keepGithub": "保留 GitHub 的",
+      "keepGithub_local": "保留仓库里的",
       "tookHere": "换成了这里的",
       "keptGithub": "保留了 GitHub 的",
+      "keptGithub_local": "保留了仓库里的",
       "commit": "存档 {{sha}}",
       "project": "项目",
       "line": "第 {{line}} 行"
     },
     "compare": {
       "title": "{{file}}：这里 ↔ GitHub 上",
+      "title_local": "{{file}}：这里 ↔ 仓库里",
       "save": "保留这里的",
       "cancel": "取消"
     },
     "blocked": {
       "title": "GitHub 上有文件没有并进来",
+      "title_local": "仓库里有文件没有并进来",
       "openOnGitHub": "在 GitHub 上打开",
       "useHere": "用这里的覆盖…",
       "deleteOnGitHub": "从 GitHub 上删掉…",
+      "deleteOnGitHub_local": "从仓库里删掉…",
       "useHereTitle": "用这里的内容覆盖 GitHub 上的 {{path}}？",
+      "useHereTitle_local": "用这里的内容覆盖仓库里的 {{path}}？",
       "deleteTitle": "从 GitHub 上删掉 {{path}}？",
+      "deleteTitle_local": "从仓库里删掉 {{path}}？",
       "useHereMessage": "GitHub 上这次对这个文件的改动不会进来，GitHub 的历史里还在。",
+      "useHereMessage_local": "仓库里这次对这个文件的改动不会进来，仓库的历史里还在。",
       "confirmUse": "覆盖",
       "confirmDelete": "删掉",
       "reason": {
@@ -5899,13 +6031,18 @@
     },
     "rewritten": {
       "title": "GitHub 上的历史被改写了",
+      "title_local": "本机仓库的历史被改写了",
       "continue": "以这里的内容接着存（GitHub 上改写后的改动不会进来）",
+      "continue_local": "以这里的内容接着存（改写后的改动不会进来）",
       "mergeNow": "把 GitHub 上现在的版本并进来",
+      "mergeNow_local": "把仓库里现在的版本并进来",
       "switch": "换一个仓库…"
     },
     "unmerged": {
       "title": "GitHub 上去掉的文件还在项目里",
+      "title_local": "仓库里去掉的文件还在项目里",
       "message": "接着存会把 GitHub 上已经去掉的这些文件重新提交。",
+      "message_local": "接着存会把仓库里已经去掉的这些文件重新提交。",
       "drop": "从项目里去掉",
       "keep": "重新提交",
       "allDrop": "全部去掉",
@@ -5917,8 +6054,10 @@
     },
     "prefer": {
       "name": "GitHub 上和这里改了同一处时，先用",
+      "name_local": "仓库里和这里改了同一处时，先用",
       "editor": "这里的",
       "github": "GitHub 上的",
+      "github_local": "仓库里的",
       "failed": "没能改，请再试一次"
     },
     "opening": {

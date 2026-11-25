@@ -23,9 +23,11 @@ import {
   type ProjectLibrary,
   type StoragePersistence,
   type WindowMemory,
+  type LocalRepository,
 } from "@animaquill/host";
 import { isSameHash } from "@animaquill/media";
 import type { TFunction } from "i18next";
+import { placedT } from "../i18n/i18n.ts";
 import type { Dialogs } from "../workbench/dialogs.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import type { Notifications } from "../workbench/notifications.ts";
@@ -209,6 +211,21 @@ const NONE: CloudProjectsSnapshot = { kind: "none" };
 const ONLY_HERE: CloudProjectsSnapshot = { kind: "none", local: "browser" };
 /** Where the window remembers which projects only in this browser it told people about. */
 const TOLD_KEY = "cloud.onlyHereTold";
+
+/**
+ * `git clone "<folder>" "<name>"`, for a repository of the server's own: in double quotes, as every
+ * shell takes them, a path on Windows with its backslashes; the name of the project as a folder
+ * name, without what no file system or shell takes (`fallback` where nothing is left).
+ */
+export const cloneCommandOf = (clone: string, name: string, fallback: string): string => {
+  const quote = (text: string) => `"${text.replace(/(["$`])/g, "\\$1")}"`;
+  const folder =
+    [...name]
+      .filter((char) => char >= " " && !'\\/:*?"<>|$`'.includes(char))
+      .join("")
+      .trim() || fallback;
+  return `git clone ${quote(clone)} ${quote(folder)}`;
+};
 
 /** Restoring a repository refused, see `RepositoryAccess.restore`, in people's words. */
 function restoreRefusalText(error: RepositoryRefused, t: TFunction): string {
@@ -1464,6 +1481,37 @@ export class CloudProjects {
     return done ? linked : undefined;
   }
 
+  /**
+   * The command that clones the repository of the open project, where it is one of the server's
+   * own: `git clone "<folder>" "<name>"`. Undefined for any other.
+   */
+  cloneCommand(name: string): string | undefined {
+    const repository = this.repository?.getSnapshot().status?.repository;
+    if (repository?.place !== "local" || !repository.clone) return undefined;
+    return cloneCommandOf(repository.clone, name, repository.name);
+  }
+
+  /**
+   * "重新建一个", "从项目重新开始存档": archiving starts over into a new repository of the server's
+   * own, for one gone or broken. Says how it went.
+   */
+  async restartArchive(): Promise<void> {
+    const { notifications, t } = this.#options;
+    const repository = this.repository;
+    if (!repository) return;
+    const outcome = await repository.restart();
+    if (outcome.kind === "started") {
+      notifications.push(t("repository.restarted"));
+      return;
+    }
+    const code = outcome.code;
+    const reason =
+      code === "signedOut" || code === "busy" || code === "unavailable" || code === "notBroken"
+        ? placedT(t, "local")(`repository.failure.${code}`)
+        : t("repository.failure.other", { code });
+    notifications.push(t("repository.archiveFailed", { reason }));
+  }
+
   /** Archives the open project now, as people ask for it. */
   async archiveNow(): Promise<void> {
     const repository = this.repository;
@@ -1736,23 +1784,39 @@ export class CloudProjects {
    * so. Resolves to whether it opened.
    */
   async restoreFromRepository(
-    repository: { readonly id: number; readonly fullName: string; readonly public?: boolean },
-    { other = false }: { readonly other?: boolean } = {},
+    repository:
+      | { readonly id: number; readonly fullName: string; readonly public?: boolean }
+      /** A repository of the server's own, by its folder there (`localRepositories`). */
+      | { readonly dir: string; readonly fullName: string; readonly public?: undefined },
+    {
+      other = false,
+      asked = false,
+    }: {
+      readonly other?: boolean;
+      /** People chose it in a dialog that said what restoring does already. */
+      readonly asked?: boolean;
+    } = {},
   ): Promise<boolean> {
     const { cloud, dialogs, notifications, t } = this.#options;
     const access = cloud.repository;
-    if (!access?.restore) return false;
+    const local = "dir" in repository;
+    const restore = local
+      ? access?.restoreLocal && ((dir: string) => access.restoreLocal!(dir))
+      : access?.restore;
+    if (!access || !restore) return false;
     const plain = { interpolation: { escapeValue: false } } as const;
     const words = { repository: repository.fullName, ...plain };
-    const go = await dialogs.confirm({
-      title: t("cloud.restore.confirmTitle", words),
-      message: [
-        t("cloud.restore.confirmMessage"),
-        ...(other ? [t("cloud.restore.confirmMessageOther")] : []),
-        ...(repository.public ? [t("cloud.restore.publicNote")] : []),
-      ].join(""),
-      confirm: t("cloud.restore.confirm"),
-    });
+    const go =
+      asked ||
+      (await dialogs.confirm({
+        title: t("cloud.restore.confirmTitle", words),
+        message: [
+          t("cloud.restore.confirmMessage"),
+          ...(other ? [t("cloud.restore.confirmMessageOther")] : []),
+          ...(repository.public ? [t("cloud.restore.publicNote")] : []),
+        ].join(""),
+        confirm: t("cloud.restore.confirm"),
+      }));
     if (!go) return false;
     if (!(await this.#signedIn(t("cloud.openTitle")))) return false;
     const environment = this.#options.environment ?? pageEnvironment();
@@ -1764,10 +1828,13 @@ export class CloudProjects {
     let made: { readonly id: string; readonly name: string } | undefined;
     let failure: string | undefined;
     try {
-      const restored = await access.restore({
-        existing: { id: repository.id },
-        ...(repository.public && { confirmPublic: true }),
-      });
+      const restored =
+        "dir" in repository
+          ? await access.restoreLocal!(repository.dir)
+          : await access.restore!({
+              existing: { id: repository.id },
+              ...(repository.public && { confirmPublic: true }),
+            });
       made = restored.project;
       if (restored.copy !== "live") {
         // It takes longer: the list says once it is there, or that it could not be.
@@ -1820,6 +1887,49 @@ export class CloudProjects {
       return false;
     }
     return this.openCloudProject(made.id, { name: made.name, copy: "live" });
+  }
+
+  /** The repositories of the server's own that people can restore: none where it has none. */
+  async localRepositories(): Promise<readonly LocalRepository[]> {
+    const access = this.#options.cloud.repository;
+    if (!access?.localRepositories) return [];
+    return access.localRepositories();
+  }
+
+  /**
+   * "从本机仓库恢复…": people choose one of the repositories of the server's own that no project is
+   * saved to, and it is restored as `restoreFromRepository` does one on GitHub. Resolves to
+   * whether a project opened.
+   */
+  async restoreLocalRepository(): Promise<boolean> {
+    const { dialogs, notifications, t } = this.#options;
+    let list: readonly LocalRepository[];
+    try {
+      list = await this.localRepositories();
+    } catch {
+      notifications.push(t("cloud.restoreLocal.failed"));
+      return false;
+    }
+    if (list.length === 0) {
+      notifications.push(t("cloud.restoreLocal.empty"));
+      return false;
+    }
+    const chosen = await dialogs.choose({
+      title: t("cloud.restoreLocal.title"),
+      message: t("cloud.restoreLocal.message"),
+      stacked: true,
+      choices: list.map((repository, index) => ({
+        id: repository.dir,
+        label: repository.name,
+        ...(index === 0 && { kind: "primary" as const }),
+      })),
+    });
+    const repository = list.find((each) => each.dir === chosen);
+    if (!repository) return false;
+    return this.restoreFromRepository(
+      { dir: repository.dir, fullName: repository.name },
+      { asked: true },
+    );
   }
 
   /** Asks the platform for the working copy of a project, see `CloudAccess.wake`. */

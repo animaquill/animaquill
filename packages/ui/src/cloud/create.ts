@@ -387,7 +387,10 @@ export class CloudCreate {
         precheck: {
           delayMs: options.checkMs ?? 400,
           canAsk: () =>
-            !this.#closed && this.#snapshot.kind === "cloud" && this.#needOf() === undefined,
+            !this.#closed &&
+            this.#snapshot.kind === "cloud" &&
+            !this.savesLocally &&
+            this.#needOf() === undefined,
           setTimeout: this.#env.setTimeout,
           clearTimeout: this.#env.clearTimeout,
         },
@@ -488,12 +491,22 @@ export class CloudCreate {
     this.#set({ steps: { ...this.#snapshot.steps, [id]: state } });
   }
 
+  /**
+   * The platform saves every project to a repository of its own (an open-source server without
+   * GitHub): nothing to choose, and the project has its repository as the platform makes it.
+   */
+  get savesLocally(): boolean {
+    const who = this.#options.account?.getSnapshot();
+    return who?.status === "signedIn" && who.repositories === "local";
+  }
+
   #needOf(): ConnectNeed | undefined {
     const account = this.#options.account;
     if (!account || !this.picker) return undefined;
     const who = account.getSnapshot();
     if (this.#sawSignedOut || who.status === "signedOut") return "signIn";
     if (who.status === "unknown") return "account";
+    if (this.savesLocally) return undefined;
     if (!who.appInstalled || this.picker.getSnapshot().notInstalled) return "installApp";
     return undefined;
   }
@@ -551,7 +564,7 @@ export class CloudCreate {
     if (phase !== "choosing" || cancelling || name.trim() === "") return false;
     if (!this.format) return false;
     if (kind !== "cloud") return true;
-    return need === undefined && this.picker?.canSubmit === true;
+    return need === undefined && (this.savesLocally || this.picker?.canSubmit === true);
   }
 
   /**
@@ -653,9 +666,9 @@ export class CloudCreate {
     const picker = this.picker;
     if (!picker) return;
     if (!this.#made) {
-      await picker.settled();
+      if (!this.savesLocally) await picker.settled();
       if (this.#closed || this.#snapshot.cancelling) return;
-      if (!picker.canSubmit) {
+      if (!this.savesLocally && !picker.canSubmit) {
         this.#set({ problem: { step: "repository", code: "choice" } });
         return;
       }
@@ -738,6 +751,14 @@ export class CloudCreate {
     const project = this.#project;
     if (!picker || !project) return false;
     this.#step("repository", "running");
+    if (this.savesLocally) {
+      // Linked as the platform made it: what it says now is what there is.
+      const now = await this.#options.access?.status(project).catch(() => undefined);
+      if (this.#closed) return false;
+      if (now?.repository) return this.#linked(now);
+      this.#stopAt({ step: "repository", code: "unavailable" });
+      return false;
+    }
     const status = await picker.submit();
     if (this.#closed) return false;
     if (status) return this.#linked(status);
@@ -1050,8 +1071,14 @@ export function createProblemText(problem: CreateProblem, t: TFunction): string 
   }
 }
 
-/** What a step is called. */
-export function createStepText(id: CreateStepId, mode: PickerMode, t: TFunction): string {
+/** What a step is called. `local`: the platform saves to repositories of its own. */
+export function createStepText(
+  id: CreateStepId,
+  mode: PickerMode,
+  t: TFunction,
+  local = false,
+): string {
+  if (id === "repository" && local) return t("newProject.step.localRepository");
   if (id === "repository")
     return t(mode === "create" ? "cloud.connect.step.create" : "cloud.connect.step.existing");
   if (id === "place") return t("newProject.step.browser");

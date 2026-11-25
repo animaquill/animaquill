@@ -2,6 +2,7 @@ import type { ProjectStore } from "@animaquill/core";
 import type { CloudProjectSummary } from "@animaquill/host";
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
+import { placedT } from "../i18n/i18n.ts";
 import { CloudPanelBody } from "../app/CloudPanel.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import { cloudOf, storedOf } from "../app/StatusBar.tsx";
@@ -204,15 +205,20 @@ export function StorageGroup({
                     ],
                     ...(summary?.repository
                       ? ([
-                          [
-                            t("projectProps.storage.repository"),
-                            t(
-                              summary.repository.private
-                                ? "projectProps.storage.repositoryPrivate"
-                                : "projectProps.storage.repositoryPublic",
-                              { name: summary.repository.fullName },
-                            ),
-                          ],
+                          summary.repository.place === "local"
+                            ? ([
+                                placedT(t, "local")("projectProps.storage.repository"),
+                                t("projectProps.storage.localRepository"),
+                              ] as const)
+                            : ([
+                                t("projectProps.storage.repository"),
+                                t(
+                                  summary.repository.private
+                                    ? "projectProps.storage.repositoryPrivate"
+                                    : "projectProps.storage.repositoryPublic",
+                                  { name: summary.repository.fullName },
+                                ),
+                              ] as const),
                           [t("projectProps.storage.archivedAt"), moment(summary.archive?.at)],
                         ] as const)
                       : []),
@@ -266,7 +272,11 @@ export function StorageGroup({
           help={t("projectProps.storage.noFolderBrowser")}
         />
       )}
-      <DefaultStorageRows repo={repository?.status?.repository?.fullName} locked={locked} />
+      <DefaultStorageRows
+        repo={repository?.status?.repository?.fullName}
+        local={repository?.status?.repository?.place === "local"}
+        locked={locked}
+      />
       {panel && linked && (
         <>
           <Heading>{t("projectProps.storage.sync")}</Heading>
@@ -346,14 +356,18 @@ function PreferRow({ prefer }: { readonly prefer: "editor" | "github" | undefine
  */
 function DefaultStorageRows({
   repo,
+  local: isLocal,
   locked,
 }: {
   readonly repo: string | undefined;
+  /** The repository is one of the server's own, which its words say. */
+  readonly local: boolean;
   readonly locked: boolean;
 }) {
   const workbench = useWorkbench();
   const { uploads, missingFiles } = workbench;
-  const { t } = useTranslation();
+  const { t: given } = useTranslation();
+  const t = placedT(given, isLocal ? "local" : undefined);
   const { store } = useSession();
   const state = useProject(store);
   const snapshot = useSyncExternalStore(uploads.subscribe, uploads.getSnapshot);

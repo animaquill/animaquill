@@ -6,11 +6,13 @@ import {
   CloudOff,
   Download,
   GitBranch,
+  HardDrive,
   Pause,
   RefreshCw,
   TriangleAlert,
   X,
 } from "lucide-react";
+import { placedT } from "../i18n/i18n.ts";
 import type { TFunction } from "i18next";
 import {
   useEffect,
@@ -672,9 +674,11 @@ function SaveStatuses({
     }
     wasOpen.current = false;
   };
+  // A repository of the server's own is said so, with a disk for its sign.
+  const repoT = placedT(t, panel?.local ? "local" : undefined);
   const label = (what: "local" | "sync" | "github", state: string) =>
     t("saveStatus.label", {
-      what: t(`saveStatus.${what}`),
+      what: repoT(`saveStatus.${what}`),
       state,
       interpolation: { escapeValue: false },
     });
@@ -770,10 +774,12 @@ function SaveStatuses({
               >
                 {isError ? (
                   <CircleAlert size={12} aria-hidden="true" />
+                ) : panel.local ? (
+                  <HardDrive size={12} aria-hidden="true" />
                 ) : (
                   <GitBranch size={12} aria-hidden="true" />
                 )}
-                <span className={styles.saveLabel}>{t("saveStatus.github")}</span>
+                <span className={styles.saveLabel}>{repoT("saveStatus.github")}</span>
                 <span className={styles.saveWord}>{githubWord}</span>
               </button>
             </Tip>

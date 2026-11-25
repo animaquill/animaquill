@@ -45,8 +45,10 @@ import {
  *   `POST .../repository/prefer` with `{ prefer }`: merging changes on GitHub
  * - `GET  <api>/projects/<project>/batches/<batch>`, `POST .../batches/<batch>/undo`: batches the
  *   platform wrote itself, taken back as a whole
- * - `POST <api>/projects/restore` with `{ existing: { id }, confirmPublic? }`: 201 or 202 with
- *   `{ project: { id, name }, copy }`
+ * - `POST <api>/projects/restore` with `{ existing: { id }, confirmPublic? }`, or `{ local: { dir } }`
+ *   for a repository of the server's own: 201 or 202 with `{ project: { id, name }, copy }`
+ * - `GET  <api>/local-repositories`, `POST <api>/projects/<project>/repository/restart`:
+ *   repositories of the server's own
  *
  * What comes back is read field by field: a platform of another version can say more, or less.
  * A platform that does not answer for a while is "unavailable", like one that is not there: what
@@ -211,6 +213,7 @@ export const statusOf = (value: unknown): RepositoryStatus => {
           private: repository.private === true,
           branch: text(repository.branch) ?? "main",
           ...optional("url", text(repository.url)),
+          ...optional("clone", text(repository.clone)),
           createdHere: repository.createdHere === true,
           linkedAt: count(repository.linkedAt) ?? 0,
         },
@@ -220,6 +223,7 @@ export const statusOf = (value: unknown): RepositoryStatus => {
     ...optional("gone", goneOf(value.gone)),
     ...optional("unusable", unusableOf(value.unusable)),
     ...optional("detail", text(value.detail)),
+    ...(value.failure === "diskFull" && { failure: "diskFull" as const }),
     archiving: value.archiving === true,
     ...(last &&
       sha !== undefined && {
@@ -293,6 +297,7 @@ const CODES: ReadonlySet<string> = new Set<RepositoryRefusal>([
   "quota",
   "behind",
   "notBlocked",
+  "notBroken",
   "notRewritten",
   "noCommonBase",
   "notUndoable",
@@ -452,6 +457,30 @@ export function browserRepository(options: BrowserRepositoryOptions): Repository
       // An answer that is no project, as from a gateway: the platform did not say it made one.
       if (!said) throw new RepositoryRefused("unavailable");
       return said;
+    },
+    async localRepositories() {
+      const answer = await call("GET", "/local-repositories");
+      const list =
+        isObject(answer) && Array.isArray(answer.repositories) ? answer.repositories : [];
+      return list.flatMap((item) => {
+        if (!isObject(item)) return [];
+        const dir = text(item.dir);
+        const name = text(item.name);
+        const project = text(item.project);
+        return dir !== undefined && name !== undefined && project !== undefined
+          ? [{ dir, name, project }]
+          : [];
+      });
+    },
+    async restoreLocal(dir) {
+      const said = restoredOf(
+        await call("POST", "/projects/restore", { local: { dir } }, changeMs),
+      );
+      if (!said) throw new RepositoryRefused("unavailable");
+      return said;
+    },
+    async restart(project) {
+      return statusOf(await call("POST", projectPath(project, "repository/restart"), {}, changeMs));
     },
     async archiveNow(project, archive = {}) {
       return statusOf(
