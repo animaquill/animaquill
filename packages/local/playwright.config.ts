@@ -32,8 +32,24 @@ export default defineConfig({
     },
     trace: process.env["CI"] ? "retain-on-failure" : "off",
   },
+  projects: [
+    { name: "editor", testIgnore: /backend\.spec\.ts/ },
+    // The backend, with servers of its own (e2e/backend-support.ts), in both browsers.
+    { name: "backend-chromium", testMatch: /backend\.spec\.ts/ },
+    {
+      name: "backend-firefox",
+      testMatch: /backend\.spec\.ts/,
+      use: {
+        ...devices["Desktop Firefox"],
+        viewport: { width: 1440, height: 900 },
+        launchOptions: {},
+      },
+    },
+  ],
   webServer: {
-    command: `pnpm build && node dist/cli.js --no-open --port ${PORT}`,
+    // The editor alone, as before the backend: what these tests are about. The tests of the
+    // backend start their own, see e2e/backend-support.ts.
+    command: `pnpm build && node dist/cli.js --offline --no-open --port ${PORT}`,
     url: `http://127.0.0.1:${PORT}/`,
     reuseExistingServer: !process.env["CI"],
     timeout: 180_000,

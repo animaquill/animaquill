@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
 import { findPrograms, isAlive, makeLinks, NoPostgres, Postgres } from "./postgres.ts";
+import { NewerDatabase } from "@animaquill/server/database.ts";
 import { readBackend } from "./lock.ts";
 import { startBackend, type StartedBackend } from "./run.ts";
 
@@ -230,7 +231,28 @@ describe.skipIf(!runs)("the backend", () => {
     expect(JSON.parse((await who()).body)).toMatchObject({ status: "signedOut" });
     const logs = readFileSync(renewed.log, "utf8");
     expect(logs).not.toContain(token);
+
+    // A newer version migrated the database since: this one does not start on it.
+    const pid = readFileSync(join(dir, "pg18", "postmaster.pid"), "utf8").split("\n");
+    const { Client } = await import("pg");
+    const client = new Client({
+      host: "127.0.0.1",
+      port: Number(pid[3]),
+      user: "animaquill",
+      password: readFileSync(join(dir, "pg18.password"), "utf8").trim(),
+      database: "animaquill",
+    });
+    await client.connect();
+    await client.query(
+      "insert into drizzle.__drizzle_migrations (hash, created_at) values ('of a newer version', 9999999999999)",
+    );
+    await client.end();
     await renewed.stop();
     backend = undefined;
+    await expect(startBackend(options)).rejects.toBeInstanceOf(NewerDatabase);
+    // And what it started for that is gone again: the folder can be started by the newer one.
+    expect(await readBackend(dir)).toBeUndefined();
+    expect(existsSync(join(dir, "lock"))).toBe(false);
+    expect(existsSync(join(dir, "pg18", "postmaster.pid"))).toBe(false);
   }, 120_000);
 });
