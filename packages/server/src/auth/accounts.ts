@@ -54,7 +54,11 @@ export const SIGNUP_MAX_FAILURES = 5;
 export interface AccountsOptions {
   readonly db: Db;
   readonly sealer: Sealer;
-  readonly github: GitHubClient;
+  /**
+   * GitHub, which signing in goes through: undefined only where the person of this machine is the
+   * one who signs in (`localSession`), as the backend of `npx animaquill` without a GitHub App.
+   */
+  readonly github: GitHubClient | undefined;
   /** The callback of the App, which the code is for. */
   readonly callbackUrl: string;
   readonly now?: () => Date;
@@ -115,16 +119,24 @@ const isUniqueViolation = (error: unknown) =>
   (error as { code?: unknown } | undefined)?.code === "23505" ||
   (error as { cause?: { code?: unknown } } | undefined)?.cause?.code === "23505";
 
+/** The name of the person of this machine (`UserKind` "local"), as the editor shows it. */
+export const LOCAL_PERSON = "本机";
+
 export const createAccounts = ({
   db,
   sealer,
-  github,
+  github: maybeGitHub,
   callbackUrl,
   now: clock,
   log,
   people = NOBODY_NEW,
 }: AccountsOptions) => {
   const now = clock ?? (() => new Date());
+  /** GitHub, for what only works through it: a sign-in started without it fails as unavailable. */
+  const gitHub = (): GitHubClient => {
+    if (!maybeGitHub) throw new GitHubUnavailable("GitHub is not set up here");
+    return maybeGitHub;
+  };
   const later = (from: Date, ms: number) => new Date(from.getTime() + ms);
 
   /**
@@ -133,6 +145,8 @@ export const createAccounts = ({
    * useless to anyone without the old master key. What fails is only noted.
    */
   const takeBack = async (gone: readonly GoneTokens[]) => {
+    // Without GitHub there is nobody to ask: what went is useless without the master key anyway.
+    if (!maybeGitHub) return;
     for (const { userId, accessToken } of gone) {
       let token: string;
       try {
@@ -140,14 +154,15 @@ export const createAccounts = ({
       } catch {
         continue;
       }
-      if (!(await github.revokeToken(token)))
+      if (!(await gitHub().revokeToken(token)))
         log?.warn({ userId }, "a GitHub token could not be taken back");
     }
   };
 
   /** A token GitHub just gave, which nothing here keeps. */
   const revokeNow = async (token: string) => {
-    if (!(await github.revokeToken(token))) log?.warn({}, "a GitHub token could not be taken back");
+    if (!(await gitHub().revokeToken(token)))
+      log?.warn({}, "a GitHub token could not be taken back");
   };
 
   const newSession = async (tx: Tx, userId: string, userAgent: string | undefined, at: Date) => {
@@ -183,8 +198,12 @@ export const createAccounts = ({
   });
 
   return {
+    /** Whether people sign in through GitHub here: without, only `localSession` gives a session. */
+    withGitHub: maybeGitHub !== undefined,
+
     /** A new sign-in: where to send the browser, and the state it has to keep in a cookie. */
     async startLogin(returnTo: string) {
+      const github = gitHub();
       const state = randomToken();
       const verifier = randomToken(48);
       const at = now();
@@ -243,6 +262,7 @@ export const createAccounts = ({
         throw problem;
       }
 
+      const github = gitHub();
       const isGitHub = (problem: unknown) =>
         problem instanceof GitHubUnavailable || problem instanceof GitHubUnauthorized;
       let tokens: GitHubTokens;
@@ -384,6 +404,31 @@ export const createAccounts = ({
         expiresAt,
         createdAt: row.createdAt,
       };
+    },
+
+    /**
+     * A new session of the person of this machine (`UserKind` "local"), who is made the first time:
+     * there is one at the most, see the index `users_one_local`. Only for the backend of `npx
+     * animaquill`, once the browser showed it was opened from the terminal that started it.
+     */
+    async localSession(userAgent: string | undefined): Promise<string> {
+      const at = now();
+      return db.transaction(async (tx) => {
+        // Two at the same time: one inserts, the other finds that row.
+        await tx
+          .insert(users)
+          .values({ kind: "local", githubId: null, login: LOCAL_PERSON })
+          .onConflictDoNothing({
+            target: users.kind,
+            where: sql`${users.kind} = 'local'`,
+          });
+        const [person] = await tx
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.kind, "local"));
+        if (!person) throw new Error("the person of this machine is not there");
+        return newSession(tx, person.id, userAgent, at);
+      });
     },
 
     /**

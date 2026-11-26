@@ -202,7 +202,7 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
       const own = credentials.sessionOf(request);
       if (!allowed(request, limits.navigation, own)) return goBack(reply, returnTo, "busy");
       const work = accounts();
-      if (!work) return goBack(reply, returnTo, "unavailable");
+      if (!work?.withGitHub) return goBack(reply, returnTo, "unavailable");
       return leaveToSignIn(request, reply, work, returnTo);
     },
   );
@@ -215,7 +215,7 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
       const own = credentials.sessionOf(request);
       if (!allowed(request, limits.navigation, own)) return goBack(reply, returnTo, "busy");
       const to = installUrl();
-      if (!to || !accounts()) return goBack(reply, returnTo, "unavailable");
+      if (!to || !accounts()?.withGitHub) return goBack(reply, returnTo, "unavailable");
       return reply
         .header(
           "set-cookie",
@@ -250,12 +250,12 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
         if (installing === undefined) return reply.redirect(HOME, 303);
         const returnTo = safeReturnTo(installing, origin);
         const clear = [credentials.clearCookie("install")];
-        if (!work) return goBack(reply, returnTo, "unavailable", clear);
+        if (!work?.withGitHub) return goBack(reply, returnTo, "unavailable", clear);
         return leaveToSignIn(request, reply, work, returnTo, clear);
       }
 
       const clear = credentials.clearCookie("login");
-      if (!work) return goBack(reply, HOME, "unavailable", [clear]);
+      if (!work?.withGitHub) return goBack(reply, HOME, "unavailable", [clear]);
       let result: LoginResult;
       try {
         result = await work.finishLogin({

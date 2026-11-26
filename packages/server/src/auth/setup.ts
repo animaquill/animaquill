@@ -35,6 +35,7 @@ export const setUpAccounts = (
     log,
     events,
     people,
+    withoutGitHub = false,
   }: {
     readonly fetch?: typeof globalThis.fetch;
     readonly log?: Logger;
@@ -42,6 +43,11 @@ export const setUpAccounts = (
     readonly people?: PeoplePolicy;
     /** What webhooks call for besides accounts, such as archives, see auth/events.ts. */
     readonly events?: AccountEventsOptions;
+    /**
+     * Accounts also without the GitHub App, where the person of this machine signs in without it
+     * (`Accounts.localSession`), as the backend of `npx animaquill` does. Only GitHub then.
+     */
+    readonly withoutGitHub?: boolean;
   } = {},
 ): AccountsSetup => {
   const { github } = config;
@@ -65,7 +71,7 @@ export const setUpAccounts = (
   // Without the master key nothing can be kept, so nobody signs in. The log says why already.
   const sealer = config.masterKeys ? createSealer(config.masterKeys) : undefined;
   const accounts =
-    client && sealer
+    (client || withoutGitHub) && sealer
       ? createAccounts({
           db,
           sealer,

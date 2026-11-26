@@ -98,6 +98,16 @@ export interface ServerParts {
    * no limit unless said.
    */
   readonly lfsDailyGb?: number | undefined;
+  /**
+   * Accounts also without the GitHub App, see `setUpAccounts`: for the person of this machine, as
+   * the backend of `npx animaquill` has them.
+   */
+  readonly withoutGitHub?: boolean | undefined;
+  /**
+   * Where the app takes requests: `app.listen` on the host and port of the settings unless said.
+   * The backend of `npx animaquill` has servers of its own, which hand the app what is for it.
+   */
+  readonly serve?: ((app: FastifyInstance) => Promise<void>) | undefined;
 }
 
 export interface Server {
@@ -107,6 +117,8 @@ export interface Server {
   readonly accounts: AccountsSetup;
   /** Listens where the settings say, and makes the rest ready behind it. */
   listen(): Promise<void>;
+  /** Once the database is ready behind it, as /api/health says it; never, if stopped first. */
+  whenReady(): Promise<void>;
   /** Stops answering, and what runs behind. */
   stop(): Promise<void>;
 }
@@ -115,6 +127,10 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
   const access = parts.access ?? OWNER_ONLY;
   const switches = parts.switches;
   let ready = false;
+  let madeReady: () => void = () => {};
+  const readyNow = new Promise<void>((resolve) => {
+    madeReady = resolve;
+  });
   let stopping = false;
   let jobs: Jobs | undefined;
   let sync: SyncHub | undefined;
@@ -164,6 +180,7 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
   const accounts = setUpAccounts(config, database.db, {
     log,
     ...(parts.people && { people: parts.people }),
+    ...(parts.withoutGitHub && { withoutGitHub: true }),
     events: {
       async onArchives(wanted) {
         for (const job of wanted)
@@ -377,6 +394,7 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
             log.warn({ err: describeError(error) }, "accounts will not be tidied up");
           });
         ready = true;
+        madeReady();
         log.info({}, "database ready");
         return;
       } catch (error) {
@@ -394,9 +412,11 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
     log,
     accounts,
     async listen() {
-      await app.listen({ host: config.host, port: config.port });
+      if (parts.serve) await parts.serve(app);
+      else await app.listen({ host: config.host, port: config.port });
       void prepare();
     },
+    whenReady: () => readyNow,
     async stop() {
       if (stopping) return;
       stopping = true;

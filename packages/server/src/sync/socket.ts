@@ -87,6 +87,18 @@ const refuse = (socket: Duplex, status: number, text: string) => {
   socket.destroy();
 };
 
+/** What takes the upgrade of a request to a WebSocket, as Node's `upgrade` event has it. */
+export type UpgradeHandler = (request: IncomingMessage, socket: Duplex, head: Buffer) => void;
+
+const upgrades = new WeakMap<FastifyInstance, UpgradeHandler>();
+
+/**
+ * The upgrades of an app, for a server that is not the app's own: the backend of `npx animaquill`
+ * has its HTTP servers, and hands Fastify the requests of the editor's site (`app.routing`) and
+ * this the upgrades. Undefined before `syncSocket` ran on it.
+ */
+export const upgradeOf = (app: FastifyInstance): UpgradeHandler | undefined => upgrades.get(app);
+
 export function syncSocket(app: FastifyInstance, options: SyncSocketOptions): void {
   const { origin, accounts, credentials, hub, proxies } = options;
   const now = options.now ?? Date.now;
@@ -211,13 +223,15 @@ export function syncSocket(app: FastifyInstance, options: SyncSocketOptions): vo
     });
   };
 
-  app.server.on("upgrade", (request: IncomingMessage, socket: Duplex, head: Buffer) => {
+  const onUpgrade: UpgradeHandler = (request, socket, head) => {
     socket.on("error", () => socket.destroy());
     upgrade(request, socket, head).catch((error: unknown) => {
       app.log.error({ err: describeError(error) }, "a sync connection failed");
       socket.destroy();
     });
-  });
+  };
+  upgrades.set(app, onUpgrade);
+  app.server.on("upgrade", onUpgrade);
 
   app.addHook("onClose", async () => {
     clearInterval(pinger);
