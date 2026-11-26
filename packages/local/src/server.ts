@@ -1,5 +1,6 @@
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+import type { Duplex } from "node:stream";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { extname, isAbsolute, join, relative } from "node:path";
 import { SCENE_PAGE_PATH, scenePage } from "@animaquill/scene/policy";
@@ -24,7 +25,25 @@ export interface LocalServerOptions {
   /** The scene page as it comes, from `@animaquill/scene/page`. */
   readonly scenePage: string;
   readonly port: number;
+  /**
+   * The backend of this computer, where it runs with the editor (backend/run.ts): `/api` of the
+   * editor's site goes to it, and the upgrades to a WebSocket there. Undefined while it is not
+   * there yet, as it starts. Without it, as with `--offline`, there is no `/api`.
+   */
+  readonly backend?: () => LocalApi | undefined;
 }
+
+/** What answers `/api` of the editor's site: the server's app (`app.routing`) and its WebSocket. */
+export interface LocalApi {
+  request(request: IncomingMessage, response: ServerResponse): void;
+  upgrade(request: IncomingMessage, socket: Duplex, head: Buffer): void;
+}
+
+/** The mark of the editor's page that says a backend is there, see `main.ts`. */
+export const BACKEND_META = '<meta name="animaquill-backend" content="local">';
+
+const isApi = (url: string | undefined) =>
+  url === "/api" || (url?.startsWith("/api/") ?? false) || (url?.startsWith("/api?") ?? false);
 
 /** Which of the sites a request is for, by its `Host`. */
 export type Destination =
@@ -131,8 +150,10 @@ async function sendFile(
   root: string,
   path: string,
   headers: Record<string, string>,
+  backend = false,
 ) {
-  const file = join(root, isEditorPage(path) ? "index.html" : path);
+  const page = isEditorPage(path);
+  const file = join(root, page ? "index.html" : path);
   const inside = relative(root, file);
   if (inside.startsWith("..") || isAbsolute(inside) || file.endsWith(".map")) {
     answer(response, 404, "Not found");
@@ -145,6 +166,24 @@ async function sendFile(
     size = found.size;
   } catch {
     answer(response, 404, "Not found");
+    return;
+  }
+  if (page && backend) {
+    // The page says the backend is there before anything runs on it.
+    let html: Buffer;
+    try {
+      html = Buffer.from((await readFile(file, "utf8")).replace("<head>", `<head>${BACKEND_META}`));
+    } catch {
+      answer(response, 404, "Not found");
+      return;
+    }
+    response.writeHead(200, {
+      ...ALWAYS,
+      ...headers,
+      "Content-Type": TYPES[".html"]!,
+      "Content-Length": String(html.length),
+    });
+    response.end(request.method === "HEAD" ? undefined : html);
     return;
   }
   response.writeHead(200, {
@@ -171,6 +210,23 @@ export function localHandler(options: LocalServerOptions, sites: Sites = localSi
     if (!destination) {
       answer(response, 421, "This server only answers for the editor on this computer");
       return;
+    }
+    if (options.backend && isApi(request.url)) {
+      // Only the editor's own name: the others of this computer lead there, never in place.
+      if (destination.site === "loopback") {
+        answer(response, 421, "The API answers only on the editor's site");
+        return;
+      }
+      if (destination.site === "editor") {
+        const api = options.backend();
+        if (api) api.request(request, response);
+        else
+          answer(response, 503, JSON.stringify({ error: "unavailable" }), {
+            "Content-Type": "application/json; charset=utf-8",
+            "Retry-After": "1",
+          });
+        return;
+      }
     }
     if (request.method !== "GET" && request.method !== "HEAD") {
       answer(response, 405, "Method not allowed", { Allow: "GET, HEAD" });
@@ -218,9 +274,33 @@ export function localHandler(options: LocalServerOptions, sites: Sites = localSi
         );
         return;
       case "editor":
-        void sendFile(request, response, options.site, path, headersFor("editor", path, headers));
+        void sendFile(
+          request,
+          response,
+          options.site,
+          path,
+          headersFor("editor", path, headers),
+          options.backend !== undefined,
+        );
         return;
     }
+  };
+}
+
+/** Upgrades to a WebSocket: only `/api` of the editor's site, where the backend is there. */
+export function upgradeHandler(
+  options: LocalServerOptions,
+  sites: Sites = localSites(options.port),
+) {
+  return (request: IncomingMessage, socket: Duplex, head: Buffer): void => {
+    socket.on("error", () => socket.destroy());
+    const destination = destinationOf(request.headers.host, sites);
+    const api = options.backend?.();
+    if (destination?.site !== "editor" || !isApi(request.url) || !api) {
+      socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+      return;
+    }
+    api.upgrade(request, socket, head);
   };
 }
 
@@ -237,6 +317,8 @@ export class PortInUse extends Error {
 
 export interface LocalServer {
   readonly sites: Sites;
+  /** Takes no new connections; those there go on until `close`. */
+  stopTaking(): void;
   close(): Promise<void>;
 }
 
@@ -284,11 +366,18 @@ export async function startLocalServer(options: LocalServerOptions): Promise<Loc
   try {
     for (const address of ["127.0.0.1", "::1"]) {
       const server = createServer(handler);
+      server.on("upgrade", upgradeHandler(options, sites));
       if (await listen(server, options.port, address)) servers.push(server);
     }
   } catch (error) {
     await closeAll(servers);
     throw error;
   }
-  return { sites, close: () => closeAll(servers) };
+  return {
+    sites,
+    stopTaking: () => {
+      for (const server of servers) server.close();
+    },
+    close: () => closeAll(servers),
+  };
 }

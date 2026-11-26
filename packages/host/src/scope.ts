@@ -70,3 +70,10 @@ export const UNSCOPED_DATABASES: readonly string[] = [
  */
 export const RELAY_TRUST_KEY = "animaquill.mcp.relays";
 export const RELAY_PORTS_KEY = "animaquill.mcp.ports";
+/**
+ * The key of binding of the session with the backend of `npx animaquill`, of this origin (and so of
+ * its port) only: see local.ts of `@animaquill/web/online`. Of the device, as the cookie is.
+ */
+export const LOCAL_BINDING_KEY = "animaquill.local.binding";
+/** That the hint of the start page about the projects of the offline mode was closed here. */
+export const OFFLINE_HINT_KEY = "animaquill.offlineProjectsHint";

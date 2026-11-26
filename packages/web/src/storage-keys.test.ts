@@ -36,6 +36,8 @@ const DEVICE_KEYS = new Set([
   "CLEAR_KEY",
   "RELAY_TRUST_KEY",
   "RELAY_PORTS_KEY",
+  "LOCAL_BINDING_KEY",
+  "OFFLINE_HINT_KEY",
 ]);
 
 describe("the keys of the local storage", () => {

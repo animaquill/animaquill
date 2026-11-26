@@ -1,5 +1,5 @@
 import { StorageSpace } from "../storage/StorageSpace.tsx";
-import type { FolderStatus, LocalRepository } from "@animaquill/host";
+import { OFFLINE_HINT_KEY, type FolderStatus, type LocalRepository } from "@animaquill/host";
 import {
   ChevronDown,
   Clock,
@@ -155,9 +155,6 @@ function UnfinishedExports({
 /** A project folder that the address of this window asks for, which waits for people. */
 /** The views that are a page of their own, not a list of projects. */
 const isPage = (view: ViewId): boolean => view === "exports" || view === "storage";
-
-/** Where the hint about the projects of the offline mode was closed, on this computer. */
-const OFFLINE_HINT_KEY = "animaquill.offlineProjectsHint";
 
 const offlineHintClosed = (): boolean => {
   try {

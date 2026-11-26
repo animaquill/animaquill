@@ -115,6 +115,8 @@ export {
   OFFLINE_SCOPE,
   RELAY_PORTS_KEY,
   RELAY_TRUST_KEY,
+  LOCAL_BINDING_KEY,
+  OFFLINE_HINT_KEY,
   UNSCOPED_DATABASES,
   onlineScope,
   resetStorageScope,

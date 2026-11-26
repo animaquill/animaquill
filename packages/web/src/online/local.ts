@@ -1,4 +1,4 @@
-import type { EventSourceLike } from "@animaquill/host";
+import { LOCAL_BINDING_KEY, type EventSourceLike } from "@animaquill/host";
 
 /**
  * The page's side of the backend of `npx animaquill` (design O4 of AnimaQuill Cloud, section 2):
@@ -15,7 +15,7 @@ export const BINDING_HEADER = "x-animaquill-binding";
 export const SYNC_PROTOCOL = "animaquill.v1";
 export const BINDING_PROTOCOL = "animaquill.binding.";
 /** Where the page keeps its key, in `localStorage` of this origin. */
-export const BINDING_KEY = "animaquill.local.binding";
+export const BINDING_KEY = LOCAL_BINDING_KEY;
 const TOKEN_PARAM = "aq-token";
 
 const KEY = /^[A-Za-z0-9_-]{43}$/;

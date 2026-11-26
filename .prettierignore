@@ -9,3 +9,4 @@ playwright-report
 packages/tools/src/__snapshots__/
 packages/tools/src/guide/texts.ts
 packages/local/src/mcp/__snapshots__/
+packages/local/npm-shrinkwrap.json
