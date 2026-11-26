@@ -282,7 +282,7 @@ describe("restoring a repository as a project of the platform", () => {
     await time.advance(4000);
     expect(here.dialogs.getSnapshot()).toMatchObject({
       kind: "progress",
-      title: "正在从 GitHub 取回…",
+      title: "正在从仓库取回…",
     });
     const made = [...platform.projects.values()].find((each) => each.copy === "restoring");
     if (made) made.copy = "live";

@@ -107,8 +107,12 @@ describe("opening from a repository", () => {
     await opening.more();
     expect(opening.getSnapshot().rows.map(({ id }) => id)).toEqual(["1", "2", "30"]);
     expect(opening.getSnapshot().more).toBe(false);
+    opening.select("1");
+    await vi.waitFor(() => expect(opening.action).toEqual({ kind: "create" }));
     opening.setFilter(" R3 ");
     expect(opening.shown.map(({ id }) => id)).toEqual(["30"]);
+    // What the filter hides has nothing to do with the button.
+    expect(opening.action).toBeUndefined();
     opening.select("2");
     await vi.waitFor(() =>
       expect(opening.getSnapshot().states.get("2")).toMatchObject({ reason: "notPushable" }),

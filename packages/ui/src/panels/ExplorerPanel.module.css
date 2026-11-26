@@ -30,7 +30,8 @@
     overflow-y: hidden;
     border-right: 0;
     border-bottom: 1px solid var(--aq-border);
-    scrollbar-width: thin;
+    /* The wheel, the keys and dragging on a touch screen go along it: no bar to take room. */
+    scrollbar-width: none;
   }
 
   .tree .node {

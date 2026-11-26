@@ -130,6 +130,8 @@ export class RepositoryOpening {
   /** What the button does now: nothing while it is not known, or where nothing can be done. */
   get action(): OpeningAction | undefined {
     const { selected, states } = this.#snapshot;
+    // What the filter hides is not what people look at: nothing to do with it.
+    if (selected !== undefined && !this.shown.some(({ id }) => id === selected)) return undefined;
     const state = selected === undefined ? undefined : states.get(selected);
     return state?.kind === "action" ? state.action : undefined;
   }
