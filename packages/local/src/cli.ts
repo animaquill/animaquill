@@ -1,9 +1,15 @@
 import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { LOCAL_PORT, localSites } from "@animaquill/web/sites";
 import { openBrowser } from "./open-browser.ts";
+import { NewerDatabase } from "@animaquill/server/database.ts";
 import { PortInUse, startLocalServer } from "./server.ts";
+import { DataDirRefused, defaultDataDir } from "./backend/data-dir.ts";
+import { adminRequest, LockHeld, readBackend } from "./backend/lock.ts";
+import { findPrograms, NoPostgres, PostgresFailed } from "./backend/postgres.ts";
+import { startBackend } from "./backend/run.ts";
 import { check, describe, guide } from "./mcp/commands.ts";
 import { findProject } from "./mcp/find.ts";
 import { animaquillHome } from "./mcp/home.ts";
@@ -28,11 +34,15 @@ const { version } = JSON.parse(
 ) as { version: string };
 
 const HELP = `用法：animaquill [选项]
+      animaquill open
       animaquill <命令> [--project <项目文件夹>]
 
-在这台电脑上启动 AnimaQuill 编辑器，用 Chrome 或 Edge 打开显示的地址。
+在这台电脑上启动 AnimaQuill 编辑器和它的后端，用 Chrome 或 Edge 打开显示的地址。
+在线模式的项目、设置存在这台电脑的数据目录里，不用登录，只有这台电脑能访问；
+离线模式的项目存在浏览器里或文件夹里。
 
 命令（项目默认是当前文件夹，或者往上最近的有 animaquill.json 的文件夹）：
+  open             在浏览器里打开已经在运行的 AnimaQuill（带一次性的登录）
   mcp              给电脑上的 AI 工具（Claude Code、Codex 等）用的 MCP 服务器（stdio）：
                    工具在浏览器里打开的编辑器里执行，编辑器要开着这个项目、连着电脑上的 AI 工具。
                    --project 也可以是在线项目的地址；--allow-origin <网址> 让那个网站上的编辑器连接
@@ -43,13 +53,14 @@ const HELP = `用法：animaquill [选项]
   guide [<主题>]   手册，比如 guide ops/clip.move；--query <词> 按关键词找
 
 选项：
-  --port <端口>  使用的端口，默认 ${LOCAL_PORT}。浏览器里的项目和设置跟着端口走，
-                 换了端口就看不到原来端口下的项目，平时不要改。
-  --no-open      不自动打开浏览器
-  -v, --version  显示版本
-  -h, --help     显示这段说明
-
-这个版本不能登录，也不能用云服务（云端同步、云端 AI）。
+  --offline          只启动离线模式，不起后端和数据库
+  --data-dir <目录>  数据目录，默认 ${defaultDataDir()}（也可以用环境变量 AQ_DATA_DIR）
+  --database <网址>  用自己的 PostgreSQL，比如 postgres://用户:密码@主机:5432/库名
+  --port <端口>      使用的端口，默认 ${LOCAL_PORT}。浏览器里的项目和设置跟着端口走，
+                     换了端口就看不到原来端口下的项目，平时不要改。
+  --no-open          不自动打开浏览器
+  -v, --version      显示版本
+  -h, --help         显示这段说明
 `;
 
 function portFrom(value: string | undefined): number {
@@ -167,9 +178,141 @@ function portsFromEnvironment(): { ports?: { first: number; count: number } } {
   return given ? { ports: { first: Number(given[1]), count: Number(given[2]) } } : {};
 }
 
+/** What the backend could not start for, as people are told, with the way out. */
+function sayRefused(error: unknown, logFile: string | undefined): void {
+  const offline = "先用离线模式（项目存在浏览器里或文件夹里）：npx animaquill --offline";
+  if (error instanceof DataDirRefused) {
+    const mode =
+      error.mode === undefined ? "" : `（权限 ${error.mode.toString(8).padStart(4, "0")}）`;
+    const why = {
+      owner: `不归当前用户${mode}`,
+      writable: `别的用户能改${mode}`,
+      link: "是一个链接",
+      notFolder: "不是文件夹",
+    }[error.reason];
+    console.error(`数据目录 ${error.path} ${why}，为了安全不启动。`);
+    if (error.reason === "writable") console.error(`运行 chmod 700 "${error.path}" 后再试。`);
+    if (error.reason === "owner" || error.reason === "link")
+      console.error("用 --data-dir 换一个只有你能用的文件夹，或者改回来后再试。");
+  } else if (error instanceof LockHeld) {
+    console.error(
+      `AnimaQuill 好像已经在运行（进程 ${error.pid}），但 10 秒没有回应。关掉它（或者结束进程 ${error.pid}）后再试。`,
+    );
+  } else if (error instanceof PortInUse) {
+    console.error(
+      `端口 ${error.port} 已经被别的程序占用：先关掉那个程序再试。换端口（--port）会看不到原来端口下浏览器里的项目。`,
+    );
+  } else if (error instanceof NewerDatabase) {
+    console.error(
+      `这个数据目录被更新版本的 AnimaQuill 用过，这个版本（${version}）打不开它。请运行 npx animaquill@latest。`,
+    );
+    return;
+  } else if (error instanceof PostgresFailed && error.missingLibrary) {
+    console.error(
+      "数据库启动不了：这台电脑缺少 Microsoft Visual C++ 运行库。装上以后再试：https://aka.ms/vs/17/release/vc_redist.x64.exe",
+    );
+  } else if (error instanceof PostgresFailed) {
+    console.error(`数据库没能启动。${logFile ? `详细原因在 ${logFile}。` : ""}`);
+    console.error(error.message);
+  } else {
+    console.error(`后端没能启动：${(error as Error)?.message ?? String(error)}`);
+  }
+  console.error(offline);
+}
+
+/** Why there is no backend here at all, so that only the offline mode starts: undefined if there is. */
+async function noBackendHere(database: string | undefined): Promise<string | undefined> {
+  if (process.platform !== "win32" && process.getuid?.() === 0 && database === undefined)
+    return "现在是 root 用户：只启动离线模式（项目存在浏览器里或文件夹里）。要用在线模式，请换普通用户运行，或者用 --database 接自己的 PostgreSQL，或者用 Docker 部署。";
+  if (database !== undefined) return undefined;
+  try {
+    await findPrograms();
+    return undefined;
+  } catch (error) {
+    if (!(error instanceof NoPostgres)) throw error;
+    const where = `${process.platform}-${process.arch}`;
+    return error.reason === "links"
+      ? `随包的数据库用不了（${error.message}）：只启动离线模式。要用在线模式，用 --database 接自己的 PostgreSQL。`
+      : `这台电脑（${where}${error.reason === "musl" ? "，musl" : ""}）没有随包的数据库：只启动离线模式。要用在线模式，用 --database 接自己的 PostgreSQL。`;
+  }
+}
+
+/** `npx animaquill --offline`, and where there can be no backend: the editor alone, as before. */
+async function startOffline(port: number, open: boolean): Promise<number> {
+  let server;
+  try {
+    server = await startLocalServer({
+      site: built("site"),
+      scenePage: readFileSync(built("scene.html"), "utf8"),
+      port,
+    });
+  } catch (error) {
+    if (error instanceof PortInUse) {
+      console.error(
+        `端口 ${port} 已经被占用：可能 AnimaQuill 已经在运行，直接打开 ${localSites(port).editor}/ 即可。` +
+          `\n如果是别的程序占用了它，先关掉那个程序。换端口（--port）会看不到原来端口下浏览器里的项目。`,
+      );
+      return 1;
+    }
+    throw error;
+  }
+  const address = `${server.sites.editor}/`;
+  console.log(`AnimaQuill ${version} 已启动（离线模式）：${address}`);
+  console.log("请用 Chrome 或 Edge 打开。只有这台电脑能访问。按 Ctrl+C 停止。");
+  if (open) void openBrowser(address);
+  const stop = () => {
+    void server.close().then(() => process.exit(0));
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+  process.once("SIGHUP", stop);
+  return -1;
+}
+
+/** Opens an address that signs in, or says it where no browser opened. */
+async function openOrSay(address: string, open: boolean): Promise<void> {
+  if (open && (await openBrowser(address))) {
+    console.log("浏览器没有打开时，运行 npx animaquill open。");
+    return;
+  }
+  console.log(`用这个网址打开（10 分钟内有效，只能用一次）：${address}`);
+}
+
+/** `animaquill open`: the editor of the backend that runs, signed in, in the browser. */
+async function openRunning(argv: readonly string[]): Promise<number> {
+  let values;
+  try {
+    ({ values } = parseArgs({
+      args: [...argv],
+      options: { "data-dir": { type: "string" }, "no-open": { type: "boolean" } },
+      strict: true,
+    }));
+  } catch (error) {
+    console.error(`${(error as Error).message}\n\n${HELP}`);
+    return 2;
+  }
+  const dir = dataDirFrom(values["data-dir"]);
+  const backend = await readBackend(dir);
+  const answer = backend && (await adminRequest(backend, "POST", "open"));
+  const url =
+    answer && answer !== "refused" && answer.status === 200
+      ? (answer.body as { url?: unknown } | undefined)?.url
+      : undefined;
+  if (typeof url !== "string") {
+    console.error("AnimaQuill 没有在运行（或者是离线模式）：先运行 npx animaquill。");
+    return 1;
+  }
+  await openOrSay(url, values["no-open"] !== true);
+  return 0;
+}
+
+const dataDirFrom = (given: string | undefined): string =>
+  resolve(given ?? (process.env["AQ_DATA_DIR"] || defaultDataDir()));
+
 async function main(argv: readonly string[]): Promise<number> {
   const [first, ...rest] = argv;
   if (first !== undefined && COMMANDS.has(first)) return runCommand(first, rest);
+  if (first === "open") return openRunning(rest);
   let options;
   try {
     ({ values: options } = parseArgs({
@@ -177,6 +320,9 @@ async function main(argv: readonly string[]): Promise<number> {
       options: {
         port: { type: "string" },
         "no-open": { type: "boolean" },
+        offline: { type: "boolean" },
+        "data-dir": { type: "string" },
+        database: { type: "string" },
         version: { type: "boolean", short: "v" },
         help: { type: "boolean", short: "h" },
       },
@@ -201,35 +347,62 @@ async function main(argv: readonly string[]): Promise<number> {
     console.error((error as Error).message);
     return 2;
   }
-
-  let server;
-  try {
-    server = await startLocalServer({
-      site: built("site"),
-      scenePage: readFileSync(built("scene.html"), "utf8"),
-      port,
-    });
-  } catch (error) {
-    if (error instanceof PortInUse) {
-      console.error(
-        `端口 ${port} 已经被占用：可能 AnimaQuill 已经在运行，直接打开 ${localSites(port).editor}/ 即可。` +
-          `\n如果是别的程序占用了它，先关掉那个程序。换端口（--port）会看不到原来端口下浏览器里的项目。`,
-      );
-      return 1;
-    }
-    throw error;
+  const open = !options["no-open"];
+  if (options.offline) return startOffline(port, open);
+  const why = await noBackendHere(options.database);
+  if (why) {
+    console.log(why);
+    return startOffline(port, open);
   }
 
-  const address = `${server.sites.editor}/`;
-  console.log(`AnimaQuill ${version} 已启动：${address}`);
-  console.log("请用 Chrome 或 Edge 打开。只有这台电脑能访问。按 Ctrl+C 停止。");
-  if (!options["no-open"]) openBrowser(address);
+  console.log(`AnimaQuill ${version}`);
+  let backend;
+  try {
+    backend = await startBackend({
+      dataDir: dataDirFrom(options["data-dir"]),
+      port,
+      version,
+      site: built("site"),
+      scenePage: readFileSync(built("scene.html"), "utf8"),
+      database: options.database,
+      say: (line) => console.log(line),
+    });
+  } catch (error) {
+    sayRefused(error, undefined);
+    return 1;
+  }
+  if (backend.kind === "running") {
+    console.log(`AnimaQuill 已经在运行：${new URL(backend.address).origin}/`);
+    if (open && (await openBrowser(backend.address))) console.log("已在浏览器里打开。");
+    else console.log(`用这个网址打开（10 分钟内有效，只能用一次）：${backend.address}`);
+    return 0;
+  }
 
+  console.log(`已启动：${backend.server.sites.editor}/`);
+  console.log("请用 Chrome 或 Edge 打开。只有这台电脑能访问。按 Ctrl+C 停止。");
+  await openOrSay(backend.addressToOpen(), open);
+
+  let signals = 0;
   const stop = () => {
-    void server.close().then(() => process.exit(0));
+    signals += 1;
+    if (signals > 1) {
+      console.log("立刻停止。");
+      void backend.stopNow().finally(() => process.exit(1));
+      return;
+    }
+    console.log("正在停止…");
+    void backend.stop().then(
+      () => {
+        console.log("已停止。");
+        process.exit(0);
+      },
+      () => process.exit(1),
+    );
   };
-  process.once("SIGINT", stop);
-  process.once("SIGTERM", stop);
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+  // Windows says this as its console window is closed, and ends the process a few seconds later.
+  process.on("SIGHUP", stop);
   return -1;
 }
 

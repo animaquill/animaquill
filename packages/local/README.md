@@ -1,18 +1,37 @@
 # AnimaQuill
 
-AI 时代的视频编辑器。这个包在你自己的电脑上启动编辑器：一条命令开一个只有这台电脑能访问的简易网页服务器，用 Chrome 或 Edge 打开就能用。
+AI 时代的视频编辑器。这个包在你自己的电脑上启动编辑器和它的后端：一条命令开一个只有这台电脑能访问的网页服务器，用 Chrome 或 Edge 打开就能用，不用登录。
 
 ```bash
 npx animaquill
 ```
 
-需要 Node.js 22 或更新的版本。启动后会打印地址并打开浏览器：
+需要 Node.js 22 或更新的版本。第一次会顺带下载这台电脑用的数据库（PostgreSQL，Windows 约 40 MB，macOS 约 130 MB，Linux 约 25 MB）。启动后会打开浏览器：
 
 ```
-AnimaQuill 0.1.0 已启动：http://animaquill.localhost:7651/
+AnimaQuill 0.4.0
+第一次准备数据库（几秒）…
+启动数据库…
+更新数据库结构…
+已启动：http://animaquill.localhost:7651/
+请用 Chrome 或 Edge 打开。只有这台电脑能访问。按 Ctrl+C 停止。
+浏览器没有自动打开时，运行 npx animaquill open。
 ```
 
-如果打开的不是 Chrome 或 Edge，把地址复制到 Chrome 或 Edge 里。按 Ctrl+C 停止服务器。
+打开的网址带一次性的登录（`#aq-token=…`，10 分钟内有效、只能用一次，页面一打开就把它从地址栏去掉）。浏览器没有打开、或者以后想再打开时，运行 `npx animaquill open`。如果打开的不是 Chrome 或 Edge，在 Chrome 或 Edge 里运行一次 `npx animaquill open`。按 Ctrl+C 停止。
+
+## 两种模式
+
+- **在线模式**（默认）：项目存在这台电脑的数据目录里，每个项目自动存进数据目录里的 Git 仓库；AI 的设置和 key 也跟着这个“本机”账号。只有启动它的这个用户、在这台电脑上能用。
+- **离线模式**：项目存在浏览器里或电脑上的文件夹里，不连后端。在编辑器里随时可以切换；`npx animaquill --offline` 只启动离线模式（以前的版本就是这样）。
+
+以 root 运行、或者这台电脑没有随包的数据库（比如 Alpine、32 位系统）时，只启动离线模式，并说明原因；可以用 `--database` 接自己的 PostgreSQL。
+
+## 数据目录
+
+默认 Windows 是 `%LOCALAPPDATA%\AnimaQuill\server\`，macOS 和 Linux 是 `~/.animaquill/server/`，可以用 `--data-dir` 或环境变量 `AQ_DATA_DIR` 换。里面有数据库（`pg18/`）、项目的仓库（`repos/`）、大文件、日志（`logs/`）和主密钥 `master.key`。主密钥加密存着的 AI key：**请另存一份**，丢了以后要重新填 key。
+
+在 macOS 和 Linux 上，这个目录只有你能访问（700，文件 600）；别的用户能改它时 AnimaQuill 不启动，并告诉你怎么改回来。
 
 ## 能做什么
 
@@ -26,19 +45,26 @@ AnimaQuill 0.1.0 已启动：http://animaquill.localhost:7651/
 
 ## 不能做什么
 
-这个版本**不能登录，也不能用云服务**：没有云端同步、云端 AI、AI 服务的平台转发和平台转发的 MCP。AI 助手只能从浏览器直连服务商，不让浏览器读取回答的服务（比如月之暗面、智谱）在这里连不上。错误报告和运行情况报告不上传，可以在编辑器里查看、复制或保存成文件。
+还不能连 GitHub、不能多人用、没有云端 AI。错误报告和运行情况报告不上传，可以在编辑器里查看、复制或保存成文件。
 
 ## 选项
 
 ```
-animaquill [--port <端口>] [--no-open]
+animaquill [--offline] [--data-dir <目录>] [--database <网址>] [--port <端口>] [--no-open]
+animaquill open
 animaquill mcp|check|describe|guide [--project <项目文件夹>]
 ```
 
+- `--offline`：只启动离线模式，不起后端和数据库。
+- `--data-dir <目录>`：数据目录，见上。
+- `--database <网址>`：用自己的 PostgreSQL，比如 `postgres://用户:密码@主机:5432/库名`，不起随包的数据库。
+- `open`：在浏览器里打开已经在运行的 AnimaQuill。再运行一次 `npx animaquill` 也一样。
 - `--port <端口>`：默认 7651。浏览器把项目、设置和 AI 的 key 按地址（包括端口）分开存，换了端口就看不到原来端口下存在浏览器里的项目（文件夹项目还在文件夹里，重新打开即可）。平时不要改。
 - `--no-open`：不自动打开浏览器。
 
-端口被占用时服务器不会自动换一个，而是报错退出：可能编辑器已经在运行，直接打开地址即可。
+端口被占用时服务器不会自动换一个，而是报错退出。
+
+数据目录被更新版本的 AnimaQuill 用过时，旧版本不会打开它，会提示运行 `npx animaquill@latest`。
 
 ## 让电脑上的 AI 工具改项目（MCP）
 
@@ -98,9 +124,9 @@ Codex 默认只等服务器启动 10 秒，第一次要下载时可能来不及�
 | `http://animaquill-sandbox.localhost:7651` | 合成器（沙箱） |
 | `http://animaquill-scene-0.localhost:7651` … `scene-7` | 场景（沙箱） |
 
-Chrome 和 Edge 把 `*.localhost` 当成这台电脑，并当作安全的地址，不需要改 hosts 文件。服务器只监听本机回环地址（127.0.0.1 和 ::1），只回答这几个名字，别的网站借不到它。
+Chrome 和 Edge 把 `*.localhost` 当成这台电脑，并当作安全的地址，不需要改 hosts 文件。服务器只监听本机回环地址（127.0.0.1 和 ::1），只回答这几个名字，别的网站借不到它。后端（`/api`）只在编辑器的地址上回答，场景和合成器的地址碰不到它；会话要 cookie 加上只存在这个端口的页面里的绑定密钥两样都对，同一台电脑上别的用户、别的程序拿不到。数据库只听 127.0.0.1、要密码，不开 Unix socket。
 
-同一个端口上不要运行别的网页服务器：在这个端口回答 `animaquill.localhost` 的程序能读到编辑器在浏览器里存的东西。
+同一个端口上不要运行别的网页服务器：AnimaQuill 没在运行时，在这个端口回答 `animaquill.localhost` 的程序能读到编辑器在浏览器里存的东西。这一点防不住。
 
 ## 从源码运行
 

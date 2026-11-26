@@ -53,20 +53,22 @@ export interface ServerOnlineOptions extends ServerAccountOptions {
   /** Where reports go, where the deployment has a place for them: none unless said. */
   readonly diagnostics?: Host["diagnostics"];
   /**
-   * The key of binding of this page, for the backend of `npx animaquill`: see local.ts. People sign
-   * in there from its terminal, not here. None unless said.
+   * The backend of `npx animaquill`, with the key of binding of this page where it has one: see
+   * local.ts. People sign in there from its terminal, not here. Not that unless said.
    */
-  readonly binding?: string | undefined;
+  readonly local?: { readonly binding: string | undefined } | undefined;
 }
 
 /** What `startEditor` takes as `online`, for the backend of this site. */
 export function serverOnline(options: ServerOnlineOptions): NonNullable<EditorSite["online"]> {
-  const { editor, version, diagnostics, binding } = options;
+  const { editor, version, diagnostics, local } = options;
+  const binding = local?.binding;
   return {
     account: () =>
       serverAccount({
         ...(options.pictures !== undefined && { pictures: options.pictures }),
-        ...(binding !== undefined && { fetch: bindingFetch(binding), signInFrom: "terminal" }),
+        ...(local && { signInFrom: "terminal" }),
+        ...(binding !== undefined && { fetch: bindingFetch(binding) }),
       }),
     parts: () => ({
       ...(diagnostics && { diagnostics }),

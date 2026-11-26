@@ -33,14 +33,24 @@ export function openCommand(
   return { command: "xdg-open", args: [url] };
 }
 
-/** Opens it. Not finding a program is fine: whoever opens says the address otherwise. */
-export function openBrowser(url: string): void {
+/**
+ * Opens it. Resolves to whether that seems to have worked: false where there is no program for it,
+ * or it gave up at once, as `xdg-open` without a desktop, so that whoever opens says the address.
+ */
+export function openBrowser(url: string): Promise<boolean> {
   const { command, args } = openCommand(url);
-  try {
-    const child = execFile(command, [...args], { windowsHide: true }, () => {});
-    child.on("error", () => {});
+  return new Promise((done) => {
+    let child;
+    try {
+      child = execFile(command, [...args], { windowsHide: true }, (error) => done(!error));
+    } catch {
+      done(false);
+      return;
+    }
+    child.on("error", () => done(false));
+    // Still opening after a while: it does, as some programs stay until the browser closes.
+    const timer = setTimeout(() => done(true), 3000);
+    timer.unref();
     child.unref();
-  } catch {
-    // Nothing opens: the address is said anyway.
-  }
+  });
 }
