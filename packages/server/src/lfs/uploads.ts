@@ -375,7 +375,9 @@ export class LfsUploads {
           eq(lfsObjects.oid, oid),
         ),
       );
-    if (known) {
+    // The server's own repositories are asked every time: their disk says, read through, whether
+    // what it has is the file, and what is not is put right by sending it again.
+    if (known && repo.provider !== "local") {
       // The storage has the file of this hash, and it is not as large as the editor says: what
       // the editor has is not that file.
       if (known.size !== size)
@@ -425,6 +427,17 @@ export class LfsUploads {
       throw new UploadRefused("unavailable", 503, { detail });
     }
     if (answer?.kind !== "absent") throw new UploadRefused("unavailable", 503);
+    // Noted, and not there as the file: not noted any more, so that nothing points at it.
+    if (known)
+      await db
+        .delete(lfsObjects)
+        .where(
+          and(
+            eq(lfsObjects.provider, repo.provider),
+            eq(lfsObjects.repoId, repo.repoId),
+            eq(lfsObjects.oid, oid),
+          ),
+        );
 
     // Counted against the limits under one lock, so that two at once do not both fit: of the
     // database, for whatever other process counts too, and one at a time here before that, so

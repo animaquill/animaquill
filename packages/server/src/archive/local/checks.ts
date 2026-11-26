@@ -16,7 +16,9 @@ import type { LocalGitRepoHost } from "./host.ts";
  *   down): one that does not is paused "broken", which people end by starting archiving over.
  *   Then the objects of Git LFS the server noted for it: one that is not there (any more), or not
  *   as large, is not noted any more, so that the editor hears it is missing and sends it again,
- *   rather than archives pointing at it; and what crashes left in `lfs/tmp/` goes.
+ *   rather than archives pointing at it; up to 1 GiB of them, those read longest ago first, is read
+ *   through for its hash, and one that is not the object goes aside into `lfs/bad/`; what crashes
+ *   left in `lfs/tmp/` goes.
  */
 
 export const LOCAL_LOOK_QUEUE = "local-repos-look";
@@ -113,7 +115,7 @@ export const verifyDue = async (
         await pauseLink(db, link, { reason: "broken", detail: error.message, at: now });
         broken.push(projectId);
       }
-      await checkLfs(db, host, link, log).catch((error: unknown) => {
+      await checkLfs(db, host, link, log, now).catch((error: unknown) => {
         log.warn(
           { project: projectId, err: describeError(error) },
           "the large files of a repository here were not looked at",
@@ -132,6 +134,7 @@ const checkLfs = async (
   host: LocalGitRepoHost,
   link: { readonly projectId: string; readonly repoId: number } & Parameters<typeof placeOf>[0],
   log: Logger,
+  at: Date,
 ): Promise<void> => {
   const place = placeOf(link) as LocalPlace;
   const noted = await db
@@ -160,8 +163,41 @@ const checkLfs = async (
       { project: link.projectId, objects: lost.length },
       "large files of a repository here are gone: no longer noted",
     );
+  // Some read through, those read longest ago first, so many bytes a round: one that is not what
+  // its oid says (a disk that rotted, a backup brought back in part) is put aside and no longer
+  // noted, so that the editor that has the file sends it again.
+  const gone = new Set(lost);
+  let budget = LFS_HASHED_PER_ROUND;
+  const turn = await db
+    .select({ oid: lfsObjects.oid, size: lfsObjects.size })
+    .from(lfsObjects)
+    .where(and(eq(lfsObjects.provider, "local"), eq(lfsObjects.repoId, link.repoId)))
+    .orderBy(asc(lfsObjects.confirmedAt), asc(lfsObjects.oid));
+  for (const object of turn) {
+    if (gone.has(object.oid)) continue;
+    if (budget <= 0) break;
+    budget -= Math.max(object.size, 1);
+    const which = and(
+      eq(lfsObjects.provider, "local"),
+      eq(lfsObjects.repoId, link.repoId),
+      eq(lfsObjects.oid, object.oid),
+    );
+    if (await host.lfsIsWhole(place, object)) {
+      await db.update(lfsObjects).set({ confirmedAt: at }).where(which);
+      continue;
+    }
+    await host.lfsPutAside(place, object.oid, at);
+    await db.delete(lfsObjects).where(which);
+    log.warn(
+      { project: link.projectId, size: object.size },
+      "a large file of a repository here is not what its name says: put aside, no longer noted",
+    );
+  }
   await host.sweepLfs(place);
 };
+
+/** Bytes of large files read through for their hashes in one look at a repository, at most. */
+export const LFS_HASHED_PER_ROUND = 1024 ** 3;
 
 /** Both rounds, as the worker has them. */
 export const scheduleLocalChecks = async (

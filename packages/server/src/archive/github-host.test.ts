@@ -355,6 +355,8 @@ describe("what the large file storage of a repository has, as it says itself", (
   let reachable = true;
   /** What the addresses the storage gives out answer in place of the object, where a test says. */
   let instead: ((url: string, init: RequestInit | undefined) => Response) | undefined;
+  /** What the batch API answers in place of the fake's, where a test says. */
+  let batchInstead: ((body: { objects: { oid: string; size: number }[] }) => unknown) | undefined;
   /** The addresses asked for, and how. */
   let asked: { url: string; redirect: string | undefined }[] = [];
   let session: RepoSession;
@@ -366,9 +368,15 @@ describe("what the large file storage of a repository has, as it says itself", (
     repo = github.addRepo(OCTO, { name: "film", select: true });
     reachable = true;
     instead = undefined;
+    batchInstead = undefined;
     asked = [];
     const fetchIt: typeof fetch = async (input, init) => {
       const url = String(input instanceof Request ? input.url : input);
+      if (batchInstead && url.endsWith("/info/lfs/objects/batch"))
+        return new Response(JSON.stringify(batchInstead(JSON.parse(String(init?.body)))), {
+          status: 200,
+          headers: { "content-type": "application/vnd.git-lfs+json" },
+        });
       if (!url.includes("/_lfs/")) return github.fetch(input, init);
       asked.push({ url, redirect: init?.redirect });
       if (!reachable) return new Response("Slow Down", { status: 503 });
@@ -385,6 +393,21 @@ describe("what the large file storage of a repository has, as it says itself", (
       webUrl: "https://github.test",
       fetch: fetchIt,
     }).open({ provider: "github", installationId: installation, repoId: repo.id });
+  });
+
+  test("an object the storage says it has not: absent to read, refused at once to put", async () => {
+    batchInstead = ({ objects }) => ({
+      objects: objects.map(({ oid, size }) => ({
+        oid,
+        size,
+        error: { code: 404, message: "Object does not exist" },
+      })),
+    });
+    const object = { oid: "c".repeat(64), size: 3 };
+    expect(await session.lfsHave([object], "download")).toEqual([{ kind: "absent" }]);
+    expect(await session.lfsHave([object], "upload")).toEqual([
+      { kind: "refused", code: 404, message: "Object does not exist" },
+    ]);
   });
 
   test("says how large each object is that it has, in their order, and nothing of one it has not", async () => {

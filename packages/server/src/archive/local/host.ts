@@ -35,6 +35,7 @@ import {
 } from "./objects.ts";
 import { hasAnyRef, moveRef, readRef } from "./refs.ts";
 import {
+  isTheObject,
   lfsHaveOf,
   lfsObjectsIn,
   lfsPathOf,
@@ -343,6 +344,33 @@ export class LocalGitRepoHost implements RepoHost<LocalPlace> {
     const sizes: (number | undefined)[] = [];
     for (const object of objects) sizes.push(await lfsSizeOf(this.#disk, gitdir, object.oid));
     return sizes;
+  }
+
+  /** Whether what a repository has under the oid of an object is that object, read through. */
+  async lfsIsWhole(place: { readonly dir: string }, object: LfsObject): Promise<boolean> {
+    return isTheObject(this.#disk, this.#gitdir(place), object);
+  }
+
+  /**
+   * Puts what a repository has under an oid, which is not the object, aside into `lfs/bad/`, which
+   * nothing takes away by itself: a download finds nothing there then, and an upload puts the
+   * object there anew.
+   */
+  async lfsPutAside(place: { readonly dir: string }, oid: string, at: Date): Promise<void> {
+    const gitdir = this.#gitdir(place);
+    const folder = join(gitdir, "lfs", "bad");
+    await this.#disk.mkdir(folder);
+    try {
+      await renameRetrying(
+        this.#disk,
+        lfsPathOf(gitdir, oid),
+        join(folder, `${oid}-${stampOf(at)}`),
+        this.#platform,
+      );
+    } catch (error) {
+      if (codeOf(error) !== "ENOENT") throw diskError(error);
+    }
+    await this.#disk.syncDir(folder).catch(() => {});
   }
 
   /** Takes away what crashes left in `lfs/tmp/` of a repository. */
@@ -677,21 +705,33 @@ class LocalRepoSession implements RepoSession {
     }
   }
 
-  async lfsHave(objects: readonly LfsObject[]): Promise<readonly LfsHave[]> {
+  async lfsHave(
+    objects: readonly LfsObject[],
+    purpose: "upload" | "download",
+  ): Promise<readonly LfsHave[]> {
     if (objects.length === 0) return [];
     if (!(await this.#lfsReady())) return objects.map(() => ({ kind: "absent" as const }));
-    return lfsHaveOf(this.#parts.disk, this.#parts.gitdir, objects);
+    return lfsHaveOf(this.#parts.disk, this.#parts.gitdir, objects, purpose);
   }
 
   async lfsPut(object: LfsObject, staged: LfsStaged): Promise<"put" | "present"> {
     await this.#lfsReady(true);
-    const put = await lfsPutInto(
-      this.#parts.disk,
-      this.#parts.gitdir,
-      this.#parts.platform,
-      object,
-      staged,
-    );
+    let put: "put" | "present";
+    try {
+      put = await lfsPutInto(
+        this.#parts.disk,
+        this.#parts.gitdir,
+        this.#parts.platform,
+        object,
+        staged,
+      );
+    } catch (error) {
+      // The repository went from under it (put aside as archiving starts over, say), while the
+      // staging file is still there: the file goes into the repository there is then.
+      if (codeOf(error) === "ENOENT" && (await this.#parts.disk.stat(staged.path)))
+        throw new GitHubUnavailable("the repository here moved while a file went in");
+      throw error;
+    }
     if (put === "put") this.#parts.log.info({ dir: this.#place.dir }, "a large file is put here");
     return put;
   }

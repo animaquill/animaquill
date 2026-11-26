@@ -833,13 +833,13 @@ class GitHubRepoSession implements RepoSession {
       const some = objects.slice(at, at + LFS_BATCH);
       const answers = await this.#batch(purpose, some);
       for (const [index, answer] of answers.entries())
-        haves.push(this.#have((some[index] as LfsObject).oid, answer));
+        haves.push(this.#have((some[index] as LfsObject).oid, answer, purpose));
     }
     return haves;
   }
 
   /** What an answer of the batch API says, the addresses it gives kept for what comes next. */
-  #have(oid: string, answer: LfsAnswer): LfsHave {
+  #have(oid: string, answer: LfsAnswer, purpose: "upload" | "download"): LfsHave {
     const key = this.#keyOf(oid);
     switch (answer.kind) {
       case "present":
@@ -860,7 +860,10 @@ class GitHubRepoSession implements RepoSession {
       }
       case "refused":
         this.#addresses.delete(key);
-        return answer.code === 404 || answer.code === 410 ? { kind: "absent" } : answer;
+        // Not there, for one who reads it; for an upload, a refusal, said at once as ever.
+        return purpose === "download" && (answer.code === 404 || answer.code === 410)
+          ? { kind: "absent" }
+          : answer;
     }
   }
 

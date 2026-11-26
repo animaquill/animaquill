@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   utimesSync,
@@ -15,6 +16,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { GitHubUnavailable } from "../../github/client.ts";
 import { NotTheObject } from "../../lfs/transfer.ts";
 import { quiet } from "../../test/archive-support.ts";
 import { LfsAbsent, LfsChanged, type LfsObject, type LocalPlace } from "../repo-host.ts";
@@ -333,5 +335,43 @@ describe.skipIf(!hasGitLfs)("large files of a repository here, with Git LFS itse
     for await (const part of piece.body) parts.push(part as Buffer);
     expect(Buffer.concat(parts).equals(theirs)).toBe(true);
     git(gitdir, ["fsck", "--strict", "--no-dangling"]);
+  });
+});
+
+describe("a repository here that goes while a file goes into it", () => {
+  test("is tried again later, the staging file kept: not lost", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "aq-local-lfs-moved-"));
+    try {
+      const place: LocalPlace = { provider: "local", repoId: 1, dir: "repos/p.git" };
+      let moved = false;
+      const host = new LocalGitRepoHost({
+        dataDir: dir,
+        log: quiet,
+        // As archiving starts over meanwhile: the repository is put aside as the file is linked.
+        disk: failing((op) => {
+          if (op === "link" && !moved) {
+            moved = true;
+            renameSync(join(dir, "repos", "p.git"), join(dir, "repos", "aside.git"));
+          }
+          return undefined;
+        }),
+      });
+      await host.prepare();
+      await host.create(place, "片子", {});
+      const data = randomBytes(5000);
+      const staged = join(dir, "u.part");
+      writeFileSync(staged, data);
+      await expect(
+        host
+          .open(place)
+          .lfsPut(
+            { oid: oidOf(data), size: data.length },
+            { path: staged, open: async () => createReadStream(staged) },
+          ),
+      ).rejects.toBeInstanceOf(GitHubUnavailable);
+      expect(readFileSync(staged).equals(data)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

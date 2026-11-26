@@ -1,6 +1,14 @@
 import { spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
@@ -315,6 +323,48 @@ describe.skipIf(!TEST_DATABASE)("large files of repositories here, on a database
     expect(noted).toEqual([{ oid: oidOf(kept) }]);
     expect((await l.lookup(m.project.id, [{ oid: oidOf(gone), size: 4000 }])).json).toEqual({
       objects: [{ oid: oidOf(gone), state: "missing" }],
+    });
+  });
+
+  test("what the disk has under an oid and is not the file, another size or another hash, is put right by sending it again", async () => {
+    const m = await made();
+    for (const spoil of [(data: Buffer) => data.subarray(0, 100), () => randomBytes(4000)]) {
+      const data = randomBytes(4000);
+      await sent(m.project.id, data);
+      const path = lfsPathOf(m.gitdir, oidOf(data));
+      writeFileSync(path, spoil(data));
+      await verifyDue(t.db, host, w.time.now, quiet);
+      await t.db
+        .update(projectRepos)
+        .set({ verifiedAt: null })
+        .where(eq(projectRepos.projectId, m.project.id));
+      // Taken, as a file not there: and once pushed, the file is there.
+      const { begun, pushed } = await sent(m.project.id, data);
+      expect(begun.json).toMatchObject({ state: "receiving", repo: m.repo });
+      expect(pushed).toEqual({ kind: "done" });
+      expect(readFileSync(path).equals(data)).toBe(true);
+      expect((await l.begin(m.project.id, data)).json).toMatchObject({ state: "present" });
+    }
+  });
+
+  test("the weekly look reads files through, so many bytes a time, and puts aside one that is not what its name says", async () => {
+    const m = await made();
+    const good = randomBytes(3000);
+    const bad = randomBytes(3000);
+    await sent(m.project.id, good);
+    await sent(m.project.id, bad);
+    const path = lfsPathOf(m.gitdir, oidOf(bad));
+    writeFileSync(path, randomBytes(3000));
+    await verifyDue(t.db, host, w.time.now, quiet);
+    const noted = await t.db
+      .select({ oid: lfsObjects.oid })
+      .from(lfsObjects)
+      .where(and(eq(lfsObjects.provider, "local"), eq(lfsObjects.repoId, m.repoId)));
+    expect(noted).toEqual([{ oid: oidOf(good) }]);
+    expect(existsSync(path)).toBe(false);
+    expect(readdirSync(join(m.gitdir, "lfs", "bad"))).toHaveLength(1);
+    expect((await l.lookup(m.project.id, [{ oid: oidOf(bad), size: 3000 }])).json).toEqual({
+      objects: [{ oid: oidOf(bad), state: "missing" }],
     });
   });
 });

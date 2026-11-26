@@ -23,7 +23,7 @@ import { codeOf, diskError, renameRetrying, type Disk } from "./disk.ts";
  * otherwise), read through for its SHA-256 and length, synced, and renamed into its place; the
  * folder is synced after. A crash leaves the staging file to push again, or the object in its
  * place, and at worst a file in `lfs/tmp/`, which the weekly check takes away. Nothing is ever
- * written over an object that is there as large as it is.
+ * written over the object itself; only over what is under its oid and is not it.
  */
 
 /** The name of an object: its SHA-256, in lower-case hexadecimal. */
@@ -54,17 +54,44 @@ export const lfsSizeOf = async (
   return stat?.isFile() ? stat.size : undefined;
 };
 
+/**
+ * Whether the object of each oid is there, read through where it is as large as asked: what the
+ * disk has of it is the object, or an upload puts it there anew (over what is not, `lfsPutInto`).
+ * For an upload, one of another size, or of the size but another hash (a disk that rotted, a
+ * backup brought back in part), is absent; for a download, it says how large it is, which the
+ * reader takes for "changed" where it is not as asked. Reading one through is cheap on this disk.
+ */
 export const lfsHaveOf = async (
   disk: Disk,
   gitdir: string,
   objects: readonly LfsObject[],
+  purpose: "upload" | "download",
 ): Promise<LfsHave[]> => {
   const haves: LfsHave[] = [];
   for (const object of objects) {
     const size = await lfsSizeOf(disk, gitdir, object.oid);
-    haves.push(size === undefined ? { kind: "absent" } : { kind: "present", size });
+    if (size === undefined) haves.push({ kind: "absent" });
+    else if (purpose === "download") haves.push({ kind: "present", size });
+    else if (size !== object.size || !(await isTheObject(disk, gitdir, object)))
+      haves.push({ kind: "absent" });
+    else haves.push({ kind: "present", size });
   }
   return haves;
+};
+
+/** Whether what the disk has under the oid of an object is that object, read through. */
+export const isTheObject = async (
+  disk: Disk,
+  gitdir: string,
+  object: LfsObject,
+): Promise<boolean> => {
+  try {
+    const found = await disk.hashFile(lfsPathOf(gitdir, object.oid));
+    return found.size === object.size && found.sha256 === object.oid;
+  } catch (error) {
+    if (codeOf(error) === "ENOENT") return false;
+    throw error;
+  }
 };
 
 /**
@@ -97,8 +124,11 @@ export const lfsPutInto = async (
   staged: LfsStaged,
 ): Promise<"put" | "present"> => {
   const target = lfsPathOf(gitdir, object.oid);
+  // There already, and it: nothing to write. Anything else there (another size, another hash) is
+  // put right with the object, in one rename.
   const there = await disk.stat(target);
-  if (there?.isFile() && there.size === object.size) return "present";
+  if (there?.isFile() && there.size === object.size && (await isTheObject(disk, gitdir, object)))
+    return "present";
   const folder = join(gitdir, ...LFS_TMP.split("/"));
   const temporary = join(folder, `.tmp-${randomBytes(8).toString("hex")}`);
   try {
@@ -121,8 +151,9 @@ export const lfsPutInto = async (
       await disk.syncFile(temporary);
     }
     await makeFolder(disk, gitdir, dirname(target));
+    // Put there meanwhile, as by another push of it: the same, whole, so this one goes.
     const now = await disk.stat(target);
-    if (now?.isFile() && now.size === object.size) {
+    if (now?.isFile() && now.size === object.size && (await isTheObject(disk, gitdir, object))) {
       await disk.unlink(temporary).catch(() => {});
       return "present";
     }
