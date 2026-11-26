@@ -1,0 +1,19 @@
+{
+  "nano-gpt": {
+    "name": "NanoGPT",
+    "models": {
+      "deepseek-chat": {
+        "id": "deepseek-chat",
+        "name": "DeepSeek V3/Deepseek Chat",
+        "limit": {
+          "context": 128000,
+          "output": 8192
+        },
+        "cost": {
+          "input": 0.3,
+          "output": 1.2
+        }
+      }
+    }
+  }
+}

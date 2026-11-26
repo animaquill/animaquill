@@ -626,6 +626,10 @@ test.describe("what a scene says", () => {
         return out;
       };
     </script>`;
+    // Where a frame does get away, it finds a page of ours, not the internet.
+    await page.route("https://example.com/**", (route) =>
+      route.fulfill({ status: 200, contentType: "text/html", body: "<!doctype html><p>stub</p>" }),
+    );
     const victim = await openNextToVictim(page, html);
     await expect
       .poll(async () => {

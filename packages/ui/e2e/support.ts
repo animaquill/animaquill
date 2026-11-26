@@ -1,7 +1,14 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { chromium, expect, test as base, type Frame, type Page } from "@playwright/test";
+import {
+  chromium,
+  expect,
+  test as base,
+  type BrowserContext,
+  type Frame,
+  type Page,
+} from "@playwright/test";
 
 export { expect };
 
@@ -140,6 +147,52 @@ export async function createProject(page: Page, name = "测试项目") {
   await expect(tab(page, "preview")).toBeVisible();
 }
 
+/** The requests to the outside that reached the network, by context. */
+const outside = new WeakMap<BrowserContext, string[]>();
+const MODELS_DEV = readFileSync(new URL("fixtures/models-dev.json", import.meta.url), "utf8");
+
+/**
+ * Answers models.dev with the copy in `fixtures/models-dev.json`, and notes every other request to
+ * a host that is not this computer, the site under test, or one of `allowed`, to fail the test.
+ * A route of a page comes before these, so a test that answers a request itself is not counted.
+ */
+async function watchOutside(
+  context: BrowserContext,
+  baseURL: string | undefined,
+  allowed: readonly string[],
+) {
+  const seen: string[] = [];
+  outside.set(context, seen);
+  const own = baseURL ? new URL(baseURL).hostname : "";
+  await context.route(
+    (url) => {
+      if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+      const host = url.hostname;
+      return !(
+        host === "localhost" ||
+        host.endsWith(".localhost") ||
+        host === "127.0.0.1" ||
+        host === "[::1]" ||
+        host === own ||
+        allowed.includes(host)
+      );
+    },
+    async (route) => {
+      const url = route.request().url();
+      if (url === "https://models.dev/api.json") {
+        await route.fulfill({
+          status: 200,
+          headers: { "access-control-allow-origin": "*", "content-type": "application/json" },
+          body: MODELS_DEV,
+        });
+        return;
+      }
+      seen.push(`${route.request().method()} ${url}`);
+      await route.continue();
+    },
+  );
+}
+
 /**
  * Opens the editor for every test, with a project unless the test says otherwise, and fails the
  * test when anything was logged as an error.
@@ -153,7 +206,15 @@ export const test = base.extend<{
   quality: "auto" | "full";
   devPage: boolean;
   folders: boolean;
+  allowExternal: string[];
 }>({
+  /**
+   * The hosts outside this computer that a test may reach for real. Any other request to the
+   * outside fails the test, listed by address: a test must not depend on the internet, whose
+   * answers change (models.dev did, in the evening of 2026-11-25). Answer it with `page.route`
+   * (that one is not counted), or name the host here with `test.use`.
+   */
+  allowExternal: [[], { option: true }],
   withProject: [true, { option: true }],
   /**
    * Whether the offline mode is chosen on the entry page also without a project: `scripts/e2e-prod`
@@ -185,8 +246,9 @@ export const test = base.extend<{
    * a private window, with IndexedDB in memory and little room in it.
    */
   onDisk: [false, { option: true }],
-  context: async ({ context, onDisk, baseURL, viewport }, use) => {
+  context: async ({ context, onDisk, baseURL, viewport, allowExternal }, use) => {
     if (!onDisk) {
+      await watchOutside(context, baseURL, allowExternal);
       await use(context);
       return;
     }
@@ -197,6 +259,7 @@ export const test = base.extend<{
       ...(baseURL ? { baseURL } : {}),
       viewport,
     });
+    await watchOutside(persistent, baseURL, allowExternal);
     await use(persistent);
     await persistent.close();
     rmSync(folder, { recursive: true, force: true });
@@ -279,6 +342,7 @@ export const test = base.extend<{
       if (withProject) await createProject(page);
       await use(problems);
       expect(problems).toEqual([]);
+      expect(outside.get(page.context()) ?? [], "requests to the internet").toEqual([]);
     },
     { auto: true },
   ],
