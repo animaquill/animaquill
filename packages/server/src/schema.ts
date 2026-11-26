@@ -38,24 +38,46 @@ export const moment = (name: string) => timestamp(name, { withTimezone: true, mo
 /** Ids of GitHub are numbers, below 2^53 for a long time to come. */
 export const githubNumber = (name: string) => bigint(name, { mode: "number" });
 
-/** A person, known by the number of their GitHub account: the login can change. */
-export const users = pgTable("users", {
-  id: uuid("id")
-    .primaryKey()
-    .default(sql`uuidv7()`),
-  githubId: githubNumber("github_id").notNull().unique(),
-  /** As GitHub had it at the last sign-in, for showing only. */
-  login: text("login").notNull(),
-  avatarUrl: text("avatar_url"),
-  createdAt: moment("created_at").notNull().defaultNow(),
-  /**
-   * Since when an admin has the account disabled: it cannot sign in or sync, and its data stays.
-   * Null while it works.
-   */
-  disabledAt: moment("disabled_at"),
-  /** Why, as the admin wrote it, for the admins. */
-  disabledReason: text("disabled_reason"),
-});
+/**
+ * Who a person is: `github`, known by the number of their GitHub account (the login can change);
+ * or `local`, the one person of a backend of `npx animaquill` on its own machine, who signs in by
+ * having started it (online-offline.md, O4), and has no number of GitHub, at most one such.
+ */
+export type UserKind = "github" | "local";
+
+/** A person: of GitHub by its number, or the one of this machine, see `UserKind`. */
+export const users = pgTable(
+  "users",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`uuidv7()`),
+    kind: text("kind").$type<UserKind>().notNull().default("github"),
+    /** The number of the GitHub account: there exactly where `kind` is `github`. */
+    githubId: githubNumber("github_id").unique(),
+    /** As GitHub had it at the last sign-in, for showing only. */
+    login: text("login").notNull(),
+    avatarUrl: text("avatar_url"),
+    createdAt: moment("created_at").notNull().defaultNow(),
+    /**
+     * Since when an admin has the account disabled: it cannot sign in or sync, and its data stays.
+     * Null while it works.
+     */
+    disabledAt: moment("disabled_at"),
+    /** Why, as the admin wrote it, for the admins. */
+    disabledReason: text("disabled_reason"),
+  },
+  (table) => [
+    check("users_kind", sql`${table.kind} in ('github', 'local')`),
+    check(
+      "users_kind_github_id",
+      sql`(${table.kind} = 'github') = (${table.githubId} is not null)`,
+    ),
+    uniqueIndex("users_one_local")
+      .on(table.kind)
+      .where(sql`${table.kind} = 'local'`),
+  ],
+);
 
 /**
  * The tokens of a person's authorization of the GitHub App, sealed. A refresh replaces both and the

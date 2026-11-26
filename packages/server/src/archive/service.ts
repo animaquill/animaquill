@@ -552,6 +552,8 @@ export class RepositoryService {
 
   /** The installation on the person's own account, which saving to GitHub needs. */
   async #installation(user: SignedIn): Promise<number> {
+    // The person of this machine has no account of GitHub to install it on.
+    if (user.githubId === null) throw new RepositoryRefused("notInstalled", 409);
     const [row] = await this.#options.db
       .select({ id: installations.id })
       .from(installations)

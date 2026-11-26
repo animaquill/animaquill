@@ -29,6 +29,13 @@
       "when": 1795684556468,
       "tag": "0003_lfs_providers",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1795701902026,
+      "tag": "0004_users_kind",
+      "breakpoints": true
     }
   ]
 }

@@ -2224,7 +2224,12 @@ export class Archiver {
           parts: [...(snapshot ? [snapshot.state] : []), ...rows.map((row) => row.data)],
           author: {
             name: project.login,
-            email: `${project.githubId}+${project.login}@users.noreply.github.com`,
+            // GitHub's address that tells no one's own, or, for the person of this machine, who
+            // has no account there, one under the editor's local name.
+            email:
+              project.githubId === null
+                ? "local@animaquill.localhost"
+                : `${project.githubId}+${project.login}@users.noreply.github.com`,
           },
         };
       },

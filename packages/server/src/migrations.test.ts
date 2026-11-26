@@ -54,6 +54,8 @@ describe.skipIf(!TEST_DATABASE)("a database of the version before", () => {
   let folder: string;
   /** The rows of Git LFS before the migrations, for 0003. */
   let lfsBefore: { objects: unknown[]; uploads: unknown[] } | undefined;
+  /** The people before the migrations, for 0004. */
+  let usersBefore: unknown[] | undefined;
 
   beforeAll(async () => {
     name = `aq_test_${randomBytes(6).toString("hex")}`;
@@ -148,6 +150,12 @@ describe.skipIf(!TEST_DATABASE)("a database of the version before", () => {
       merges: await rowsOf("repo_merges"),
     };
     lfsBefore = { objects: await rowsOf("lfs_objects"), uploads: await rowsOf("lfs_uploads") };
+    // One disabled, with why, so that every column of a person is something.
+    await direct.query(`
+      insert into users (id, github_id, login, avatar_url, created_at, disabled_at, disabled_reason)
+        values ('0190a000-0000-7000-8000-000000000003', 103, 'hedy', 'https://example.com/h.png',
+          '2026-11-01T08:00:00Z', '2026-11-20T10:00:00Z', '滥用')`);
+    usersBefore = await rowsOf("users");
 
     await database.migrate();
 
@@ -241,6 +249,47 @@ describe.skipIf(!TEST_DATABASE)("a database of the version before", () => {
     await direct.query(upload("local"));
     expect(await fails(upload("local"))).toBe("23505");
     expect(await fails(upload("gitlab"))).toBe("23514");
+    await direct.query("rollback");
+  });
+
+  test("0004_users_kind: every person stays as they were, of GitHub; one of this machine at most, and without a number of GitHub", async () => {
+    expect(await rowsOf("users", ["kind"])).toEqual(usersBefore);
+    expect(usersBefore).toHaveLength(3);
+    const kinds = await direct.query("select kind, github_id from users");
+    expect(kinds.rows).toHaveLength(3);
+    for (const row of kinds.rows) {
+      expect(row.kind).toBe("github");
+      expect(row.github_id).not.toBeNull();
+    }
+    const fails = async (text: string) => {
+      await direct.query("savepoint attempt");
+      const error = await direct.query(text).then(
+        () => undefined,
+        (failed: unknown) => failed as { code?: string },
+      );
+      await direct.query("rollback to savepoint attempt");
+      return error?.code;
+    };
+    const person = (kind: string | undefined, githubId: string) =>
+      kind === undefined
+        ? `insert into users (github_id, login) values (${githubId}, 'x')`
+        : `insert into users (kind, github_id, login) values ('${kind}', ${githubId}, 'x')`;
+    await direct.query("begin");
+    // Of GitHub, as before: with a number, each once; without one, never.
+    expect(await fails(person(undefined, "101"))).toBe("23505");
+    expect(await fails(person(undefined, "null"))).toBe("23514");
+    expect(await fails(person("github", "null"))).toBe("23514");
+    // The person of this machine has none; nor is there anyone else of any other kind.
+    expect(await fails(person("local", "104"))).toBe("23514");
+    expect(await fails(person("gitlab", "null"))).toBe("23514");
+    expect(await fails(person("gitlab", "104"))).toBe("23514");
+    expect(await fails(person(undefined, "104"))).toBeUndefined();
+    await direct.query(person("local", "null"));
+    // And only one.
+    expect(await fails(person("local", "null"))).toBe("23505");
+    expect(
+      await fails("update users set kind = 'local', github_id = null where github_id = 101"),
+    ).toBe("23505");
     await direct.query("rollback");
   });
 });

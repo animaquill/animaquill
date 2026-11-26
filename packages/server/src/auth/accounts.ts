@@ -67,7 +67,8 @@ export interface AccountsOptions {
 /** Who is signed in, as the editor sees it. */
 export interface SignedIn {
   readonly userId: string;
-  readonly githubId: number;
+  /** Null for the person of this machine (`UserKind` "local"), who has no account of GitHub here. */
+  readonly githubId: number | null;
   readonly login: string;
   readonly avatarUrl: string | null;
   /** Whether the App is installed on the person's own account, which saving to GitHub needs. */
@@ -378,7 +379,7 @@ export const createAccounts = ({
         githubId: row.githubId,
         login: row.login,
         avatarUrl: row.avatarUrl,
-        installed: await isInstalledFor(db, row.githubId),
+        installed: row.githubId !== null && (await isInstalledFor(db, row.githubId)),
         renewed,
         expiresAt,
         createdAt: row.createdAt,

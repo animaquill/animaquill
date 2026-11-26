@@ -111,6 +111,8 @@ describe.skipIf(!TEST_DATABASE)("the data of the server, out and in again", () =
     await from.query(
       "insert into users (github_id, login) select 900000000 + g, 'bulk' || g from generate_series(1, 5200) g",
     );
+    // The person of this machine, without a number of GitHub (users.kind, O4a).
+    await from.query("insert into users (kind, github_id, login) values ('local', null, '本机')");
   }, 300_000);
   afterAll(async () => {
     for (const t of made) await t.drop();
@@ -182,6 +184,11 @@ describe.skipIf(!TEST_DATABASE)("the data of the server, out and in again", () =
       githubTokens: { total: 2, opened: 0 },
       aiKeys: { total: 1, opened: 0 },
     });
+    // The person of this machine comes back as that, without a number of GitHub.
+    const localOf = async (t: TestDatabase) =>
+      (await t.query("select id, kind, github_id, login from users where kind = 'local'")).rows;
+    expect(await localOf(to)).toEqual(await localOf(from));
+    expect(await localOf(to)).toMatchObject([{ kind: "local", github_id: null, login: "本机" }]);
     // A JSON null stays a JSON null, no value stays none, and the large rows come back whole.
     const jsonOf = async (t: TestDatabase) =>
       (
