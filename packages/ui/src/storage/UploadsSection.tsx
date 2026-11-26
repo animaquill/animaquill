@@ -97,7 +97,7 @@ export function UploadsSection({ focused }: { focused: boolean }) {
         <span className={styles.buttons}>
           {item.phase === "failed" && (
             <>
-              {(item.problem === "githubQuota" ||
+              {((item.problem === "githubQuota" && !workbench.localRepository()) ||
                 item.problem === "notAcknowledged" ||
                 item.problem === "changed" ||
                 item.problem === "missing" ||

@@ -1197,7 +1197,7 @@ export class Workbench {
         const place = this.defaultPlace();
         return key === undefined || !place || this.#uploadProject()?.project === undefined
           ? undefined
-          : { key, place };
+          : { key, place, local: this.localRepository() };
       },
       assets: () => this.session.store?.getState().assets ?? {},
       acknowledged: async () => {
@@ -3401,9 +3401,6 @@ export class Workbench {
       const who = this.account?.getSnapshot();
       if (who?.status === "signedOut") return "signedOut";
       const status = cloud.repository?.getSnapshot().status;
-      // Repositories of the server's own have no large file storage yet (O8b): nothing goes up.
-      if (who?.status === "signedIn" && who.repositories === "local") return "unsupported";
-      if (status?.repository?.place === "local") return "unsupported";
       if (status?.state === "none") return "noRepository";
       if (status?.unusable !== undefined) return "repository";
       if (status?.state === "paused" && LFS_STOPPING.has(status.reason ?? "")) return "repository";
@@ -3552,9 +3549,24 @@ export class Workbench {
    * that they know what it means, and through the dialog otherwise, which asks them first.
    */
   async putInLfs(assets: readonly string[]): Promise<void> {
+    // Into the server's own repository: nothing of GitHub's to say yes to.
+    if (this.localRepository()) return void (await this.uploads.add(assets));
     if (!this.lfsAccount.acknowledged) await this.lfsAccount.refresh();
     if (this.lfsAccount.acknowledged) await this.uploads.add(assets);
     else await this.choosePlaces(assets);
+  }
+
+  /**
+   * Whether the open project is saved to a repository of the server's own (an open-source server
+   * without GitHub, O8): its large file storage is the server's disk, which nobody pays GitHub for,
+   * so nothing is asked first, and nobody hears of how large files are, or of GitHub's quota.
+   */
+  localRepository(): boolean {
+    const cloud = this.cloud?.getSnapshot();
+    if (cloud?.kind !== "linked") return false;
+    const who = this.account?.getSnapshot();
+    if (who?.status === "signedIn" && who.repositories === "local") return true;
+    return cloud.repository?.getSnapshot().status?.repository?.place === "local";
   }
 
   /**
@@ -3598,6 +3610,8 @@ export class Workbench {
   async fixUpload(problem: UploadProblem): Promise<void> {
     switch (problem) {
       case "githubQuota":
+        // The server's own: its limit is the server's, not anything on GitHub.
+        if (this.localRepository()) return;
         window.open(GITHUB_BILLING, "_blank", "noopener,noreferrer");
         return;
       case "changed":
@@ -3676,6 +3690,8 @@ export class Workbench {
   async fixDownload(problem: DownloadProblem | "access"): Promise<void> {
     switch (problem) {
       case "githubQuota":
+        // The server's own: its limit is the server's, not anything on GitHub.
+        if (this.localRepository()) return;
         window.open(GITHUB_BILLING, "_blank", "noopener,noreferrer");
         return;
       case "occupied":

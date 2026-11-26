@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { ProjectStore } from "@animaquill/core";
 import {
   Reassembler,
@@ -153,6 +153,8 @@ if (text !== "export const a = 1;\n")
 step("opened again, with the change");
 
 const headers = { cookie: `${SESSION_COOKIE}=${session}`, origin };
+/** What a request that writes says besides, as the editor's do. */
+const writing = { ...headers, "x-animaquill": "1" };
 const listed = (await (await fetch(`${api}/api/projects`, { headers })).json()) as {
   projects: { id: string; name: string }[];
 };
@@ -178,6 +180,16 @@ if (local === "full") {
   if (said.failure !== "diskFull" || said.lastArchive !== undefined)
     throw new Error(`the full disk is not what the status says: ${JSON.stringify(said)}`);
   step("the disk is full, and the status says so");
+  // And no file of an asset is taken now: the disk keeps its room.
+  const refused = await fetch(`${api}/api/projects/${id}/lfs/objects`, {
+    method: "POST",
+    headers: { ...writing, "content-type": "application/json" },
+    body: JSON.stringify({ oid: "b".repeat(64), size: 1000 }),
+  });
+  const words = (await refused.json()) as { error?: string; detail?: string };
+  if (refused.status !== 503 || words.detail !== "diskFull")
+    throw new Error(`a file is taken on a full disk: ${refused.status} ${JSON.stringify(words)}`);
+  step("no file of an asset is taken on the full disk");
 }
 if (local === "1") {
   const said = (await (await fetch(`${api}/api/auth/session`, { headers })).json()) as {
@@ -201,6 +213,52 @@ if (local === "1") {
   process.stdout.write(
     `SMOKE_CLONE=${status.repository.clone}\nSMOKE_SHA=${status.lastArchive.sha}\n`,
   );
+
+  // A file of an asset, as the editor sends it: into the large file storage of the repository,
+  // without anything to say yes to first, and back out of it.
+  const file = randomBytes(1024 * 1024 + 17);
+  const oid = createHash("sha256").update(file).digest("hex");
+  const begun = await fetch(`${api}/api/projects/${id}/lfs/objects`, {
+    method: "POST",
+    headers: { ...writing, "content-type": "application/json" },
+    body: JSON.stringify({ oid, size: file.length }),
+  });
+  const upload = (await begun.json()) as { id?: string; repo?: string; chunk?: number };
+  if (begun.status !== 201 || !upload.id || !upload.chunk)
+    throw new Error(`no upload: ${begun.status} ${JSON.stringify(upload)}`);
+  for (let at = 0; at < file.length; at += upload.chunk) {
+    const piece = await fetch(`${api}/api/lfs/uploads/${upload.id}`, {
+      method: "PUT",
+      headers: {
+        ...writing,
+        "content-type": "application/octet-stream",
+        "upload-offset": String(at),
+      },
+      body: file.subarray(at, at + upload.chunk),
+    });
+    if (piece.status !== 200) throw new Error(`a piece: ${piece.status} ${await piece.text()}`);
+  }
+  let state = "";
+  for (let turn = 0; turn < 200 && state !== "done"; turn++) {
+    if (turn > 0) await new Promise((resolve) => setTimeout(resolve, 1000));
+    const asked = await fetch(`${api}/api/lfs/uploads/${upload.id}`, { headers });
+    state = ((await asked.json()) as { state?: string }).state ?? "";
+    if (state === "failed" || state === "expired") throw new Error(`the upload ${state}`);
+  }
+  if (state !== "done") throw new Error(`the upload is still ${state}`);
+  const back = await fetch(`${api}/api/projects/${id}/lfs/objects/${oid}?size=${file.length}`, {
+    headers: {
+      ...headers,
+      range: "bytes=0-",
+      "x-animaquill": "1",
+      "sec-fetch-site": "same-origin",
+    },
+  });
+  const came = Buffer.from(await back.arrayBuffer());
+  if (back.status !== 206 || !came.equals(file))
+    throw new Error(`what came back is not the file: ${back.status}, ${came.length} bytes`);
+  step(`a file of an asset in the repository here (${upload.repo}), and back`);
+  process.stdout.write(`SMOKE_LFS=${oid}\n`);
 }
 step("done");
 process.exit(0);

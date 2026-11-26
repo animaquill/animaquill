@@ -91,7 +91,11 @@ export function PlacesDialog({ request }: { request: PlacesRequest }) {
   const sorted = sortRows(rows, order);
   const { shown, folded } = unfolded ? { shown: sorted, folded: [] } : foldRows(sorted);
   const { count, bytes } = totalOf(rows, chosen);
-  const asks = account.account?.acknowledgedAt === undefined && account.status !== "none";
+  // Nothing of GitHub's to say yes to for a repository of the server's own.
+  const asks =
+    !workbench.localRepository() &&
+    account.account?.acknowledgedAt === undefined &&
+    account.status !== "none";
   const repo = status?.repository?.fullName;
 
   const toggle = (row: PlaceRow) => {

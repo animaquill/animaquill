@@ -50,7 +50,11 @@ export function phaseText(t: TFunction, item: UploadItem): string {
     case "blocked":
       return t("storage.uploads.phase.queued");
     case "busy":
-      return item.full ? t("storage.uploads.phase.busyFull") : t("storage.uploads.phase.busy");
+      return item.diskFull
+        ? t("storage.uploads.phase.busyDisk")
+        : item.full
+          ? t("storage.uploads.phase.busyFull")
+          : t("storage.uploads.phase.busy");
     default:
       return t(`storage.uploads.phase.${item.phase}`);
   }

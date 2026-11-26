@@ -31,8 +31,13 @@ type Assets = Readonly<
 
 export interface NewAssetsOptions {
   readonly t: TFunction;
-  /** The open project, as far as uploads go: its key and default here, or none to send to. */
-  readonly project: () => { readonly key: string; readonly place: DefaultPlace } | undefined;
+  /**
+   * The open project, as far as uploads go: its key and default here, or none to send to. `local`:
+   * its repository is one of the server's own, whose disk costs people nothing of GitHub's: nothing
+   * is asked first, and nobody hears of how large files are.
+   */
+  readonly project: () =>
+    { readonly key: string; readonly place: DefaultPlace; readonly local?: boolean } | undefined;
   readonly assets: () => Assets;
   /** Whether people said they know what the storage means, asking the backend where not known. */
   readonly acknowledged: () => Promise<boolean>;
@@ -118,12 +123,14 @@ export class NewAssets {
 
   /** Assets just imported into the open project. */
   async imported(ids: readonly string[]): Promise<void> {
-    const { project, assets, sizes } = this.#options;
+    const { project, assets } = this.#options;
     const open = project();
     if (!open || ids.length === 0) return;
+    const sizes = this.#sizesFor(open);
     const plan = planImport(ids, assets(), open.place.effective, sizes);
     if (plan.send.length === 0 && plan.tooLarge.length === 0) return;
-    const knows = plan.send.length > 0 ? await this.#options.acknowledged() : true;
+    const knows =
+      plan.send.length > 0 && open.local !== true ? await this.#options.acknowledged() : true;
     // Another project meanwhile: these are not its assets.
     if (project()?.key !== open.key) return;
     if (!knows) {
@@ -131,7 +138,13 @@ export class NewAssets {
       return;
     }
     if (plan.send.length > 0) await this.#options.send(plan.send);
-    this.#tell(open.key, plan);
+    this.#tell(open.key, plan, sizes);
+  }
+
+  /** What is told of, for a project: of a repository of the server's own, only what it does not take. */
+  #sizesFor(open: { readonly local?: boolean }): NewAssetsOptions["sizes"] {
+    const { sizes } = this.#options;
+    return open.local === true ? { ...sizes, large: Infinity, batch: Infinity } : sizes;
   }
 
   #bytes(ids: Iterable<string>): number {
@@ -167,8 +180,12 @@ export class NewAssets {
    * together, with a way to keep this project's assets here; else large files, with a way to keep
    * those here; and files too large, which stay here.
    */
-  #tell(key: string, { send, large, tooLarge }: ReturnType<typeof planImport>): void {
-    const { t, notify, cancel, sizes } = this.#options;
+  #tell(
+    key: string,
+    { send, large, tooLarge }: ReturnType<typeof planImport>,
+    sizes: NewAssetsOptions["sizes"],
+  ): void {
+    const { t, notify, cancel } = this.#options;
     const batch = send.length > 1 && this.#bytes(send) > sizes.batch;
     const lines = [
       ...(batch

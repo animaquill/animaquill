@@ -119,6 +119,8 @@ export interface UploadItem {
   readonly speed?: number;
   /** For "busy": the person has as many files on their way as the platform takes. */
   readonly full?: boolean;
+  /** For "busy": the disk of the server keeps its room, and takes no new file now. */
+  readonly diskFull?: boolean;
   readonly problem?: UploadProblem;
   /** For "queued": how many go before it. */
   readonly ahead?: number;
@@ -240,6 +242,7 @@ interface Live {
   readonly received: number;
   readonly speed?: number;
   readonly full?: boolean;
+  readonly diskFull?: boolean;
 }
 
 const isLiveMessage = (message: unknown): message is LiveMessage =>
@@ -720,6 +723,7 @@ export class AssetUploads {
                 phase: "busy",
                 received: record.received ?? 0,
                 ...(error.detail === "person" && { full: true }),
+                ...(error.detail === "diskFull" && { diskFull: true }),
               });
               await this.#rest((error.retryAfter ?? 10) * 1000, signal);
               continue;
@@ -1164,6 +1168,7 @@ export class AssetUploads {
         record.state === "done" ? record.size : Math.max(live?.received ?? 0, record.received ?? 0),
       ...(live?.speed !== undefined && phase === "sending" && { speed: live.speed }),
       ...(live?.full && phase === "busy" && { full: true }),
+      ...(live?.diskFull && phase === "busy" && { diskFull: true }),
       ...(record.problem !== undefined && { problem: record.problem as UploadProblem }),
       ...(phase === "queued" && { ahead }),
       ...(record.replaced && { replaced: true }),

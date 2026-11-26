@@ -14,11 +14,13 @@ function world({
   knows = false,
   place = { chosen: "lfs", written: false, effective: "lfs" } as DefaultPlace,
   acknowledgeTakes = true,
+  local = false,
 } = {}) {
   const state = {
     key: "p1" as string | undefined,
     knows,
     place,
+    local,
     assets: {
       a: { hash: "sha256-a", size: 1 * MB, path: "assets/a.png", name: "a.png" },
       b: { hash: "sha256-b", size: 300 * MB, path: "assets/b.mp4", name: "b.mp4" },
@@ -35,7 +37,10 @@ function world({
   let next = 1;
   const assets = new NewAssets({
     t,
-    project: () => (state.key === undefined ? undefined : { key: state.key, place: state.place }),
+    project: () =>
+      state.key === undefined
+        ? undefined
+        : { key: state.key, place: state.place, local: state.local },
     assets: () => state.assets,
     acknowledged: async () => state.knows,
     acknowledge: async () => {
@@ -254,5 +259,18 @@ describe("assets just imported, before people said they know", () => {
     w.state.key = "p2";
     await w.press(id as number, "storage.uploads.notice.agree");
     expect(w.sent).toEqual([]);
+  });
+
+  it("of a project in a repository of the server's own go at once: nothing asked, nothing said of size but what it does not take", async () => {
+    const w = world({ local: true });
+    await w.assets.imported(["a", "b", "e"]);
+    expect(w.sent).toEqual([["a", "b", "e"]]);
+    expect(w.assets.waiting).toEqual([]);
+    expect(w.notices.size).toBe(0);
+    await w.assets.imported(["c", "d"]);
+    expect(w.sent).toEqual([["a", "b", "e"], ["d"]]);
+    expect([...w.notices.values()].map(({ message }) => message)).toEqual([
+      "storage.uploads.notice.tooLargeOne(1:c.mov)",
+    ]);
   });
 });

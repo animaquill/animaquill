@@ -26,6 +26,9 @@ export function StorageSpace() {
     account?.getSnapshot ?? noAccount,
   );
   const signedIn = who?.status === "signedIn";
+  // A server whose projects are all in its own repositories: their large files are on its disk,
+  // which this page does not list by project yet; nothing of GitHub's quota is about them.
+  const local = signedIn && who.repositories === "local";
   useEffect(() => {
     if (signedIn) void lfsAccount.refresh();
   }, [lfsAccount, signedIn]);
@@ -38,17 +41,19 @@ export function StorageSpace() {
       <section className={styles.part} aria-labelledby="storage-lfs" data-storage="lfs">
         <div className={styles.head}>
           <h2 id="storage-lfs">{t("storage.uploads.space.lfsTitle")}</h2>
-          <a
-            href={GITHUB_BILLING}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={styles.link}
-          >
-            {t("storage.uploads.space.seeQuota")} <ExternalLink size={12} aria-hidden />
-          </a>
+          {!local && (
+            <a
+              href={GITHUB_BILLING}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={styles.link}
+            >
+              {t("storage.uploads.space.seeQuota")} <ExternalLink size={12} aria-hidden />
+            </a>
+          )}
         </div>
         <p className={styles.muted}>{t("storage.uploads.space.lfsAbout")}</p>
-        {!signedIn ? (
+        {local ? null : !signedIn ? (
           <p className={styles.muted} data-storage-state="signedOut">
             {t("storage.uploads.space.signIn")}{" "}
             <button type="button" className={styles.button} onClick={() => void workbench.signIn()}>

@@ -42,13 +42,9 @@ const SAID_OF_REPOSITORIES = [
   "start.card.",
   "start.new.",
   "projectProps.storage.",
-  "storage.uploads.properties.",
-  "storage.uploads.blocked.unsupported",
-  "storage.uploads.row.put",
-  "storage.uploads.panel.summary",
-  "storage.uploads.menu.lfs",
-  "storage.uploads.badge.lfs",
-  "storage.uploads.dialog.",
+  // Where assets are: since O8b repositories here have a large file storage of their own.
+  "storage.uploads.",
+  "storage.download",
   "storage.storedIn.",
 ];
 
@@ -69,11 +65,27 @@ const ONLY_GITHUB = new Set([
   "repository.fix.protected",
   "repoMerge.blocked.openOnGitHub",
   "cloud.delete.unusable",
-  // The cost of GitHub's large file storage, and its limit: never asked of a repository here.
-  "storage.uploads.dialog.tooLarge",
+  // The cost of GitHub's large file storage, its quota, and what is said of large files because
+  // of them: never asked of, or said to, a project whose repository is here (`localRepository`).
   "storage.uploads.dialog.cost",
   "storage.uploads.dialog.seeQuota",
   "storage.uploads.dialog.acknowledge",
+  "storage.uploads.problem.notAcknowledged",
+  "storage.uploads.fix.quota",
+  "storage.uploads.fix.acknowledgeTitle",
+  "storage.uploads.notice.askOne",
+  "storage.uploads.notice.askMany",
+  "storage.uploads.notice.askLargeOne",
+  "storage.uploads.notice.askLargeMany",
+  "storage.uploads.notice.cost",
+  "storage.uploads.notice.batch",
+  "storage.uploads.notice.largeOne",
+  "storage.uploads.notice.largeMany",
+  "storage.uploads.space.seeQuota",
+  "storage.downloads.problem.githubQuota",
+  "storage.downloads.fix.quota",
+  // A link to the repository on GitHub, which only GitHub has.
+  "storage.uploads.row.seeOnGitHub",
 ]);
 
 describe("words of repositories of the server's own", () => {

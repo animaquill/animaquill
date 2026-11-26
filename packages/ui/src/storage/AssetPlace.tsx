@@ -106,7 +106,9 @@ export function AssetPlace({ asset }: { asset: string }) {
       const problem = going.problem ?? "refused";
       const fix =
         problem === "githubQuota"
-          ? "quota"
+          ? workbench.localRepository()
+            ? undefined
+            : "quota"
           : problem === "notAcknowledged"
             ? "acknowledge"
             : problem === "changed" || problem === "missing"
