@@ -73,10 +73,15 @@ export const readLfs = async (
     })
     .from(projects)
     .innerJoin(projectRepos, eq(projectRepos.projectId, projects.id))
-    // `lfs_objects` knows repositories on GitHub only (O8b brings the server's own).
+    // Repositories on GitHub only: the storage page is of the GitHub account's room. The objects
+    // of the server's own repositories are on its disk, see archive/local/lfs.ts.
     .innerJoin(
       lfsObjects,
-      and(eq(lfsObjects.repoId, projectRepos.repoId), eq(projectRepos.provider, "github")),
+      and(
+        eq(lfsObjects.provider, projectRepos.provider),
+        eq(lfsObjects.repoId, projectRepos.repoId),
+        eq(projectRepos.provider, "github"),
+      ),
     )
     .where(access.visible(userId))
     .groupBy(

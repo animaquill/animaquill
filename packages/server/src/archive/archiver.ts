@@ -83,6 +83,7 @@ import {
   hereOf,
   placeOf,
   type RepoHosts,
+  type RepoProvider,
   type RepoInfo,
   type RepoSession,
   type TreeEntry,
@@ -1885,8 +1886,6 @@ export class Archiver {
     pointed: readonly LfsObject[],
     looked: Looked,
   ): Promise<{ stored: Map<string, number>; unknown: Set<string> }> {
-    // Repositories of the server's own have no large file storage yet: nothing is in one.
-    if (link.provider !== "github") return { stored: new Map(), unknown: new Set() };
     // Each object as large as it is said to be: two assets can say two sizes of one oid, and a
     // storage that minds the size has it under one of them only.
     const fresh = new Map<string, LfsObject[]>();
@@ -1908,6 +1907,7 @@ export class Archiver {
         .from(lfsObjects)
         .where(
           and(
+            eq(lfsObjects.provider, link.provider),
             eq(lfsObjects.repoId, link.repoId),
             inArray(lfsObjects.oid, oids.slice(at, at + 1000)),
           ),
@@ -1923,7 +1923,7 @@ export class Archiver {
     // `ASKED_SEEN`.
     const now = this.#now().getTime();
     const seenOf = (object: LfsObject) =>
-      ASKED_SEEN.get(`${link.repoId}:${object.oid}:${object.size}`);
+      ASKED_SEEN.get(`${link.provider}:${link.repoId}:${object.oid}:${object.size}`);
     const asked = new Set<LfsObject>();
     for (const said of fresh.values())
       for (const object of said) {
@@ -1934,7 +1934,7 @@ export class Archiver {
       Math.min(...said.map((object) => seenOf(object)?.at ?? 0));
     const waiting = [...fresh.values()].toSorted((a, b) => lastAsked(a) - lastAsked(b));
     const note = (object: LfsObject, absent: boolean) => {
-      const key = `${link.repoId}:${object.oid}:${object.size}`;
+      const key = `${link.provider}:${link.repoId}:${object.oid}:${object.size}`;
       ASKED_SEEN.delete(key);
       if (ASKED_SEEN.size >= ASKED_SEEN_MOST)
         ASKED_SEEN.delete(ASKED_SEEN.keys().next().value as string);
@@ -1956,14 +1956,15 @@ export class Archiver {
         left -= some.length;
         try {
           const sizes = await session.lfsSizes(some);
-          const found: { repoId: number; oid: string; size: number }[] = [];
+          const found: { provider: RepoProvider; repoId: number; oid: string; size: number }[] =
+            [];
           for (const [index, object] of some.entries()) {
             asked.add(object);
             const size = sizes[index];
             note(object, size === undefined);
             if (size === undefined) continue;
             looked.set(object.oid, size);
-            found.push({ repoId: link.repoId, oid: object.oid, size });
+            found.push({ provider: link.provider, repoId: link.repoId, oid: object.oid, size });
           }
           if (found.length > 0) {
             await this.#db.insert(lfsObjects).values(found).onConflictDoNothing();

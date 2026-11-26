@@ -7,9 +7,11 @@ import {
   LfsQuota,
   RepoPaused,
   RepoRefused,
+  hereOf,
   placeOf,
   type LfsAnswer,
   type RepoHosts,
+  type RepoProvider,
 } from "../archive/repo-host.ts";
 import {
   OPEN_LFS_STATES,
@@ -126,7 +128,10 @@ export class UploadRefused extends Error {
 export interface UploadAnswer {
   readonly id?: string;
   readonly state: "present" | LfsUploadState;
-  /** The repository, by its number on GitHub, as the place of the asset is bound to it. */
+  /**
+   * The repository, as the place of the asset is bound to it: its number on GitHub, or
+   * `local:<number>` for one of the server's own (`hereOf`).
+   */
   readonly repo: string;
   readonly oid: string;
   readonly size: number;
@@ -139,6 +144,12 @@ export interface UploadAnswer {
 }
 
 type Row = typeof lfsUploads.$inferSelect;
+
+/** A repository, as `lfs_objects` and `lfs_uploads` know it: its number on its provider. */
+interface Repo {
+  readonly provider: RepoProvider;
+  readonly repoId: number;
+}
 
 export interface LfsUploadsOptions {
   readonly db: Db;
@@ -236,7 +247,7 @@ export class LfsUploads {
     return {
       id: row.id,
       state: row.state,
-      repo: String(row.repoId),
+      repo: hereOf(row).repo,
       oid: row.oid,
       size: row.size,
       received: row.received,
@@ -247,10 +258,10 @@ export class LfsUploads {
     };
   }
 
-  #present(repoId: number, oid: string, size: number): UploadAnswer {
+  #present(repo: Repo, oid: string, size: number): UploadAnswer {
     return {
       state: "present",
-      repo: String(repoId),
+      repo: hereOf(repo).repo,
       oid,
       size,
       received: size,
@@ -271,13 +282,14 @@ export class LfsUploads {
   }
 
   /** The upload of an object into a repository that is on its way, if there is one. */
-  async #open(repoId: number, oid: string, db: Pick<Db, "select"> = this.#options.db) {
+  async #open(repo: Repo, oid: string, db: Pick<Db, "select"> = this.#options.db) {
     const [row] = await db
       .select()
       .from(lfsUploads)
       .where(
         and(
-          eq(lfsUploads.repoId, repoId),
+          eq(lfsUploads.provider, repo.provider),
+          eq(lfsUploads.repoId, repo.repoId),
           eq(lfsUploads.oid, oid),
           inArray(lfsUploads.state, [...OPEN_LFS_STATES]),
         ),
@@ -325,23 +337,29 @@ export class LfsUploads {
     // Repositories of the server's own have no large file storage yet (O8b): nothing is noted for
     // one, as `lfs_objects` and `lfs_uploads` know repositories on GitHub only.
     if (link.provider !== "github") throw new UploadRefused("unsupported", 409);
-    const repoId = link.repoId;
+    const repo: Repo = { provider: link.provider, repoId: link.repoId };
 
     const [known] = await db
       .select({ size: lfsObjects.size })
       .from(lfsObjects)
-      .where(and(eq(lfsObjects.repoId, repoId), eq(lfsObjects.oid, oid)));
+      .where(
+        and(
+          eq(lfsObjects.provider, repo.provider),
+          eq(lfsObjects.repoId, repo.repoId),
+          eq(lfsObjects.oid, oid),
+        ),
+      );
     if (known) {
       // The storage has the file of this hash, and it is not as large as the editor says: what
       // the editor has is not that file.
       if (known.size !== size)
         return {
           fresh: false,
-          answer: await this.#notTheFile(user, projectId, repoId, file, known.size),
+          answer: await this.#notTheFile(user, projectId, repo, file, known.size),
         };
-      return { fresh: false, answer: this.#present(repoId, oid, size) };
+      return { fresh: false, answer: this.#present(repo, oid, size) };
     }
-    const open = await this.#open(repoId, oid);
+    const open = await this.#open(repo, oid);
     if (open) return { fresh: false, answer: this.#goOn(user, open, size) };
 
     // Larger than the storage takes, as far as is known: GitHub is not asked, see `fileBytes`.
@@ -359,14 +377,17 @@ export class LfsUploads {
       if (stored === undefined || stored === size) {
         [stored] = await this.#asking(projectId, () => session.lfsSizes([{ oid, size }]));
         if (stored !== undefined)
-          await db.insert(lfsObjects).values({ repoId, oid, size: stored }).onConflictDoNothing();
+          await db
+            .insert(lfsObjects)
+            .values({ ...repo, oid, size: stored })
+            .onConflictDoNothing();
       }
       if (stored !== size)
         return {
           fresh: false,
-          answer: await this.#notTheFile(user, projectId, repoId, file, stored),
+          answer: await this.#notTheFile(user, projectId, repo, file, stored),
         };
-      return { fresh: false, answer: this.#present(repoId, oid, size) };
+      return { fresh: false, answer: this.#present(repo, oid, size) };
     }
     if (answer?.kind === "refused") {
       const { error, detail } = refusalOf(answer);
@@ -382,7 +403,7 @@ export class LfsUploads {
     // database, for whatever other process counts too, and one at a time here before that, so
     // that those who wait hold no connection. A lock that does not come in time says "busy".
     const taken = await this.#counted(async (tx) => {
-      const there = await this.#open(repoId, oid, tx);
+      const there = await this.#open(repo, oid, tx);
       if (there) return { there };
       const sizeOf = sql<string>`coalesce(sum(${lfsUploads.size}), 0)`;
       const [mine] = await tx
@@ -418,7 +439,7 @@ export class LfsUploads {
         .values({
           userId: user.userId,
           projectId,
-          repoId,
+          ...repo,
           oid,
           size,
           state: "receiving",
@@ -477,7 +498,7 @@ export class LfsUploads {
   async #notTheFile(
     user: SignedIn,
     projectId: string,
-    repoId: number,
+    repo: Repo,
     file: { readonly oid: string; readonly size: number },
     stored: number | undefined,
   ): Promise<UploadAnswer> {
@@ -489,7 +510,8 @@ export class LfsUploads {
       .where(
         and(
           eq(lfsUploads.userId, user.userId),
-          eq(lfsUploads.repoId, repoId),
+          eq(lfsUploads.provider, repo.provider),
+          eq(lfsUploads.repoId, repo.repoId),
           eq(lfsUploads.oid, file.oid),
           eq(lfsUploads.size, file.size),
           eq(lfsUploads.state, "failed"),
@@ -505,7 +527,7 @@ export class LfsUploads {
       .values({
         userId: user.userId,
         projectId,
-        repoId,
+        ...repo,
         oid: file.oid,
         size: file.size,
         state: "failed",

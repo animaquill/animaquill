@@ -108,7 +108,13 @@ export class LfsPusher {
         .from(projectRepos)
         .innerJoin(projects, eq(projects.id, projectRepos.projectId))
         .innerJoin(users, eq(users.id, projects.ownerId))
-        .where(and(eq(projectRepos.projectId, row.projectId), eq(projectRepos.repoId, row.repoId)));
+        .where(
+          and(
+            eq(projectRepos.projectId, row.projectId),
+            eq(projectRepos.provider, row.provider),
+            eq(projectRepos.repoId, row.repoId),
+          ),
+        );
       if (!link) return this.#fail(row, "gone", "the project is not saved to this repository now");
       // Nothing goes to GitHub for someone disabled: it waits, as far as it may.
       if (link.disabledAt !== null)
@@ -171,7 +177,13 @@ export class LfsPusher {
     await db.transaction(async (tx) => {
       await tx
         .insert(lfsObjects)
-        .values({ repoId: row.repoId, oid: row.oid, size: row.size, confirmedAt: now })
+        .values({
+          provider: row.provider,
+          repoId: row.repoId,
+          oid: row.oid,
+          size: row.size,
+          confirmedAt: now,
+        })
         .onConflictDoNothing();
       // Given up meanwhile, it stays given up: the storage has the file all the same.
       await tx

@@ -705,8 +705,7 @@ export class Rebuilder {
    */
   async #noteLfs(session: RepoSession, link: Link, pointers: readonly LfsObject[]): Promise<void> {
     const byOid = new Map(pointers.map((object) => [object.oid, object]));
-    // Repositories of the server's own have no large file storage yet: nothing to note.
-    if (byOid.size === 0 || link.provider !== "github") return;
+    if (byOid.size === 0) return;
     try {
       const known = new Set<string>();
       const oids = [...byOid.keys()];
@@ -716,6 +715,7 @@ export class Rebuilder {
           .from(lfsObjects)
           .where(
             and(
+              eq(lfsObjects.provider, link.provider),
               eq(lfsObjects.repoId, link.repoId),
               inArray(lfsObjects.oid, oids.slice(at, at + 1000)),
             ),
@@ -727,7 +727,9 @@ export class Rebuilder {
       const sizes = await session.lfsSizes(asked);
       const found = asked.flatMap((object, index) => {
         const size = sizes[index];
-        return size === undefined ? [] : [{ repoId: link.repoId, oid: object.oid, size }];
+        return size === undefined
+          ? []
+          : [{ provider: link.provider, repoId: link.repoId, oid: object.oid, size }];
       });
       if (found.length > 0) await this.#db.insert(lfsObjects).values(found).onConflictDoNothing();
       this.#log.info(

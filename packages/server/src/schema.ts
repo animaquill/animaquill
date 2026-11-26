@@ -1063,18 +1063,24 @@ export const repoConflicts = pgTable(
  * there, or GitHub said it had them. An archive writes the pointer of an asset only to what is
  * here, see archive/pointers.ts, never one to an object that is not there. GitHub has no way to
  * take one object out of a repository's storage, so a row stays for as long as the repository's
- * number means anything.
+ * number means anything. For a repository of the server's own (`provider` "local"), the objects are
+ * in its folder, see archive/local/lfs.ts: its numbers are not GitHub's, and never meet them.
  */
 export const lfsObjects = pgTable(
   "lfs_objects",
   {
+    /** The repository, as `project_repos` says it: `repo_id` is its number on `provider`. */
+    provider: text("provider").$type<RepoProvider>().notNull().default("github"),
     repoId: githubNumber("repo_id").notNull(),
     /** The SHA-256 of the content, in lower-case hexadecimal, as Git LFS names it. */
     oid: text("oid").notNull(),
     size: count("size").notNull(),
     confirmedAt: moment("confirmed_at").notNull().defaultNow(),
   },
-  (table) => [primaryKey({ columns: [table.repoId, table.oid] })],
+  (table) => [
+    primaryKey({ columns: [table.provider, table.repoId, table.oid] }),
+    check("lfs_objects_provider", sql`${table.provider} in ('github', 'local')`),
+  ],
 );
 
 /** How an upload into the large file storage goes, see `lfsUploads`. */
@@ -1101,6 +1107,8 @@ export const lfsUploads = pgTable(
     projectId: text("project_id")
       .notNull()
       .references(() => projects.id, { onDelete: "cascade" }),
+    /** The repository, as `project_repos` says it: `repo_id` is its number on `provider`. */
+    provider: text("provider").$type<RepoProvider>().notNull().default("github"),
     repoId: githubNumber("repo_id").notNull(),
     /** The SHA-256 of the file, in lower-case hexadecimal, as Git LFS names it. */
     oid: text("oid").notNull(),
@@ -1123,12 +1131,13 @@ export const lfsUploads = pgTable(
   },
   (table) => [
     uniqueIndex("lfs_uploads_open")
-      .on(table.repoId, table.oid)
+      .on(table.provider, table.repoId, table.oid)
       .where(sql`state in ('receiving', 'received', 'pushing')`),
     index("lfs_uploads_user").on(table.userId, table.state),
     index("lfs_uploads_state").on(table.state, table.updatedAt),
     // Those of a project go with it, found without reading the table.
     index("lfs_uploads_project").on(table.projectId),
+    check("lfs_uploads_provider", sql`${table.provider} in ('github', 'local')`),
     check(
       "lfs_uploads_state",
       sql`${table.state} in ('receiving', 'received', 'pushing', 'done', 'failed', 'expired')`,

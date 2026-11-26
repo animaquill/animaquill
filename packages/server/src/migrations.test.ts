@@ -52,6 +52,8 @@ describe.skipIf(!TEST_DATABASE)("a database of the version before", () => {
   let direct: Client;
   let database: ReturnType<typeof createDatabase>;
   let folder: string;
+  /** The rows of Git LFS before the migrations, for 0003. */
+  let lfsBefore: { objects: unknown[]; uploads: unknown[] } | undefined;
 
   beforeAll(async () => {
     name = `aq_test_${randomBytes(6).toString("hex")}`;
@@ -128,12 +130,24 @@ describe.skipIf(!TEST_DATABASE)("a database of the version before", () => {
         ('0190a000-0000-7000-8000-0000000000a3', 'p-two', 9002, 7, 'bbb', null, 'manual', 2, 0);
       insert into repo_merges (id, project_id, repo_id, from_sha, to_sha, state, seq) values
         ('0190a000-0000-7000-8000-0000000000b1', 'p-two', 9002, 'bbb', 'ccc', 'applied', 8);
+      insert into lfs_objects (repo_id, oid, size, confirmed_at) values
+        (9001, '${"a".repeat(64)}', 10, '2026-11-20T10:00:00Z'),
+        (9001, '${"b".repeat(64)}', 20, '2026-11-20T10:00:00Z'),
+        (9002, '${"a".repeat(64)}', 10, '2026-11-20T10:00:00Z');
+      insert into lfs_uploads (id, user_id, project_id, repo_id, oid, size, received, state,
+          created_at, updated_at)
+        values
+        ('0190a000-0000-7000-8000-0000000000c1', '0190a000-0000-7000-8000-000000000001', 'p-one',
+          9001, '${"c".repeat(64)}', 30, 5, 'receiving', '2026-11-20T10:00:00Z', '2026-11-20T10:00:00Z'),
+        ('0190a000-0000-7000-8000-0000000000c2', '0190a000-0000-7000-8000-000000000001', 'p-one',
+          9001, '${"a".repeat(64)}', 10, 10, 'done', '2026-11-20T10:00:00Z', '2026-11-20T10:00:00Z');
     `);
     const before = {
       repos: await rowsOf("project_repos"),
       archives: await rowsOf("archives"),
       merges: await rowsOf("repo_merges"),
     };
+    lfsBefore = { objects: await rowsOf("lfs_objects"), uploads: await rowsOf("lfs_uploads") };
 
     await database.migrate();
 
@@ -183,5 +197,50 @@ describe.skipIf(!TEST_DATABASE)("a database of the version before", () => {
     expect(Number(second.rows[0].id)).toBe(Number(first.rows[0].id) + 1);
     const verified = await direct.query("select verified_at from project_repos");
     for (const row of verified.rows) expect(row.verified_at).toBeNull();
+  });
+
+  test("0003_lfs_providers: the objects and uploads of Git LFS stay as they were, on GitHub; the same number here is another repository", async () => {
+    expect(await rowsOf("lfs_objects", ["provider"])).toEqual(lfsBefore?.objects);
+    expect(await rowsOf("lfs_uploads", ["provider"])).toEqual(lfsBefore?.uploads);
+    const providers = await direct.query(
+      "select provider from lfs_objects union all select provider from lfs_uploads",
+    );
+    expect(providers.rows).toHaveLength(5);
+    for (const row of providers.rows) expect(row.provider).toBe("github");
+    const fails = async (text: string) => {
+      await direct.query("savepoint attempt");
+      const error = await direct.query(text).then(
+        () => undefined,
+        (failed: unknown) => failed as { code?: string },
+      );
+      await direct.query("rollback to savepoint attempt");
+      return error?.code;
+    };
+    const a = "a".repeat(64);
+    const c = "c".repeat(64);
+    await direct.query("begin");
+    // The same object of the same repository on GitHub, once; of the same number here, another.
+    expect(
+      await fails(`insert into lfs_objects (repo_id, oid, size) values (9001, '${a}', 10)`),
+    ).toBe("23505");
+    expect(
+      await fails(
+        `insert into lfs_objects (provider, repo_id, oid, size) values ('local', 9001, '${a}', 10)`,
+      ),
+    ).toBeUndefined();
+    expect(
+      await fails(
+        `insert into lfs_objects (provider, repo_id, oid, size) values ('gitlab', 9001, '${a}', 10)`,
+      ),
+    ).toBe("23514");
+    const upload = (provider: string) =>
+      `insert into lfs_uploads (user_id, project_id, provider, repo_id, oid, size, state)
+        values ('0190a000-0000-7000-8000-000000000001', 'p-one', '${provider}', 9001, '${c}', 30, 'receiving')`;
+    // One open upload of an object into a repository: on GitHub as before, and here apart.
+    expect(await fails(upload("github"))).toBe("23505");
+    await direct.query(upload("local"));
+    expect(await fails(upload("local"))).toBe("23505");
+    expect(await fails(upload("gitlab"))).toBe("23514");
+    await direct.query("rollback");
   });
 });

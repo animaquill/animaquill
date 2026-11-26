@@ -371,7 +371,7 @@ export class LfsDownloads {
     const now = this.#now();
     return answers.map((answer, index) => {
       const { oid } = objects[index] as { oid: string };
-      const key = `${link.repoId}:${oid}`;
+      const key = `${link.provider}:${link.repoId}:${oid}`;
       if (answer.kind === "download") {
         const { href } = answer.download;
         let protocol: string;
@@ -430,7 +430,13 @@ export class LfsDownloads {
         await db
           .select({ oid: lfsObjects.oid, size: lfsObjects.size })
           .from(lfsObjects)
-          .where(and(eq(lfsObjects.repoId, link.repoId), inArray(lfsObjects.oid, oids)))
+          .where(
+            and(
+              eq(lfsObjects.provider, link.provider),
+              eq(lfsObjects.repoId, link.repoId),
+              inArray(lfsObjects.oid, oids),
+            ),
+          )
       ).map(({ oid, size }) => [oid, size]),
     );
     const unique = [...new Map(objects.map((object) => [object.oid, object])).values()];
@@ -450,6 +456,7 @@ export class LfsDownloads {
               .from(lfsUploads)
               .where(
                 and(
+                  eq(lfsUploads.provider, link.provider),
                   eq(lfsUploads.repoId, link.repoId),
                   inArray(
                     lfsUploads.oid,
@@ -534,7 +541,7 @@ export class LfsDownloads {
       const link = await this.#repoOf(user, projectId);
       const start = range.start;
       const end = Math.min(range.end, start + this.#limits.mostBytes - 1, object.size - 1);
-      const key = `${link.repoId}:${object.oid}`;
+      const key = `${link.provider}:${link.repoId}:${object.oid}`;
       for (let attempt = 1; ; attempt++) {
         let address = this.#addresses.get(key);
         if (!address || address.until <= this.#now()) {
