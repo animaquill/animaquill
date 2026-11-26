@@ -1,14 +1,18 @@
 import { createHash } from "node:crypto";
 import {
   chmodSync,
+  closeSync,
   createReadStream,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   renameSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -530,6 +534,37 @@ interface ReposList {
   }[];
 }
 
+/** How much of a file is copied at a time: objects of Git LFS are as large as 2 GiB. */
+const COPY_BYTES = 1024 * 1024;
+
+/**
+ * Copies a file into a new one (EEXIST where it is there), a piece at a time, as it is read: its
+ * length and SHA-256. ENOENT where it is not there.
+ */
+const copyHashing = (from: string, to: string, mode: number): { size: number; sha256: string } => {
+  const source = openSync(from, "r");
+  try {
+    const target = openSync(to, "wx", mode);
+    try {
+      const hash = createHash("sha256");
+      const piece = Buffer.allocUnsafe(COPY_BYTES);
+      let size = 0;
+      for (;;) {
+        const read = readSync(source, piece, 0, COPY_BYTES, null);
+        if (read === 0) break;
+        hash.update(piece.subarray(0, read));
+        for (let at = 0; at < read;) at += writeSync(target, piece, at, read - at);
+        size += read;
+      }
+      return { size, sha256: hash.digest("hex") };
+    } finally {
+      closeSync(target);
+    }
+  } finally {
+    closeSync(source);
+  }
+};
+
 /** A file of `repos/` whose name says it is half written, as a crash leaves one. */
 const isTemporary = (name: string) =>
   name.startsWith(".tmp-") || name.startsWith("tmp_obj_") || name.endsWith(".lock");
@@ -579,24 +614,19 @@ export const exportRepos = async (
   const files: { path: string; size: number; sha256: string }[] = [];
   let bytes = 0;
   const copy = (path: string, mayBeGone: boolean) => {
-    let content: Buffer;
+    const target = join(dir, "repos", path);
+    mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+    let copied: { size: number; sha256: string };
     try {
-      content = readFileSync(join(from, path));
+      copied = copyHashing(join(from, path), target, 0o600);
     } catch (error) {
       // A loose object `git gc` packed meanwhile: the pack it went into is listed too, or the
       // check below says what is missing.
       if (mayBeGone && (error as { code?: unknown }).code === "ENOENT") return;
       throw error;
     }
-    const target = join(dir, "repos", path);
-    mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-    writeFileSync(target, content, { mode: 0o600 });
-    files.push({
-      path,
-      size: content.length,
-      sha256: createHash("sha256").update(content).digest("hex"),
-    });
-    bytes += content.length;
+    files.push({ path, ...copied });
+    bytes += copied.size;
   };
   for (const path of listed(false)) copy(path, false);
   await hooks.afterRefs?.();
@@ -659,12 +689,11 @@ export const importRepos = (dir: string, dataDir: string, manifest: Manifest): n
         isAbsolute(file.path)
       )
         throw new DataRefused(`${file.path} is no file of a repository`);
-      const content = readFileSync(join(dir, "repos", file.path));
-      if (createHash("sha256").update(content).digest("hex") !== file.sha256)
-        throw new DataRefused(`repos/${file.path} is not what was exported`);
       const target = join(building, file.path);
       mkdirSync(dirname(target), { recursive: true, mode: 0o755 });
-      writeFileSync(target, content, { mode: 0o644 });
+      const copied = copyHashing(join(dir, "repos", file.path), target, 0o644);
+      if (copied.sha256 !== file.sha256 || copied.size !== file.size)
+        throw new DataRefused(`repos/${file.path} is not what was exported`);
     }
     if (!existsSync(join(building, ".animaquill-repos")))
       writeFileSync(

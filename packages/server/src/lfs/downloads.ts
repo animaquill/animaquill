@@ -75,6 +75,8 @@ export const LOOKUP_MOST = 100;
 /**
  * How much one person may download through the platform a day, in GiB (2026-11-15, 20 until the
  * user says otherwise): admins change it on the admin site or with `admin.ts lfs downloads limit`.
+ * The fallback is the platform's: a server of its own has no limit where nobody set one (O8b,
+ * `DownloadsOptions.dailyGb`).
  */
 export const LFS_DOWNLOADS_SETTING: Setting<{ readonly dailyGb: number }> = {
   key: "lfsDownloads",
@@ -140,6 +142,11 @@ export interface DownloadsOptions {
   /** What admins set, read every few seconds; undefined to read the database each time. */
   readonly settings?: () => Settings | undefined;
   readonly limits?: Partial<DownloadLimits>;
+  /**
+   * GiB one person may download a day where admins set nothing (`LFS_DOWNLOADS_SETTING`): no limit
+   * unless said. The platform says 20.
+   */
+  readonly dailyGb?: number | undefined;
   readonly now?: () => number;
 }
 
@@ -269,6 +276,8 @@ export class LfsDownloads {
   readonly #limits: DownloadLimits;
   readonly #now: () => number;
   readonly #places: Places;
+  /** `LFS_DOWNLOADS_SETTING`, with what it is where nobody set it here. */
+  readonly #daily: Setting<{ readonly dailyGb: number }>;
   /** Bytes each person downloaded on the day this counts, see `#counted`. */
   #day: number;
   #bytesOf = new Map<string, number>();
@@ -278,6 +287,10 @@ export class LfsDownloads {
     this.#limits = { ...DOWNLOAD_LIMITS, ...options.limits };
     this.#now = options.now ?? Date.now;
     this.#places = new Places(this.#limits.perPerson, this.#limits.atOnce);
+    this.#daily = {
+      ...LFS_DOWNLOADS_SETTING,
+      fallback: { dailyGb: options.dailyGb ?? Number.POSITIVE_INFINITY },
+    };
     this.#day = Math.floor(this.#now() / DAY_MS);
   }
 
@@ -306,8 +319,6 @@ export class LfsDownloads {
     const link = await linkOf(db, projectId);
     if (!link) throw new DownloadRefused("notLinked", 409);
     if (isUnusable(link.pauseReason, link.provider)) throw new DownloadRefused("gone", 409);
-    // Repositories of the server's own have no large file storage yet (O8b).
-    if (link.provider !== "github") throw new DownloadRefused("unavailable", 503);
     if (!this.#options.hosts?.has(link.provider)) throw new DownloadRefused("unavailable", 503);
     return link;
   }
@@ -341,27 +352,34 @@ export class LfsDownloads {
     }
   }
 
-  /** Says what each object is, as the storage of the repository has it. */
+  /**
+   * Says what each object is, as the storage of the repository has it, with how large it is where
+   * the storage says (the server's own repositories do; GitHub does not).
+   */
   async #ask(
     projectId: string,
     link: RepoRow,
     objects: readonly { readonly oid: string; readonly size: number }[],
-  ): Promise<readonly ("ready" | "absent" | "changed" | "unavailable")[]> {
+  ): Promise<
+    readonly (
+      | { readonly state: "ready"; readonly size?: number }
+      | { readonly state: "absent" | "changed" | "unavailable" }
+    )[]
+  > {
     const hosts = this.#options.hosts as RepoHosts;
     const session = hosts.open(placeOf(link));
     const haves = await this.#asking(projectId, () => session.lfsHave(objects, "download"));
-    return haves.map((have, index) => {
-      const { size } = objects[index] as { size: number };
+    return haves.map((have) => {
       if (have.kind === "present")
-        return have.size !== undefined && have.size !== size ? "changed" : "ready";
-      if (have.kind === "absent") return "absent";
-      if (have.code === 422) return "changed";
+        return { state: "ready" as const, ...(have.size !== undefined && { size: have.size }) };
+      if (have.kind === "absent") return { state: "absent" as const };
+      if (have.code === 422) return { state: "changed" as const };
       if (/quota/i.test(have.message))
         throw new DownloadRefused("githubQuota", 409, {
           detail: short(have.message),
         });
       if (have.code === 401 || have.code === 403) throw new DownloadRefused("gone", 409);
-      return "unavailable";
+      return { state: "unavailable" as const };
     });
   }
 
@@ -395,8 +413,8 @@ export class LfsDownloads {
     );
     const unique = [...new Map(objects.map((object) => [object.oid, object])).values()];
     const states = await this.#ask(projectId, link, unique);
-    const stateOf = new Map(unique.map((object, index) => [object.oid, states[index]]));
-    const absent = unique.filter((object) => stateOf.get(object.oid) === "absent");
+    const answerOf = new Map(unique.map((object, index) => [object.oid, states[index]]));
+    const absent = unique.filter((object) => answerOf.get(object.oid)?.state === "absent");
     const coming = new Map(
       absent.length === 0
         ? []
@@ -422,8 +440,9 @@ export class LfsDownloads {
           ).map((row) => [row.oid, row]),
     );
     return objects.map(({ oid, size }): LookupAnswer => {
-      const knownSize = known.get(oid);
-      const state = stateOf.get(oid);
+      const answer = answerOf.get(oid);
+      const state = answer?.state;
+      const knownSize = (answer?.state === "ready" ? answer.size : undefined) ?? known.get(oid);
       if (state === "ready")
         return {
           oid,
@@ -443,8 +462,8 @@ export class LfsDownloads {
   async #allowance(user: SignedIn): Promise<number> {
     const settings = this.#options.settings?.();
     const { dailyGb } = settings
-      ? await settings.get(LFS_DOWNLOADS_SETTING)
-      : await readSetting(this.#options.db, LFS_DOWNLOADS_SETTING);
+      ? await settings.get(this.#daily)
+      : await readSetting(this.#options.db, this.#daily);
     this.#roll();
     return dailyGb * this.#limits.bytesPerGb - (this.#bytesOf.get(user.userId) ?? 0);
   }

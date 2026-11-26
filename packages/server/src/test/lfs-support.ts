@@ -5,11 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { STORAGE } from "@animaquill/core";
 import { eq } from "drizzle-orm";
-import { LfsDownloads, type DownloadLimits } from "../lfs/downloads.ts";
+import { LFS_DOWNLOADS_SETTING, LfsDownloads, type DownloadLimits } from "../lfs/downloads.ts";
 import { LfsPusher } from "../lfs/push.ts";
 import { Staging } from "../lfs/staging.ts";
 import { LfsSweeper } from "../lfs/sweep.ts";
-import { LfsUploads, type LfsLimits } from "../lfs/uploads.ts";
+import { LfsUploads, type LfsLimits, type LocalLfs } from "../lfs/uploads.ts";
 import { changeLfs } from "../me/lfs.ts";
 import type { Logger } from "../database.ts";
 import { lfsUploads } from "../schema.ts";
@@ -51,8 +51,15 @@ export const lfsWorld = async (
      * any file: yes, unless a test is about that.
      */
     readonly acknowledged?: boolean;
+    /** The repositories, in place of those of the fake GitHub. */
+    readonly hosts?: RepoHosts;
+    /** The large file storage of the server's own repositories, where `hosts` has them. */
+    readonly local?: LocalLfs;
+    /** What a person may download a day where admins set nothing: the platform's 20 unless said. */
+    readonly dailyGb?: number | undefined;
   } = {},
 ) => {
+  const hosts = options.hosts ?? RepoHosts.github(w.host);
   if (options.acknowledged !== false)
     await changeLfs(
       w.db,
@@ -67,7 +74,8 @@ export const lfsWorld = async (
   const uploads = new LfsUploads({
     db: w.db,
     staging,
-    hosts: RepoHosts.github(w.host),
+    hosts,
+    ...(options.local && { local: options.local }),
     enqueue: async (upload) => {
       queued.push(upload);
     },
@@ -78,15 +86,17 @@ export const lfsWorld = async (
   });
   const downloads = new LfsDownloads({
     db: w.db,
-    hosts: RepoHosts.github(w.host),
+    hosts,
     log: options.downloadLog ?? quiet,
+    // As the platform has it, unless a test is about a server of its own.
+    dailyGb: "dailyGb" in options ? options.dailyGb : LFS_DOWNLOADS_SETTING.fallback.dailyGb,
     now: () => w.time.now.getTime(),
     ...(options.downloadLimits && { limits: options.downloadLimits }),
   });
   const p = await platform(w, { lfs: uploads, lfsDownloads: downloads });
   const pusher = new LfsPusher({
     db: w.db,
-    hosts: RepoHosts.github(w.host),
+    hosts,
     staging,
     log: quiet,
     now: () => w.time.now,

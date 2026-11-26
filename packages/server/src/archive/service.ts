@@ -11,6 +11,7 @@ import { GitHubUnauthorized, GitHubUnavailable } from "../github/client.ts";
 import {
   archives,
   installations,
+  lfsObjects,
   projectRepos,
   projects,
   repoConflicts,
@@ -48,7 +49,13 @@ import { readSetting } from "../settings.ts";
 import { recheckLink } from "./recheck.ts";
 import type { LocalGitRepoHost } from "./local/host.ts";
 import { linkLocal } from "./local/links.ts";
-import { RepoPaused, type GitHubPlace, type RepoHost, type RepoSession } from "./repo-host.ts";
+import {
+  RepoPaused,
+  type GitHubPlace,
+  type LocalPlace,
+  type RepoHost,
+  type RepoSession,
+} from "./repo-host.ts";
 import { dueAt, type ArchiveJob } from "./schedule.ts";
 import { notifyPerson } from "../me/events.ts";
 
@@ -1319,15 +1326,16 @@ export class RepositoryService {
       )
         throw new RepositoryRefused("notBroken", 409);
       const now = this.#now();
+      let aside: string | undefined;
       try {
-        await local.putAside({ dir }, now);
+        aside = await local.putAside({ dir }, now);
       } catch (error) {
         this.#options.log?.warn({ project: projectId, err: describeError(error) }, "not put aside");
         throw new RepositoryRefused("unavailable", 503);
       }
-      await this.#options.db.transaction(async (tx) => {
+      const repoId = await this.#options.db.transaction(async (tx) => {
         await tx.delete(projectRepos).where(sameLink(still));
-        await linkLocal(tx, { projectId, userId: user.userId, at: now, dir });
+        const made = await linkLocal(tx, { projectId, userId: user.userId, at: now, dir });
         // Nothing of the repository before waits for people any more.
         await tx
           .update(repoConflicts)
@@ -1338,15 +1346,57 @@ export class RepositoryService {
           .set({ state: "superseded", input: null })
           .where(and(eq(repoMerges.projectId, projectId), eq(repoMerges.state, "ready")));
         await notifyLink(tx, [projectId]);
+        return made;
       });
       this.#options.log?.warn(
         { project: projectId },
         "archiving starts over in a new repository here",
       );
+      if (aside !== undefined)
+        await this.#carryLfs(projectId, aside, { provider: "local", repoId, dir });
     });
     if (!done.held) throw new RepositoryRefused("busy", 429, "busy", { retryAfter: 10 });
     await this.#options.enqueue({ project: projectId, kind: "first", by: user.userId });
     return this.status(user, projectId);
+  }
+
+  /**
+   * The large files of a repository that was put aside, into the new one of the project: the new
+   * repository is made for them (the first archive finds it there, empty), and each object, read
+   * through and checked, is noted for it. What fails stays where it was put aside, which nothing
+   * takes away: the editor that has the file sends it again.
+   */
+  async #carryLfs(projectId: string, aside: string, place: LocalPlace): Promise<void> {
+    const local = this.#options.local;
+    if (!local) return;
+    try {
+      const [project] = await this.#options.db
+        .select({ name: projects.name, ownerId: projects.ownerId })
+        .from(projects)
+        .where(eq(projects.id, projectId));
+      if (!project) return;
+      await local.create(place, project.name, { owner: project.ownerId, project: projectId });
+      const carried = await local.carryLfs(aside, place);
+      for (let at = 0; at < carried.length; at += 1000)
+        await this.#options.db
+          .insert(lfsObjects)
+          .values(
+            carried
+              .slice(at, at + 1000)
+              .map((object) => ({ provider: "local" as const, repoId: place.repoId, ...object })),
+          )
+          .onConflictDoNothing();
+      if (carried.length > 0)
+        this.#options.log?.info(
+          { project: projectId, objects: carried.length },
+          "large files carried over into the new repository here",
+        );
+    } catch (error) {
+      this.#options.log?.warn(
+        { project: projectId, err: describeError(error) },
+        "the large files of the repository put aside are not carried over",
+      );
+    }
   }
 
   /**

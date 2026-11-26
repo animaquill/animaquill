@@ -1,7 +1,7 @@
-import { and, asc, eq, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, lt, notInArray, or, sql } from "drizzle-orm";
 import { withLock, describeError, type Db, type Logger } from "../../database.ts";
 import type { Jobs } from "../../jobs.ts";
-import { projectRepos } from "../../schema.ts";
+import { lfsObjects, projectRepos } from "../../schema.ts";
 import { ARCHIVE_LOCK, linkOf, pauseLink, sameLink } from "../links.ts";
 import { RepoPaused, placeOf, type LocalPlace } from "../repo-host.ts";
 import type { LocalGitRepoHost } from "./host.ts";
@@ -14,6 +14,9 @@ import type { LocalGitRepoHost } from "./host.ts";
  *   what came;
  * - once a week each, whether the repository still reads (`LocalGitRepoHost.verify`, from the tip
  *   down): one that does not is paused "broken", which people end by starting archiving over.
+ *   Then the objects of Git LFS the server noted for it: one that is not there (any more), or not
+ *   as large, is not noted any more, so that the editor hears it is missing and sends it again,
+ *   rather than archives pointing at it; and what crashes left in `lfs/tmp/` goes.
  */
 
 export const LOCAL_LOOK_QUEUE = "local-repos-look";
@@ -110,11 +113,54 @@ export const verifyDue = async (
         await pauseLink(db, link, { reason: "broken", detail: error.message, at: now });
         broken.push(projectId);
       }
+      await checkLfs(db, host, link, log).catch((error: unknown) => {
+        log.warn(
+          { project: projectId, err: describeError(error) },
+          "the large files of a repository here were not looked at",
+        );
+      });
       await db.update(projectRepos).set({ verifiedAt: now }).where(sameLink(link));
       verified += 1;
     });
   }
   return { verified, broken };
+};
+
+/** See `verifyDue`: whether the objects noted for a repository here are there as noted. */
+const checkLfs = async (
+  db: Db,
+  host: LocalGitRepoHost,
+  link: { readonly projectId: string; readonly repoId: number } & Parameters<typeof placeOf>[0],
+  log: Logger,
+): Promise<void> => {
+  const place = placeOf(link) as LocalPlace;
+  const noted = await db
+    .select({ oid: lfsObjects.oid, size: lfsObjects.size })
+    .from(lfsObjects)
+    .where(and(eq(lfsObjects.provider, "local"), eq(lfsObjects.repoId, link.repoId)));
+  const lost: string[] = [];
+  for (let at = 0; at < noted.length; at += 1000) {
+    const some = noted.slice(at, at + 1000);
+    const sizes = await host.lfsSizes(place, some);
+    for (const [index, object] of some.entries())
+      if (sizes[index] !== object.size) lost.push(object.oid);
+  }
+  for (let at = 0; at < lost.length; at += 1000)
+    await db
+      .delete(lfsObjects)
+      .where(
+        and(
+          eq(lfsObjects.provider, "local"),
+          eq(lfsObjects.repoId, link.repoId),
+          inArray(lfsObjects.oid, lost.slice(at, at + 1000)),
+        ),
+      );
+  if (lost.length > 0)
+    log.error(
+      { project: link.projectId, objects: lost.length },
+      "large files of a repository here are gone: no longer noted",
+    );
+  await host.sweepLfs(place);
 };
 
 /** Both rounds, as the worker has them. */

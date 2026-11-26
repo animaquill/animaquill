@@ -1,6 +1,7 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { constants, promises as fs, type Stats } from "node:fs";
 import { dirname, join } from "node:path";
+import type { Readable } from "node:stream";
 import { GitHubUnavailable } from "../../github/client.ts";
 
 /**
@@ -28,7 +29,34 @@ export interface Disk {
   stat(path: string): Promise<Stats | undefined>;
   /** Syncs what a folder has, so that a file renamed into it stays there through a crash. */
   syncDir(path: string): Promise<void>;
+  /** Gives the file at `existing` another name, `path`, on the same disk: EXDEV where it is not. */
+  link(existing: string, path: string): Promise<void>;
+  chmod(path: string, mode: number): Promise<void>;
+  /** Syncs a file, as it is. */
+  syncFile(path: string): Promise<void>;
+  /** The SHA-256 of a file, in lower-case hexadecimal, and its length: read through. */
+  hashFile(path: string): Promise<{ readonly sha256: string; readonly size: number }>;
+  /**
+   * Writes what `from` has into a new file (EEXIST where `path` is there), hashed on the way, and
+   * syncs it. Resolves to its SHA-256 and length. `from` is closed whatever happens.
+   */
+  writeFrom(
+    path: string,
+    from: Readable,
+  ): Promise<{ readonly sha256: string; readonly size: number }>;
+  /**
+   * Part of a file to read, from `start` to `end` (both in it), with how large all of it is: opened
+   * now, so that a file that is not there says so here (ENOENT).
+   */
+  readRange(
+    path: string,
+    start: number,
+    end: number,
+  ): Promise<{ readonly size: number; readonly body: Readable }>;
 }
+
+/** How much of a file is read at a time. */
+const READ_BYTES = 1024 * 1024;
 
 /** The disk of this computer. */
 export const nodeDisk = (platform: NodeJS.Platform = process.platform): Disk => ({
@@ -72,6 +100,74 @@ export const nodeDisk = (platform: NodeJS.Platform = process.platform): Disk => 
       await handle.sync();
     } finally {
       await handle.close();
+    }
+  },
+  link: (existing, path) => fs.link(existing, path),
+  chmod: (path, mode) => fs.chmod(path, mode),
+  async syncFile(path) {
+    const handle = await fs.open(path, "r");
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  },
+  async hashFile(path) {
+    const handle = await fs.open(path, "r");
+    try {
+      const hash = createHash("sha256");
+      let size = 0;
+      const stream = handle.createReadStream({ highWaterMark: READ_BYTES, autoClose: false });
+      for await (const piece of stream as AsyncIterable<Buffer>) {
+        hash.update(piece);
+        size += piece.length;
+      }
+      return { sha256: hash.digest("hex"), size };
+    } finally {
+      await handle.close();
+    }
+  },
+  async writeFrom(path, from) {
+    let handle;
+    try {
+      handle = await fs.open(path, "wx", 0o644);
+    } catch (error) {
+      from.destroy();
+      throw error;
+    }
+    try {
+      const hash = createHash("sha256");
+      let size = 0;
+      for await (const piece of from as AsyncIterable<Buffer>) {
+        hash.update(piece);
+        size += piece.length;
+        for (let at = 0; at < piece.length;) {
+          const { bytesWritten } = await handle.write(piece, at, piece.length - at);
+          if (bytesWritten <= 0) throw new Error("nothing was written");
+          at += bytesWritten;
+        }
+      }
+      await handle.sync();
+      return { sha256: hash.digest("hex"), size };
+    } finally {
+      from.destroy();
+      await handle.close();
+    }
+  },
+  async readRange(path, start, end) {
+    const handle = await fs.open(path, "r");
+    try {
+      const { size } = await handle.stat();
+      const body = handle.createReadStream({
+        start,
+        end: Math.max(start, Math.min(end, size - 1)),
+        highWaterMark: READ_BYTES,
+        autoClose: true,
+      });
+      return { size, body };
+    } catch (error) {
+      await handle.close();
+      throw error;
     }
   },
 });

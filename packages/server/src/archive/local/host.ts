@@ -3,6 +3,7 @@ import { basename, join, resolve } from "node:path";
 import type { Logger } from "../../database.ts";
 import { GitHubUnavailable } from "../../github/client.ts";
 import {
+  LfsAbsent,
   RepoPaused,
   RepoRefused,
   blobShaOf,
@@ -11,6 +12,7 @@ import {
   type Comparison,
   type LfsHave,
   type LfsPiece,
+  type LfsStaged,
   type LfsObject,
   type LocalPlace,
   type Person,
@@ -20,7 +22,8 @@ import {
   type TreeChange,
   type TreeEntry,
 } from "../repo-host.ts";
-import { rm } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { rm, statfs } from "node:fs/promises";
 import { codeOf, diskError, nodeDisk, renameRetrying, type Disk } from "./disk.ts";
 import {
   EMPTY_TREE,
@@ -31,6 +34,15 @@ import {
   type TreeItem,
 } from "./objects.ts";
 import { hasAnyRef, moveRef, readRef } from "./refs.ts";
+import {
+  lfsHaveOf,
+  lfsObjectsIn,
+  lfsPathOf,
+  lfsPutInto,
+  lfsReadFrom,
+  lfsSizeOf,
+  sweepLfsTemporary,
+} from "./lfs.ts";
 
 /**
  * The repositories of the server's own (`provider` "local"): one bare Git repository a project, in
@@ -322,6 +334,67 @@ export class LocalGitRepoHost implements RepoHost<LocalPlace> {
     return found;
   }
 
+  /** How large the objects of Git LFS of a repository are, in their order: undefined where not there. */
+  async lfsSizes(
+    place: { readonly dir: string },
+    objects: readonly LfsObject[],
+  ): Promise<(number | undefined)[]> {
+    const gitdir = this.#gitdir(place);
+    const sizes: (number | undefined)[] = [];
+    for (const object of objects) sizes.push(await lfsSizeOf(this.#disk, gitdir, object.oid));
+    return sizes;
+  }
+
+  /** Takes away what crashes left in `lfs/tmp/` of a repository. */
+  async sweepLfs(place: { readonly dir: string }): Promise<number> {
+    return sweepLfsTemporary(this.#disk, this.#gitdir(place), this.#now());
+  }
+
+  /**
+   * Puts the objects of Git LFS of a repository that was put aside (`putAside`, by its folder from
+   * the data folder) into another one: each read through and checked against its oid first, then
+   * a second name of it (a copy where that cannot be), as `lfsPut` puts one. What is not the object
+   * it is named as stays where it is. Resolves to the objects that are in `place` now.
+   */
+  async carryLfs(from: string, place: LocalPlace): Promise<LfsObject[]> {
+    await this.#usable();
+    const source = join(this.dataDir, ...from.split("/"));
+    const gitdir = this.#gitdir(place);
+    const carried: LfsObject[] = [];
+    for (const object of await lfsObjectsIn(this.#disk, source)) {
+      const path = lfsPathOf(source, object.oid);
+      try {
+        await lfsPutInto(this.#disk, gitdir, this.#platform, object, {
+          path,
+          open: async () => createReadStream(path),
+        });
+        carried.push(object);
+      } catch (error) {
+        this.#log.warn(
+          { from, dir: place.dir, err: { name: (error as Error | undefined)?.name } },
+          "an object of Git LFS is not carried over",
+        );
+      }
+    }
+    return carried;
+  }
+
+  /**
+   * Bytes free on the disk of the repositories, for anybody, and how large it is, as `df` has it.
+   * Undefined where it cannot be told.
+   */
+  async room(): Promise<{ readonly free: number; readonly total: number } | undefined> {
+    try {
+      const stats = await statfs(this.#root);
+      return {
+        free: Number(stats.bavail) * Number(stats.bsize),
+        total: Number(stats.blocks) * Number(stats.bsize),
+      };
+    } catch {
+      return undefined;
+    }
+  }
+
   /**
    * Reads what the branch has, from its tip down: the commit and every tree and file of it, each
    * checked against its name. Not the history before. Resolves where it is whole; rejects with
@@ -589,21 +662,55 @@ class LocalRepoSession implements RepoSession {
     return moved === "moved" ? sha : undefined;
   }
 
+  /**
+   * Before the large file storage is used: as `#ready`, but a repository that is not there has
+   * nothing (it can be one the first archive did not make yet), and one to put into is waited for.
+   */
+  async #lfsReady(put = false): Promise<boolean> {
+    try {
+      await this.#ready();
+      return true;
+    } catch (error) {
+      if (!(error instanceof RepoPaused) || error.reason !== "gone") throw error;
+      if (put) throw new GitHubUnavailable("the repository here is not there yet");
+      return false;
+    }
+  }
+
   async lfsHave(objects: readonly LfsObject[]): Promise<readonly LfsHave[]> {
     if (objects.length === 0) return [];
-    throw new RepoRefused(501, "repositories here have no large file storage yet");
+    if (!(await this.#lfsReady())) return objects.map(() => ({ kind: "absent" as const }));
+    return lfsHaveOf(this.#parts.disk, this.#parts.gitdir, objects);
   }
 
-  async lfsPut(): Promise<"put" | "present"> {
-    throw new RepoRefused(501, "repositories here have no large file storage yet");
+  async lfsPut(object: LfsObject, staged: LfsStaged): Promise<"put" | "present"> {
+    await this.#lfsReady(true);
+    const put = await lfsPutInto(
+      this.#parts.disk,
+      this.#parts.gitdir,
+      this.#parts.platform,
+      object,
+      staged,
+    );
+    if (put === "put") this.#parts.log.info({ dir: this.#place.dir }, "a large file is put here");
+    return put;
   }
 
-  async lfsRead(): Promise<LfsPiece> {
-    throw new RepoRefused(501, "repositories here have no large file storage yet");
+  async lfsRead(
+    object: LfsObject,
+    range: { readonly start: number; readonly end: number },
+  ): Promise<LfsPiece> {
+    if (!(await this.#lfsReady())) throw new LfsAbsent("the repository here is not there");
+    return lfsReadFrom(this.#parts.disk, this.#parts.gitdir, object, range);
   }
 
   async lfsSizes(objects: readonly LfsObject[]): Promise<readonly (number | undefined)[]> {
-    return objects.map(() => undefined);
+    if (objects.length === 0) return [];
+    if (!(await this.#lfsReady())) return objects.map(() => undefined);
+    const sizes: (number | undefined)[] = [];
+    for (const object of objects)
+      sizes.push(await lfsSizeOf(this.#parts.disk, this.#parts.gitdir, object.oid));
+    return sizes;
   }
 
   async close(): Promise<void> {}

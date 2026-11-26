@@ -6,7 +6,7 @@ import type { Link } from "./archive/links.ts";
 import { recheckLink } from "./archive/recheck.ts";
 import { enqueueRebuild, setUpRebuildQueues } from "./archive/rebuild.ts";
 import type { LocalGitRepoHost } from "./archive/local/host.ts";
-import { startLocalRepos } from "./archive/local/links.ts";
+import { localLfsOf, prepareLocalStaging, startLocalRepos } from "./archive/local/links.ts";
 import { RepoHosts } from "./archive/repo-host.ts";
 import {
   enqueueArchive,
@@ -93,6 +93,11 @@ export interface ServerParts {
    * (`startLocalRepos`); a deployment that never keeps any says undefined.
    */
   readonly local?: LocalGitRepoHost | undefined;
+  /**
+   * GiB one person may download a day through the server where admins set nothing (lfs/downloads.ts):
+   * no limit unless said.
+   */
+  readonly lfsDailyGb?: number | undefined;
 }
 
 export interface Server {
@@ -225,6 +230,7 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
   const lfsUploads = async (hosts: RepoHosts): Promise<LfsUploads | undefined> => {
     const staging = new Staging(config.stagingDir);
     if (hosts.providers.length === 0) return undefined;
+    if (hosts.local) await prepareLocalStaging(config, hosts.local, log);
     if (!(await staging.usable())) {
       app.log.warn(
         `Uploads to Git LFS are off: ${config.stagingDir} is not a folder the API may write`,
@@ -236,6 +242,7 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
       db: database.db,
       staging,
       hosts,
+      local: hosts.local && localLfsOf(config, hosts.local),
       enqueue: (upload) => enqueuePush(queue, upload),
       log,
       ...(config.stagingFloorGb !== undefined && {
@@ -299,6 +306,7 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
                 hosts,
                 log,
                 settings: () => settings,
+                dailyGb: parts.lfsDailyGb,
               });
         // Files that were all there when the API stopped, before they were read through.
         void lfs?.settleWaiting().catch((error: unknown) => {

@@ -1,14 +1,18 @@
+import { mkdir, stat } from "node:fs/promises";
+import { resolve } from "node:path";
 import { and, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { localReposOn, type Config } from "../../config.ts";
 import type { Db, Executor, Logger } from "../../database.ts";
+import type { LocalLfs } from "../../lfs/uploads.ts";
 import { projectRepos, projects } from "../../schema.ts";
-import { LocalGitRepoHost, ReposMissing, localDirOf } from "./host.ts";
+import { LocalGitRepoHost, REPOS_FOLDER, ReposMissing, localDirOf } from "./host.ts";
 
 /**
  * Projects saved to repositories of the server's own (`provider` "local"), where it keeps those and
  * is not set up for GitHub: a project has one from when it is made (the hub links it in the same
  * transaction), and the worker links those that have none as it starts. The repository itself is
- * made by the first archive (archiver.ts): nothing here touches the disk.
+ * made by the first archive (archiver.ts): nothing here touches it. Also how their large file
+ * storage is set up as a process starts (`localLfsOf`, `prepareLocalStaging`).
  */
 
 /** The next number of a repository of the server's own. */
@@ -135,4 +139,53 @@ export const startLocalRepos = async (
     );
     return undefined;
   }
+};
+
+/**
+ * The large file storage of the server's own repositories, as uploads count against it (see
+ * lfs/uploads.ts), from what the server is set up for.
+ */
+export const localLfsOf = (config: Config, host: LocalGitRepoHost): LocalLfs => {
+  const gib = 1024 ** 3;
+  let reposDevice: Promise<number | undefined> | undefined;
+  const deviceOf = async (path: string) => (await stat(path).catch(() => undefined))?.dev;
+  return {
+    fileBytes: Math.floor(config.localLfs.fileMaxGb * gib),
+    maxBytes:
+      config.localLfs.maxGb === undefined ? undefined : Math.floor(config.localLfs.maxGb * gib),
+    stagingFloorBytes:
+      config.stagingFloorGb === undefined ? undefined : config.stagingFloorGb * gib,
+    room: () => host.room(),
+    async sameDisk(path) {
+      reposDevice ??= deviceOf(host.pathOf({ dir: REPOS_FOLDER }));
+      const [repos, other] = await Promise.all([reposDevice, deviceOf(path)]);
+      if (repos === undefined) reposDevice = undefined;
+      return repos !== undefined && repos === other;
+    },
+  };
+};
+
+/**
+ * The staging folder where the server's own repositories are on, as a process starts: made where
+ * it is `staging/` of the data folder and not there yet (only the server's, 0700); said in the
+ * log whether it is on the disk of the repositories, where a file goes into its repository as a
+ * second name of it, or on another one, where each is copied, and needs room twice.
+ */
+export const prepareLocalStaging = async (
+  config: Config,
+  host: LocalGitRepoHost,
+  log: Logger,
+): Promise<void> => {
+  if (resolve(config.stagingDir) === resolve(config.dataDir, "staging"))
+    await mkdir(config.stagingDir, { recursive: true, mode: 0o700 }).catch((error: unknown) => {
+      log.warn({ err: String(error) }, "the staging folder is not made");
+    });
+  const same = await localLfsOf(config, host).sameDisk(config.stagingDir);
+  if (same)
+    log.info({ staging: config.stagingDir }, "large files go into repositories here as they are");
+  else
+    log.warn(
+      { staging: config.stagingDir },
+      "the staging folder is not on the disk of the repositories here: each large file is copied, and needs room twice",
+    );
 };

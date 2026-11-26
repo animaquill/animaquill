@@ -4,7 +4,7 @@ import { GitHubRepoHost } from "./archive/github-host.ts";
 import { Rebuilder, setUpRebuildQueues, startRebuilding } from "./archive/rebuild.ts";
 import { scheduleLocalChecks } from "./archive/local/checks.ts";
 import type { LocalGitRepoHost } from "./archive/local/host.ts";
-import { linkUnlinked, startLocalRepos } from "./archive/local/links.ts";
+import { linkUnlinked, prepareLocalStaging, startLocalRepos } from "./archive/local/links.ts";
 import { RepoHosts } from "./archive/repo-host.ts";
 import { STOP_WAIT_MS, enqueueArchive, startArchiving } from "./archive/schedule.ts";
 import type { Config } from "./config.ts";
@@ -108,6 +108,7 @@ export const startWorker = (config: Config, parts: WorkerParts): Worker => {
    * is the only one.
    */
   const pushing = async (boss: Jobs) => {
+    if (hosts.local) await prepareLocalStaging(config, hosts.local, log);
     const staging = new Staging(config.stagingDir);
     if (!(await staging.usable())) {
       log.warn(

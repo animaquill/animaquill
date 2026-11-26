@@ -1,7 +1,7 @@
 import { createPrivateKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
-import { isAbsolute } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { STAGING_DIR } from "./lfs/staging.ts";
 import {
   LIBRARY_SECRET,
@@ -50,9 +50,16 @@ export interface Config {
   readonly library: LibraryConfig;
   /**
    * LFS_STAGING_DIR: where files on their way into Git LFS wait, the volume `platform_staging`,
-   * see lfs/staging.ts. Only names of its own are ever touched in there.
+   * see lfs/staging.ts. Only names of its own are ever touched in there. `staging/` of the data
+   * folder unless said (`/var/lib/animaquill/staging`, as the platform has it).
    */
   readonly stagingDir: string;
+  /**
+   * The large file storage of the repositories of the server's own (archive/local/lfs.ts), in
+   * GiB: AQ_LOCAL_LFS_MAX, all of it together, undefined for no limit; AQ_LOCAL_LFS_FILE_MAX, the
+   * largest file, 2 unless said, and never more (the editor keeps larger ones where they are).
+   */
+  readonly localLfs: { readonly maxGb: number | undefined; readonly fileMaxGb: number };
   /**
    * LFS_MIN_FREE_GB: the disk the staging folder is on keeps this many GiB free, counting what is
    * on its way to it; no new upload is taken below that.
@@ -313,13 +320,37 @@ const stagingFloorOf = (env: Env, problems: string[]): number | undefined => {
   return undefined;
 };
 
-/** LFS_STAGING_DIR, a folder by its whole path: anything else leaves the default. */
-const stagingDirOf = (env: Env, problems: string[]): string => {
+/** LFS_STAGING_DIR, a folder by its whole path: anything else leaves `staging/` of the data folder. */
+const stagingDirOf = (env: Env, problems: string[], dataDir: string): string => {
+  const fallback = join(dataDir, "staging");
   const text = plain(env, "LFS_STAGING_DIR");
-  if (text === undefined) return STAGING_DIR;
+  if (text === undefined) return fallback;
   if (isAbsolute(text) && !text.includes("\0")) return text;
   problems.push(`LFS_STAGING_DIR has to be a whole path like ${STAGING_DIR}`);
-  return STAGING_DIR;
+  return fallback;
+};
+
+/** The largest file of the server's own large file storage, in GiB, as the editor knows it. */
+export const LOCAL_LFS_FILE_MOST_GB = 2;
+
+/** A number of GiB more than 0 of a variable, or undefined (and says so where it is not one). */
+const gibOf = (env: Env, name: string, problems: string[]): number | undefined => {
+  const text = plain(env, name);
+  if (text === undefined) return undefined;
+  const value = Number(text);
+  if (/^\d+(?:\.\d+)?$/.test(text) && Number.isFinite(value) && value > 0) return value;
+  problems.push(`${name} has to be a number of GiB more than 0, like 100`);
+  return undefined;
+};
+
+const localLfsOf = (env: Env, problems: string[]): Config["localLfs"] => {
+  const file = gibOf(env, "AQ_LOCAL_LFS_FILE_MAX", problems);
+  if (file !== undefined && file > LOCAL_LFS_FILE_MOST_GB)
+    problems.push(`AQ_LOCAL_LFS_FILE_MAX is ${LOCAL_LFS_FILE_MOST_GB} at most`);
+  return {
+    maxGb: gibOf(env, "AQ_LOCAL_LFS_MAX", problems),
+    fileMaxGb: Math.min(file ?? LOCAL_LFS_FILE_MOST_GB, LOCAL_LFS_FILE_MOST_GB),
+  };
 };
 
 export const DATA_DIR = "/var/lib/animaquill";
@@ -367,7 +398,8 @@ export const loadConfig = (
   const trustedProxies = proxiesOf(env, problems);
   const relay = relayOf(env);
   const publicOrigin = origin(env, defaults.publicOrigin ?? LOCAL_ORIGIN);
-  const stagingDir = stagingDirOf(env, problems);
+  const dataDir = dataDirOf(env, problems);
+  const stagingDir = stagingDirOf(env, problems, dataDir);
   const stagingFloorGb = stagingFloorOf(env, problems);
   return {
     host: plain(env, "HOST") ?? "0.0.0.0",
@@ -390,7 +422,8 @@ export const loadConfig = (
     library: loadLibraryConfig(env, (name) => secret(env, name, read)),
     stagingDir,
     stagingFloorGb,
-    dataDir: dataDirOf(env, problems),
+    localLfs: localLfsOf(env, problems),
+    dataDir,
     localRepos: localReposOf(env, problems),
   };
 };
@@ -423,6 +456,7 @@ export const describeConfig = (config: Config) => ({
   library: describeLibrary(config.library),
   stagingDir: config.stagingDir,
   ...(config.stagingFloorGb !== undefined && { stagingFloorGb: config.stagingFloorGb }),
+  localLfs: config.localLfs,
   dataDir: config.dataDir,
   localRepos: localReposOn(config),
 });

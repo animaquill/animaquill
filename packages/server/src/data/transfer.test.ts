@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type pg from "pg";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { storeTokens } from "../auth/tokens.ts";
@@ -331,6 +331,21 @@ describe.skipIf(!TEST_DATABASE)("the data of the server, out and in again", () =
     writeFileSync(join(repos, "p1.git", "refs", "heads", "main.lock"), "");
     writeFileSync(join(repos, "p1.git", "objects", "ab", "cdef"), randomBytes(100));
     writeFileSync(join(repos, "p1.git", "objects", "ab", "tmp_obj_123"), "half");
+    // A large file of Git LFS, copied a piece at a time; what a crash left in lfs/tmp stays out.
+    const large = randomBytes(5 * 1024 * 1024 + 7);
+    const lfsOid = createHash("sha256").update(large).digest("hex");
+    const lfsPath = join(
+      "p1.git",
+      "lfs",
+      "objects",
+      lfsOid.slice(0, 2),
+      lfsOid.slice(2, 4),
+      lfsOid,
+    );
+    mkdirSync(join(repos, dirname(lfsPath)), { recursive: true });
+    writeFileSync(join(repos, lfsPath), large);
+    mkdirSync(join(repos, "p1.git", "lfs", "tmp"), { recursive: true });
+    writeFileSync(join(repos, "p1.git", "lfs", "tmp", ".tmp-0123"), "half");
     writeFileSync(join(repos, "broken", "p0-20261110T080000Z.git", "HEAD"), "x");
     writeFileSync(join(dataDir, ".tmp-abc"), "not a repository");
     for (let n = 0; n < 3; n++) await from.query("select nextval('local_repo_ids')");
@@ -370,6 +385,9 @@ describe.skipIf(!TEST_DATABASE)("the data of the server, out and in again", () =
       readFileSync(join(repos, "p1.git", "objects", "ab", "cdef")),
     );
     expect(existsSync(join(otherDir, "repos", ".animaquill-repos"))).toBe(true);
+    expect(readFileSync(join(otherDir, "repos", lfsPath)).equals(large)).toBe(true);
+    expect(paths.indexOf(lfsPath.replace(/\\/g, "/"))).toBeGreaterThanOrEqual(firstObject);
+    expect(paths.some((path) => path.includes(".tmp-"))).toBe(false);
     const next = await into.query("select nextval('local_repo_ids') as id");
     expect(Number(next.rows[0].id)).toBe(manifest.sequences!["public.local_repo_ids"]! + 1);
 

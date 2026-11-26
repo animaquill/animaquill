@@ -237,6 +237,32 @@ describe("uploads into Git LFS", () => {
   });
 });
 
+describe("the large file storage of the server's own repositories", () => {
+  test("waits in staging/ of the data folder, takes 2 GiB a file at most and all it can unless told", () => {
+    const plainly = loadConfig({ AQ_DATA_DIR: "/srv/aq" }, files({}));
+    expect(plainly.stagingDir).toBe("/srv/aq/staging");
+    expect(plainly.localLfs).toEqual({ maxGb: undefined, fileMaxGb: 2 });
+    const told = loadConfig(
+      { AQ_DATA_DIR: "/srv/aq", AQ_LOCAL_LFS_MAX: "500", AQ_LOCAL_LFS_FILE_MAX: "0.5" },
+      files({}),
+    );
+    expect(told.localLfs).toEqual({ maxGb: 500, fileMaxGb: 0.5 });
+    expect(describeConfig(told)).toMatchObject({ localLfs: { maxGb: 500, fileMaxGb: 0.5 } });
+    expect(told.problems.join()).not.toContain("LFS");
+  });
+
+  test("never more than 2 GiB a file, which the editor knows; anything not a number says so", () => {
+    const more = loadConfig({ AQ_LOCAL_LFS_FILE_MAX: "4" }, files({}));
+    expect(more.localLfs.fileMaxGb).toBe(2);
+    expect(more.problems.join()).toContain("AQ_LOCAL_LFS_FILE_MAX");
+    for (const value of ["0", "-1", "lots", "10GB"]) {
+      const config = loadConfig({ AQ_LOCAL_LFS_MAX: value }, files({}));
+      expect(config.localLfs.maxGb, value).toBeUndefined();
+      expect(config.problems.join(), value).toContain("AQ_LOCAL_LFS_MAX");
+    }
+  });
+});
+
 describe("repositories of the server's own", () => {
   test("are on where the GitHub App is not set up, or where AQ_LOCAL_REPOS says so; in the data folder", () => {
     const plainly = loadConfig({}, files({}));

@@ -144,6 +144,26 @@ export interface UploadAnswer {
 
 type Row = typeof lfsUploads.$inferSelect;
 
+/** The large file storage of the server's own repositories, as uploads into it are counted. */
+export interface LocalLfs {
+  /** The largest file. */
+  readonly fileBytes: number;
+  /** All of it together at most, objects and uploads on their way: undefined for no limit. */
+  readonly maxBytes: number | undefined;
+  /** LFS_MIN_FREE_GB, where the server is set up for it, which the staging disk keeps free too. */
+  readonly stagingFloorBytes: number | undefined;
+  /** Bytes free on the disk of the repositories, and how large it is. */
+  room(): Promise<{ readonly free: number; readonly total: number } | undefined>;
+  /** Whether a folder is on the disk of the repositories. */
+  sameDisk(path: string): Promise<boolean>;
+}
+
+/**
+ * What the disk of the server's own repositories keeps free whatever comes in: 2 GiB, or 5 % of
+ * it where that is more (D of the design of O8, 2026-11-23).
+ */
+export const localFloorOf = (total: number): number => Math.max(2 * GIB, Math.ceil(total * 0.05));
+
 /** A repository, as `lfs_objects` and `lfs_uploads` know it: its number on its provider. */
 interface Repo {
   readonly provider: RepoProvider;
@@ -158,6 +178,11 @@ export interface LfsUploadsOptions {
    * project's provider: nothing is taken.
    */
   readonly hosts: RepoHosts | undefined;
+  /**
+   * The large file storage of the repositories of the server's own, where they are on: its limits,
+   * and the disk they are on.
+   */
+  readonly local?: LocalLfs | undefined;
   /** Puts an upload whose file is all there into the queue of the worker, see push.ts. */
   readonly enqueue: (upload: string) => Promise<void>;
   readonly log: Logger;
@@ -325,19 +350,20 @@ export class LfsUploads {
       .where(eq(projects.id, projectId));
     // Whether the person may: the route asks (access.ts).
     if (!project) throw new UploadRefused("notFound", 404);
-    // Files go into the room of the person's GitHub account, and cannot be taken out one by one:
-    // only once they said they know (/api/me/lfs), whatever the page did or did not ask.
-    const [prefs] = await db
-      .select({ at: userPrefs.lfsAcknowledgedAt })
-      .from(userPrefs)
-      .where(eq(userPrefs.userId, user.userId));
-    if (!prefs?.at) throw new UploadRefused("notAcknowledged", 409);
     const link = await linkOf(db, projectId);
+    // Files go into the room of the person's GitHub account, and cannot be taken out one by one:
+    // only once they said they know (/api/me/lfs), whatever the page did or did not ask. Those of a
+    // repository of the server's own go onto its disk, which costs nobody anything of theirs.
+    if (link?.provider !== "local") {
+      const [prefs] = await db
+        .select({ at: userPrefs.lfsAcknowledgedAt })
+        .from(userPrefs)
+        .where(eq(userPrefs.userId, user.userId));
+      if (!prefs?.at) throw new UploadRefused("notAcknowledged", 409);
+    }
     if (!link) throw new UploadRefused("notLinked", 409);
-    // Repositories of the server's own have no large file storage yet (O8b): nothing is noted for
-    // one, as `lfs_objects` and `lfs_uploads` know repositories on GitHub only.
-    if (link.provider !== "github") throw new UploadRefused("unsupported", 409);
     const repo: Repo = { provider: link.provider, repoId: link.repoId };
+    const here = link.provider === "local" ? this.#options.local : undefined;
 
     const [known] = await db
       .select({ size: lfsObjects.size })
@@ -363,7 +389,8 @@ export class LfsUploads {
     if (open) return { fresh: false, answer: this.#goOn(user, open, size) };
 
     // Larger than the storage takes, as far as is known: GitHub is not asked, see `fileBytes`.
-    if (size > this.#limits.fileBytes) throw new UploadRefused("tooLarge", 413);
+    if (size > Math.min(this.#limits.fileBytes, here?.fileBytes ?? Infinity))
+      throw new UploadRefused("tooLarge", 413);
     // GitHub has it, as from another project in the repository, or a push of Git LFS.
     if (!hosts?.has(link.provider)) throw new UploadRefused("unavailable", 503);
     const session = hosts.open(placeOf(link));
@@ -428,10 +455,14 @@ export class LfsUploads {
         .where(inArray(lfsUploads.state, [...OPEN_LFS_STATES]));
       if (Number(all?.bytes ?? 0) + size > this.#limits.totalBytes)
         throw new UploadRefused("busy", 503, { retryAfter: WAIT.total });
-      const free = await staging.freeBytes();
-      if (free - Number(all?.coming ?? 0) - size < this.#limits.floorBytes) {
-        log.warn({ free, coming: Number(all?.coming ?? 0) }, "the disk is too full for uploads");
-        throw new UploadRefused("busy", 503, { retryAfter: WAIT.disk });
+      const coming = Number(all?.coming ?? 0);
+      if (here) await this.#roomHere(tx, here, size, coming);
+      else {
+        const free = await staging.freeBytes();
+        if (free - coming - size < this.#limits.floorBytes) {
+          log.warn({ free, coming }, "the disk is too full for uploads");
+          throw new UploadRefused("busy", 503, { retryAfter: WAIT.disk });
+        }
       }
       const now = this.#now();
       const [row] = await tx
@@ -463,6 +494,48 @@ export class LfsUploads {
     }
     log.info({ upload: row.id, project: projectId, size }, "upload to Git LFS started");
     return { fresh: true, answer: this.#answer(row) };
+  }
+
+  /**
+   * Whether a file of `size` fits into the large file storage of the server's own repositories:
+   * all of it together within what the server is set up for (`maxBytes`, as GitHub's room is,
+   * "githubQuota"), and the disk of the repositories keeping `localFloorOf` its size free, counting
+   * what is still to come of what is coming (busy, as the disk is: "diskFull"). Where the staging
+   * folder is on another disk, that one keeps as much free too; a floor the server is set up for
+   * (LFS_MIN_FREE_GB) is kept there as well.
+   */
+  async #roomHere(tx: Tx, here: LocalLfs, size: number, coming: number): Promise<void> {
+    const { staging, log } = this.#options;
+    if (here.maxBytes !== undefined) {
+      const [kept] = await tx
+        .select({ bytes: sql<string>`coalesce(sum(${lfsObjects.size}), 0)` })
+        .from(lfsObjects)
+        .where(eq(lfsObjects.provider, "local"));
+      const [going] = await tx
+        .select({ bytes: sql<string>`coalesce(sum(${lfsUploads.size}), 0)` })
+        .from(lfsUploads)
+        .where(
+          and(eq(lfsUploads.provider, "local"), inArray(lfsUploads.state, [...OPEN_LFS_STATES])),
+        );
+      if (Number(kept?.bytes ?? 0) + Number(going?.bytes ?? 0) + size > here.maxBytes)
+        throw new UploadRefused("githubQuota", 409, { detail: "local" });
+    }
+    const full = (free: number, total: number, floor = localFloorOf(total)) =>
+      free - coming - size < floor;
+    const room = await here.room();
+    if (!room || full(room.free, room.total)) {
+      log.warn({ ...room, coming }, "the disk of the repositories here is too full for uploads");
+      throw new UploadRefused("busy", 503, { retryAfter: WAIT.disk, detail: "diskFull" });
+    }
+    const apart = !(await here.sameDisk(staging.dir));
+    if (apart || here.stagingFloorBytes !== undefined) {
+      const free = await staging.freeBytes();
+      const floor = Math.max(apart ? localFloorOf(room.total) : 0, here.stagingFloorBytes ?? 0);
+      if (free - coming - size < floor) {
+        log.warn({ free, coming }, "the disk of the staging folder is too full for uploads");
+        throw new UploadRefused("busy", 503, { retryAfter: WAIT.disk, detail: "diskFull" });
+      }
+    }
   }
 
   /** What GitHub is asked for the editor: what it cannot say now is said in the editor's words. */
