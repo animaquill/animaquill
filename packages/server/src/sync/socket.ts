@@ -146,6 +146,20 @@ export function syncSocket(app: FastifyInstance, options: SyncSocketOptions): vo
       refuse(socket, 403, "Forbidden");
       return;
     }
+    // Where the subprotocol says part of the session, one without the protocol of syncing among
+    // them is no connection of an editor: refused before anything of it is looked at.
+    if (socketProtocol) {
+      const offered = new Set(
+        (request.headers["sec-websocket-protocol"] ?? "")
+          .split(",")
+          .map((part) => part.trim())
+          .filter(Boolean),
+      );
+      if (socketProtocol(offered) === false) {
+        refuse(socket, 400, "Bad Request");
+        return;
+      }
+    }
     const session = credentials.sessionOf(request);
     const own =
       session === undefined ? undefined : hashOf(session).toString("base64url").slice(0, 22);
