@@ -12,7 +12,7 @@
 ## 规则
 
 - 这个仓库是公开的。不要提交服务器信息、密钥、账号数据或闭源代码。
-- 第三方依赖只用 MIT、Apache、BSD、MPL 这类许可证；ISC、0BSD、Unlicense、BlueOak-1.0.0 也算（2026-11-11），Zlib 也算（2026-11-25）；随包的 PostgreSQL（`@embedded-postgres/<平台>` 里的 PostgreSQL License 程序和它自带的 OpenSSL、ICU、zlib 这类宽松许可证的库）也算，只限随包的数据库（2026-11-26）。
+- 第三方依赖只用 MIT、Apache、BSD、MPL 这类许可证；ISC、0BSD、Unlicense、BlueOak-1.0.0 也算（2026-11-11），Zlib 也算（2026-11-25）；随包的 PostgreSQL（`@embedded-postgres/<平台>` 里的 PostgreSQL License 程序和它自带的 OpenSSL、ICU、zlib 这类宽松许可证的库）也算，只限随包的数据库（2026-11-26）；Windows 版随包数据库里动态加载的 LGPL-2.1 库（`libintl`、`libiconv`）原样带着也可以，第三方许可清单里写明并给出源码地址（2026-11-26）；BSL-1.0 和公有领域也算（onnxruntime-web 里编进的 Boost.Mp11、MurmurHash3，2026-11-26）。
 - 用户的决定不符合核心准则时，先提醒用户，用户确认后再继续。
 
 ## 开发
