@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import host from "../app/DialogHost.module.css";
 import type { CloudProjectsSnapshot } from "../cloud/projects.ts";
-import { formatSize } from "../transfer/transfer.ts";
+import { formatLimit, formatSize } from "../transfer/transfer.ts";
 import type { DialogRequest } from "../workbench/dialogs.ts";
 import {
   canChoose,
@@ -141,7 +141,7 @@ export function PlacesDialog({ request }: { request: PlacesRequest }) {
         return t("storage.uploads.dialog.on");
       case "tooLarge":
         return t("storage.uploads.dialog.tooLarge", {
-          most: formatSize(workbench.uploads.fileMost),
+          most: formatLimit(workbench.uploads.fileMost),
         });
       case "noFile":
         return t("storage.uploads.dialog.noFile");

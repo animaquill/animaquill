@@ -57,9 +57,9 @@ export interface Config {
   /**
    * The large file storage of the repositories of the server's own (archive/local/lfs.ts), in
    * GiB: AQ_LOCAL_LFS_MAX, all of it together, undefined for no limit; AQ_LOCAL_LFS_FILE_MAX, the
-   * largest file, 2 unless said, and never more (the editor keeps larger ones where they are).
+   * largest file, as `fileBytes`: `LOCAL_LFS_FILE_MOST` unless said, and never more.
    */
-  readonly localLfs: { readonly maxGb: number | undefined; readonly fileMaxGb: number };
+  readonly localLfs: { readonly maxGb: number | undefined; readonly fileBytes: number };
   /**
    * LFS_MIN_FREE_GB: the disk the staging folder is on keeps this many GiB free, counting what is
    * on its way to it; no new upload is taken below that.
@@ -330,8 +330,13 @@ const stagingDirOf = (env: Env, problems: string[], dataDir: string): string => 
   return fallback;
 };
 
-/** The largest file of the server's own large file storage, in GiB, as the editor knows it. */
-export const LOCAL_LFS_FILE_MOST_GB = 2;
+/**
+ * The largest file of the server's own large file storage unless said, and the most it can be set
+ * to: 2 GB (decimal), a little less than GitHub's 2 GiB, so that whatever is here also fits there
+ * once the repository moves to GitHub, and that the editor, which says sizes in decimal units,
+ * says "2 GB" of it.
+ */
+export const LOCAL_LFS_FILE_MOST = 2_000_000_000;
 
 /** A number of GiB more than 0 of a variable, or undefined (and says so where it is not one). */
 const gibOf = (env: Env, name: string, problems: string[]): number | undefined => {
@@ -345,11 +350,12 @@ const gibOf = (env: Env, name: string, problems: string[]): number | undefined =
 
 const localLfsOf = (env: Env, problems: string[]): Config["localLfs"] => {
   const file = gibOf(env, "AQ_LOCAL_LFS_FILE_MAX", problems);
-  if (file !== undefined && file > LOCAL_LFS_FILE_MOST_GB)
-    problems.push(`AQ_LOCAL_LFS_FILE_MAX is ${LOCAL_LFS_FILE_MOST_GB} at most`);
+  const fileBytes = file === undefined ? undefined : Math.floor(file * 1024 ** 3);
+  if (fileBytes !== undefined && fileBytes > LOCAL_LFS_FILE_MOST)
+    problems.push(`AQ_LOCAL_LFS_FILE_MAX is ${LOCAL_LFS_FILE_MOST / 1e9} GB at most`);
   return {
     maxGb: gibOf(env, "AQ_LOCAL_LFS_MAX", problems),
-    fileMaxGb: Math.min(file ?? LOCAL_LFS_FILE_MOST_GB, LOCAL_LFS_FILE_MOST_GB),
+    fileBytes: Math.min(fileBytes ?? LOCAL_LFS_FILE_MOST, LOCAL_LFS_FILE_MOST),
   };
 };
 

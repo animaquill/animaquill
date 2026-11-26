@@ -241,19 +241,22 @@ describe("the large file storage of the server's own repositories", () => {
   test("waits in staging/ of the data folder, takes 2 GiB a file at most and all it can unless told", () => {
     const plainly = loadConfig({ AQ_DATA_DIR: "/srv/aq" }, files({}));
     expect(plainly.stagingDir).toBe("/srv/aq/staging");
-    expect(plainly.localLfs).toEqual({ maxGb: undefined, fileMaxGb: 2 });
+    // 2 GB, decimal: a little less than GitHub's 2 GiB, so that it fits there too.
+    expect(plainly.localLfs).toEqual({ maxGb: undefined, fileBytes: 2_000_000_000 });
     const told = loadConfig(
       { AQ_DATA_DIR: "/srv/aq", AQ_LOCAL_LFS_MAX: "500", AQ_LOCAL_LFS_FILE_MAX: "0.5" },
       files({}),
     );
-    expect(told.localLfs).toEqual({ maxGb: 500, fileMaxGb: 0.5 });
-    expect(describeConfig(told)).toMatchObject({ localLfs: { maxGb: 500, fileMaxGb: 0.5 } });
+    expect(told.localLfs).toEqual({ maxGb: 500, fileBytes: 0.5 * 1024 ** 3 });
+    expect(describeConfig(told)).toMatchObject({
+      localLfs: { maxGb: 500, fileBytes: 0.5 * 1024 ** 3 },
+    });
     expect(told.problems.join()).not.toContain("LFS");
   });
 
   test("never more than 2 GiB a file, which the editor knows; anything not a number says so", () => {
     const more = loadConfig({ AQ_LOCAL_LFS_FILE_MAX: "4" }, files({}));
-    expect(more.localLfs.fileMaxGb).toBe(2);
+    expect(more.localLfs.fileBytes).toBe(2_000_000_000);
     expect(more.problems.join()).toContain("AQ_LOCAL_LFS_FILE_MAX");
     for (const value of ["0", "-1", "lots", "10GB"]) {
       const config = loadConfig({ AQ_LOCAL_LFS_MAX: value }, files({}));

@@ -3,7 +3,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import { httpsLink } from "../app/links.ts";
-import { formatSize } from "../transfer/transfer.ts";
+import { formatLimit, formatSize } from "../transfer/transfer.ts";
 import type { LocalLfsUse } from "@animaquill/host";
 import { GITHUB_BILLING } from "./links.ts";
 import styles from "./StorageSpace.module.css";
@@ -37,13 +37,13 @@ function LocalUse({ use, failed }: { use: LocalLfsUse | undefined; failed: boole
           {use.leftBy === "max"
             ? t("storage.uploads.space.localLeftMax", {
                 left: formatSize(use.leftBytes),
-                max: formatSize(use.maxBytes ?? 0),
+                max: formatLimit(use.maxBytes ?? 0),
               })
             : t("storage.uploads.space.localLeftDisk", { left: formatSize(use.leftBytes) })}
         </p>
       )}
       <p className={styles.muted}>
-        {t("storage.uploads.space.localFile", { most: formatSize(use.fileBytes) })}
+        {t("storage.uploads.space.localFile", { most: formatLimit(use.fileBytes) })}
       </p>
     </div>
   );

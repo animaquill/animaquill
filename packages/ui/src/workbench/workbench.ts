@@ -144,7 +144,7 @@ import { TimelineEditor } from "../timeline/editor.ts";
 import { formatTimecode, frameAt, frameSeconds, frameTime } from "../timeline/frames.ts";
 import { keepFiles, type ImportReport, type PreparedProject } from "../transfer/import.ts";
 import { downloadFrom, type HereOf } from "../storage/places.ts";
-import { ProjectTransfer, formatSize } from "../transfer/transfer.ts";
+import { ProjectTransfer, formatLimit, formatSize } from "../transfer/transfer.ts";
 import { ActionRegistry, type Action } from "./actions.ts";
 import { Dialogs } from "./dialogs.ts";
 import { commandFailedText } from "../i18n/failures.ts";
@@ -3585,8 +3585,8 @@ export class Workbench {
   uploadLimitWords(): UploadLimitWords {
     const max = this.lfsAccount.getSnapshot().account?.local?.maxBytes;
     return {
-      most: formatSize(this.uploads.fileMost),
-      max: max === undefined ? this.t("storage.uploads.space.someLimit") : formatSize(max),
+      most: formatLimit(this.uploads.fileMost),
+      max: max === undefined ? this.t("storage.uploads.space.someLimit") : formatLimit(max),
     };
   }
 

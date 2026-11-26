@@ -1,6 +1,6 @@
 import type { TFunction } from "i18next";
 import type { NotificationAction, NotificationOptions } from "../workbench/notifications.ts";
-import { formatSize } from "../transfer/transfer.ts";
+import { formatLimit, formatSize } from "../transfer/transfer.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import { planImport, type DefaultPlace } from "./default-place.ts";
 
@@ -180,7 +180,7 @@ export class NewAssets {
     const said = this.#names(ids);
     return t(TEXTS[key][said.count === 1 ? 0 : 1], {
       ...said,
-      most: formatSize(most ?? this.#options.sizes.most),
+      most: formatLimit(most ?? this.#options.sizes.most),
       interpolation: { escapeValue: false },
     });
   }

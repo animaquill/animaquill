@@ -44,6 +44,12 @@ export function formatSize(bytes: number): string {
   return `${value.toFixed(unit > 1 ? 1 : 0)} ${sizeUnits[unit]}`;
 }
 
+/**
+ * A limit, as people read it: as `formatSize`, without a decimal that says nothing, so that a limit
+ * of 2,000,000,000 bytes is "2 GB" as the texts say it.
+ */
+export const formatLimit = (bytes: number): string => formatSize(bytes).replace(/\.0(?= )/, "");
+
 /** Tells failures apart when people pass on what they got to read. */
 const errorName = (error: unknown) => (error instanceof Error ? error.name : "Error");
 

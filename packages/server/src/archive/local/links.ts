@@ -150,7 +150,7 @@ export const localLfsOf = (config: Config, host: LocalGitRepoHost): LocalLfs => 
   let reposDevice: Promise<number | undefined> | undefined;
   const deviceOf = async (path: string) => (await stat(path).catch(() => undefined))?.dev;
   return {
-    fileBytes: Math.floor(config.localLfs.fileMaxGb * gib),
+    fileBytes: config.localLfs.fileBytes,
     maxBytes:
       config.localLfs.maxGb === undefined ? undefined : Math.floor(config.localLfs.maxGb * gib),
     stagingFloorBytes:
