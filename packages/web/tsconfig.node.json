@@ -4,5 +4,5 @@
     "lib": ["ES2024"],
     "types": ["node"]
   },
-  "include": ["src/sites.ts", "src/vite.ts", "src/**/*.test.ts"]
+  "include": ["src/sites.ts", "src/vite.ts", "src/*.test.ts"]
 }

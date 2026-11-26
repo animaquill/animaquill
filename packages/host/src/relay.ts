@@ -2,8 +2,8 @@
  * The relay of AI services, where the editor is hosted on a platform that has one: the browser
  * agent talks to services through it when they do not let a page read their answers (no CORS).
  * The browser sends the request to the platform, which passes it on to the service and the answer
- * back as it comes, and keeps none of it. Only for people signed in to the platform. On this
- * computer (`npx animaquill`) there is none, and services can only be reached straight.
+ * back as it comes, and keeps none of it. Only for people signed in to the platform. In the offline
+ * mode there is none, and services can only be reached straight.
  *
  * Node can use this file as well: the platform says why it did not pass a request on in the way
  * set here.
@@ -19,6 +19,31 @@ export interface AiRelay {
   addressOf(baseUrl: string): string | undefined;
   /** What goes with every request through the relay, besides what the service needs. */
   readonly headers: Readonly<Record<string, string>>;
+}
+
+/**
+ * Where the relay of a server (`@animaquill/server`, relay/target.ts) takes a service: one at
+ * https://<name>/<path> is at /api/llm-relay/https/<name>/<path> of the editor's site, which keeps
+ * the name of the service in the address, as pi needs. It takes https on its port only, and names
+ * only, which `relayAddressOf` says before anything is sent. The server's tests check that it takes
+ * what this makes (relay/address.test.ts there).
+ */
+export const RELAY_SERVICE_PATH = "/api/llm-relay/https/";
+
+/** The address of a service through the relay at `origin`, or undefined for one it does not take. */
+export function relayAddressOf(baseUrl: string, origin: string): string | undefined {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "https:" || url.port !== "" || url.username || url.password)
+    return undefined;
+  if (url.search || url.hash) return undefined;
+  // An address written as numbers, IPv6 in brackets or IPv4, which the relay does not go to.
+  if (url.hostname.startsWith("[") || /^[\d.]+$/.test(url.hostname)) return undefined;
+  return `${origin}${RELAY_SERVICE_PATH}${url.hostname}${url.pathname.replace(/\/+$/, "")}`;
 }
 
 /**
