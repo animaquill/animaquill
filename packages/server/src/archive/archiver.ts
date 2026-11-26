@@ -1956,8 +1956,7 @@ export class Archiver {
         left -= some.length;
         try {
           const sizes = await session.lfsSizes(some);
-          const found: { provider: RepoProvider; repoId: number; oid: string; size: number }[] =
-            [];
+          const found: { provider: RepoProvider; repoId: number; oid: string; size: number }[] = [];
           for (const [index, object] of some.entries()) {
             asked.add(object);
             const size = sizes[index];
