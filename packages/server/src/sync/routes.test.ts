@@ -40,6 +40,7 @@ import { PROJECT_LOCK, SYNC_HUB_LIMITS, SyncHub } from "./hub.ts";
 import { PROJECTS_SWEEP_QUEUE, scheduleProjectSweep } from "./sweep.ts";
 import { attentionOf, STALE_MOST, STALE_MS } from "./list.ts";
 import { projectRoutes } from "./routes.ts";
+import { HOSTED_CREDENTIALS } from "../auth/credentials.ts";
 
 /**
  * The projects of a person as the editor asks for them (the interface of 1A): the list people open
@@ -409,6 +410,7 @@ describe.skipIf(!TEST_DATABASE)("the projects of a person through the API, on a 
     await app.register(projectRoutes, {
       origin: ORIGIN,
       accounts: () => accounts,
+      credentials: HOSTED_CREDENTIALS,
       db: () => t.db,
       hub: () => hub,
       webUrl: WEB,

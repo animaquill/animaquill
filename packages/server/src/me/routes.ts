@@ -25,6 +25,7 @@ import {
   saveChat,
 } from "./chats.ts";
 import { editorAtLeast } from "../sync/hub.ts";
+import type { SessionCredentials } from "../auth/credentials.ts";
 
 /**
  * What goes with the account of whoever is signed in, for the editor: their AI settings and keys,
@@ -98,6 +99,8 @@ export interface MeRoutesOptions {
   readonly access?: AccessPolicy | undefined;
   readonly origin: string;
   readonly accounts: () => Accounts | undefined;
+  /** How the browser shows its session, see auth/credentials.ts. */
+  readonly credentials: SessionCredentials;
   readonly db: () => Db | undefined;
   /** Seals the keys; undefined without a master key: keys and settings are unavailable then. */
   readonly sealer: Sealer | undefined;
@@ -137,6 +140,7 @@ export const meRoutes = async (app: FastifyInstance, options: MeRoutesOptions) =
   const now = options.now ?? Date.now;
   const guard = fromThisSite(options.origin);
   const signedIn = signedInWith(
+    options.credentials,
     options.accounts,
     () => db() !== undefined && sealer !== undefined,
     options.gate,
@@ -153,7 +157,12 @@ export const meRoutes = async (app: FastifyInstance, options: MeRoutesOptions) =
     images: new Limits({ perClient: 3000, perOwn: 1500, ceiling: 30000 }, TEN_MINUTES, now),
   };
   const aiChanges = new RateLimit(AI_CHANGES, TEN_MINUTES, now);
-  const signedInHere = signedInWith(options.accounts, () => db() !== undefined, options.gate);
+  const signedInHere = signedInWith(
+    options.credentials,
+    options.accounts,
+    () => db() !== undefined,
+    options.gate,
+  );
 
   app.setErrorHandler((error, request, reply) => {
     const status =

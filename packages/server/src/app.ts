@@ -8,6 +8,7 @@ import { accessGate, checkDeclared, OWNER_ONLY, type AccessPolicy } from "./acce
 import { repositoryRoutes } from "./archive/routes.ts";
 import type { RepositoryService } from "./archive/service.ts";
 import type { Accounts } from "./auth/accounts.ts";
+import { HOSTED_CREDENTIALS, type SessionCredentials } from "./auth/credentials.ts";
 import { authRoutes, type AdminHandoff } from "./auth/routes.ts";
 import type { Config } from "./config.ts";
 import { describeError, type Db } from "./database.ts";
@@ -51,6 +52,11 @@ export interface Platform {
   ready(): boolean;
   /** Accounts, when people can sign in: see auth/setup.ts. Only asked once `ready`. */
   accounts?(): Accounts | undefined;
+  /**
+   * How a browser shows its session, and is given one, see auth/credentials.ts: the cookies of a
+   * site of its own over HTTPS (`HOSTED_CREDENTIALS`) unless said.
+   */
+  readonly credentials?: SessionCredentials | undefined;
   /** Where people install the GitHub App. */
   installUrl?(): string | undefined;
   /** What webhooks say about accounts and installations. Only told once `ready`. */
@@ -117,6 +123,8 @@ export interface Platform {
 export interface ServerParts {
   /** Accounts, once there are, see auth/setup.ts. */
   readonly accounts: () => Accounts | undefined;
+  /** How a browser shows its session, see auth/credentials.ts. */
+  readonly credentials: SessionCredentials;
   /** The hub, once the database is ready. */
   readonly sync: () => SyncHub | undefined;
   /** The database, once it is ready. */
@@ -210,6 +218,7 @@ export const buildApp = (
     return part;
   };
   const accounts = () => (platform.ready() ? platform.accounts?.() : undefined);
+  const credentials = platform.credentials ?? HOSTED_CREDENTIALS;
   const sync = () => same(platform.ready() ? platform.sync?.() : undefined, "the hub");
   const db = () => (platform.ready() ? platform.db?.() : undefined);
   /** What goes through the relay of AI services now, which ends with the sessions it came from. */
@@ -219,7 +228,7 @@ export const buildApp = (
   // A route that says nothing of access stops the server here, as it is registered.
   checkDeclared(app, () => platform.ownAccess ?? []);
   // What the deployment adds, before the routes of the server, so that its hooks are on them too.
-  platform.extend?.(app, { accounts, sync, db, relaying, proxies });
+  platform.extend?.(app, { accounts, credentials, sync, db, relaying, proxies });
 
   app.get(
     "/api/health",
@@ -235,6 +244,7 @@ export const buildApp = (
   app.register(authRoutes, {
     origin: config.publicOrigin,
     accounts,
+    credentials,
     installUrl: () => platform.installUrl?.(),
     // What a session opened for syncing, or has going through the relay, ends with it.
     signedOut: (session) => {
@@ -246,13 +256,14 @@ export const buildApp = (
   });
 
   // Syncing projects.
-  syncSocket(app, { origin: config.publicOrigin, accounts, hub: sync, proxies });
+  syncSocket(app, { origin: config.publicOrigin, accounts, credentials, hub: sync, proxies });
   const repositories = () =>
     same(platform.ready() ? platform.repositories?.() : undefined, "the service of repositories");
   // The list of a person's projects, and taking one away.
   app.register(projectRoutes, {
     origin: config.publicOrigin,
     accounts,
+    credentials,
     db,
     hub: sync,
     webUrl: config.github.webUrl,
@@ -268,6 +279,7 @@ export const buildApp = (
   app.register(meRoutes, {
     origin: config.publicOrigin,
     accounts,
+    credentials,
     db,
     sealer: config.masterKeys ? createSealer(config.masterKeys) : undefined,
     now: platform.now,
@@ -284,6 +296,7 @@ export const buildApp = (
     app.register(personEventsRoutes, {
       events: platform.events,
       accounts,
+      credentials,
       db,
       gate,
       now: platform.now,
@@ -291,6 +304,7 @@ export const buildApp = (
   // The open catalog of models for the settings.
   app.register(catalogRoutes, {
     accounts,
+    credentials,
     catalog: new ModelCatalogCache(platform.modelCatalog ?? {}),
     now: platform.now,
   });
@@ -298,6 +312,7 @@ export const buildApp = (
   app.register(repositoryRoutes, {
     origin: config.publicOrigin,
     accounts,
+    credentials,
     repositories,
     gate,
   });
@@ -305,6 +320,7 @@ export const buildApp = (
   app.register(lfsRoutes, {
     origin: config.publicOrigin,
     accounts,
+    credentials,
     uploads: () => (platform.ready() ? platform.lfs?.() : undefined),
     gate,
   });
@@ -312,6 +328,7 @@ export const buildApp = (
   app.register(lfsDownloadRoutes, {
     origin: config.publicOrigin,
     accounts,
+    credentials,
     downloads: () => (platform.ready() ? platform.lfsDownloads?.() : undefined),
     gate,
   });
@@ -327,6 +344,7 @@ export const buildApp = (
     },
     exchanges: relaying,
     accounts,
+    credentials,
     usage: platform.relay?.usage ?? (() => undefined),
     own: {
       names: [hostnameOf(config.publicOrigin)],

@@ -12,6 +12,7 @@ import { REQUEST_HEADER } from "../auth/guard.ts";
 import { projectRepos, projects } from "../schema.ts";
 import { SyncHub } from "./hub.ts";
 import { projectRoutes } from "./routes.ts";
+import { HOSTED_CREDENTIALS } from "../auth/credentials.ts";
 
 /**
  * The editor's own reading of the projects of the platform (`browserCloudProjects` of
@@ -51,6 +52,7 @@ describe.skipIf(!TEST_DATABASE)("the editor reads the projects of the platform",
     await app.register(projectRoutes, {
       origin: ORIGIN,
       accounts: () => accounts,
+      credentials: HOSTED_CREDENTIALS,
       db: () => t.db,
       hub: () => hub,
       webUrl: WEB,

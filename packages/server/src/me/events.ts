@@ -2,11 +2,11 @@ import type { FastifyInstance } from "fastify";
 import { sql } from "drizzle-orm";
 import type { AccessGate } from "../access.ts";
 import type { Accounts } from "../auth/accounts.ts";
-import { ourValue, readCookies, SESSION_COOKIE } from "../auth/cookies.ts";
 import { Limits } from "../auth/limits.ts";
 import { signedInWith } from "../auth/signed-in.ts";
 import type { Db, Executor, Logger } from "../database.ts";
 import { listenToChannel } from "../sync/channel-listener.ts";
+import type { SessionCredentials } from "../auth/credentials.ts";
 
 /**
  * What changed of a person's list of projects, said to their pages at once (`GET /api/me/events`,
@@ -121,6 +121,8 @@ export const listenForPeople = (
 export interface PersonEventsRoutesOptions {
   readonly events: PersonEvents;
   readonly accounts: () => Accounts | undefined;
+  /** How the browser shows its session, see auth/credentials.ts. */
+  readonly credentials: SessionCredentials;
   readonly db: () => Db | undefined;
   readonly gate?: AccessGate | undefined;
   /** Only tests: the time of the limits. */
@@ -134,7 +136,12 @@ export async function personEventsRoutes(
   const { events, accounts, db } = options;
   const now = options.now ?? Date.now;
   const { heartbeatMs, streamMs } = events;
-  const signedIn = signedInWith(accounts, () => db() !== undefined, options.gate);
+  const signedIn = signedInWith(
+    options.credentials,
+    accounts,
+    () => db() !== undefined,
+    options.gate,
+  );
   // A stream is one request each half hour, and again where the network went: a few per minute.
   const limits = new Limits({ perClient: 120, perOwn: 60, ceiling: 3000 }, 10 * 60_000, now);
   app.addHook("onClose", async () => events.close());
@@ -149,7 +156,7 @@ export async function personEventsRoutes(
         return reply.code(403).send({ error: "forbidden" });
       const user = await signedIn(request, reply, limits);
       if (!user) return reply;
-      const session = ourValue(readCookies(request.headers.cookie)[SESSION_COOKIE]) as string;
+      const session = options.credentials.sessionOf(request) as string;
       const raw = reply.raw;
       let ended = false;
       const send = (text: string) => {

@@ -8,6 +8,7 @@ import {
 import type { Accounts } from "../auth/accounts.ts";
 import { Limits } from "../auth/limits.ts";
 import { signedInWith } from "../auth/signed-in.ts";
+import type { SessionCredentials } from "../auth/credentials.ts";
 
 /**
  * The open catalog of models (models.dev) for editors whose browser cannot read it themselves:
@@ -97,6 +98,8 @@ export class ModelCatalogCache {
 
 export interface CatalogRoutesOptions {
   readonly accounts: () => Accounts | undefined;
+  /** How the browser shows its session, see auth/credentials.ts. */
+  readonly credentials: SessionCredentials;
   readonly catalog: ModelCatalogCache;
   readonly now?: (() => number) | undefined;
 }
@@ -110,7 +113,7 @@ export const catalogRoutes = async (app: FastifyInstance, options: CatalogRoutes
     TEN_MINUTES,
     options.now ?? Date.now,
   );
-  const signedIn = signedInWith(options.accounts, () => true);
+  const signedIn = signedInWith(options.credentials, options.accounts, () => true);
   app.get(
     "/api/ai/model-catalog",
     { config: { access: { none: "the open catalog of models, the same for everyone" } } },

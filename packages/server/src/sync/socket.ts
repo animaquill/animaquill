@@ -4,7 +4,7 @@ import { SYNC_CLOSE, SYNC_LIMITS, SYNC_MESSAGE_BYTES } from "@animaquill/host/sy
 import type { FastifyInstance } from "fastify";
 import { WebSocketServer, type WebSocket } from "ws";
 import type { Accounts } from "../auth/accounts.ts";
-import { ourValue, readCookies, SESSION_COOKIE } from "../auth/cookies.ts";
+import type { SessionCredentials } from "../auth/credentials.ts";
 import { clientOf, Limits } from "../auth/limits.ts";
 import { describeError } from "../database.ts";
 import type { TrustedProxies } from "../proxies.ts";
@@ -66,6 +66,8 @@ export interface SyncSocketOptions {
   readonly origin: string;
   /** Undefined while nobody can sign in, or the database is not there yet. */
   readonly accounts: () => Accounts | undefined;
+  /** How the browser shows its session, see auth/credentials.ts. */
+  readonly credentials: SessionCredentials;
   readonly hub: () => SyncHub | undefined;
   readonly proxies: TrustedProxies;
   readonly now?: () => number;
@@ -86,12 +88,16 @@ const refuse = (socket: Duplex, status: number, text: string) => {
 };
 
 export function syncSocket(app: FastifyInstance, options: SyncSocketOptions): void {
-  const { origin, accounts, hub, proxies } = options;
+  const { origin, accounts, credentials, hub, proxies } = options;
   const now = options.now ?? Date.now;
+  const { socketProtocol } = credentials;
   const wss = new WebSocketServer({
     noServer: true,
     maxPayload: SYNC_MESSAGE_BYTES,
     perMessageDeflate: false,
+    // Only where part of the session comes in Sec-WebSocket-Protocol, see auth/credentials.ts:
+    // without, ws would answer with the first the page offers.
+    ...(socketProtocol && { handleProtocols: (offered: Set<string>) => socketProtocol(offered) }),
   });
   /** Connections that start, by address, or by session where the address says nothing. */
   const starts = new Limits({ perClient: 120, perOwn: 60, ceiling: 3000 }, 10 * 60_000, now);
@@ -128,7 +134,7 @@ export function syncSocket(app: FastifyInstance, options: SyncSocketOptions): vo
       refuse(socket, 403, "Forbidden");
       return;
     }
-    const session = ourValue(readCookies(request.headers.cookie)[SESSION_COOKIE]);
+    const session = credentials.sessionOf(request);
     const own =
       session === undefined ? undefined : hashOf(session).toString("base64url").slice(0, 22);
     if (!starts.take(clientOf(addressOf(request, proxies)), own)) {

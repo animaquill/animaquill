@@ -1,12 +1,12 @@
 import type { AccessGate } from "../access.ts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Accounts, SignedIn } from "../auth/accounts.ts";
-import { ourValue, readCookies, SESSION_COOKIE } from "../auth/cookies.ts";
 import { fromThisSite, REQUEST_HEADER } from "../auth/guard.ts";
 import { clientOf, Limits } from "../auth/limits.ts";
 import { describeError } from "../database.ts";
 import { hashOf } from "../seal.ts";
 import { DownloadRefused, LOOKUP_MOST, rangeOf, type LfsDownloads } from "./downloads.ts";
+import type { SessionCredentials } from "../auth/credentials.ts";
 
 /**
  * Files of assets out of the large file storage of a project's repository, for the editor, see
@@ -31,6 +31,8 @@ export interface DownloadRoutesOptions {
   readonly gate: AccessGate;
   readonly origin: string;
   readonly accounts: () => Accounts | undefined;
+  /** How the browser shows its session, see auth/credentials.ts. */
+  readonly credentials: SessionCredentials;
   /** Undefined where there are no downloads: no GitHub App. */
   readonly downloads: () => LfsDownloads | undefined;
   readonly now?: () => number;
@@ -91,7 +93,7 @@ export const lfsDownloadRoutes = async (app: FastifyInstance, options: DownloadR
     reply: FastifyReply,
     limit: Limits,
   ): Promise<{ user: SignedIn; work: LfsDownloads } | undefined> => {
-    const session = ourValue(readCookies(request.headers.cookie)[SESSION_COOKIE]);
+    const session = options.credentials.sessionOf(request);
     if (!session) {
       await reply.code(401).send({ error: "signedOut" });
       return undefined;

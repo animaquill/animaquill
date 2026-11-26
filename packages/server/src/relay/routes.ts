@@ -4,7 +4,6 @@ import { pipeline, Transform } from "node:stream";
 import { relayRefusalBody, type RelayRefusal } from "@animaquill/host/relay";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Accounts } from "../auth/accounts.ts";
-import { ourValue, readCookies, SESSION_COOKIE } from "../auth/cookies.ts";
 import { REQUEST_HEADER } from "../auth/guard.ts";
 import { clientOf, Limits } from "../auth/limits.ts";
 import { whenSignedOutEverywhere } from "../auth/tokens.ts";
@@ -22,6 +21,7 @@ import {
 } from "./network.ts";
 import { RELAY_PATH, targetOf, type Target } from "./target.ts";
 import type { RelayUsage } from "./use.ts";
+import type { SessionCredentials } from "../auth/credentials.ts";
 
 /**
  * The relay of AI services: `/api/llm-relay/https/<name>/<path>` takes a request of the browser
@@ -55,6 +55,8 @@ export interface RelayRoutesOptions {
   readonly enabled: () => boolean | Promise<boolean>;
   /** Undefined while nobody can sign in, or the database is not there yet. */
   readonly accounts: () => Accounts | undefined;
+  /** How the browser shows its session, see auth/credentials.ts. */
+  readonly credentials: SessionCredentials;
   /** Where use is counted, once the database is there. */
   readonly usage: () => RelayUsage | undefined;
   /** The platform's own names and networks, which the relay never goes to, see `OwnAddresses`. */
@@ -447,7 +449,7 @@ export const relayRoutes = async (app: FastifyInstance, options: RelayRoutesOpti
         );
         return refuse(reply, 403, "forbidden", "only the pages of the editor can use the relay");
       }
-      const session = ourValue(readCookies(request.headers.cookie)[SESSION_COOKIE]);
+      const session = options.credentials.sessionOf(request);
       const mine =
         session === undefined ? undefined : hashOf(session).toString("base64url").slice(0, 22);
       const client = clientOf(request.ip);

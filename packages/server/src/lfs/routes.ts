@@ -2,12 +2,12 @@ import type { AccessGate } from "../access.ts";
 import type { IncomingMessage } from "node:http";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Accounts, SignedIn } from "../auth/accounts.ts";
-import { ourValue, readCookies, SESSION_COOKIE } from "../auth/cookies.ts";
 import { fromThisSite } from "../auth/guard.ts";
 import { clientOf, Limits } from "../auth/limits.ts";
 import { describeError } from "../database.ts";
 import { hashOf } from "../seal.ts";
 import { UploadRefused, type LfsUploads, type UploadAnswer } from "./uploads.ts";
+import type { SessionCredentials } from "../auth/credentials.ts";
 
 /**
  * Sending files into the large file storage of a project's repository, for the editor, see
@@ -43,6 +43,8 @@ export interface LfsRoutesOptions {
   readonly origin: string;
   /** Undefined while nobody can sign in, or the database is not there yet. */
   readonly accounts: () => Accounts | undefined;
+  /** How the browser shows its session, see auth/credentials.ts. */
+  readonly credentials: SessionCredentials;
   /** Undefined where uploads are off: no staging folder, or no GitHub App. */
   readonly uploads: () => LfsUploads | undefined;
   readonly now?: () => number;
@@ -251,7 +253,7 @@ export const lfsRoutes = async (app: FastifyInstance, options: LfsRoutesOptions)
   );
 
   const own = (request: FastifyRequest) => {
-    const session = ourValue(readCookies(request.headers.cookie)[SESSION_COOKIE]);
+    const session = options.credentials.sessionOf(request);
     return session && { session, own: hashOf(session).toString("base64url").slice(0, 22) };
   };
 

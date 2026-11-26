@@ -1,5 +1,7 @@
 /**
- * The cookies of signing in. All of them have the `__Host-` prefix, so that only this site, over
+ * The cookies of signing in, on a site of its own over HTTPS: routes of the editor find and give the
+ * session and the cookies of the way in through `SessionCredentials` (credentials.ts), whose
+ * `HOSTED_CREDENTIALS` are these. All of them have the `__Host-` prefix, so that only this site, over
  * HTTPS, can set them, and no other site under the same domain can put one in front of ours. They
  * are HttpOnly, so that no script reads them, and SameSite=Lax, so that the way back from GitHub,
  * a top-level navigation, still brings them along.

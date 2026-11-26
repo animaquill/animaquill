@@ -9,16 +9,8 @@ import {
   type LoginResult,
   type SavesTo,
 } from "./accounts.ts";
-import {
-  clearCookie,
-  INSTALL_COOKIE,
-  LOGIN_COOKIE,
-  ourValue,
-  readCookies,
-  SESSION_COOKIE,
-  setCookie,
-  SIGNUP_COOKIE,
-} from "./cookies.ts";
+import { ourValue } from "./cookies.ts";
+import type { SessionCredentials } from "./credentials.ts";
 import { fromThisSite } from "./guard.ts";
 import { clientOf, Limits } from "./limits.ts";
 import {
@@ -52,6 +44,8 @@ import {
 
 export interface AuthRoutesOptions {
   readonly origin: string;
+  /** How the browser shows its session, and is given one, see credentials.ts. */
+  readonly credentials: SessionCredentials;
   /** Undefined while sign-in cannot work: no master key, the App not set up, no database yet. */
   readonly accounts: () => Accounts | undefined;
   /** Where people install the App, when it is set up. */
@@ -118,7 +112,7 @@ const one = (value: unknown): string | undefined =>
 type Query = Record<string, unknown>;
 
 export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOptions) => {
-  const { origin, accounts, installUrl } = options;
+  const { origin, accounts, installUrl, credentials } = options;
   // Signing out has nothing to say, whatever type the request gives it: an empty body is none.
   app.removeContentTypeParser("application/json");
   app.addContentTypeParser(
@@ -177,8 +171,6 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
       .header("retry-after", String(limit.retryAfter(clientOf(request.ip), ownOf(own))))
       .send({ error: "busy" });
 
-  const jar = (request: FastifyRequest) => readCookies(request.headers.cookie);
-
   /** Leaves for a sign-in of GitHub, which comes back to `returnTo`. */
   const leaveToSignIn = async (
     request: FastifyRequest,
@@ -195,7 +187,10 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
       return goBack(reply, returnTo, "unavailable", cookies);
     }
     return reply
-      .header("set-cookie", [...cookies, setCookie(LOGIN_COOKIE, start.state, start.maxAgeSeconds)])
+      .header("set-cookie", [
+        ...cookies,
+        credentials.setCookie("login", start.state, start.maxAgeSeconds),
+      ])
       .redirect(start.url, 303);
   };
 
@@ -204,7 +199,7 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
     { config: { access: { none: "signing in" } } },
     async (request, reply) => {
       const returnTo = safeReturnTo(request.query.returnTo, origin);
-      const own = ourValue(jar(request)[SESSION_COOKIE]);
+      const own = credentials.sessionOf(request);
       if (!allowed(request, limits.navigation, own)) return goBack(reply, returnTo, "busy");
       const work = accounts();
       if (!work) return goBack(reply, returnTo, "unavailable");
@@ -217,12 +212,15 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
     { config: { access: { none: "installing the GitHub App" } } },
     async (request, reply) => {
       const returnTo = safeReturnTo(request.query.returnTo, origin);
-      const own = ourValue(jar(request)[SESSION_COOKIE]);
+      const own = credentials.sessionOf(request);
       if (!allowed(request, limits.navigation, own)) return goBack(reply, returnTo, "busy");
       const to = installUrl();
       if (!to || !accounts()) return goBack(reply, returnTo, "unavailable");
       return reply
-        .header("set-cookie", setCookie(INSTALL_COOKIE, encodePath(returnTo), INSTALL_SECONDS))
+        .header(
+          "set-cookie",
+          credentials.setCookie("install", encodePath(returnTo), INSTALL_SECONDS),
+        )
         .redirect(to, 303);
     },
   );
@@ -232,12 +230,11 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
     { config: { access: { none: "signing in" } } },
     async (request, reply) => {
       const query = request.query;
-      const cookies = jar(request);
       const state = one(query.state);
-      const installing = decodePath(cookies[INSTALL_COOKIE]);
-      const own =
-        ourValue(cookies[LOGIN_COOKIE]) ??
-        (installing === undefined ? undefined : cookies[INSTALL_COOKIE]);
+      const install = credentials.cookieOf(request, "install");
+      const installing = decodePath(install);
+      const loginState = ourValue(credentials.cookieOf(request, "login"));
+      const own = loginState ?? (installing === undefined ? undefined : install);
       if (!allowed(request, limits.navigation, own)) return goBack(reply, HOME, "busy");
       const work = accounts();
 
@@ -252,18 +249,18 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
         request.log.info({ setupAction: one(query.setup_action) ?? null }, "back from installing");
         if (installing === undefined) return reply.redirect(HOME, 303);
         const returnTo = safeReturnTo(installing, origin);
-        const clear = [clearCookie(INSTALL_COOKIE)];
+        const clear = [credentials.clearCookie("install")];
         if (!work) return goBack(reply, returnTo, "unavailable", clear);
         return leaveToSignIn(request, reply, work, returnTo, clear);
       }
 
-      const clear = clearCookie(LOGIN_COOKIE);
+      const clear = credentials.clearCookie("login");
       if (!work) return goBack(reply, HOME, "unavailable", [clear]);
       let result: LoginResult;
       try {
         result = await work.finishLogin({
           state,
-          cookieState: ourValue(cookies[LOGIN_COOKIE]),
+          cookieState: loginState,
           code: one(query.code),
           error: one(query.error),
           userAgent: request.headers["user-agent"],
@@ -281,16 +278,16 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
         return reply
           .header("set-cookie", [
             clear,
-            setCookie(SIGNUP_COOKIE, result.signupId, SIGNUP_MS / 1000),
+            credentials.setCookie("signup", result.signupId, SIGNUP_MS / 1000),
           ])
           .redirect(SIGNUP_PAGE, 303);
       }
       // A session that was here before is over: this browser is someone else's now, or theirs again.
-      const before = ourValue(cookies[SESSION_COOKIE]);
+      const before = credentials.sessionOf(request);
       if (before) await work.logout(before).catch(() => {});
       return goBack(reply, result.returnTo, "ok", [
         clear,
-        setCookie(SESSION_COOKIE, result.sessionId, SESSION_MS / 1000),
+        credentials.setCookie("session", result.sessionId, SESSION_MS / 1000),
       ]);
     },
   );
@@ -299,7 +296,7 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
     "/api/auth/session",
     { config: { access: { none: "who is signed in" } } },
     async (request, reply) => {
-      const id = ourValue(jar(request)[SESSION_COOKIE]);
+      const id = credentials.sessionOf(request);
       // Without a session nothing needs the database: the editor asks this every time it opens.
       if (!id) return { status: "signedOut" };
       if (!allowed(request, limits.session, id)) return busy(request, reply, limits.session, id);
@@ -308,13 +305,13 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
       const signedIn = await work.session(id);
       if (!signedIn) {
         return reply
-          .header("set-cookie", clearCookie(SESSION_COOKIE))
+          .header("set-cookie", credentials.clearCookie("session"))
           .send({ status: "signedOut" });
       }
       // The cookie lasts as long as the session, which has a longest life, see accounts.ts.
       if (signedIn.renewed) {
         const seconds = (signedIn.expiresAt.getTime() - now()) / 1000;
-        reply.header("set-cookie", setCookie(SESSION_COOKIE, id, seconds));
+        reply.header("set-cookie", credentials.setCookie("session", id, seconds));
       }
       return describeSignedIn(signedIn, options.savesTo?.() ?? "github");
     },
@@ -324,7 +321,7 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
     "/api/auth/logout",
     { config: { access: { none: "signing out" } }, preHandler: guard, bodyLimit: 1024 },
     async (request, reply) => {
-      const id = ourValue(jar(request)[SESSION_COOKIE]);
+      const id = credentials.sessionOf(request);
       if (!allowed(request, limits.change, id)) return busy(request, reply, limits.change, id);
       const work = accounts();
       if (id && work) {
@@ -336,7 +333,7 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
         }
       }
       if (id) options.signedOut?.(hashOf(id).toString("base64url"));
-      return reply.header("set-cookie", clearCookie(SESSION_COOKIE)).code(204).send();
+      return reply.header("set-cookie", credentials.clearCookie("session")).code(204).send();
     },
   );
 
@@ -363,7 +360,7 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
           if (cookies.length > 0) reply.header("set-cookie", cookies);
           return reply.redirect(url.href, 303);
         };
-        const id = ourValue(jar(request)[SESSION_COOKIE]);
+        const id = credentials.sessionOf(request);
         if (!allowed(request, limits.navigation, id)) return back("busy");
         const work = accounts();
         if (!work) return back("unavailable");
@@ -377,7 +374,7 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
         // The cookie lasts as long as the session, as in /api/auth/session.
         const cookies =
           id && signedIn?.renewed
-            ? [setCookie(SESSION_COOKIE, id, (signedIn.expiresAt.getTime() - now()) / 1000)]
+            ? [credentials.setCookie("session", id, (signedIn.expiresAt.getTime() - now()) / 1000)]
             : [];
         if (signedIn && now() - signedIn.createdAt.getTime() < admin.signedInWithinMs) {
           let code: string | undefined;
@@ -409,13 +406,13 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
     "/api/auth/signup",
     { config: { access: { none: "the first sign-in" } } },
     async (request, reply) => {
-      const id = ourValue(jar(request)[SIGNUP_COOKIE]);
+      const id = ourValue(credentials.cookieOf(request, "signup"));
       if (!allowed(request, limits.session, id)) return busy(request, reply, limits.session, id);
       const work = accounts();
       const pending = id && work ? await work.signup(id) : undefined;
       if (!pending) {
         return reply
-          .header("set-cookie", clearCookie(SIGNUP_COOKIE))
+          .header("set-cookie", credentials.clearCookie("signup"))
           .code(404)
           .send({ error: "expired" });
       }
@@ -427,14 +424,14 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
     "/api/auth/signup",
     { config: { access: { none: "the first sign-in" } }, preHandler: guard, bodyLimit: 1024 },
     async (request, reply) => {
-      const id = ourValue(jar(request)[SIGNUP_COOKIE]);
+      const id = ourValue(credentials.cookieOf(request, "signup"));
       if (!allowed(request, limits.signup, id)) return busy(request, reply, limits.signup, id);
       const work = accounts();
       const code = request.body?.code;
       if (typeof code !== "string") return reply.code(400).send({ error: "invalid" });
       if (!id || !work) {
         return reply
-          .header("set-cookie", clearCookie(SIGNUP_COOKIE))
+          .header("set-cookie", credentials.clearCookie("signup"))
           .code(410)
           .send({ error: "expired" });
       }
@@ -442,18 +439,18 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
       request.log.info({ signup: result.kind }, "invite code");
       if (result.kind === "expired") {
         return reply
-          .header("set-cookie", clearCookie(SIGNUP_COOKIE))
+          .header("set-cookie", credentials.clearCookie("signup"))
           .code(410)
           .send({ error: "expired" });
       }
       if (result.kind === "invalid") {
-        if (result.triesLeft === 0) reply.header("set-cookie", clearCookie(SIGNUP_COOKIE));
+        if (result.triesLeft === 0) reply.header("set-cookie", credentials.clearCookie("signup"));
         return reply.code(400).send({ error: "invalid", triesLeft: result.triesLeft });
       }
       return reply
         .header("set-cookie", [
-          clearCookie(SIGNUP_COOKIE),
-          setCookie(SESSION_COOKIE, result.sessionId, SESSION_MS / 1000),
+          credentials.clearCookie("signup"),
+          credentials.setCookie("session", result.sessionId, SESSION_MS / 1000),
         ])
         .send({ returnTo: withOutcome(result.returnTo, "ok", origin) });
     },
@@ -463,12 +460,12 @@ export const authRoutes = async (app: FastifyInstance, options: AuthRoutesOption
     "/api/auth/signup/cancel",
     { config: { access: { none: "the first sign-in" } }, preHandler: guard, bodyLimit: 1024 },
     async (request, reply) => {
-      const id = ourValue(jar(request)[SIGNUP_COOKIE]);
+      const id = ourValue(credentials.cookieOf(request, "signup"));
       if (!allowed(request, limits.change, id)) return busy(request, reply, limits.change, id);
       const work = accounts();
       const returnTo = id && work ? await work.cancelSignup(id) : HOME;
       return reply
-        .header("set-cookie", clearCookie(SIGNUP_COOKIE))
+        .header("set-cookie", credentials.clearCookie("signup"))
         .send({ returnTo: withOutcome(returnTo, "cancelled", origin) });
     },
   );

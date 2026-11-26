@@ -1,7 +1,6 @@
 import type { AccessGate } from "../access.ts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Accounts, SignedIn } from "../auth/accounts.ts";
-import { ourValue, readCookies, SESSION_COOKIE } from "../auth/cookies.ts";
 import { fromThisSite } from "../auth/guard.ts";
 import { clientOf, Limits, RateLimit } from "../auth/limits.ts";
 import { describeError } from "../database.ts";
@@ -12,6 +11,7 @@ import {
   type RepositoryChoice,
   type RepositoryService,
 } from "./service.ts";
+import type { SessionCredentials } from "../auth/credentials.ts";
 
 /**
  * Saving projects to GitHub, for the editor:
@@ -115,6 +115,8 @@ export interface RepositoryRoutesOptions {
   readonly origin: string;
   /** Undefined while nobody can sign in, or the database is not there yet. */
   readonly accounts: () => Accounts | undefined;
+  /** How the browser shows its session, see auth/credentials.ts. */
+  readonly credentials: SessionCredentials;
   readonly repositories: () => RepositoryService | undefined;
   readonly now?: () => number;
 }
@@ -178,7 +180,7 @@ export const repositoryRoutes = async (app: FastifyInstance, options: Repository
     reply: FastifyReply,
     limit: Limits,
   ): Promise<{ user: SignedIn; service: RepositoryService } | undefined> => {
-    const session = ourValue(readCookies(request.headers.cookie)[SESSION_COOKIE]);
+    const session = options.credentials.sessionOf(request);
     if (!session) {
       await reply.code(401).send({ error: "signedOut" });
       return undefined;

@@ -8,6 +8,7 @@ import { REQUEST_HEADER } from "../auth/guard.ts";
 import { randomToken } from "../seal.ts";
 import { lfsRoutes, type LfsRoutesOptions } from "./routes.ts";
 import type { LfsUploads, UploadAnswer } from "./uploads.ts";
+import { HOSTED_CREDENTIALS } from "../auth/credentials.ts";
 
 /**
  * What the routes of uploads into Git LFS keep from the API before a piece is read: requests from
@@ -92,6 +93,7 @@ const routes = async (options: Partial<LfsRoutesOptions> = {}) => {
   await app.register(lfsRoutes, {
     origin: ORIGIN,
     accounts: () => accounts,
+    credentials: HOSTED_CREDENTIALS,
     uploads: () => uploads,
     // The pieces of uploads, which name no project: nothing to check.
     gate: async () => true,

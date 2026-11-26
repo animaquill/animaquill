@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { AccessGate } from "../access.ts";
 import type { Accounts, SignedIn } from "./accounts.ts";
-import { ourValue, readCookies, SESSION_COOKIE } from "./cookies.ts";
+import type { SessionCredentials } from "./credentials.ts";
 import { clientOf, type Limits } from "./limits.ts";
 import { hashOf } from "../seal.ts";
 
@@ -12,13 +12,18 @@ import { hashOf } from "../seal.ts";
  * project (access.ts): 404 `notFound` for one the person may not do that with.
  */
 export const signedInWith =
-  (accounts: () => Accounts | undefined, ready: () => boolean, gate?: AccessGate) =>
+  (
+    credentials: SessionCredentials,
+    accounts: () => Accounts | undefined,
+    ready: () => boolean,
+    gate?: AccessGate,
+  ) =>
   async (
     request: FastifyRequest,
     reply: FastifyReply,
     limit: Limits,
   ): Promise<SignedIn | undefined> => {
-    const session = ourValue(readCookies(request.headers.cookie)[SESSION_COOKIE]);
+    const session = credentials.sessionOf(request);
     if (!session) {
       await reply.code(401).send({ error: "signedOut" });
       return undefined;

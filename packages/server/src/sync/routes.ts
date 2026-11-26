@@ -1,6 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { Accounts, SignedIn } from "../auth/accounts.ts";
-import { ourValue, readCookies, SESSION_COOKIE } from "../auth/cookies.ts";
 import { fromThisSite } from "../auth/guard.ts";
 import { clientOf, Limits, RateLimit } from "../auth/limits.ts";
 import { describeError, type Db } from "../database.ts";
@@ -23,6 +22,7 @@ import { listProjects } from "./list.ts";
 import { applyOrganizer, changesOf, readOrganized } from "./organize.ts";
 import { wakeCopy } from "./wake.ts";
 import { notifyPerson } from "../me/events.ts";
+import type { SessionCredentials } from "../auth/credentials.ts";
 
 /**
  * The projects of whoever is signed in, for the editor (the interface of 1A):
@@ -144,6 +144,8 @@ export interface ProjectRoutesOptions {
   readonly origin: string;
   /** Undefined while nobody can sign in, or the database is not there yet. */
   readonly accounts: () => Accounts | undefined;
+  /** How the browser shows its session, see auth/credentials.ts. */
+  readonly credentials: SessionCredentials;
   readonly db: () => Db | undefined;
   /** The projects as editors are connected to them: taking one away goes through it. */
   readonly hub: () => SyncHub | undefined;
@@ -264,7 +266,7 @@ export const projectRoutes = async (app: FastifyInstance, options: ProjectRoutes
     reply: FastifyReply,
     limit: Limits,
   ): Promise<SignedIn | undefined> => {
-    const session = ourValue(readCookies(request.headers.cookie)[SESSION_COOKIE]);
+    const session = options.credentials.sessionOf(request);
     if (!session) {
       await reply.code(401).send({ error: "signedOut" });
       return undefined;
