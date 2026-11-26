@@ -9,6 +9,7 @@ import {
   type FocusEvent,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent,
   type ReactNode,
 } from "react";
 import { createPortal, flushSync } from "react-dom";
@@ -78,6 +79,12 @@ const isQuiet = (quiet: Quiet | undefined, event: MouseEvent | globalThis.MouseE
   Math.abs(event.clientX - quiet.x) <= QUIET_PX &&
   Math.abs(event.clientY - quiet.y) <= QUIET_PX;
 
+/** One place in the menu, for the mouse and the keys alike, as in a desktop's menus. */
+const focusOnHover = (event: PointerEvent<HTMLButtonElement>) => {
+  if (event.pointerType === "mouse" && !event.currentTarget.disabled)
+    event.currentTarget.focus({ preventScroll: true });
+};
+
 interface MenuListProps {
   readonly label: string;
   readonly groups: readonly (readonly MenuItem[])[];
@@ -121,11 +128,18 @@ const MenuList = forwardRef<HTMLDivElement, MenuListProps>(function MenuList(
   ref,
 ) {
   const { t } = useTranslation();
+  /** The item the mouse was last on, where the keys go on from once it has left the menu. */
+  const last = useRef<HTMLElement | null>(null);
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const list = itemsIn(event.currentTarget);
-    const index = list.indexOf(document.activeElement as HTMLElement);
+    const active = document.activeElement as HTMLElement;
+    const index = list.indexOf(
+      active === event.currentTarget && last.current ? last.current : active,
+    );
+    // From the menu itself, down goes to its first item, past the row that leads back.
+    const first = list[0]?.hasAttribute("data-menu-back") ? 1 : 0;
     const moves: Record<string, number> = {
-      ArrowDown: (index + 1) % list.length,
+      ArrowDown: index < 0 ? Math.min(first, list.length - 1) : (index + 1) % list.length,
       ArrowUp: index < 0 ? list.length - 1 : (index - 1 + list.length) % list.length,
       Home: 0,
       End: list.length - 1,
@@ -152,6 +166,15 @@ const MenuList = forwardRef<HTMLDivElement, MenuListProps>(function MenuList(
       onKeyDown={onKeyDown}
       onMouseDown={(event) => event.preventDefault()}
       onPointerEnter={onPointerEnter}
+      onPointerLeave={(event) => {
+        if (event.pointerType !== "mouse") return;
+        // The mouse gone, nothing stays lit; the keys go on from where it was.
+        const menu = event.currentTarget;
+        const active = document.activeElement;
+        if (!(active instanceof HTMLElement) || active === menu || !menu.contains(active)) return;
+        last.current = active;
+        menu.focus({ preventScroll: true });
+      }}
     >
       {back !== undefined && (
         <>
@@ -162,6 +185,7 @@ const MenuList = forwardRef<HTMLDivElement, MenuListProps>(function MenuList(
             aria-description={t("menu.back")}
             tabIndex={-1}
             data-menu-back=""
+            onPointerEnter={focusOnHover}
             onClick={(event) => {
               if (!isQuiet(quiet, event)) onBack?.();
             }}
@@ -197,9 +221,7 @@ const MenuList = forwardRef<HTMLDivElement, MenuListProps>(function MenuList(
               data-open={opened === item.id ? "" : undefined}
               onPointerEnter={(event) => {
                 if (event.pointerType !== "mouse") return;
-                // One place in the menu, for the mouse and the keys alike, as in a desktop's menus.
-                if (!event.currentTarget.disabled)
-                  event.currentTarget.focus({ preventScroll: true });
+                focusOnHover(event);
                 onHover?.(item, event.currentTarget);
               }}
               onKeyDown={(event) => {

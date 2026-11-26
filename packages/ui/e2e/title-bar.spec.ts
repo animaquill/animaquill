@@ -149,6 +149,22 @@ test("on a phone the menu of an item takes the place of the menu, and only a cli
     clip: { x: 0, y: 0, width: 390, height: 400 },
   });
 
+  // From the menu itself, as after a click opened it, down goes past the way back.
+  const inHelp = help(page).getByRole("menuitem");
+  await help(page).focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(inHelp.nth(1)).toBeFocused();
+  // The mouse and the keys share one place: the way back too, and once the mouse has left nothing
+  // stays lit, and the keys go on from where it was.
+  await back.hover();
+  await expect(back).toBeFocused();
+  await inHelp.nth(1).hover();
+  await expect(inHelp.nth(1)).toBeFocused();
+  await page.mouse.move(380, 790);
+  await expect(help(page)).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(inHelp.nth(2)).toBeFocused();
+
   // Back by the row on top. What is under the pointer then is where the menu is, as in any menu.
   await back.click();
   await expect(help(page)).toHaveCount(0);
