@@ -77,7 +77,12 @@ jobs:
           node-version: 26
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # The container runs as root while GitHub gives it a home of another user, and Firefox does not
+      # start as root in a home that is not root's (Playwright says to set HOME). The backend of the
+      # tests runs as pwuser with a home of its own, see packages/local/e2e/backend-support.ts.
       - run: pnpm e2e
+        env:
+          HOME: /root
       # The traces of what failed, which a failure that does not come again needs to be understood.
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

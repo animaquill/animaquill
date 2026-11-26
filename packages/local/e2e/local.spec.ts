@@ -20,7 +20,15 @@ import {
 } from "../../ui/e2e/scene-support.ts";
 import { anthropicSays } from "../../ui/e2e/ai-support.ts";
 import { openCommand } from "../src/open-browser.ts";
-import { content, expect, findCompositor, resourcesIn, tab, test } from "../../ui/e2e/support.ts";
+import {
+  content,
+  expect,
+  findCompositor,
+  resourcesIn,
+  showTab,
+  tab,
+  test,
+} from "../../ui/e2e/support.ts";
 
 const RED = fileURLToPath(new URL("../../ui/e2e/fixtures/red.webm", import.meta.url));
 
@@ -181,7 +189,7 @@ test.describe("the editor on this computer", () => {
     // That browser takes nothing dropped from a test. Scenes are what it is for, see below.
     test.skip(canCapture, "the browser that can capture takes no folders dropped on it");
     const disk = await newProjectOnDisk(page);
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     const box = await content(page, "assets").boundingBox();
     if (!box) throw new Error("The assets panel has no box");
     await drop(page, RED, { x: box.x + box.width / 2, y: box.y + box.height / 2 });
@@ -354,7 +362,7 @@ test.describe("the editor on this computer", () => {
       await expect(keys).toHaveAttribute("data-where", "animaquill-keys");
       await page.screenshot({ path: test.info().outputPath("local-storage.png") });
       await settings.getByRole("button", { name: "关闭设置" }).click();
-      await tab(page, "chat").click();
+      await showTab(page, "chat");
       await expect(
         content(page, "chat").getByRole("textbox", { name: /给 AI 发消息/ }),
       ).toBeVisible();
