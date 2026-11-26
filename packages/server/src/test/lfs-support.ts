@@ -80,8 +80,6 @@ export const lfsWorld = async (
     db: w.db,
     hosts: RepoHosts.github(w.host),
     log: options.downloadLog ?? quiet,
-    fetch: w.github.fetch,
-    plain: true,
     now: () => w.time.now.getTime(),
     ...(options.downloadLimits && { limits: options.downloadLimits }),
   });
@@ -91,7 +89,6 @@ export const lfsWorld = async (
     hosts: RepoHosts.github(w.host),
     staging,
     log: quiet,
-    fetch: w.github.fetch,
     now: () => w.time.now,
     ...(options.transferMs !== undefined && { transferMs: () => options.transferMs as number }),
   });

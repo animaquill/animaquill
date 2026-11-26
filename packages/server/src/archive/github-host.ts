@@ -1,8 +1,13 @@
 import { GitHubApp, InstallationRefused } from "../github/app.ts";
 import { GitHubUnauthorized, GitHubUnavailable } from "../github/client.ts";
 import { GitHubRest, messageOf, type RestAnswer, type RestOptions } from "../github/rest.ts";
+import { Readable } from "node:stream";
+import { putObject, transferMs, verifyObject } from "../lfs/transfer.ts";
 import {
+  LfsAbsent,
+  LfsChanged,
   LfsQuota,
+  LfsRefused,
   RepoPaused,
   RepoRefused,
   blobShaOf,
@@ -10,8 +15,10 @@ import {
   type CommitInfo,
   type Comparison,
   type LfsAction,
-  type LfsAnswer,
+  type LfsHave,
   type LfsObject,
+  type LfsPiece,
+  type LfsStaged,
   type Person,
   type RepoHost,
   type RepoInfo,
@@ -71,6 +78,69 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** An action of an object in an answer of Git LFS's batch API, as far as it is one. */
+/** What the batch API says about an object it was asked about. */
+type LfsAnswer =
+  | { readonly kind: "present"; readonly size?: number }
+  /** Where to put it, and where to say so afterwards, where it wants that. */
+  | { readonly kind: "upload"; readonly upload: LfsAction; readonly verify?: LfsAction }
+  | { readonly kind: "download"; readonly download: LfsAction }
+  | { readonly kind: "refused"; readonly code: number; readonly message: string };
+
+/** How long the storage has to answer a GET of part of an object, until its headers. */
+const READ_HEADERS_MS = 30_000;
+/** An address is let go of this long before it runs out, and kept an hour at most. */
+const ADDRESS_SPARE_MS = 5 * 60_000;
+const ADDRESS_MOST_MS = 3600_000;
+/** Addresses kept at most: the oldest go first. */
+const ADDRESSES_MOST = 20_000;
+
+/**
+ * Where the storage said objects can be read, by repository and oid, until a little before the
+ * addresses run out: of the host, as a session comes and goes with each piece that is read, and
+ * the batch API is not asked for every one. In memory only: never said to a browser, or logged.
+ */
+class LfsAddresses {
+  readonly #byKey = new Map<string, LfsAction & { readonly until: number }>();
+
+  get(key: string): LfsAction | undefined {
+    const address = this.#byKey.get(key);
+    if (address && address.until <= Date.now()) {
+      this.#byKey.delete(key);
+      return undefined;
+    }
+    return address;
+  }
+
+  set(key: string, action: LfsAction): void {
+    const now = Date.now();
+    const until = Math.min(
+      (action.expiresAt ?? now + ADDRESS_MOST_MS) - ADDRESS_SPARE_MS,
+      now + ADDRESS_MOST_MS,
+    );
+    this.#byKey.delete(key);
+    if (until <= now) return;
+    if (this.#byKey.size >= ADDRESSES_MOST) {
+      for (const [other, address] of this.#byKey)
+        if (address.until <= now) this.#byKey.delete(other);
+      if (this.#byKey.size >= ADDRESSES_MOST)
+        this.#byKey.delete(this.#byKey.keys().next().value as string);
+    }
+    this.#byKey.set(key, { ...action, until });
+  }
+
+  delete(key: string): void {
+    this.#byKey.delete(key);
+  }
+}
+
+/** `bytes <start>-<end>/<size>` as the storage says it, or undefined. */
+const contentRangeOf = (header: string | null) => {
+  const found = /^bytes (\d{1,15})-(\d{1,15})\/(\d{1,15})$/.exec(header ?? "");
+  return found
+    ? { start: Number(found[1]), end: Number(found[2]), size: Number(found[3]) }
+    : undefined;
+};
+
 const lfsActionOf = (value: unknown, now: number): LfsAction | undefined => {
   if (!isObject(value) || typeof value.href !== "string") return undefined;
   try {
@@ -228,14 +298,23 @@ class GitHubRepoSession implements RepoSession {
   readonly #fetch: typeof fetch;
   /** /repos/{owner}/{name} as `info` last found it: names change, the number does not. */
   #base: string | undefined;
+  /** Where the storage said to read objects, of the host: see `LfsAddresses`. */
+  readonly #addresses: LfsAddresses;
+  /** Where the storage said to put objects, by oid, for `lfsPut` after `lfsHave`. */
+  readonly #uploads = new Map<
+    string,
+    { readonly upload: LfsAction; readonly verify?: LfsAction | undefined }
+  >();
 
   constructor(
     place: GitHubPlace,
     app: GitHubApp,
     rest: GitHubRest,
     web: { readonly url: string; readonly api: string; readonly fetch: typeof fetch },
+    addresses: LfsAddresses,
     signal?: AbortSignal,
   ) {
+    this.#addresses = addresses;
     this.#signal = signal;
     this.#place = place;
     this.#app = app;
@@ -678,7 +757,13 @@ class GitHubRepoSession implements RepoSession {
     return sha;
   }
 
-  async lfsBatch(
+  /**
+   * Asks the large file storage of the repository about objects (Git LFS's batch API, basic
+   * transfers): for "upload", what it has and where to put the rest; for "download", where to get
+   * them. An answer for each object, in their order. Rejects with LfsQuota where the storage of the
+   * account is full, and RepoPaused where the repository is not there to the App.
+   */
+  async #batch(
     operation: "upload" | "download",
     objects: readonly LfsObject[],
   ): Promise<readonly LfsAnswer[]> {
@@ -733,11 +818,185 @@ class GitHubRepoSession implements RepoSession {
     // Nothing is held: every call stands on its own.
   }
 
+  /** The key of an object of this repository among the addresses of the host. */
+  #keyOf(oid: string): string {
+    return `${this.#place.repoId}:${oid}`;
+  }
+
+  async lfsHave(
+    objects: readonly LfsObject[],
+    purpose: "upload" | "download",
+  ): Promise<readonly LfsHave[]> {
+    const haves: LfsHave[] = [];
+    // As Git LFS asks: a hundred objects at a time.
+    for (let at = 0; at < objects.length; at += LFS_BATCH) {
+      const some = objects.slice(at, at + LFS_BATCH);
+      const answers = await this.#batch(purpose, some);
+      for (const [index, answer] of answers.entries())
+        haves.push(this.#have((some[index] as LfsObject).oid, answer));
+    }
+    return haves;
+  }
+
+  /** What an answer of the batch API says, the addresses it gives kept for what comes next. */
+  #have(oid: string, answer: LfsAnswer): LfsHave {
+    const key = this.#keyOf(oid);
+    switch (answer.kind) {
+      case "present":
+        return answer;
+      case "upload":
+        this.#uploads.set(oid, { upload: answer.upload, verify: answer.verify });
+        return { kind: "absent" };
+      case "download": {
+        const { href } = answer.download;
+        // Only over https, but where GitHub itself is reached over http, as the fake GitHub of the
+        // tests is: the headers of the address can be a credential.
+        if (new URL(href).protocol !== "https:" && !this.#webUrl.startsWith("http:")) {
+          this.#addresses.delete(key);
+          return { kind: "refused", code: 0, message: "an address that is not https" };
+        }
+        this.#addresses.set(key, answer.download);
+        return { kind: "present" };
+      }
+      case "refused":
+        this.#addresses.delete(key);
+        return answer.code === 404 || answer.code === 410 ? { kind: "absent" } : answer;
+    }
+  }
+
+  async lfsPut(
+    object: LfsObject,
+    staged: LfsStaged,
+    options: { readonly timeoutMs?: number } = {},
+  ): Promise<"put" | "present"> {
+    let action = this.#uploads.get(object.oid);
+    this.#uploads.delete(object.oid);
+    if (!action) {
+      const [answer] = await this.#batch("upload", [object]);
+      if (answer?.kind === "present") return "present";
+      if (answer?.kind === "refused") throw new LfsRefused(answer.code, answer.message);
+      if (answer?.kind !== "upload") throw new GitHubUnavailable("no address to put the file");
+      action = answer;
+    }
+    const content = await staged.open();
+    const transfer = {
+      fetch: this.#fetch,
+      timeoutMs: options.timeoutMs ?? transferMs(object.size),
+    };
+    await putObject(action.upload, content, object, transfer);
+    if (action.verify) await verifyObject(action.verify, object, transfer);
+    return "put";
+  }
+
+  async lfsRead(
+    object: LfsObject,
+    range: { readonly start: number; readonly end: number },
+  ): Promise<LfsPiece> {
+    const key = this.#keyOf(object.oid);
+    for (let attempt = 1; ; attempt++) {
+      let address = this.#addresses.get(key);
+      if (!address) {
+        const [have] = await this.lfsHave([object], "download");
+        if (have?.kind === "absent") throw new LfsAbsent("the storage does not have the object");
+        if (have?.kind === "refused") throw this.#readRefusal(have);
+        address = this.#addresses.get(key);
+        if (!address) throw new GitHubUnavailable("no address to read the object from");
+      }
+      const answer = await this.#get(address, range.start, range.end);
+      if (answer === "expired") {
+        // Taken back early, or it ran out after all: a new one, once.
+        this.#addresses.delete(key);
+        if (attempt === 1) continue;
+        throw new GitHubUnavailable("the storage took back its address");
+      }
+      if (answer === "absent") {
+        this.#addresses.delete(key);
+        throw new LfsAbsent("the storage does not have the object");
+      }
+      const response = answer;
+      const said = contentRangeOf(response.headers.get("content-range"));
+      const length = Number(response.headers.get("content-length"));
+      let from: number;
+      let total: number;
+      if (response.status === 206 && said) {
+        from = said.start;
+        total = said.size;
+      } else if (response.status === 200 && Number.isSafeInteger(length)) {
+        // All of it, as a storage that does not take ranges answers: only from its start.
+        from = 0;
+        total = length;
+      } else {
+        await response.body?.cancel().catch(() => {});
+        throw new GitHubUnavailable("the storage said nothing of the part it sends");
+      }
+      if (total !== object.size) {
+        await response.body?.cancel().catch(() => {});
+        throw new LfsChanged("the storage has the object in another size");
+      }
+      if (from !== range.start || !response.body) {
+        await response.body?.cancel().catch(() => {});
+        throw new GitHubUnavailable("the storage sent another part");
+      }
+      return { start: from, size: total, body: Readable.fromWeb(response.body as never) };
+    }
+  }
+
+  /** What a refusal of the storage to give an object means to the one who reads it. */
+  #readRefusal(refused: Extract<LfsHave, { kind: "refused" }>): Error {
+    if (refused.code === 422) return new LfsChanged("the storage has the object in another size");
+    if (/quota/i.test(refused.message)) return new LfsQuota(refused.message);
+    if (refused.code === 401 || refused.code === 403)
+      return new RepoPaused("gone", "the storage does not give the object");
+    return new GitHubUnavailable(`Git LFS does not give the object: ${refused.code}`);
+  }
+
+  /** The storage's answer to a GET of part of an object, until its headers. */
+  async #get(
+    address: LfsAction,
+    start: number,
+    end: number,
+  ): Promise<Response | "expired" | "absent"> {
+    const headers = new Headers(address.header);
+    headers.set("accept-encoding", "identity");
+    headers.set("range", `bytes=${start}-${end}`);
+    const stop = new AbortController();
+    const timer = setTimeout(() => stop.abort(), READ_HEADERS_MS);
+    let response: Response;
+    try {
+      response = await this.#fetch(address.href, {
+        method: "GET",
+        headers,
+        // The headers of an address go where it says, and nowhere else.
+        redirect: "manual",
+        signal: this.#signal ? AbortSignal.any([stop.signal, this.#signal]) : stop.signal,
+      });
+    } catch (error) {
+      throw new GitHubUnavailable(
+        `reading the object failed: ${error instanceof Error ? error.name : "failed"}`,
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+    if (response.status === 403) {
+      await response.body?.cancel().catch(() => {});
+      return "expired";
+    }
+    if (response.status === 404) {
+      await response.body?.cancel().catch(() => {});
+      return "absent";
+    }
+    if (response.status !== 200 && response.status !== 206) {
+      await response.body?.cancel().catch(() => {});
+      throw new GitHubUnavailable(`the storage did not give the object: ${response.status}`);
+    }
+    return response;
+  }
+
   async lfsSizes(objects: readonly LfsObject[]): Promise<readonly (number | undefined)[]> {
     const sizes: (number | undefined)[] = [];
     // As Git LFS asks: a hundred objects at a time.
     for (let at = 0; at < objects.length; at += LFS_BATCH) {
-      const answers = await this.lfsBatch("download", objects.slice(at, at + LFS_BATCH));
+      const answers = await this.#batch("download", objects.slice(at, at + LFS_BATCH));
       for (const answer of answers) {
         if (answer.kind === "download")
           sizes.push(
@@ -765,6 +1024,7 @@ export class GitHubRepoHost implements RepoHost<GitHubPlace> {
   readonly #app: GitHubApp;
   readonly #rest: GitHubRest;
   readonly #web: { readonly url: string; readonly api: string; readonly fetch: typeof fetch };
+  readonly #addresses = new LfsAddresses();
 
   /** `webUrl`: github.com, or a GitHub of a company, where Git and Git LFS are. */
   constructor(app: GitHubApp, options: RestOptions & { readonly webUrl: string }) {
@@ -777,7 +1037,14 @@ export class GitHubRepoHost implements RepoHost<GitHubPlace> {
     place: GitHubPlace,
     options: { readonly signal?: AbortSignal | undefined } = {},
   ): RepoSession {
-    return new GitHubRepoSession(place, this.#app, this.#rest, this.#web, options.signal);
+    return new GitHubRepoSession(
+      place,
+      this.#app,
+      this.#rest,
+      this.#web,
+      this.#addresses,
+      options.signal,
+    );
   }
 }
 

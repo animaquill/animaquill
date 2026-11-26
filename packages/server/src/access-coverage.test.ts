@@ -315,8 +315,6 @@ describe.skipIf(!TEST_DATABASE)("access to projects, route by route, on a databa
       db: t.db,
       hosts: RepoHosts.github(who.host),
       log: quiet,
-      fetch: who.github.fetch,
-      plain: true,
       now: () => who.time.now.getTime(),
     });
     const routes: { method: string; url: string; access: RouteAccess | undefined }[] = [];

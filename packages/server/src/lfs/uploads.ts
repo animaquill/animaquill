@@ -9,7 +9,6 @@ import {
   RepoRefused,
   hereOf,
   placeOf,
-  type LfsAnswer,
   type RepoHosts,
   type RepoProvider,
 } from "../archive/repo-host.ts";
@@ -202,9 +201,10 @@ const short = (text: string) => text.replace(/\s+/g, " ").trim().slice(0, 200);
  * What a refusal of an object by the storage means for people: too large, no room left, or
  * something else, in GitHub's words.
  */
-export const refusalOf = (
-  answer: Extract<LfsAnswer, { kind: "refused" }>,
-): { readonly error: string; readonly detail: string } => {
+export const refusalOf = (answer: {
+  readonly code: number;
+  readonly message: string;
+}): { readonly error: string; readonly detail: string } => {
   const detail = short(answer.message);
   if ((answer.code === 422 || answer.code === 413) && /size|large/i.test(answer.message))
     return { error: "tooLarge", detail };
@@ -368,7 +368,7 @@ export class LfsUploads {
     if (!hosts?.has(link.provider)) throw new UploadRefused("unavailable", 503);
     const session = hosts.open(placeOf(link));
     const [answer] = await this.#asking(projectId, () =>
-      session.lfsBatch("upload", [{ oid, size }]),
+      session.lfsHave([{ oid, size }], "upload"),
     );
     if (answer?.kind === "present") {
       // It goes by the oid: how large what it has is, the storage says itself, and only that is
@@ -397,7 +397,7 @@ export class LfsUploads {
       log.warn({ project: projectId, code: answer.code, detail }, "GitHub's LFS refused a file");
       throw new UploadRefused("unavailable", 503, { detail });
     }
-    if (answer?.kind !== "upload") throw new UploadRefused("unavailable", 503);
+    if (answer?.kind !== "absent") throw new UploadRefused("unavailable", 503);
 
     // Counted against the limits under one lock, so that two at once do not both fit: of the
     // database, for whatever other process counts too, and one at a time here before that, so

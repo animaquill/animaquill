@@ -1,11 +1,11 @@
 import { and, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { backoffMs } from "../archive/links.ts";
-import { LfsQuota, RepoPaused, placeOf, type RepoHosts } from "../archive/repo-host.ts";
+import { LfsQuota, LfsRefused, RepoPaused, placeOf, type RepoHosts } from "../archive/repo-host.ts";
 import { describeError, type Db, type Logger } from "../database.ts";
 import { GitHubUnavailable } from "../github/client.ts";
 import { lfsObjects, lfsUploads, projectRepos, projects, users } from "../schema.ts";
 import type { Staging } from "./staging.ts";
-import { NotTheObject, TransferFailed, putObject, transferMs, verifyObject } from "./transfer.ts";
+import { NotTheObject, TransferFailed, transferMs } from "./transfer.ts";
 import { LFS_LIFE_MS, refusalOf } from "./uploads.ts";
 
 /**
@@ -42,8 +42,6 @@ export interface LfsPusherOptions {
   readonly hosts: RepoHosts;
   readonly staging: Staging;
   readonly log: Logger;
-  /** What reaches the storage's own addresses, for tests. */
-  readonly fetch?: typeof fetch;
   /** How long sending a file of a size may take, see `transferMs`. */
   readonly transferMs?: (size: number) => number;
   readonly now?: () => Date;
@@ -121,15 +119,26 @@ export class LfsPusher {
         return this.#later(row, "the account is disabled", DISABLED_WAIT_MS);
       const session = hosts.open(placeOf(link));
       const object = { oid: row.oid, size: row.size };
-      // Every time: the addresses it gives out last a quarter of an hour.
-      const [answer] = await session.lfsBatch("upload", [object]);
-      if (answer?.kind === "present") {
+      // Every time: GitHub's addresses last a quarter of an hour.
+      const [have] = await session.lfsHave([object], "upload");
+      if (have?.kind === "refused") {
+        const { error, detail } = refusalOf(have);
+        return this.#fail(row, error, detail);
+      }
+      const put =
+        have?.kind === "present"
+          ? "present"
+          : await session.lfsPut(
+              object,
+              { path: staging.pathOf(id), open: () => staging.reader(id, row.size) },
+              { timeoutMs: (this.#options.transferMs ?? transferMs)(row.size) },
+            );
+      if (put === "present") {
         // It goes by the oid: how large what it has is, the storage says itself. What came in is
         // the file (its hash is that of this many bytes), so anything else there is not.
+        const said = have?.kind === "present" ? have.size : undefined;
         const stored =
-          answer.size !== undefined && answer.size !== row.size
-            ? answer.size
-            : (await session.lfsSizes([object]))[0];
+          said !== undefined && said !== row.size ? said : (await session.lfsSizes([object]))[0];
         if (stored !== row.size)
           return this.#fail(
             row,
@@ -138,21 +147,13 @@ export class LfsPusher {
           );
         return this.#done(row);
       }
-      if (answer?.kind === "refused") {
-        const { error, detail } = refusalOf(answer);
-        return this.#fail(row, error, detail);
-      }
-      if (answer?.kind !== "upload") return this.#later(row, "no address to put the file");
-      const content = await staging.reader(id, row.size);
-      const transfer = {
-        ...(this.#options.fetch && { fetch: this.#options.fetch }),
-        timeoutMs: (this.#options.transferMs ?? transferMs)(row.size),
-      };
-      await putObject(answer.upload, content, object, transfer);
-      if (answer.verify) await verifyObject(answer.verify, object, transfer);
       log.info({ upload: id, size: row.size, attempt: row.attempts }, "pushed to Git LFS");
       return this.#done(row);
     } catch (error) {
+      if (error instanceof LfsRefused) {
+        const { error: code, detail } = refusalOf({ code: error.code, message: error.message });
+        return this.#fail(row, code, detail);
+      }
       if (error instanceof LfsQuota) return this.#fail(row, "githubQuota", error.message);
       if (error instanceof RepoPaused) return this.#fail(row, "gone", error.message);
       // Not the file that came in and was checked: something changed it where it waited.

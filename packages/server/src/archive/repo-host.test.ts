@@ -37,7 +37,7 @@ describe("RepoHosts", () => {
     expect(hosts.providers).toEqual([]);
     const session = hosts.open({ provider: "github", installationId: 1, repoId: 7 });
     await expect(session.info()).rejects.toBeInstanceOf(GitHubUnavailable);
-    await expect(session.lfsBatch("upload", [])).rejects.toBeInstanceOf(GitHubUnavailable);
+    await expect(session.lfsHave([], "upload")).rejects.toBeInstanceOf(GitHubUnavailable);
     await expect(session.close()).resolves.toBeUndefined();
     const local = RepoHosts.github(naming<GitHubPlace>("on GitHub")).open({
       provider: "local",

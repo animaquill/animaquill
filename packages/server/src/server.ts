@@ -299,7 +299,6 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
                 hosts,
                 log,
                 settings: () => settings,
-                plain: config.github.webUrl.startsWith("http:"),
               });
         // Files that were all there when the API stopped, before they were read through.
         void lfs?.settleWaiting().catch((error: unknown) => {

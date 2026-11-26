@@ -9,7 +9,8 @@ import {
   bytesOf,
   type CommitInfo,
   type Comparison,
-  type LfsAnswer,
+  type LfsHave,
+  type LfsPiece,
   type LfsObject,
   type LocalPlace,
   type Person,
@@ -588,11 +589,16 @@ class LocalRepoSession implements RepoSession {
     return moved === "moved" ? sha : undefined;
   }
 
-  async lfsBatch(
-    _operation: "upload" | "download",
-    objects: readonly LfsObject[],
-  ): Promise<readonly LfsAnswer[]> {
+  async lfsHave(objects: readonly LfsObject[]): Promise<readonly LfsHave[]> {
     if (objects.length === 0) return [];
+    throw new RepoRefused(501, "repositories here have no large file storage yet");
+  }
+
+  async lfsPut(): Promise<"put" | "present"> {
+    throw new RepoRefused(501, "repositories here have no large file storage yet");
+  }
+
+  async lfsRead(): Promise<LfsPiece> {
     throw new RepoRefused(501, "repositories here have no large file storage yet");
   }
 

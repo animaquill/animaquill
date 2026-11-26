@@ -284,7 +284,7 @@ describe("archiving into GitHub, through its Git Data API", () => {
       });
       const error = await odd
         .open({ provider: "github", installationId: installation, repoId: repo.id })
-        .lfsBatch("upload", [{ oid: "a".repeat(64), size: 3 }])
+        .lfsHave([{ oid: "a".repeat(64), size: 3 }], "upload")
         .catch((reason: unknown) => reason);
       expect(error, String(status)).toBeInstanceOf(RepoRefused);
       expect(error, String(status)).not.toBeInstanceOf(RepoPaused);

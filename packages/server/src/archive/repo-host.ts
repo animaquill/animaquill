@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { Readable } from "node:stream";
 
 /**
  * Where projects are archived, as the archive needs it and whatever the Git platform: one
@@ -145,18 +146,61 @@ export interface LfsAction {
   readonly expiresAt?: number;
 }
 
-/** What the large file storage says about an object it was asked about. */
-export type LfsAnswer =
+/**
+ * What the large file storage of a repository says it has of an object, see `RepoSession.lfsHave`.
+ */
+export type LfsHave =
   /**
-   * It has an object of that oid: nothing to put there. `size`, where it says one, can be the size
-   * it was asked about and nothing more: how large what it has is, `lfsSizes` finds out.
+   * It has an object of that oid. `size`, where it says one, can be the size it was asked about and
+   * nothing more (GitHub's): how large what it has is, `lfsSizes` finds out. The server's own
+   * repositories say what they keep.
    */
   | { readonly kind: "present"; readonly size?: number }
-  /** Where to put it, and where to say so afterwards, where it wants that. */
-  | { readonly kind: "upload"; readonly upload: LfsAction; readonly verify?: LfsAction }
-  | { readonly kind: "download"; readonly download: LfsAction }
-  /** It does not take, or does not have, the object: an HTTP status, and its words. */
+  /** Not there: for an upload, it takes it. */
+  | { readonly kind: "absent" }
+  /** It does not take, or does not give, the object: an HTTP status, and its words. */
   | { readonly kind: "refused"; readonly code: number; readonly message: string };
+
+/** The file of an upload as it waits in the staging folder, for `RepoSession.lfsPut`. */
+export interface LfsStaged {
+  /** Where it is, a whole path. */
+  readonly path: string;
+  /** Reads it from its start, once; rejects with ENOENT where it is gone. */
+  open(): Promise<Readable>;
+}
+
+/** Part of an object, as `RepoSession.lfsRead` gives it. */
+export interface LfsPiece {
+  /** Where the part starts in the object: the start that was asked for. */
+  readonly start: number;
+  /** How large all of the object is. */
+  readonly size: number;
+  /**
+   * From `start` on: at least to the end that was asked for, perhaps beyond (a storage that does not
+   * take ranges sends all of it), which the reader does not read.
+   */
+  readonly body: Readable;
+}
+
+/** The storage has no object of that oid. */
+export class LfsAbsent extends Error {
+  override name = "LfsAbsent";
+}
+
+/** The storage has the oid, as another size than the object: not the file. */
+export class LfsChanged extends Error {
+  override name = "LfsChanged";
+}
+
+/** The storage did not take an object, or does not give it: an HTTP status, and its words. */
+export class LfsRefused extends Error {
+  override name = "LfsRefused";
+  readonly code: number;
+  constructor(code: number, message: string) {
+    super(message);
+    this.code = code;
+  }
+}
 
 /** The large file storage of the account has no room left, or no traffic: nothing goes in now. */
 export class LfsQuota extends Error {
@@ -220,21 +264,43 @@ export interface RepoSession {
     at: Date,
   ): Promise<string | undefined>;
   /**
-   * Asks the large file storage of the repository about objects (Git LFS's batch API, basic
-   * transfers): for "upload", what it has and where to put the rest; for "download", where to get
-   * them. An answer for each object, in their order. Rejects with LfsQuota where the storage of the
-   * account is full, and RepoPaused where the repository is not there to the App.
+   * What the large file storage of the repository has of these objects, an answer for each, in
+   * their order: for an "upload", whether it has it, or takes it; for a "download", whether it gives
+   * it. Rejects with LfsQuota where the storage of the account is full, and RepoPaused where the
+   * repository is not there to the App. What GitHub says on the way is kept for `lfsPut` and
+   * `lfsRead`, which then need not ask again.
    */
-  lfsBatch(
-    operation: "upload" | "download",
+  lfsHave(
     objects: readonly LfsObject[],
-  ): Promise<readonly LfsAnswer[]>;
+    purpose: "upload" | "download",
+  ): Promise<readonly LfsHave[]>;
+  /**
+   * Puts the file of an upload into the storage as `object`: all of it, and only where it is the
+   * object (its SHA-256 and length), or it rejects with `NotTheObject` (lfs/transfer.ts) and the
+   * storage has nothing of it. "present" where the storage has the oid already, and nothing was put
+   * there: how large what it has is, `lfsSizes` says. Rejects with `LfsRefused` where the storage
+   * does not take it, as `lfsHave` does otherwise. `timeoutMs`: how long sending it may take.
+   */
+  lfsPut(
+    object: LfsObject,
+    staged: LfsStaged,
+    options?: { readonly timeoutMs?: number },
+  ): Promise<"put" | "present">;
+  /**
+   * Part of an object, from `start` to `end` (bytes, both in it). Rejects with `LfsAbsent` where the
+   * storage does not have it, `LfsChanged` where what it has is of another size, and as `lfsHave`
+   * does otherwise; GitHubUnavailable where it cannot be read now.
+   */
+  lfsRead(
+    object: LfsObject,
+    range: { readonly start: number; readonly end: number },
+  ): Promise<LfsPiece>;
   /**
    * How large the storage has each of these objects, in their order, as the storage itself says of
    * what it keeps, whatever size it was asked about: undefined for one it does not have. An object
    * is only noted as there (`lfs_objects`) with the size found here, as a pointer says both, and
    * the storage goes by the oid alone when it says it has one. Each oid once in a call: the storage
-   * answers by oid. Rejects as `lfsBatch` does, and with GitHubUnavailable where the storage could
+   * answers by oid. Rejects as `lfsHave` does, and with GitHubUnavailable where the storage could
    * not be asked.
    */
   lfsSizes(objects: readonly LfsObject[]): Promise<readonly (number | undefined)[]>;
@@ -327,7 +393,9 @@ const unhosted = (provider: RepoProvider): RepoSession => {
     writeCommit: fail,
     advance: fail,
     start: fail,
-    lfsBatch: fail,
+    lfsHave: fail,
+    lfsPut: fail,
+    lfsRead: fail,
     lfsSizes: fail,
     close: async () => {},
   };

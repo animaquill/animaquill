@@ -5,11 +5,12 @@ import { describeError, type Db, type Logger } from "../database.ts";
 import { GitHubUnavailable } from "../github/client.ts";
 import { isUnusable, linkOf } from "../archive/links.ts";
 import {
+  LfsAbsent,
+  LfsChanged,
   LfsQuota,
   RepoPaused,
   RepoRefused,
   placeOf,
-  type LfsAction,
   type RepoHosts,
   type RepoRow,
 } from "../archive/repo-host.ts";
@@ -47,16 +48,12 @@ export interface DownloadLimits {
   readonly atOnce: number;
   /** The most a piece has: more than that is asked for again. */
   readonly mostBytes: number;
-  /** How long the storage has to answer, until its headers. */
-  readonly headersMs: number;
   /** How long a piece may go without a byte, either way. */
   readonly stallMs: number;
   /** Bytes a second on average after `graceMs`, looked at every `checkMs`. */
   readonly bytesPerSecond: number;
   readonly graceMs: number;
   readonly checkMs: number;
-  /** How long an address is taken before it runs out, at least. */
-  readonly addressSpareMs: number;
   /** What a GB of `LFS_DOWNLOADS_SETTING` is: a GiB, but in tests. */
   readonly bytesPerGb: number;
 }
@@ -65,12 +62,10 @@ export const DOWNLOAD_LIMITS: DownloadLimits = {
   perPerson: 4,
   atOnce: 32,
   mostBytes: 64 * MIB,
-  headersMs: 30_000,
   stallMs: 20_000,
   bytesPerSecond: 16 * KIB,
   graceMs: 10_000,
   checkMs: 1000,
-  addressSpareMs: 5 * 60_000,
   bytesPerGb: GIB,
 };
 
@@ -145,9 +140,6 @@ export interface DownloadsOptions {
   /** What admins set, read every few seconds; undefined to read the database each time. */
   readonly settings?: () => Settings | undefined;
   readonly limits?: Partial<DownloadLimits>;
-  readonly fetch?: typeof fetch;
-  /** Addresses over http are taken too, as the fake GitHub of the tests gives. */
-  readonly plain?: boolean;
   readonly now?: () => number;
 }
 
@@ -173,14 +165,6 @@ export const rangeOf = (
   const end = found[2] === "" ? size - 1 : Math.min(Number(found[2]), size - 1);
   if (start >= size || end < start) return undefined;
   return { start, end };
-};
-
-/** `bytes <start>-<end>/<size>` as the storage says it, or undefined. */
-const contentRangeOf = (header: string | null) => {
-  const found = /^bytes (\d{1,15})-(\d{1,15})\/(\d{1,15})$/.exec(header ?? "");
-  return found
-    ? { start: Number(found[1]), end: Number(found[2]), size: Number(found[3]) }
-    : undefined;
 };
 
 /** Places for pieces: so many of one person, and so many of everybody. */
@@ -284,10 +268,7 @@ export class LfsDownloads {
   readonly #options: DownloadsOptions;
   readonly #limits: DownloadLimits;
   readonly #now: () => number;
-  readonly #fetch: typeof fetch;
   readonly #places: Places;
-  /** Addresses the storage gave, by repository and oid, until shortly before they run out. */
-  readonly #addresses = new Map<string, LfsAction & { readonly until: number }>();
   /** Bytes each person downloaded on the day this counts, see `#counted`. */
   #day: number;
   #bytesOf = new Map<string, number>();
@@ -296,7 +277,6 @@ export class LfsDownloads {
     this.#options = options;
     this.#limits = { ...DOWNLOAD_LIMITS, ...options.limits };
     this.#now = options.now ?? Date.now;
-    this.#fetch = options.fetch ?? ((input, init) => fetch(input, init));
     this.#places = new Places(this.#limits.perPerson, this.#limits.atOnce);
     this.#day = Math.floor(this.#now() / DAY_MS);
   }
@@ -341,6 +321,8 @@ export class LfsDownloads {
         throw new DownloadRefused("githubQuota", 409, {
           detail: short(error.message),
         });
+      if (error instanceof LfsAbsent) throw new DownloadRefused("missing", 410);
+      if (error instanceof LfsChanged) throw new DownloadRefused("changed", 409);
       if (error instanceof RepoPaused) throw new DownloadRefused("gone", 409);
       if (error instanceof GitHubUnavailable)
         throw new DownloadRefused("unavailable", 503, {
@@ -359,7 +341,7 @@ export class LfsDownloads {
     }
   }
 
-  /** Keeps the addresses of a batch of answers, and says what each object is. */
+  /** Says what each object is, as the storage of the repository has it. */
   async #ask(
     projectId: string,
     link: RepoRow,
@@ -367,47 +349,20 @@ export class LfsDownloads {
   ): Promise<readonly ("ready" | "absent" | "changed" | "unavailable")[]> {
     const hosts = this.#options.hosts as RepoHosts;
     const session = hosts.open(placeOf(link));
-    const answers = await this.#asking(projectId, () => session.lfsBatch("download", objects));
-    const now = this.#now();
-    return answers.map((answer, index) => {
-      const { oid } = objects[index] as { oid: string };
-      const key = `${link.provider}:${link.repoId}:${oid}`;
-      if (answer.kind === "download") {
-        const { href } = answer.download;
-        let protocol: string;
-        try {
-          protocol = new URL(href).protocol;
-        } catch {
-          return "unavailable";
-        }
-        if (protocol !== "https:" && !(this.#options.plain && protocol === "http:"))
-          return "unavailable";
-        const until = Math.min(
-          (answer.download.expiresAt ?? now + 3600_000) - this.#limits.addressSpareMs,
-          now + 3600_000,
-        );
-        if (until > now) this.#addresses.set(key, { ...answer.download, until });
-        return "ready";
-      }
-      this.#addresses.delete(key);
-      if (answer.kind === "refused") {
-        if (answer.code === 404 || answer.code === 410) return "absent";
-        if (answer.code === 422) return "changed";
-        if (/quota/i.test(answer.message))
-          throw new DownloadRefused("githubQuota", 409, {
-            detail: short(answer.message),
-          });
-        if (answer.code === 401 || answer.code === 403) throw new DownloadRefused("gone", 409);
-      }
+    const haves = await this.#asking(projectId, () => session.lfsHave(objects, "download"));
+    return haves.map((have, index) => {
+      const { size } = objects[index] as { size: number };
+      if (have.kind === "present")
+        return have.size !== undefined && have.size !== size ? "changed" : "ready";
+      if (have.kind === "absent") return "absent";
+      if (have.code === 422) return "changed";
+      if (/quota/i.test(have.message))
+        throw new DownloadRefused("githubQuota", 409, {
+          detail: short(have.message),
+        });
+      if (have.code === 401 || have.code === 403) throw new DownloadRefused("gone", 409);
       return "unavailable";
     });
-  }
-
-  /** Forgets addresses that ran out, so that the map does not grow for ever. */
-  #tidy(): void {
-    const now = this.#now();
-    for (const [key, address] of this.#addresses)
-      if (address.until <= now) this.#addresses.delete(key);
   }
 
   /**
@@ -421,7 +376,6 @@ export class LfsDownloads {
   ): Promise<readonly LookupAnswer[]> {
     const link = await this.#repoOf(user, projectId);
     if (objects.length === 0) return [];
-    this.#tidy();
     const { db } = this.#options;
     const oids = [...new Set(objects.map(({ oid }) => oid))];
     // What the platform knows the storage has, and how large: another size is not the file.
@@ -541,114 +495,36 @@ export class LfsDownloads {
       const link = await this.#repoOf(user, projectId);
       const start = range.start;
       const end = Math.min(range.end, start + this.#limits.mostBytes - 1, object.size - 1);
-      const key = `${link.provider}:${link.repoId}:${object.oid}`;
-      for (let attempt = 1; ; attempt++) {
-        let address = this.#addresses.get(key);
-        if (!address || address.until <= this.#now()) {
-          const [state] = await this.#ask(projectId, link, [object]);
-          if (state === "absent") throw new DownloadRefused("missing", 410);
-          if (state === "changed") throw new DownloadRefused("changed", 409);
-          address = this.#addresses.get(key);
-          if (state !== "ready" || !address) throw new DownloadRefused("unavailable", 503);
-        }
-        const answer = await this.#get(address, start, end);
-        if (answer === "expired") {
-          // Taken back early, or it ran out after all: a new one, once.
-          this.#addresses.delete(key);
-          if (attempt === 1) continue;
-          throw new DownloadRefused("unavailable", 503);
-        }
-        if (answer === "absent") {
-          this.#addresses.delete(key);
-          throw new DownloadRefused("missing", 410);
-        }
-        const { response } = answer;
-        const said = contentRangeOf(response.headers.get("content-range"));
-        const length = Number(response.headers.get("content-length"));
-        let from: number;
-        let total: number;
-        if (response.status === 206 && said) {
-          from = said.start;
-          total = said.size;
-        } else if (response.status === 200 && Number.isSafeInteger(length)) {
-          // All of it, as a storage that does not take ranges answers: only from its start.
-          from = 0;
-          total = length;
-        } else {
-          await response.body?.cancel().catch(() => {});
-          throw new DownloadRefused("unavailable", 503);
-        }
-        if (total !== object.size) {
-          await response.body?.cancel().catch(() => {});
-          throw new DownloadRefused("changed", 409);
-        }
-        if (from !== start || !response.body) {
-          await response.body?.cancel().catch(() => {});
-          throw new DownloadRefused("unavailable", 503);
-        }
-        const paced = new Paced(end - start + 1, this.#limits, this.#now, (bytes) =>
-          this.#counted(user, bytes),
-        );
-        const source = Readable.fromWeb(response.body as never);
-        source.on("error", (error) => paced.destroy(error));
-        // The rest of what the storage sends is not read: the connection goes.
-        paced.onFull = () => {
-          source.unpipe(paced);
-          source.destroy();
-          paced.end();
-        };
-        paced.once("close", () => {
-          leave();
-          source.destroy();
-        });
-        source.pipe(paced);
-        return { start, end, size: object.size, body: paced };
+      const session = (this.#options.hosts as RepoHosts).open(placeOf(link));
+      const read = await this.#asking(projectId, () => session.lfsRead(object, { start, end }));
+      if (read.size !== object.size) {
+        read.body.destroy();
+        throw new DownloadRefused("changed", 409);
       }
+      if (read.start !== start) {
+        read.body.destroy();
+        throw new DownloadRefused("unavailable", 503);
+      }
+      const paced = new Paced(end - start + 1, this.#limits, this.#now, (bytes) =>
+        this.#counted(user, bytes),
+      );
+      const source = read.body;
+      source.on("error", (error) => paced.destroy(error));
+      // The rest of what the storage sends is not read: the connection goes.
+      paced.onFull = () => {
+        source.unpipe(paced);
+        source.destroy();
+        paced.end();
+      };
+      paced.once("close", () => {
+        leave();
+        source.destroy();
+      });
+      source.pipe(paced);
+      return { start, end, size: object.size, body: paced };
     } catch (error) {
       leave();
       throw error;
     }
-  }
-
-  /** The storage's answer to a GET of part of an object, until its headers. */
-  async #get(
-    address: LfsAction,
-    start: number,
-    end: number,
-  ): Promise<{ readonly response: Response } | "expired" | "absent"> {
-    const headers = new Headers(address.header);
-    headers.set("accept-encoding", "identity");
-    headers.set("range", `bytes=${start}-${end}`);
-    const stop = new AbortController();
-    const timer = setTimeout(() => stop.abort(), this.#limits.headersMs);
-    let response: Response;
-    try {
-      response = await this.#fetch(address.href, {
-        method: "GET",
-        headers,
-        // The headers of an address go where it says, and nowhere else.
-        redirect: "manual",
-        signal: stop.signal,
-      });
-    } catch (error) {
-      throw new DownloadRefused("unavailable", 503, {
-        detail: error instanceof Error ? error.name : "failed",
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-    if (response.status === 403) {
-      await response.body?.cancel().catch(() => {});
-      return "expired";
-    }
-    if (response.status === 404) {
-      await response.body?.cancel().catch(() => {});
-      return "absent";
-    }
-    if (response.status !== 200 && response.status !== 206) {
-      await response.body?.cancel().catch(() => {});
-      throw new DownloadRefused("unavailable", 503);
-    }
-    return { response };
   }
 }
