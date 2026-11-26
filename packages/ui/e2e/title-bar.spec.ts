@@ -87,12 +87,10 @@ test("the title bar: nothing over anything else at any width, every menu within 
     } else {
       expect(width).toBeLessThanOrEqual(560);
       await page.locator("header").getByRole("button", { name: "菜单" }).click();
-      // By the keyboard: where it is this narrow, the menu of the help opens over the item that
-      // opens it as soon as the pointer is on it, so a click would land on what is in the menu, or,
-      // as it did on a slow runner (CI), wait for ever for the item that is now covered.
-      const item = page.getByRole("menu", { name: "菜单" }).getByRole("menuitem", { name: "帮助" });
-      await item.focus();
-      await page.keyboard.press("ArrowRight");
+      await page
+        .getByRole("menu", { name: "菜单" })
+        .getByRole("menuitem", { name: "帮助" })
+        .click();
       await expect(page.getByRole("menu", { name: "帮助" })).toBeVisible();
       await page.screenshot({
         path: test.info().outputPath(`title-${width}-menus.png`),
@@ -111,4 +109,99 @@ test("the title bar: nothing over anything else at any width, every menu within 
       clip: { x: 0, y: 0, width, height: 40 },
     });
   }
+});
+
+const all = (page: Page) => page.locator("header").getByRole("button", { name: "菜单" });
+const inAll = (page: Page, name: string) =>
+  page.getByRole("menu", { name: "菜单" }).getByRole("menuitem", { name, exact: true });
+const help = (page: Page) => page.getByRole("menu", { name: "帮助" });
+
+test("on a phone the menu of an item takes the place of the menu, and only a click opens it", async ({
+  page,
+}) => {
+  await offlineWithProject(page);
+  await page.setViewportSize({ width: 390, height: 800 });
+  await all(page).click();
+  const item = inAll(page, "帮助");
+  await expect(item).toHaveAttribute("aria-haspopup", "menu");
+  // The pointer resting on it opens nothing: what is under the pointer stays what it was.
+  await item.hover();
+  await page.waitForTimeout(400);
+  await expect(help(page)).toHaveCount(0);
+  await expect(item).toHaveAttribute("aria-expanded", "false");
+
+  // A double click opens it, and the second click is not taken by what is now under the pointer.
+  const before = page.url();
+  await item.dblclick();
+  await expect(help(page)).toBeVisible();
+  await expect(page.getByRole("menu", { name: "菜单" })).toBeHidden();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(page.url()).toBe(before);
+  // In place of the menu, inside the window, with the way back on top.
+  const box = (await help(page).boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(390);
+  const back = help(page).getByRole("menuitem").first();
+  await expect(back).toHaveText("帮助");
+  await expect(back).toHaveAccessibleDescription("返回上一级");
+  await page.screenshot({
+    path: test.info().outputPath("title-390-in-place.png"),
+    clip: { x: 0, y: 0, width: 390, height: 400 },
+  });
+
+  // Back by the row on top. What is under the pointer then is where the menu is, as in any menu.
+  await back.click();
+  await expect(help(page)).toHaveCount(0);
+  await expect(item).toHaveAttribute("aria-expanded", "false");
+  await page.mouse.move(380, 790);
+  await item.focus();
+
+  // By the keyboard: → in, to its first item, ← and Esc back to the item, Esc again closes.
+  await page.keyboard.press("ArrowRight");
+  await expect(help(page)).toBeVisible();
+  await expect(help(page).getByRole("menuitem").nth(1)).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(back).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
+  await expect(item).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(help(page)).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(item).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(all(page)).toBeFocused();
+});
+
+test("where there is room the menu of an item opens beside it as the mouse rests on it", async ({
+  page,
+}) => {
+  await offlineWithProject(page);
+  await page.setViewportSize({ width: 560, height: 800 });
+  await all(page).click();
+  const item = inAll(page, "帮助");
+  await item.hover();
+  await expect(help(page)).toBeVisible();
+  await expect(item).toHaveAttribute("aria-expanded", "true");
+  // Beside it, not over it, and the menu it came from is still there.
+  const [parent, child] = [(await item.boundingBox())!, (await help(page).boundingBox())!];
+  expect(child.x).toBeGreaterThanOrEqual(parent.x + parent.width);
+  await expect(page.getByRole("menu", { name: "菜单" })).toBeVisible();
+  await expect(help(page).getByRole("menuitem", { name: "帮助" })).toHaveCount(0);
+  // Into it, on the way crossing nothing: it stays.
+  await help(page).getByRole("menuitem").first().hover();
+  await page.waitForTimeout(300);
+  await expect(help(page)).toBeVisible();
+  // Resting on another item closes it.
+  await inAll(page, "文件").hover();
+  await expect(page.getByRole("menu", { name: "文件" })).toBeVisible();
+  await expect(help(page)).toHaveCount(0);
+  await page.screenshot({
+    path: test.info().outputPath("title-560-beside.png"),
+    clip: { x: 0, y: 0, width: 560, height: 400 },
+  });
+  // Esc goes back to the item, then closes.
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("menu")).toHaveCount(0);
 });

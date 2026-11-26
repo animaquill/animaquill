@@ -1,4 +1,4 @@
-import { Check, ChevronRight } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight } from "lucide-react";
 import {
   Fragment,
   forwardRef,
@@ -8,9 +8,11 @@ import {
   useState,
   type FocusEvent,
   type KeyboardEvent,
+  type MouseEvent,
   type ReactNode,
 } from "react";
-import { createPortal } from "react-dom";
+import { createPortal, flushSync } from "react-dom";
+import { useTranslation } from "react-i18next";
 import styles from "./Menu.module.css";
 
 export interface MenuItem {
@@ -33,8 +35,8 @@ export interface MenuItem {
   /** A few words on its right, such as how many it is about, or why it cannot be chosen. */
   readonly note?: string;
   /**
-   * A menu of its own, which opens to its right: `run` is not called then. Only in menus that open
-   * at the pointer, see `PopupMenu`.
+   * A menu of its own, which opens beside it, or in place of the menu where there is no room:
+   * `run` is not called then. Only in menus that open at the pointer, see `PopupMenu`.
    */
   readonly items?: readonly (readonly MenuItem[])[];
 }
@@ -59,30 +61,72 @@ const itemsIn = (root: HTMLElement | null) => [
   ...(root?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not(:disabled)') ?? []),
 ];
 
+/** A click this soon after a menu took the place of another is the second of a double click. */
+const QUIET_MS = 500;
+const QUIET_PX = 6;
+
+/** A click, as the second of a double click, where the first was and right after it. */
+interface Quiet {
+  readonly until: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+const isQuiet = (quiet: Quiet | undefined, event: MouseEvent | globalThis.MouseEvent) =>
+  quiet !== undefined &&
+  performance.now() < quiet.until &&
+  Math.abs(event.clientX - quiet.x) <= QUIET_PX &&
+  Math.abs(event.clientY - quiet.y) <= QUIET_PX;
+
 interface MenuListProps {
   readonly label: string;
   readonly groups: readonly (readonly MenuItem[])[];
   readonly className?: string | undefined;
+  readonly hidden?: boolean;
   readonly onClose: () => void;
-  /** Opens the menu of an item that has one, next to it; undefined closes the one that is open. */
-  readonly onSubmenu?: (item: MenuItem | undefined, from: HTMLElement | undefined) => void;
+  /**
+   * Opens the menu of an item that has one, from a click or a key (`byKey`); undefined closes the
+   * one that is open.
+   */
+  readonly onSubmenu?: (item: MenuItem, from: HTMLElement, byKey: boolean) => void;
+  /** The mouse rests on an item, one with a menu or not. */
+  readonly onHover?: (item: MenuItem, from: HTMLElement) => void;
+  readonly onPointerEnter?: () => void;
   /** The item whose menu is open. */
   readonly opened?: string | undefined;
   /** Leaves this menu for the one it came from, as ArrowLeft does in a menu of an item. */
   readonly onBack?: () => void;
+  /** A row on top that leads back, in a menu that took the place of the one it came from. */
+  readonly back?: string | undefined;
+  /** Where and until when a click is the second of a double click on what this replaced. */
+  readonly quiet?: Quiet | undefined;
 }
 
 /** The items of a menu, and moving through them with the keyboard. */
 const MenuList = forwardRef<HTMLDivElement, MenuListProps>(function MenuList(
-  { label, groups, className, onClose, onSubmenu, opened, onBack },
+  {
+    label,
+    groups,
+    className,
+    hidden,
+    onClose,
+    onSubmenu,
+    onHover,
+    onPointerEnter,
+    opened,
+    onBack,
+    back,
+    quiet,
+  },
   ref,
 ) {
+  const { t } = useTranslation();
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const list = itemsIn(event.currentTarget);
     const index = list.indexOf(document.activeElement as HTMLElement);
     const moves: Record<string, number> = {
       ArrowDown: (index + 1) % list.length,
-      ArrowUp: (index - 1 + list.length) % list.length,
+      ArrowUp: index < 0 ? list.length - 1 : (index - 1 + list.length) % list.length,
       Home: 0,
       End: list.length - 1,
     };
@@ -103,9 +147,33 @@ const MenuList = forwardRef<HTMLDivElement, MenuListProps>(function MenuList(
       className={`${styles.menu} ${className ?? ""}`}
       role="menu"
       aria-label={label}
+      tabIndex={-1}
+      hidden={hidden}
       onKeyDown={onKeyDown}
       onMouseDown={(event) => event.preventDefault()}
+      onPointerEnter={onPointerEnter}
     >
+      {back !== undefined && (
+        <>
+          <button
+            type="button"
+            className={`${styles.item} ${styles.back}`}
+            role="menuitem"
+            aria-description={t("menu.back")}
+            tabIndex={-1}
+            data-menu-back=""
+            onClick={(event) => {
+              if (!isQuiet(quiet, event)) onBack?.();
+            }}
+          >
+            <span className={styles.mark}>
+              <ChevronLeft size={14} aria-hidden />
+            </span>
+            <span className={styles.label}>{back}</span>
+          </button>
+          <div className={styles.separator} role="separator" />
+        </>
+      )}
       {groups.map((group, index) => (
         <Fragment key={group[0]?.id ?? index}>
           {index > 0 && <div className={styles.separator} role="separator" />}
@@ -126,18 +194,25 @@ const MenuList = forwardRef<HTMLDivElement, MenuListProps>(function MenuList(
                 "aria-haspopup": "menu" as const,
                 "aria-expanded": opened === item.id,
               })}
-              onPointerEnter={(event) =>
-                onSubmenu?.(item.items ? item : undefined, event.currentTarget)
-              }
+              data-open={opened === item.id ? "" : undefined}
+              onPointerEnter={(event) => {
+                if (event.pointerType !== "mouse") return;
+                // One place in the menu, for the mouse and the keys alike, as in a desktop's menus.
+                if (!event.currentTarget.disabled)
+                  event.currentTarget.focus({ preventScroll: true });
+                onHover?.(item, event.currentTarget);
+              }}
               onKeyDown={(event) => {
                 if (!item.items || (event.key !== "ArrowRight" && event.key !== "Enter")) return;
                 event.preventDefault();
                 event.stopPropagation();
-                onSubmenu?.(item, event.currentTarget);
+                onSubmenu?.(item, event.currentTarget, true);
               }}
               onClick={(event) => {
+                if (isQuiet(quiet, event)) return;
                 if (item.items) {
-                  onSubmenu?.(item, event.currentTarget);
+                  // Space, or a reader's click, comes with no count of clicks.
+                  onSubmenu?.(item, event.currentTarget, event.detail === 0);
                   return;
                 }
                 item.run();
@@ -218,42 +293,169 @@ interface PopupMenuProps {
   readonly onClose: () => void;
 }
 
-/** A menu that opens at the pointer, for right clicks. It stays inside the window. */
+/** How long the mouse rests on an item before its menu opens, or the one open closes. */
+const HOVER_MS = 150;
+/** The gap between a menu and the one of its item, and between a menu and the window's edge. */
+const GAP = 2;
+const EDGE = 4;
+
+/** After a click that opened a menu in place, where its second click would be. */
+const quietFrom = (how: Opened["how"], at: { readonly x: number; readonly y: number }) =>
+  how === "click" ? { until: performance.now() + QUIET_MS, ...at } : undefined;
+
+interface Opened {
+  readonly item: MenuItem;
+  readonly from: HTMLElement;
+  /** From a key its first item takes the focus; the mouse passing by opens it only beside. */
+  readonly how: "key" | "click" | "hover";
+  /**
+   * In place of the menu it came from, one level in, with a row on top that leads back: where there
+   * is no room beside it, as on a phone, so that it never lies over the item that opened it.
+   */
+  readonly inPlace: boolean;
+}
+
+/**
+ * A menu that opens at the pointer, for right clicks. It stays inside the window.
+ *
+ * The menu of an item opens beside it, as the mouse rests on the item or as it is clicked. Where the
+ * window has no room for it on either side, it takes the place of the menu instead, and only a click
+ * or a key opens it, never the pointer passing by: what is under the pointer does not change by
+ * itself.
+ */
 export function PopupMenu({ label, groups, x, y, onClose }: PopupMenuProps) {
+  const holder = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
   const sub = useRef<HTMLDivElement>(null);
   const opener = useRef<Element | null>(null);
-  const [open, setOpen] = useState<{ item: MenuItem; from: HTMLElement; focus: boolean }>();
-
-  // The menu of an item, to the right of it, or to its left where the window ends.
-  useLayoutEffect(() => {
-    const element = sub.current;
-    if (!element || !open) return;
-    const from = open.from.getBoundingClientRect();
-    const { width, height } = element.getBoundingClientRect();
-    const right = from.right + 2;
-    element.style.left = `${right + width > innerWidth - 4 ? Math.max(from.left - width - 2, 4) : right}px`;
-    element.style.top = `${Math.max(Math.min(from.top - 4, innerHeight - height - 4), 4)}px`;
-    if (open.focus) itemsIn(element)[0]?.focus();
-  }, [open]);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [open, setOpen] = useState<Opened>();
+  /** No room beside this menu for the menu of an item. */
+  const [narrow, setNarrow] = useState(false);
+  const [quiet, setQuiet] = useState<Quiet>();
+  const down = useRef({ x: 0, y: 0 });
+  useEffect(() => () => clearTimeout(timer.current), []);
+  // The second click of a double click that opened a menu in place lands where the item was, which
+  // may now be past its end: it does nothing there either, rather than close the menus.
+  useEffect(() => {
+    if (quiet === undefined) return;
+    const swallow = (event: globalThis.MouseEvent) => {
+      if (!isQuiet(quiet, event) || holder.current?.contains(event.target as Node)) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+    const kinds = [
+      "pointerdown",
+      "mousedown",
+      "pointerup",
+      "mouseup",
+      "click",
+      "dblclick",
+    ] as const;
+    for (const kind of kinds) addEventListener(kind, swallow, true);
+    return () => {
+      for (const kind of kinds) removeEventListener(kind, swallow, true);
+    };
+  }, [quiet]);
 
   useLayoutEffect(() => {
     const element = list.current;
     if (!element) return;
-    opener.current = document.activeElement;
+    // Not its own item, as when React runs this twice to check it.
+    if (!holder.current?.contains(document.activeElement)) opener.current = document.activeElement;
     const { width, height } = element.getBoundingClientRect();
-    element.style.left = `${Math.max(Math.min(x, innerWidth - width - 4), 4)}px`;
-    element.style.top = `${Math.max(Math.min(y, innerHeight - height - 4), 4)}px`;
+    const left = Math.max(Math.min(x, innerWidth - width - EDGE), EDGE);
+    element.style.left = `${left}px`;
+    element.style.top = `${Math.max(Math.min(y, innerHeight - height - EDGE), EDGE)}px`;
+    // A menu of an item is at least as wide as a menu is at the least, which is about this one.
+    const room = Math.max(innerWidth - left - width - GAP - EDGE, left - GAP - EDGE);
+    setNarrow(room < width);
     itemsIn(element)[0]?.focus();
   }, [x, y]);
+
+  // The menu of an item: to its right, or to its left where the window ends, or in place.
+  useLayoutEffect(() => {
+    const element = sub.current;
+    const root = list.current;
+    if (!element || !root || !open) return;
+    const { width, height } = element.getBoundingClientRect();
+    if (open.inPlace) {
+      // Where the menu is, which is hidden now and has no box.
+      const [left, top] = [parseFloat(root.style.left), parseFloat(root.style.top)];
+      element.style.left = `${Math.max(Math.min(left, innerWidth - width - EDGE), EDGE)}px`;
+      element.style.top = `${Math.max(Math.min(top, innerHeight - height - EDGE), EDGE)}px`;
+      const first = itemsIn(element)[1];
+      if (open.how === "key" && first) first.focus();
+      else element.focus();
+      return;
+    }
+    const beside = root.getBoundingClientRect();
+    const right = beside.right + GAP;
+    const left = beside.left - width - GAP;
+    if (right + width > innerWidth - EDGE && left < EDGE) {
+      // No room after all, which only its size tells: in place, from a click or a key; from the
+      // mouse passing by, not at all. Before it is painted, so it is never seen beside.
+      if (open.how !== "hover") element.focus();
+      // oxlint-disable-next-line react/set-state-in-effect -- measured, see above
+      setNarrow(true);
+      // oxlint-disable-next-line react/set-state-in-effect -- measured, see above
+      setQuiet(quietFrom(open.how, down.current));
+      // oxlint-disable-next-line react/set-state-in-effect -- measured, see above
+      setOpen(open.how === "hover" ? undefined : { ...open, inPlace: true });
+      return;
+    }
+    element.style.left = `${right + width > innerWidth - EDGE ? left : right}px`;
+    const from = open.from.getBoundingClientRect();
+    element.style.top = `${Math.max(Math.min(from.top - EDGE, innerHeight - height - EDGE), EDGE)}px`;
+    if (open.how === "key") itemsIn(element)[0]?.focus();
+  }, [open]);
 
   const close = () => {
     onClose();
     if (opener.current instanceof HTMLElement) opener.current.focus({ preventScroll: true });
   };
 
+  const show = (item: MenuItem, from: HTMLElement, byKey: boolean) => {
+    clearTimeout(timer.current);
+    const how = byKey ? "key" : "click";
+    if (narrow) {
+      // What holds the focus goes away: the focus waits in the menus until the new one is there.
+      holder.current?.focus();
+      setQuiet(quietFrom(how, down.current));
+      setOpen({ item, from, how, inPlace: true });
+      return;
+    }
+    if (item.id === open?.item.id && !byKey) return;
+    setOpen({ item, from, how, inPlace: false });
+  };
+
+  const hover = (item: MenuItem, from: HTMLElement) => {
+    if (narrow || open?.inPlace) return;
+    clearTimeout(timer.current);
+    if (!item.items && !open) return;
+    if (item.id === open?.item.id) return;
+    timer.current = setTimeout(
+      () => setOpen(item.items && { item, from, how: "hover", inPlace: false }),
+      HOVER_MS,
+    );
+  };
+
+  const back = () => {
+    if (!open) return;
+    const { from } = open;
+    holder.current?.focus();
+    flushSync(() => setOpen(undefined));
+    from.focus();
+  };
+
   return createPortal(
     <div
+      ref={holder}
+      className={styles.holder}
+      tabIndex={-1}
+      onPointerDownCapture={(event) => {
+        down.current = { x: event.clientX, y: event.clientY };
+      }}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) onClose();
       }}
@@ -263,12 +465,11 @@ export function PopupMenu({ label, groups, x, y, onClose }: PopupMenuProps) {
         className={styles.popup}
         label={label}
         groups={groups}
+        hidden={open?.inPlace === true}
         onClose={close}
         opened={open?.item.id}
-        onSubmenu={(item, from) => {
-          if (item?.id === open?.item.id && !(from && from === document.activeElement)) return;
-          setOpen(item && from && { item, from, focus: from === document.activeElement });
-        }}
+        onSubmenu={show}
+        onHover={hover}
       />
       {open?.item.items && (
         <MenuList
@@ -277,11 +478,10 @@ export function PopupMenu({ label, groups, x, y, onClose }: PopupMenuProps) {
           label={open.item.label}
           groups={open.item.items}
           onClose={close}
-          onBack={() => {
-            const { from } = open;
-            setOpen(undefined);
-            from.focus();
-          }}
+          onBack={back}
+          back={open.inPlace ? open.item.label : undefined}
+          onPointerEnter={() => clearTimeout(timer.current)}
+          quiet={open.inPlace ? quiet : undefined}
         />
       )}
     </div>,

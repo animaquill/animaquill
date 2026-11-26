@@ -36,6 +36,18 @@
   left: auto;
 }
 
+.menu:focus {
+  outline: 0;
+}
+
+.menu[hidden] {
+  display: none;
+}
+
+.holder {
+  outline: 0;
+}
+
 .popup {
   position: fixed;
   top: 0;
@@ -61,6 +73,11 @@
   color: var(--aq-on-accent);
   background: var(--aq-accent);
   outline: 0;
+}
+
+/* The item whose menu is open, while the focus is in that menu: where it came from. */
+.item[data-open]:not(:focus) {
+  background: var(--aq-bg-hover);
 }
 
 .danger {
@@ -114,4 +131,9 @@
 
 .more {
   margin-left: 8px;
+}
+
+/* The row on top that leads back, in a menu that took the place of the one it came from. */
+.back {
+  font-weight: 600;
 }

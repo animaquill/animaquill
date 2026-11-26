@@ -22,7 +22,8 @@
     "timeline": "时间轴",
     "help": "帮助",
     "all": "菜单",
-    "opened": "已打开"
+    "opened": "已打开",
+    "back": "返回上一级"
   },
   "edit": {
     "undo": "撤销",
