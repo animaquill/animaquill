@@ -419,8 +419,6 @@ export class Workbench {
    * it: a project that is connected would get a second link.
    */
   readonly cloudKnown = new Flag();
-  /** The start page is asked to show its projects of the platform, see `openCloudProjects`. */
-  readonly cloudColumn = new Flag();
   /**
    * The open project cannot be edited now, as a project of the platform whose repository cannot be
    * used, see `CloudProjects.unusable`: it can be looked at, played and exported, and nothing
@@ -2658,12 +2656,6 @@ export class Workbench {
     this.cloudPanel.set(true);
   }
 
-  /** "打开在线项目…": the start page, at its projects of the platform. */
-  async openCloudProjects(): Promise<void> {
-    await this.closeProject();
-    if (!this.session.store) this.cloudColumn.set(true);
-  }
-
   /** What people press in the panel of the platform, see `cloudPanel`. */
   runCloudAction(id: PanelActionId): void {
     const { cloud } = this;
@@ -4759,14 +4751,8 @@ export class Workbench {
       });
     }
     if (cloud) {
-      // The menu has two ways to the platform: its projects, and how the open one stands with it.
-      // Everything else is in the panel, and in the command palette by the ids it always had.
-      this.actions.register({
-        id: "cloud.open",
-        title: (t) => t("cloud.openAction"),
-        run: () => void this.openCloudProjects(),
-        menu: { name: "file", group: "cloud" },
-      });
+      // How the open project stands with the platform. Its projects open from "从仓库打开…" and
+      // from the start page; everything else is in the panel, and in the command palette.
       this.actions.register({
         id: "cloud.panel",
         title: (t) => t("cloud.panelAction"),

@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { closeSettings, goToSettingsGroup, openSettingsPage, settingsOf } from "./ai-support.ts";
 import { content, devPageOnly, editorReady, expect, test } from "./support.ts";
 import { aiAdds, execute, markers, reload, send } from "./undo-support.ts";
+import { onlineProjects } from "./start-support.ts";
 
 /**
  * AI tasks taken back as a whole after the page was loaded again (the design of AI collaboration,
@@ -164,8 +165,7 @@ test.describe("a project of the platform", () => {
         window as unknown as { aqCloud: { seed(name: string, options: object): string } }
       ).aqCloud.seed("年会视频", { repository: "annual" }),
     );
-    await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
-    await page.getByRole("menu").getByRole("menuitem", { name: "打开在线项目…" }).click();
+    await onlineProjects(page);
     await page.getByText("年会视频").first().click();
     await expect(page.locator("footer [data-cloud]")).toHaveAttribute("data-cloud", "online");
     await aiAdds(page, [[["m1", "一"]]]);

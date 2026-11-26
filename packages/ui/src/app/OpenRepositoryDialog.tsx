@@ -219,7 +219,10 @@ export function OpenRepositoryDialog({ request }: { request: OpenRepositoryReque
                 </button>
               )}
             </div>
-            {source === "github" && <p className={styles.hint}>{t("repository.orgs")}</p>}
+            {/* Only where the one people look for is not there, which is when it helps. */}
+            {source === "github" && list === "ready" && rows.length === 0 && (
+              <p className={styles.hint}>{t("repository.orgs")}</p>
+            )}
           </div>
         )}
 

@@ -1164,12 +1164,26 @@ test.describe("tabs down a side", () => {
     await expect(content(page, "timeline")).toBeVisible();
     expect((await box(group(page, "timeline"))).width).toBeCloseTo(before.width, 0);
     await tab(page, "timeline").click({ button: "right" });
-    await expect(check(page, "收起这一组")).toHaveCount(0);
+    const item = (name: string) =>
+      page.getByRole("menu").getByRole("menuitem", { name, exact: true });
+    await expect(item("收起这一组")).toHaveCount(0);
     await page.keyboard.press("Escape");
-    // A group that can has it in its menu too, for the keyboard.
+    // A group that can has it in its menu too, for the keyboard, and the tab says how it is.
+    await expect(tabButton(page, "assets")).toHaveAttribute("aria-expanded", "true");
+    await expect(tabButton(page, "files")).not.toHaveAttribute("aria-expanded");
+    // The icon of what shows stands out in the group in use, and not once that is folded up.
+    const shadow = () =>
+      tabButton(page, "assets").evaluate((element) => getComputedStyle(element).boxShadow);
+    await content(page, "assets").click({ position: { x: 100, y: 300 } });
+    expect(await shadow()).not.toBe("none");
     await tab(page, "assets").click({ button: "right" });
-    await check(page, "收起这一组").click();
+    await item("收起这一组").click();
     await expect(content(page, "assets")).toBeHidden();
+    await expect(tabButton(page, "assets")).toHaveAttribute("aria-expanded", "false");
+    expect(await shadow()).toBe("none");
+    await tab(page, "assets").click({ button: "right" });
+    await item("展开这一组").click();
+    await expect(content(page, "assets")).toBeVisible();
   });
 
   test("close with their button once their names are out, and not while only icons show", async ({

@@ -1,6 +1,13 @@
 import { UploadMark, useAssetMarks, usePlaceMenu } from "../storage/marks.tsx";
 import { Boxes, FolderTree, Library, TriangleAlert } from "lucide-react";
-import { useMemo, useRef, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import { useResourceCatalog, type ExplorerItem } from "../resources/catalog.ts";
@@ -233,6 +240,12 @@ function SourceTree({
     missing: <TriangleAlert size={14} aria-hidden />,
     libraries: <Library size={14} aria-hidden />,
   };
+  // In one line, as where the tab is narrow, the one chosen is in sight.
+  useEffect(() => {
+    tree.current
+      ?.querySelector(`[data-node="${node}"]`)
+      ?.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  }, [node]);
   return (
     <div
       ref={tree}
@@ -240,6 +253,15 @@ function SourceTree({
       role="tree"
       aria-label={t("explorer.tree")}
       onKeyDown={onKeyDown}
+      onWheel={(event) => {
+        // In one line, the wheel goes along it, as a mouse has no other way to.
+        const element = event.currentTarget;
+        const sideways =
+          element.scrollWidth > element.clientWidth + 1 &&
+          element.scrollHeight <= element.clientHeight + 1;
+        if (!sideways || event.deltaX !== 0) return;
+        element.scrollLeft += event.deltaY;
+      }}
     >
       {EXPLORER_NODES.map((at) => {
         const parent = parentOf(at);

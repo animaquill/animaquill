@@ -205,17 +205,24 @@
   border-radius: 6px;
 }
 
-/* Where a new folder goes offline, and what it will be called there. */
+/*
+ * Where a new folder goes offline, and what it will be called there: a label and what it is in
+ * one line, as the name above, and what the folder will be called under it.
+ */
 .place {
   display: grid;
-  gap: 4px;
-  margin: 0 0 16px;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  gap: 4px 8px;
+  margin: 12px 0 16px;
+  color: var(--aq-text);
 }
 
 .placeRow {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .placeName {
@@ -239,11 +246,29 @@
   color: var(--aq-text-muted);
 }
 
-.placeRow button {
+/* As the other buttons of the dialog. */
+.placeButton {
   flex: none;
+  padding: 4px 14px;
+  color: var(--aq-text);
+  white-space: nowrap;
+  background: var(--aq-bg-input);
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.placeButton:hover:not(:disabled) {
+  background: var(--aq-bg-hover);
+}
+
+.placeButton:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .placePreview {
+  grid-column: 2;
   overflow: hidden;
   color: var(--aq-text-muted);
   font-size: var(--aq-font-12);

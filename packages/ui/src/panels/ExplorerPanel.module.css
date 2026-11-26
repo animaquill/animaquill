@@ -12,7 +12,10 @@
   height: 100%;
 }
 
-/* Narrow, as in the tabs on the left: the sources go on top. */
+/*
+ * Narrow, as in the tabs on the left: the sources go on top, in one line that scrolls sideways (the
+ * wheel too, see `SourceTree`), so that the list keeps the height. Each source starts its kinds.
+ */
 @container (max-width: 420px) {
   .layout {
     grid-template-columns: minmax(0, 1fr);
@@ -21,25 +24,31 @@
 
   .tree {
     display: flex;
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
     gap: 2px;
-    max-height: 30cqh;
+    overflow-x: auto;
+    overflow-y: hidden;
     border-right: 0;
     border-bottom: 1px solid var(--aq-border);
+    scrollbar-width: thin;
   }
 
   .tree .node {
+    flex: none;
     padding-left: 6px !important;
   }
 
-  /* Each source starts a line of its own, with its kinds after it. */
   .tree .node[aria-level="1"] {
-    flex-basis: 100%;
     font-weight: 600;
   }
 
-  .tree .node[aria-level="1"][aria-expanded] {
-    flex-basis: auto;
+  .tree .node[aria-level="1"]:not(:first-child) {
+    margin-left: 6px;
+    box-shadow: -5px 0 0 -4px var(--aq-border);
+  }
+
+  .tree .node[aria-level="1"][aria-selected="true"]:not(:first-child) {
+    box-shadow: none;
   }
 }
 

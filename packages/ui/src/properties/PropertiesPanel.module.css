@@ -936,9 +936,9 @@
   min-width: 0;
   height: calc(22px * var(--aq-size-scale));
   padding: 0 4px 0 0;
-  color: var(--aq-text-muted);
+  color: var(--aq-text);
   font: inherit;
-  font-size: var(--aq-font-11);
+  font-size: var(--aq-font-12);
   font-weight: 600;
   text-align: start;
   background: none;
@@ -948,8 +948,13 @@
 }
 
 .sectionToggle:hover {
-  color: var(--aq-text);
   background: var(--aq-bg-hover);
+}
+
+/* A group after another one starts with a thin line, so that its title reads as one. */
+.object:not(:first-child) > .sectionHeading {
+  padding-top: 4px;
+  border-top: 1px solid var(--aq-border);
 }
 
 .sectionToggle:focus-visible {
@@ -979,7 +984,6 @@
 
 /* An effect has its name in the button, and its switch and its bin after it. */
 .effectHeader .sectionToggle {
-  color: var(--aq-text);
   font-size: inherit;
 }
 

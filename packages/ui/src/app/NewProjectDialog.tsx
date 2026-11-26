@@ -434,6 +434,7 @@ function Place({
         </span>
         <button
           type="button"
+          className={own.placeButton}
           disabled={disabled}
           onClick={() =>
             // Right in the click: the browser asks for a folder only then.

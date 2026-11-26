@@ -408,6 +408,7 @@
     "left": "选项卡在左侧",
     "right": "选项卡在右侧",
     "collapse": "收起这一组",
+    "expand": "展开这一组",
     "pin": "钉住选项卡",
     "peek": "鼠标悬停时展开",
     "edge": "选项卡栏的宽度",
@@ -4487,7 +4488,6 @@
     "offlineProjectsClose": "不再提示"
   },
   "cloud": {
-    "openAction": "打开在线项目…",
     "panelAction": "在线面板…",
     "signInFirst": "要先登录才能用在线模式。登录时页面会离开一下，再回到这个项目，改动都会留着。",
     "openTitle": "打开在线项目",
@@ -4836,7 +4836,7 @@
       "confirmMessage": "会按这个仓库现在的样子建一个新的在线项目，以后照常存回这个仓库。",
       "confirmMessageOther": "当前的项目不会变，恢复好以后会打开恢复出来的那个。",
       "confirm": "恢复",
-      "running": "正在从 GitHub 取回…",
+      "running": "正在从仓库取回…",
       "running_local": "正在从本机仓库取回…",
       "long": "恢复花的时间比预期长，好了以后会出现在“在线项目”里。",
       "gone": "从仓库恢复没有成功，什么都没留下，可以再试一次。",
@@ -5494,7 +5494,7 @@
     "filter": "筛选仓库",
     "list": "仓库",
     "open": "打开",
-    "createHere": "在这里新建项目",
+    "createHere": "用这个仓库新建项目",
     "isProject": "在线项目“{{name}}”",
     "archived": "{{time}}存档",
     "neverArchived": "还没存过档",

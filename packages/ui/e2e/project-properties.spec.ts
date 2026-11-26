@@ -2,7 +2,7 @@ import type { Page } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { footer, nameIn, openDropped, projectOnDisk, text } from "./folder-support.ts";
-import { openCard, projectCard } from "./start-support.ts";
+import { onlineProjects, openCard, projectCard } from "./start-support.ts";
 import { content, devPageOnly, editorReady, expect, test, showTab } from "./support.ts";
 
 /**
@@ -354,7 +354,7 @@ test.describe("the project properties of projects of the platform", () => {
         { repository: "opening" },
       );
     });
-    await chooseFrom(page, "文件", "打开在线项目…");
+    await onlineProjects(page);
     await openCard(page, "片头动画");
     await expect(page).toHaveTitle("片头动画 - AnimaQuill");
     await statusName(page, "片头动画").click();

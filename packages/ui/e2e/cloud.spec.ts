@@ -1,6 +1,6 @@
 import type { BrowserContext, Page } from "@playwright/test";
 import { footer } from "./folder-support.ts";
-import { openCard, sidebar, statusOf } from "./start-support.ts";
+import { onlineProjects, openCard, sidebar, statusOf } from "./start-support.ts";
 import { closeSettings, openSettingsPage, settingsOf } from "./ai-support.ts";
 import { createProject, devPageOnly, editorReady, expect, test } from "./support.ts";
 
@@ -92,7 +92,7 @@ test.describe("the start page", () => {
   test("clears this computer only once people know what is only here", async ({ page }) => {
     await arrive(page);
     await withLab(page, (lab) => lab.seed("年会视频", { repository: "annual" }));
-    await chooseFrom(page, "文件", "打开在线项目…");
+    await onlineProjects(page);
     await openCard(page, "年会视频");
     await expect(cloudStatus(page)).toHaveAttribute("data-cloud", "online");
     // The platform stops answering, and people go on.
@@ -126,7 +126,7 @@ test.describe("the start page", () => {
   test("lists what this browser has where the platform's list cannot be read", async ({ page }) => {
     await arrive(page);
     await withLab(page, (lab) => lab.seed("年会视频", { repository: "annual" }));
-    await chooseFrom(page, "文件", "打开在线项目…");
+    await onlineProjects(page);
     await openCard(page, "年会视频");
     await expect(cloudStatus(page)).toHaveAttribute("data-cloud", "online");
     await withLab(page, (lab) => {
@@ -243,7 +243,7 @@ test.describe("opening from a repository", () => {
     await box.getByRole("option", { name: /someone-elses/ }).click({ force: true });
     await expect(box.getByRole("button", { name: "打开", exact: true })).toBeDisabled();
     await box.getByRole("option", { name: /empty-one/ }).click();
-    await expect(box.getByRole("button", { name: "在这里新建项目" })).toBeEnabled();
+    await expect(box.getByRole("button", { name: "用这个仓库新建项目" })).toBeEnabled();
     await shot(page, "open-repository");
     await box.getByRole("option", { name: /old-film/ }).dblclick();
     await expect(page).toHaveTitle("旧片子 - AnimaQuill");
@@ -253,7 +253,7 @@ test.describe("opening from a repository", () => {
     await opening(page)
       .getByRole("option", { name: /empty-one/ })
       .click();
-    await opening(page).getByRole("button", { name: "在这里新建项目" }).click();
+    await opening(page).getByRole("button", { name: "用这个仓库新建项目" }).click();
     const making = page.locator("dialog[data-create-phase]");
     await expect(making.locator('[data-repository="octo/empty-one"]')).toBeVisible();
     await expect(making.getByRole("textbox", { name: "仓库名" })).toHaveCount(0);
@@ -407,7 +407,7 @@ test.describe("the offline mode of a site without a backend", () => {
     await expect(footer(page).locator(`[data-save-status="sync"]`)).toHaveCount(0);
     await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
     await expect(page.getByRole("menuitem", { name: "在线面板…" })).toHaveCount(0);
-    await expect(page.getByRole("menuitem", { name: "打开在线项目…" })).toHaveCount(0);
+    await expect(page.getByRole("menuitem", { name: "从仓库打开…" })).toHaveCount(0);
     await page.keyboard.press("Escape");
     await chooseFrom(page, "文件", "关闭项目");
     await expect(sidebar(page)).toBeVisible();

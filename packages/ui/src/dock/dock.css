@@ -232,6 +232,19 @@
   z-index: 5;
 }
 
+/*
+ * Folded up, no icon of the strip stands out as the one that shows: what it showed is out of the
+ * way, as in VS Code, and a click on it brings it back.
+ */
+.dv-groupview:has(> .dv-tabs-and-actions-container [data-collapsed="true"])
+  > .dv-tabs-and-actions-container
+  .dv-tabs-container
+  > .dv-tab.dv-active-tab {
+  color: var(--dv-activegroup-hiddenpanel-tab-color);
+  background-color: var(--dv-activegroup-hiddenpanel-tab-background-color);
+  box-shadow: none;
+}
+
 /* Where the tabs go when the empty part of their strip is let go here. */
 .aq-strip-target {
   position: fixed;

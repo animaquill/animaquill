@@ -26,6 +26,22 @@ export function PanelTab({ api, params, tabLocation }: IDockviewPanelHeaderProps
     return () => cancelAnimationFrame(frame);
   }, [api, tabLocation]);
 
+  // Down a side, the tab that shows says whether its group is folded up, for screen readers: a
+  // click on it, or Enter, folds the group up or opens it, see `DockArea`.
+  const foldable = strips.canCollapse(api.group);
+  const collapsed = strips.isCollapsed(api.group);
+  useEffect(() => {
+    const tabElement = element.current?.closest(".dv-tab");
+    if (!tabElement) return;
+    const mark = () => {
+      if (foldable && api.isVisible) tabElement.setAttribute("aria-expanded", String(!collapsed));
+      else tabElement.removeAttribute("aria-expanded");
+    };
+    mark();
+    const subscription = api.onDidVisibilityChange(mark);
+    return () => subscription.dispose();
+  }, [api, foldable, collapsed]);
+
   const definition = workbench.panels.get(params.type);
   const Icon = definition?.icon ?? CircleHelp;
   const title = definition ? definition.title(t) : t("panel.unknown.title");

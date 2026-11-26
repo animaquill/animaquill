@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 import { dialog, footer } from "./folder-support.ts";
-import { openCard, projectCard } from "./start-support.ts";
-import { chooseFromMenu, devPageOnly, editorReady, expect, test } from "./support.ts";
+import { onlineProjects, openCard, projectCard } from "./start-support.ts";
+import { devPageOnly, editorReady, expect, test } from "./support.ts";
 
 /**
  * Merging what changed on GitHub, as people see it in the editor (the design of the start page of
@@ -110,7 +110,7 @@ async function opened(page: Page, name = "片头动画"): Promise<string> {
     (lab, called) => lab.seed(called, { repository: "opening" }),
     name,
   );
-  await chooseFromMenu(page, "文件", "打开在线项目…");
+  await onlineProjects(page);
   await openCard(page, name);
   await expect(page).toHaveTitle(`${name} - AnimaQuill`);
   await expect(cloudStatus(page)).toHaveText("已同步");
@@ -682,11 +682,7 @@ test.describe("merges of what changed on GitHub", () => {
         listed: { attention: "conflicts", repository: { state: "paused", reason: "conflicts" } },
       }),
     );
-    await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
-    await page
-      .getByRole("menu")
-      .getByRole("menuitem", { name: "打开在线项目…", exact: true })
-      .click();
+    await onlineProjects(page);
     const card = projectCard(page, "有冲突的");
     await expect(card).toContainText("同步失败");
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -698,11 +694,7 @@ test.describe("opening a project step by step", () => {
   test("ticks each step, and says where the platform is slow", async ({ page }) => {
     await arrive(page, `${ADDRESS}&catchUpMs=3000`);
     const id = await withLab(page, (lab) => lab.seed("慢的", { repository: "slow" }));
-    await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
-    await page
-      .getByRole("menu")
-      .getByRole("menuitem", { name: "打开在线项目…", exact: true })
-      .click();
+    await onlineProjects(page);
     await openCard(page, "慢的");
     await expect(cloudStatus(page)).toHaveText("已同步");
     await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();

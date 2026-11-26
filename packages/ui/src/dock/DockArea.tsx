@@ -129,8 +129,7 @@ export function DockArea() {
       groups.push([
         {
           id: "collapse",
-          label: t("strip.collapse"),
-          checked: collapsed,
+          label: t(collapsed ? "strip.expand" : "strip.collapse"),
           run: () => strips.toggleCollapsed(group),
         },
       ]);

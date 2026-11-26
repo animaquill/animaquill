@@ -2,6 +2,7 @@ import type { Page } from "@playwright/test";
 import { dialog, footer, installChosen, privateText } from "./folder-support.ts";
 import {
   cardMenu,
+  onlineProjects,
   openCard,
   projectCard,
   projectList,
@@ -108,8 +109,7 @@ test.describe("the start page of the online mode", () => {
       lab.seed("教程：关键帧入门", { repository: "keyframes" });
       lab.seed("旅行 Vlog 第 3 集", { repository: "travel-vlog" });
     });
-    await chooseFrom(page, "文件", "打开在线项目…");
-    await showView(page, "全部项目");
+    await onlineProjects(page);
     await expect(page.getByRole("group", { name: "筛选" })).toHaveCount(0);
     await openCard(page, "产品发布短片");
     await expect(page).toHaveTitle("产品发布短片 - AnimaQuill");
@@ -248,8 +248,8 @@ test.describe("the start page of the online mode", () => {
       lab.seed("产品发布短片", { repository: "launch" });
       lab.seed("年会开场", { repository: "annual", ago: 26 * 3_600_000 });
     });
-    // As the menu asks for them; the page reads the list again then.
-    await chooseFrom(page, "文件", "打开在线项目…");
+    // As when people come back to the window; the page reads the list again then.
+    await onlineProjects(page);
     await expect.poll(() => names(page)).toEqual(["产品发布短片", "年会开场"]);
     await showView(page, "最近打开");
     await expect(welcome).toBeVisible();
@@ -266,8 +266,7 @@ test.describe("the start page of the online mode", () => {
       lab.seed("产品发布短片", { repository: "launch" });
       lab.seed("年会开场", { repository: "annual" });
     });
-    await chooseFrom(page, "文件", "打开在线项目…");
-    await showView(page, "全部项目");
+    await onlineProjects(page);
     await expect(projectCard(page, "年会开场")).toBeVisible();
     const bar = await sidebar(page).boundingBox();
     const main = await page.getByRole("main").boundingBox();

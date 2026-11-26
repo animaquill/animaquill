@@ -1330,8 +1330,7 @@ export function StartPage() {
     projectFolders?.getSnapshot ?? noFolders,
   );
   const [now, setNow] = useState(() => Date.now());
-  const [askedForCloud] = useState(() => workbench.cloudColumn.getSnapshot());
-  const [view, setView] = useState<ViewId>(askedForCloud ? "all" : "recent");
+  const [view, setView] = useState<ViewId>("recent");
   const [search, setSearch] = useState("");
   const [renaming, setRenaming] = useState<string | undefined>();
   const [picking, setPicking] = useState<{ card: ProjectCard; x: number; y: number }>();
@@ -1434,24 +1433,6 @@ export function StartPage() {
   useEffect(() => {
     startCovers.show(seen, { onlySeen: watch !== undefined, listedAt: lists.listedAt });
   });
-
-  // "打开在线项目…" of the menu means the projects of the platform, as they are now: asked
-  // before the page was there, or while it is.
-  useEffect(() => {
-    const { cloudColumn } = workbench;
-    const take = (isFirst: boolean) => {
-      if (!cloudColumn.getSnapshot()) return;
-      cloudColumn.set(false);
-      if (!isFirst) {
-        setView("all");
-        setSearch("");
-      }
-      refresh();
-      main.current?.focus({ preventScroll: true });
-    };
-    take(true);
-    return cloudColumn.subscribe(() => take(false));
-  }, [workbench, refresh]);
 
   const newProject = (kind: NewKind = "new") => {
     // Made from a group, it goes into that group.

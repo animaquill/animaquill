@@ -1,5 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
-import { expect } from "./support.ts";
+import { chooseFromMenu, expect } from "./support.ts";
 
 /**
  * The start page, "作品墙", as tests go through it: a side bar of views and groups, and on the right
@@ -8,6 +8,18 @@ import { expect } from "./support.ts";
 
 /** The side bar. */
 export const sidebar = (page: Page) => page.getByRole("navigation", { name: "项目分类" });
+
+/**
+ * All the projects of the platform on the start page, as they are now: the open project closes
+ * first, and the page reads the list again, as when people come back to the window. ("打开在线项目…"
+ * of the file menu did this; "从仓库打开…" took its place, see the design of U1, 8.)
+ */
+export async function onlineProjects(page: Page) {
+  if (!(await sidebar(page).isVisible())) await chooseFromMenu(page, "文件", "关闭项目");
+  await expect(sidebar(page)).toBeVisible();
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+  await showView(page, "全部项目");
+}
 
 /** Goes to a view of the side bar: "最近打开", "全部项目", "收藏", or a group by its name. */
 export async function showView(page: Page, name: string) {
