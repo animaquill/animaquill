@@ -1,4 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { createReadStream, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
@@ -6,7 +7,7 @@ import { FakeGitHub } from "../test/fake-github.ts";
 import { GitHubApp } from "../github/app.ts";
 import { GitHubRepoHost } from "./github-host.ts";
 import { LocalGitRepoHost } from "./local/host.ts";
-import { blobShaOf, bytesOf, type RepoSession } from "./repo-host.ts";
+import { LfsAbsent, blobShaOf, bytesOf, type RepoSession } from "./repo-host.ts";
 
 /**
  * What the archive takes of every repository session (`RepoSession`), whichever provider it is on:
@@ -147,5 +148,35 @@ describe.each(Object.keys(providers))("a repository session on %s", (provider) =
     expect(await session.compare(second, aside)).toEqual({ status: "diverged", mergeBase: first });
     expect(await session.commit("0".repeat(40))).toBeUndefined();
     expect((await session.commit(second))!.parents).toEqual([first]);
+  });
+
+  test("the large file storage: what is not there is absent, what is put in reads back in parts, by its size", async () => {
+    const session = await open();
+    const data = randomBytes(70_000);
+    const object = { oid: createHash("sha256").update(data).digest("hex"), size: data.length };
+    expect(await session.lfsHave([object], "upload")).toEqual([{ kind: "absent" }]);
+    const staged = join(mkdtempSync(join(tmpdir(), "aq-staged-")), "u.part");
+    writeFileSync(staged, data);
+    const file = { path: staged, open: async () => createReadStream(staged) };
+    expect(await session.lfsPut(object, file)).toBe("put");
+    const [have] = await session.lfsHave([object], "download");
+    expect(have?.kind).toBe("present");
+    expect(await session.lfsSizes([object])).toEqual([data.length]);
+    const piece = await session.lfsRead(object, { start: 100, end: 1099 });
+    expect(piece).toMatchObject({ start: 100, size: data.length });
+    const parts: Buffer[] = [];
+    let got = 0;
+    for await (const part of piece.body) {
+      parts.push(part as Buffer);
+      got += (part as Buffer).length;
+      if (got >= 1000) break;
+    }
+    piece.body.destroy();
+    expect(Buffer.concat(parts).subarray(0, 1000).equals(data.subarray(100, 1100))).toBe(true);
+    // Put once more: there, nothing is written.
+    expect(await session.lfsHave([object], "upload")).toMatchObject([{ kind: "present" }]);
+    // What it does not have, read: absent.
+    const other = { oid: "a".repeat(64), size: 3 };
+    await expect(session.lfsRead(other, { start: 0, end: 2 })).rejects.toBeInstanceOf(LfsAbsent);
   });
 });
