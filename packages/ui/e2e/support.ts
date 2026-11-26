@@ -153,7 +153,8 @@ const MODELS_DEV = readFileSync(new URL("fixtures/models-dev.json", import.meta.
 
 /**
  * Answers models.dev with the copy in `fixtures/models-dev.json`, and notes every other request to
- * a host that is not this computer, the site under test, or one of `allowed`, to fail the test.
+ * a host that is not this computer, the site under test, or one of `allowed` (`*.example.com` is
+ * that name and every name under it), to fail the test.
  * A route of a page comes before these, so a test that answers a request itself is not counted.
  */
 async function watchOutside(
@@ -174,7 +175,11 @@ async function watchOutside(
         host === "127.0.0.1" ||
         host === "[::1]" ||
         host === own ||
-        allowed.includes(host)
+        allowed.some((each) =>
+          each.startsWith("*.")
+            ? host.endsWith(each.slice(1)) || host === each.slice(2)
+            : host === each,
+        )
       );
     },
     async (route) => {
