@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { open, readFile, rm, stat } from "node:fs/promises";
+import { link, mkdir, open, readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { request } from "node:http";
 import { writePrivate } from "./data-dir.ts";
@@ -63,14 +63,21 @@ export class LockHeld extends Error {
   }
 }
 
-/** How long a start that holds the lock has to answer, from its start. */
-const STARTING_MS = 60_000;
+/**
+ * How long a start that holds the lock has to answer, from its start: the first start makes the
+ * database, which on Windows with a virus scanner looking at every new file can take minutes;
+ * only a lock older than this whose process is alive and does not answer is taken over (as of a
+ * process whose number another one has now, after a restart of the computer).
+ */
+export const STARTING_MS = 5 * 60_000;
 /** How long one that wrote `backend.json` has to answer a ping. */
 const ANSWER_MS = 10_000;
 
 export interface LockOptions {
   readonly now?: () => number;
   readonly wait?: (ms: number) => Promise<void>;
+  /** Told once where another start is starting, and this one waits for it. */
+  readonly waiting?: ((pid: number) => void) | undefined;
   /** Asks a backend who it is: `ping` unless said. */
   readonly ping?: (backend: BackendNote) => Promise<"ours" | "other" | "refused">;
 }
@@ -99,47 +106,109 @@ export async function takeLock(
   const ask = options.ping ?? ping;
   const lockPath = join(dir, LOCK_FILE);
   const backendPath = join(dir, BACKEND_FILE);
-  for (let round = 0; round < 5; round++) {
+  for (let round = 0; round < 20; round++) {
     const note: LockNote = { pid: process.pid, instance: newInstance(), startedAt: now() };
+    if (await makeLock(lockPath, note)) return held(note, lockPath, backendPath);
+    const seen = await readFile(lockPath, "utf8").catch(() => undefined);
+    if (seen === undefined) continue;
+    let other: LockNote | undefined;
     try {
-      const file = await open(
-        lockPath,
-        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
-        0o600,
-      );
-      try {
-        await file.writeFile(JSON.stringify(note));
-        await file.sync();
-      } finally {
-        await file.close();
-      }
-      return held(note, lockPath, backendPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      other = JSON.parse(seen) as LockNote;
+    } catch {
+      other = undefined;
     }
-    const other = await readJson<LockNote>(lockPath);
-    if (!other || !Number.isInteger(other.pid)) {
-      // Being written right now, or left half written: a moment, then it is taken over.
-      const age = now() - ((await stat(lockPath).catch(() => undefined))?.mtimeMs ?? 0);
-      if (age < 2000) {
-        await wait(500);
-        continue;
-      }
-      await rm(lockPath, { force: true });
-      continue;
-    }
-    if (!isAlive(other.pid)) {
-      await rm(lockPath, { force: true });
+    if (!other || !Number.isInteger(other.pid) || !isAlive(other.pid)) {
+      // A process that is gone, or a lock no start of ours wrote whole: taken over.
+      await takeOver(lockPath, seen, wait);
       continue;
     }
     // Alive: a backend that is starting, or one that runs, or a process of that number that is
     // nothing of ours.
-    const found = await answerOf(other, backendPath, { now, wait, ask });
+    const found = await answerOf(other, backendPath, { now, wait, ask, waiting: options.waiting });
     if (found.kind === "running") return found;
     if (found.kind === "silent") throw new LockHeld(other.pid);
-    await rm(lockPath, { force: true });
+    await takeOver(lockPath, seen, wait);
   }
   throw new Error("the lock of the data folder could not be taken");
+}
+
+/**
+ * Makes the lock, whole or not at all: written into a file of its own, then linked to its name,
+ * which fails where there is one. A disk without links (FAT, exFAT) gets it made with `wx`.
+ */
+async function makeLock(lockPath: string, note: LockNote): Promise<boolean> {
+  const text = JSON.stringify(note);
+  const temporary = `${lockPath}.${note.instance}.tmp`;
+  const file = await open(
+    temporary,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+    0o600,
+  );
+  try {
+    await file.writeFile(text);
+    await file.sync();
+  } finally {
+    await file.close();
+  }
+  try {
+    await link(temporary, lockPath);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") return false;
+    if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EXDEV" && code !== "ENOSYS")
+      throw error;
+  } finally {
+    await rm(temporary, { force: true });
+  }
+  try {
+    const direct = await open(
+      lockPath,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL,
+      0o600,
+    );
+    try {
+      await direct.writeFile(text);
+      await direct.sync();
+    } finally {
+      await direct.close();
+    }
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  }
+}
+
+/** How long one that takes a lock over may hold the right to: one older was left by a crash. */
+const TAKING_MS = 30_000;
+
+/**
+ * Takes away a lock that was `seen` as it is, and nothing else: one start at a time takes over (the
+ * folder `lock.taking`, made or not at all), and only a lock that is still what it read goes. Two
+ * starts after a crash never take each other's new lock away.
+ */
+export async function takeOver(
+  lockPath: string,
+  seen: string,
+  wait: (ms: number) => Promise<void> = sleep,
+): Promise<void> {
+  const guard = `${lockPath}.taking`;
+  try {
+    await mkdir(guard, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    const age = Date.now() - ((await stat(guard).catch(() => undefined))?.mtimeMs ?? Date.now());
+    if (age > TAKING_MS) await rm(guard, { recursive: true, force: true });
+    else await wait(200);
+    return;
+  }
+  try {
+    const now = await readFile(lockPath, "utf8").catch(() => undefined);
+    if (now === seen) await rm(lockPath, { force: true });
+  } finally {
+    await rm(guard, { recursive: true, force: true });
+  }
 }
 
 async function answerOf(
@@ -149,13 +218,16 @@ async function answerOf(
     now,
     wait,
     ask,
+    waiting,
   }: {
+    waiting?: ((pid: number) => void) | undefined;
     now: () => number;
     wait: (ms: number) => Promise<void>;
     ask: NonNullable<LockOptions["ping"]>;
   },
 ): Promise<Running | { kind: "silent" } | { kind: "notOurs" }> {
   // One that is starting writes backend.json once it answers.
+  let told = false;
   for (;;) {
     const backend = await readJson<BackendNote>(backendPath);
     if (backend?.instance === other.instance) {
@@ -168,6 +240,8 @@ async function answerOf(
       }
     }
     if (now() - other.startedAt >= STARTING_MS) return { kind: "notOurs" };
+    if (!told) waiting?.(other.pid);
+    told = true;
     await wait(500);
   }
 }

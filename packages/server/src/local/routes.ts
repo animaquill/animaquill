@@ -33,6 +33,12 @@ export interface LocalRoutesOptions {
   /** The instance of this start, as `backend.json` has it. */
   readonly instance: string;
   readonly version: string;
+  /**
+   * What `POST /api/local/admin/open` gives the command line: the address with a new token unless
+   * said; the backend of `npx animaquill` adds the page in its data folder that leads there, so
+   * that the token never goes into a command line (see `open-page.ts` there).
+   */
+  readonly open?: (() => Promise<{ readonly url: string; readonly page?: string }>) | undefined;
 }
 
 export const ADMIN_PREFIX = "/api/local/admin";
@@ -100,6 +106,6 @@ export const localRoutes =
         onRequest: admin,
         bodyLimit: 1024,
       },
-      async () => ({ url: `${editor}/#aq-token=${tokens.issue()}` }),
+      async () => options.open?.() ?? { url: `${editor}/#aq-token=${tokens.issue()}` },
     );
   };

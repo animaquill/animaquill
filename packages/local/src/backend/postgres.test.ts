@@ -2,9 +2,12 @@ import { spawnSync } from "node:child_process";
 import {
   cpSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -12,7 +15,15 @@ import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, test } from "vitest";
-import { findPrograms, isAlive, makeLinks, NoPostgres, Postgres } from "./postgres.ts";
+import { fileURLToPath } from "node:url";
+import {
+  findPrograms,
+  isAlive,
+  LeftOverRunning,
+  makeLinks,
+  NoPostgres,
+  Postgres,
+} from "./postgres.ts";
 import { NewerDatabase } from "@animaquill/server/database.ts";
 import { readBackend } from "./lock.ts";
 import { startBackend, type StartedBackend } from "./run.ts";
@@ -61,7 +72,7 @@ describe("the links of the libraries", () => {
   );
 });
 
-describe.skipIf(!runs)("PostgreSQL of the data folder", () => {
+describe.skipIf(!runs)("PostgreSQL of the data folder", { timeout: 60_000 }, () => {
   test("is made once, listens on 127.0.0.1 only, and stops", async () => {
     const dir = folder();
     const postgres = new Postgres({
@@ -113,19 +124,62 @@ describe.skipIf(!runs)("PostgreSQL of the data folder", () => {
     expect(isAlive(pid)).toBe(false);
     await after.start();
     await after.stop(4000);
-    // A number that is another process's now.
+    // One that runs and does not answer, as stopped (`kill -STOP`): left alone, and nothing
+    // starts; its postmaster.pid stays where it is.
     if (process.platform === "win32") return;
+    await after.start();
+    const stopped = Number(readFileSync(file, "utf8").split("\n")[0]);
+    process.kill(stopped, "SIGSTOP");
+    try {
+      const third = new Postgres({ ...options, answerMs: 1500 });
+      await expect(third.stopLeftOver()).rejects.toEqual(new LeftOverRunning(stopped));
+      expect(Number(readFileSync(file, "utf8").split("\n")[0])).toBe(stopped);
+    } finally {
+      process.kill(stopped, "SIGCONT");
+    }
+    await after.stop(4000);
+    // A number that is another process's now, alive: not signalled either.
     const stranger = spawnSync("sh", ["-c", "sleep 30 >/dev/null 2>&1 & echo $!"], {
       encoding: "utf8",
     });
     const other = Number(stranger.stdout.trim());
     writeFileSync(file, `${other}\n${before.folder}\n1\n5432\n\n127.0.0.1\n`);
-    expect(await after.stopLeftOver()).toBe("foreign");
+    await expect(after.stopLeftOver()).rejects.toEqual(new LeftOverRunning(other));
     expect(isAlive(other)).toBe(true);
     process.kill(other);
+    // Gone: the file is stale, and PostgreSQL starts over it.
+    await new Promise((done) => setTimeout(done, 200));
+    expect(await after.stopLeftOver()).toBe("stale");
     await after.start();
     await after.stop(4000);
   });
+
+  test.skipIf(process.platform === "win32")(
+    "starts in a folder whose name a shell would read, and nothing of the name runs",
+    async () => {
+      const marker = folder();
+      // What a shell reading the name would run writes where the test looks.
+      process.env["AQ_TEST_MARK"] = marker;
+      try {
+        for (const name of ['a"b', "a$(touch $AQ_TEST_MARK/one)c", "a`touch $AQ_TEST_MARK/two`c"]) {
+          const dir = join(folder(), name);
+          mkdirSync(dir, { recursive: true });
+          const postgres = new Postgres({
+            programs: programs!,
+            dataDir: dir,
+            password: OURS,
+            logFile: join(dir, "logs", "pg.log"),
+          });
+          await postgres.init();
+          await postgres.start();
+          await postgres.stop(4000);
+        }
+      } finally {
+        delete process.env["AQ_TEST_MARK"];
+      }
+      expect(readdirSync(marker)).toEqual([]);
+    },
+  );
 });
 
 describe.skipIf(!runs)("the backend", () => {
@@ -181,7 +235,15 @@ describe.skipIf(!runs)("the backend", () => {
     if (first.kind !== "started") throw new Error("not started");
     backend = first;
     expect(said).toEqual(["第一次准备数据库（几秒）…", "启动数据库…", "更新数据库结构…"]);
-    const token = first.addressToOpen().split("#aq-token=")[1]!;
+    const opening = await first.addressToOpen();
+    const token = opening.url.split("#aq-token=")[1]!;
+    // The browser is given a page of the data folder, only ours to read, that goes on there.
+    const page = fileURLToPath(opening.page!);
+    expect(page.startsWith(dir)).toBe(true);
+    expect(statSync(page).mode & 0o777).toBe(0o600);
+    expect(readFileSync(page, "utf8")).toContain(
+      `location.replace(${JSON.stringify(opening.url)})`,
+    );
     const origin = `http://animaquill.localhost:${port}`;
     const exchange = () =>
       call(
@@ -193,6 +255,8 @@ describe.skipIf(!runs)("the backend", () => {
       );
     const answer = await exchange();
     expect(answer.status).toBe(200);
+    // Its token is taken: the page is gone.
+    expect(existsSync(page)).toBe(false);
     const cookie = String(answer.headers["set-cookie"]).split(";")[0]!;
     const { binding } = JSON.parse(answer.body) as { binding: string };
     const who = () =>

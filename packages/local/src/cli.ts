@@ -8,7 +8,14 @@ import { NewerDatabase } from "@animaquill/server/database.ts";
 import { PortInUse, startLocalServer } from "./server.ts";
 import { DataDirRefused, defaultDataDir } from "./backend/data-dir.ts";
 import { adminRequest, LockHeld, readBackend } from "./backend/lock.ts";
-import { findPrograms, NoPostgres, PostgresFailed } from "./backend/postgres.ts";
+import { checkedOpening, type Opening } from "./backend/open-page.ts";
+import {
+  findPrograms,
+  isAlive,
+  LeftOverRunning,
+  NoPostgres,
+  PostgresFailed,
+} from "./backend/postgres.ts";
 import { startBackend } from "./backend/run.ts";
 import { check, describe, guide } from "./mcp/commands.ts";
 import { findProject } from "./mcp/find.ts";
@@ -55,7 +62,8 @@ const HELP = `用法：animaquill [选项]
 选项：
   --offline          只启动离线模式，不起后端和数据库
   --data-dir <目录>  数据目录，默认 ${defaultDataDir()}（也可以用环境变量 AQ_DATA_DIR）
-  --database <网址>  用自己的 PostgreSQL，比如 postgres://用户:密码@主机:5432/库名
+  --database <网址>  用自己的 PostgreSQL，比如 postgres://用户@主机:5432/库名。带密码的网址
+                     请用环境变量 AQ_DATABASE_URL 给：命令行里的密码同一台电脑的其他用户能看到
   --port <端口>      使用的端口，默认 ${LOCAL_PORT}。浏览器里的项目和设置跟着端口走，
                      换了端口就看不到原来端口下的项目，平时不要改。
   --no-open          不自动打开浏览器
@@ -189,6 +197,7 @@ function sayRefused(error: unknown, logFile: string | undefined): void {
       writable: `别的用户能改${mode}`,
       link: "是一个链接",
       notFolder: "不是文件夹",
+      name: '的路径里有 " 或 %（Windows 上数据库的启动程序读不对）',
     }[error.reason];
     console.error(`数据目录 ${error.path} ${why}，为了安全不启动。`);
     if (error.reason === "writable") console.error(`运行 chmod 700 "${error.path}" 后再试。`);
@@ -207,6 +216,11 @@ function sayRefused(error: unknown, logFile: string | undefined): void {
       `这个数据目录被更新版本的 AnimaQuill 用过，这个版本（${version}）打不开它。请运行 npx animaquill@latest。`,
     );
     return;
+  } else if (error instanceof LeftOverRunning) {
+    console.error(
+      `数据目录里有一个数据库进程（进程 ${error.pid}）还在运行，但是没有回应：可能正在恢复，或者被暂停了，或者 pg18.password 被改过。` +
+        `等一会儿再试；确定它不再需要时，结束进程 ${error.pid} 后再试。`,
+    );
   } else if (error instanceof PostgresFailed && error.missingLibrary) {
     console.error(
       "数据库启动不了：这台电脑缺少 Microsoft Visual C++ 运行库。装上以后再试：https://aka.ms/vs/17/release/vc_redist.x64.exe",
@@ -269,14 +283,21 @@ async function startOffline(port: number, open: boolean): Promise<number> {
   return -1;
 }
 
-/** Opens an address that signs in, or says it where no browser opened. */
-async function openOrSay(address: string, open: boolean): Promise<void> {
-  if (open && (await openBrowser(address))) {
-    console.log("浏览器没有打开时，运行 npx animaquill open。");
+/**
+ * Opens what signs in, by its page in the data folder (the token in no command line, see
+ * open-page.ts), or says the address where no browser opened or none is to be.
+ */
+async function openOrSay(opening: Opening, open: boolean, opened?: string): Promise<void> {
+  if (open && opening.page !== undefined && (await openBrowser(opening.page))) {
+    console.log(opened ?? "浏览器没有打开时，运行 npx animaquill open。");
     return;
   }
-  console.log(`用这个网址打开（10 分钟内有效，只能用一次）：${address}`);
+  console.log(`用这个网址打开（10 分钟内有效，只能用一次）：${opening.url}`);
 }
+
+const NOT_RUNNING = "AnimaQuill 没有在运行（或者是离线模式）：先运行 npx animaquill。";
+const WRONG_ANSWER =
+  "在 AnimaQuill 的端口上回答的不像是 AnimaQuill，什么都没有打开。先关掉那个程序，再运行 npx animaquill。";
 
 /** `animaquill open`: the editor of the backend that runs, signed in, in the browser. */
 async function openRunning(argv: readonly string[]): Promise<number> {
@@ -293,18 +314,35 @@ async function openRunning(argv: readonly string[]): Promise<number> {
   }
   const dir = dataDirFrom(values["data-dir"]);
   const backend = await readBackend(dir);
-  const answer = backend && (await adminRequest(backend, "POST", "open"));
-  const url =
-    answer && answer !== "refused" && answer.status === 200
-      ? (answer.body as { url?: unknown } | undefined)?.url
-      : undefined;
-  if (typeof url !== "string") {
-    console.error("AnimaQuill 没有在运行（或者是离线模式）：先运行 npx animaquill。");
+  // A backend.json of a process that is gone says nothing: its port may be anyone's now.
+  if (!backend || !Number.isInteger(backend.pid) || !isAlive(backend.pid)) {
+    console.error(NOT_RUNNING);
     return 1;
   }
-  await openOrSay(url, values["no-open"] !== true);
+  const answer = await adminRequest(backend, "POST", "open");
+  if (answer === "refused" || answer.status !== 200) {
+    console.error(NOT_RUNNING);
+    return 1;
+  }
+  const opening = await checkedOpening(backend, answer.body, dir);
+  if (!opening) {
+    console.error(WRONG_ANSWER);
+    return 1;
+  }
+  await openOrSay(opening, values["no-open"] !== true, "已在浏览器里打开。");
   return 0;
 }
+
+/** The address of a database of people's own, from the environment, in place of `--database`. */
+const DATABASE_VARIABLE = "AQ_DATABASE_URL";
+
+const hasPassword = (address: string) => {
+  try {
+    return new URL(address).password !== "";
+  } catch {
+    return false;
+  }
+};
 
 const dataDirFrom = (given: string | undefined): string =>
   resolve(given ?? (process.env["AQ_DATA_DIR"] || defaultDataDir()));
@@ -349,7 +387,15 @@ async function main(argv: readonly string[]): Promise<number> {
   }
   const open = !options["no-open"];
   if (options.offline) return startOffline(port, open);
-  const why = await noBackendHere(options.database);
+  // The address of a database of people's own, with its password: better from the environment,
+  // as what is in a command line others of the computer can read.
+  const database = options.database ?? (process.env[DATABASE_VARIABLE] || undefined);
+  delete process.env[DATABASE_VARIABLE];
+  if (options.database !== undefined && hasPassword(options.database))
+    console.error(
+      `提醒：--database 里的密码，同一台电脑上的其他用户能看到（在进程列表里）。改用环境变量 ${DATABASE_VARIABLE} 给这个网址。`,
+    );
+  const why = await noBackendHere(database);
   if (why) {
     console.log(why);
     return startOffline(port, open);
@@ -364,7 +410,7 @@ async function main(argv: readonly string[]): Promise<number> {
       version,
       site: built("site"),
       scenePage: readFileSync(built("scene.html"), "utf8"),
-      database: options.database,
+      database,
       say: (line) => console.log(line),
     });
   } catch (error) {
@@ -372,15 +418,18 @@ async function main(argv: readonly string[]): Promise<number> {
     return 1;
   }
   if (backend.kind === "running") {
-    console.log(`AnimaQuill 已经在运行：${new URL(backend.address).origin}/`);
-    if (open && (await openBrowser(backend.address))) console.log("已在浏览器里打开。");
-    else console.log(`用这个网址打开（10 分钟内有效，只能用一次）：${backend.address}`);
+    if (!backend.opening) {
+      console.error(WRONG_ANSWER);
+      return 1;
+    }
+    console.log(`AnimaQuill 已经在运行：${backend.editor}/`);
+    await openOrSay(backend.opening, open, "已在浏览器里打开。");
     return 0;
   }
 
   console.log(`已启动：${backend.server.sites.editor}/`);
   console.log("请用 Chrome 或 Edge 打开。只有这台电脑能访问。按 Ctrl+C 停止。");
-  await openOrSay(backend.addressToOpen(), open);
+  await openOrSay(await backend.addressToOpen(), open);
 
   let signals = 0;
   const stop = () => {

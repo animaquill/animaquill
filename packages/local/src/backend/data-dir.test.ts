@@ -12,6 +12,8 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   DataDirRefused,
+  restrictOnWindows,
+  unsafeDataDir,
   defaultDataDir,
   masterKeyOf,
   passwordOf,
@@ -114,5 +116,40 @@ describe("its secrets", () => {
     await writePrivate(join(dir, "backend.json"), "one");
     await writePrivate(join(dir, "backend.json"), "two");
     if (posix) expect(statSync(join(dir, "backend.json")).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe("on Windows", () => {
+  test("a data folder with what cmd reads in double quotes is refused there, and only there", () => {
+    expect(unsafeDataDir('C:\\Users\\ada\\a"b', "win32")).toBe(true);
+    expect(unsafeDataDir("C:\\Users\\ada\\100%", "win32")).toBe(true);
+    expect(unsafeDataDir("C:\\Users\\张 三\\AppData\\Local\\AnimaQuill\\server", "win32")).toBe(
+      false,
+    );
+    expect(unsafeDataDir('/home/ada/a"b$(x)', "linux")).toBe(false);
+  });
+
+  test("the folder is made the user's alone by its SID, without what it inherits", () => {
+    const ran: string[][] = [];
+    const run = (program: string, args: readonly string[]) => {
+      ran.push([program, ...args]);
+      return program === "whoami" ? '"desktop-1\\ada","S-1-5-21-1-2-3-1001"\r\n' : "";
+    };
+    const dir = "C:\\Users\\ada\\AppData\\Local\\AnimaQuill\\server";
+    expect(restrictOnWindows(dir, { USERPROFILE: "C:\\Users\\ada" }, run)).toEqual([]);
+    expect(ran).toEqual([
+      ["whoami", "/user", "/fo", "csv", "/nh"],
+      ["icacls", dir, "/inheritance:r", "/grant:r", "*S-1-5-21-1-2-3-1001:(OI)(CI)F", "/Q"],
+    ]);
+  });
+
+  test("says where the folder is not in the user's folder, or could not be made theirs alone", () => {
+    const failing = () => {
+      throw new Error("拒绝访问。\r\nmore");
+    };
+    const warnings = restrictOnWindows("D:\\aq", { USERPROFILE: "C:\\Users\\ada" }, failing);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toMatch(/^数据目录 D:\\aq 不在你的用户目录里/);
+    expect(warnings[1]).toMatch(/没能把数据目录 D:\\aq 设成只有你能访问（拒绝访问。/);
   });
 });

@@ -3,6 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  STARTING_MS,
+  takeOver,
   BACKEND_FILE,
   LOCK_FILE,
   LockHeld,
@@ -111,7 +113,7 @@ describe("the lock", () => {
     expect(lock.note.pid).toBe(process.pid);
     // And without a backend.json, once it had its minute to start.
     const other = folder();
-    lockOf(other, { pid: OTHER, instance: "x", startedAt: time.now() - 120_000 });
+    lockOf(other, { pid: OTHER, instance: "x", startedAt: time.now() - STARTING_MS - 1000 });
     expect(
       ((await takeLock(other, { ...time, ping: async () => "ours" })) as HeldLock).note.pid,
     ).toBe(process.pid);
@@ -127,5 +129,51 @@ describe("the lock", () => {
       new LockHeld(OTHER),
     );
     expect(time.now() - start).toBeGreaterThanOrEqual(10_000);
+  });
+
+  test("of one that is starting is waited for for minutes, as a first start on Windows may take", async () => {
+    const dir = folder();
+    const time = clock();
+    lockOf(dir, { pid: OTHER, instance: "slow", startedAt: time.now() });
+    const told: number[] = [];
+    const found = await takeLock(dir, {
+      now: time.now,
+      wait: async (ms) => {
+        await time.wait(ms);
+        if (time.now() > 1_000_000 + 4 * 60_000)
+          backendOf(dir, { instance: "slow", port: 7651, adminKey: "k", origin: "x" });
+      },
+      ping: async () => "ours",
+      waiting: (pid) => told.push(pid),
+    });
+    expect(found).toMatchObject({ kind: "running" });
+    expect(told).toEqual([OTHER]);
+  });
+
+  test("taken over by two at once, neither takes the other's new lock away", async () => {
+    const dir = folder();
+    const path = join(dir, LOCK_FILE);
+    const stale = JSON.stringify({ pid: 2 ** 22 + 17, instance: "gone", startedAt: 0 });
+    writeFileSync(path, stale);
+    // A takes it over and makes its own; B read the stale one before, and takes over late.
+    await takeOver(path, stale);
+    const a = (await takeLock(dir)) as HeldLock;
+    await takeOver(path, stale);
+    expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ instance: a.note.instance });
+    // And while one is taking over, the other waits for it.
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(`${path}.taking`);
+    let waited = 0;
+    await takeOver(path, readFileSync(path, "utf8"), async () => void (waited += 1));
+    expect(waited).toBe(1);
+    expect(JSON.parse(readFileSync(path, "utf8"))).toMatchObject({ instance: a.note.instance });
+  });
+
+  test("is written whole: nothing of it is there half written", async () => {
+    const dir = folder();
+    const lock = (await takeLock(dir)) as HeldLock;
+    expect(JSON.parse(readFileSync(join(dir, LOCK_FILE), "utf8"))).toEqual(lock.note);
+    const { readdirSync } = await import("node:fs");
+    expect(readdirSync(dir).toSorted()).toEqual([LOCK_FILE]);
   });
 });

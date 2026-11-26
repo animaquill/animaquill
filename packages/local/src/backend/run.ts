@@ -1,11 +1,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { buildApp } from "@animaquill/server/app.ts";
 import { bindingSecretOf, localCredentials } from "@animaquill/server/auth/local-credentials.ts";
 import { loadConfig, readIfThere, type Config } from "@animaquill/server/config.ts";
 import { createDatabase, MIGRATIONS, migrationsDue } from "@animaquill/server/database.ts";
 import { localRoutes } from "@animaquill/server/local/routes.ts";
-import { OneTimeTokens } from "@animaquill/server/local/tokens.ts";
+import { OneTimeTokens, TOKEN_MS } from "@animaquill/server/local/tokens.ts";
 import { startServer } from "@animaquill/server/server.ts";
 import { upgradeOf } from "@animaquill/server/sync/socket.ts";
 import { startWorker } from "@animaquill/server/worker.ts";
@@ -13,6 +14,7 @@ import { startLocalServer, type LocalApi, type LocalServer } from "../server.ts"
 import { masterKeyOf, passwordOf, prepareDataDir } from "./data-dir.ts";
 import { adminRequest, newAdminKey, takeLock, type HeldLock } from "./lock.ts";
 import { fileLogger, openLogs, type LogFiles } from "./logs.ts";
+import { checkedOpening, OpenPages, type Opening } from "./open-page.ts";
 import { findPrograms, MAJOR, Postgres, PostgresFailed } from "./postgres.ts";
 
 /**
@@ -41,18 +43,24 @@ export interface StartedBackend {
   readonly server: LocalServer;
   /** The log of this start. */
   readonly log: string;
-  /** The address that signs the browser in, once, for ten minutes. */
-  addressToOpen(): string;
+  /**
+   * What signs the browser in, once, for ten minutes: the address, and the page of the data folder
+   * that leads there, which is what the browser is given (open-page.ts).
+   */
+  addressToOpen(): Promise<Opening>;
   /** Stops it all, within about four seconds: see `stop`. */
   stop(): Promise<void>;
   /** Stops PostgreSQL at once, as after a second Ctrl+C: it recovers as it starts again. */
   stopNow(): Promise<void>;
 }
 
-/** Another start of the same data folder answers: its address to open, signed in. */
+/** Another start of the same data folder answers: what to open of it, signed in, where it said. */
 export interface RunningBackend {
   readonly kind: "running";
-  readonly address: string;
+  /** The editor's site of that start. */
+  readonly editor: string;
+  /** Undefined where its answer was not one to open, see `checkedOpening`. */
+  readonly opening: Opening | undefined;
 }
 
 /** The address of `--database`, as the server's settings take it. */
@@ -91,15 +99,20 @@ export async function startBackend(
   const { dataDir } = options;
   // What this process makes is its user's alone: the repositories, the files of assets, the logs.
   if (process.platform !== "win32") process.umask(0o077);
-  await prepareDataDir(dataDir);
-  const lock = await takeLock(dataDir);
+  for (const warning of (await prepareDataDir(dataDir)).warnings) options.say(warning);
+  const lock = await takeLock(dataDir, {
+    waiting: (pid) => options.say(`AnimaQuill 好像正在启动（进程 ${pid}），等它启动好…`),
+  });
   if ("kind" in lock) {
     const opened = await adminRequest(lock.backend, "POST", "open");
-    const url =
-      opened !== "refused" && opened.status === 200
-        ? (opened.body as { url?: unknown })?.url
-        : undefined;
-    return { kind: "running", address: typeof url === "string" ? url : `${lock.backend.origin}/` };
+    return {
+      kind: "running",
+      editor: lock.backend.origin,
+      opening:
+        opened !== "refused" && opened.status === 200
+          ? await checkedOpening(lock.backend, opened.body, dataDir)
+          : undefined,
+    };
   }
   const undo: Undo[] = [() => lock.release()];
   const unwind = async () => {
@@ -223,6 +236,25 @@ async function start(
   if (!masterKey) throw new Error(`${join(dataDir, "master.key")} is not a master key`);
   const bindingSecret = bindingSecretOf(masterKey.key);
   const tokens = new OneTimeTokens();
+  // What a start before left of pages with tokens goes; this one's go as their tokens do.
+  const pages = new OpenPages(dataDir);
+  await pages.removeAll();
+  undo.push(() => pages.removeAll());
+  const issue = async (): Promise<{ url: string; page: string }> => {
+    let page: string | undefined;
+    let gone = false;
+    const token = tokens.issue(() => {
+      gone = true;
+      if (page) void pages.remove(page);
+    });
+    const url = `${editor}/#aq-token=${token}`;
+    page = await pages.write(url);
+    const written = page;
+    if (gone) await pages.remove(written);
+    // Its token is too old by then, whether anybody asked for one since or not.
+    setTimeout(() => void pages.remove(written), TOKEN_MS + 1000).unref();
+    return { url, page: written };
+  };
   const adminKey = newAdminKey();
 
   const backend = startServer(config, {
@@ -240,6 +272,7 @@ async function start(
             adminKey,
             instance: lock.note.instance,
             version,
+            open: issue,
           }),
         },
         { level: "info", stream: logs.stream },
@@ -275,7 +308,10 @@ async function start(
     kind: "started",
     server,
     log: logs.path,
-    addressToOpen: () => `${editor}/#aq-token=${tokens.issue()}`,
+    addressToOpen: async () => {
+      const { url, page } = await issue();
+      return { url, page: pathToFileURL(page).href };
+    },
     stop() {
       stopping ??= (async () => {
         const until = Date.now() + 4000;
@@ -285,6 +321,7 @@ async function start(
         await stopBoth();
         await server.close();
         if (postgres) await postgres.stop(Math.max(1000, until - Date.now()));
+        await pages.removeAll().catch(() => {});
         await lock.release().catch(() => {});
         await logs.close().catch(() => {});
       })();
@@ -292,6 +329,7 @@ async function start(
     },
     stopNow: async () => {
       await postgres?.stopNow();
+      await pages.removeAll().catch(() => {});
       await lock.release().catch(() => {});
     },
   };

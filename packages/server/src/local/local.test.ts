@@ -42,6 +42,25 @@ describe("the one-time tokens", () => {
     expect(tokens.take(second)).toBe(false);
   });
 
+  test("say when each is gone: taken, too old, or made way for a newer one", () => {
+    let now = 1000;
+    const tokens = new OneTimeTokens(() => now);
+    const gone: string[] = [];
+    const taken = tokens.issue(() => gone.push("taken"));
+    tokens.issue(() => gone.push("old"));
+    expect(tokens.take("x".repeat(43))).toBe(false);
+    expect(gone).toEqual([]);
+    tokens.take(taken);
+    expect(gone).toEqual(["taken"]);
+    now += TOKEN_MS;
+    tokens.issue();
+    expect(gone).toEqual(["taken", "old"]);
+    const crowd = new OneTimeTokens();
+    crowd.issue(() => gone.push("first"));
+    for (let index = 0; index < 32; index++) crowd.issue();
+    expect(gone).toEqual(["taken", "old", "first"]);
+  });
+
   test("keep 32 waiting at the most, the oldest going first", () => {
     const tokens = new OneTimeTokens();
     const all = Array.from({ length: 33 }, () => tokens.issue());

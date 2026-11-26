@@ -14,19 +14,23 @@ const MOST = 32;
 const hash = (token: string) => createHash("sha256").update(token).digest();
 
 export class OneTimeTokens {
-  readonly #waiting: { readonly hash: Buffer; readonly until: number }[] = [];
+  readonly #waiting: {
+    readonly hash: Buffer;
+    readonly until: number;
+    readonly gone: (() => void) | undefined;
+  }[] = [];
   readonly #now: () => number;
 
   constructor(now: () => number = Date.now) {
     this.#now = now;
   }
 
-  /** A new token. */
-  issue(): string {
+  /** A new token; `gone` is told once it was taken, or went for its age or for a newer one. */
+  issue(gone?: () => void): string {
     const token = randomBytes(32).toString("base64url");
     this.#forgetOld();
-    if (this.#waiting.length >= MOST) this.#waiting.shift();
-    this.#waiting.push({ hash: hash(token), until: this.#now() + TOKEN_MS });
+    if (this.#waiting.length >= MOST) this.#waiting.shift()?.gone?.();
+    this.#waiting.push({ hash: hash(token), until: this.#now() + TOKEN_MS, gone });
     return token;
   }
 
@@ -39,13 +43,13 @@ export class OneTimeTokens {
     for (const [index, each] of this.#waiting.entries())
       if (timingSafeEqual(each.hash, given)) found = index;
     if (found < 0) return false;
-    this.#waiting.splice(found, 1);
+    this.#waiting.splice(found, 1)[0]?.gone?.();
     return true;
   }
 
   #forgetOld() {
     const now = this.#now();
     for (let index = this.#waiting.length - 1; index >= 0; index--)
-      if (this.#waiting[index]!.until <= now) this.#waiting.splice(index, 1);
+      if (this.#waiting[index]!.until <= now) this.#waiting.splice(index, 1)[0]?.gone?.();
   }
 }

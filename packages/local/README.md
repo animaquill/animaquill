@@ -31,7 +31,9 @@ AnimaQuill 0.4.0
 
 默认 Windows 是 `%LOCALAPPDATA%\AnimaQuill\server\`，macOS 和 Linux 是 `~/.animaquill/server/`，可以用 `--data-dir` 或环境变量 `AQ_DATA_DIR` 换。里面有数据库（`pg18/`）、项目的仓库（`repos/`）、大文件、日志（`logs/`）和主密钥 `master.key`。主密钥加密存着的 AI key：**请另存一份**，丢了以后要重新填 key。
 
-在 macOS 和 Linux 上，这个目录只有你能访问（700，文件 600）；别的用户能改它时 AnimaQuill 不启动，并告诉你怎么改回来。
+在 macOS 和 Linux 上，这个目录只有你能访问（700，文件 600）；别的用户能改它时 AnimaQuill 不启动，并告诉你怎么改回来。在 Windows 上，每次启动都把它设成只有你能访问（去掉继承的权限）；数据目录不在你的用户目录里、或者设不成时会提醒。
+
+打开浏览器时，带一次性登录的网址不会出现在任何命令行里：AnimaQuill 在数据目录里写一个只有你能读的跳转页（`open-….html`），让浏览器打开它；登录用掉或者 10 分钟后就删掉。
 
 ## 能做什么
 
@@ -57,7 +59,7 @@ animaquill mcp|check|describe|guide [--project <项目文件夹>]
 
 - `--offline`：只启动离线模式，不起后端和数据库。
 - `--data-dir <目录>`：数据目录，见上。
-- `--database <网址>`：用自己的 PostgreSQL，比如 `postgres://用户:密码@主机:5432/库名`，不起随包的数据库。
+- `--database <网址>`：用自己的 PostgreSQL，比如 `postgres://用户@主机:5432/库名`，不起随包的数据库。带密码的网址请放在环境变量 `AQ_DATABASE_URL` 里（比如 `AQ_DATABASE_URL=postgres://用户:密码@主机:5432/库名 npx animaquill`）：命令行里的密码，同一台电脑上的其他用户能在进程列表里看到。
 - `open`：在浏览器里打开已经在运行的 AnimaQuill。再运行一次 `npx animaquill` 也一样。
 - `--port <端口>`：默认 7651。浏览器把项目、设置和 AI 的 key 按地址（包括端口）分开存，换了端口就看不到原来端口下存在浏览器里的项目（文件夹项目还在文件夹里，重新打开即可）。平时不要改。
 - `--no-open`：不自动打开浏览器。

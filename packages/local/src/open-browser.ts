@@ -19,6 +19,23 @@ export interface OpenCommand {
   readonly args: readonly string[];
 }
 
+/** Whether an address is one of a page: `http:`, or a `file:` of an `.html`. */
+export function opensAsPage(url: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol === "http:") return true;
+  return (
+    parsed.protocol === "file:" &&
+    parsed.search === "" &&
+    parsed.hash === "" &&
+    parsed.pathname.endsWith(".html")
+  );
+}
+
 /** The program and its arguments that open `url` on a system. */
 export function openCommand(
   url: string,
@@ -38,6 +55,8 @@ export function openCommand(
  * or it gave up at once, as `xdg-open` without a desktop, so that whoever opens says the address.
  */
 export function openBrowser(url: string): Promise<boolean> {
+  // Only a page: what the system opens otherwise could be a program.
+  if (!opensAsPage(url)) return Promise.resolve(false);
   const { command, args } = openCommand(url);
   return new Promise((done) => {
     let child;

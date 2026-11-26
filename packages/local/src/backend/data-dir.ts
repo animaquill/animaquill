@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, readdir, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { dirname, join, win32 } from "node:path";
 
 /**
  * The data folder of the backend of `npx animaquill` (design O4 of AnimaQuill Cloud, section 1):
@@ -28,7 +29,7 @@ export const defaultDataDir = (
 /** Why the data folder is not one to start with, for what people are told. */
 export class DataDirRefused extends Error {
   override name = "DataDirRefused";
-  readonly reason: "notFolder" | "link" | "owner" | "writable";
+  readonly reason: "notFolder" | "link" | "owner" | "writable" | "name";
   readonly path: string;
   readonly mode: number | undefined;
   constructor(reason: DataDirRefused["reason"], path: string, mode?: number) {
@@ -40,14 +41,75 @@ export class DataDirRefused extends Error {
 }
 
 const posix = process.platform !== "win32";
+
+/**
+ * A path PostgreSQL's own programs would hand to a shell wrong: on Windows `pg_ctl` puts the data
+ * folder into a command of `cmd` in double quotes, where `"` ends them and `%` expands. Elsewhere
+ * nothing here goes through a shell (postgres.ts), so any name is fine.
+ */
+export const unsafeDataDir = (dir: string, platform: NodeJS.Platform = process.platform): boolean =>
+  platform === "win32" && /["%\r\n]/.test(dir);
 /** The user of this process, on POSIX. */
 const me = () => process.getuid?.();
 
+/** Runs a program of Windows to its end: its output. */
+export type RunProgram = (program: string, args: readonly string[]) => string;
+
+const runProgram: RunProgram = (program, args) =>
+  execFileSync(program, [...args], {
+    encoding: "utf8",
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+
+/**
+ * Windows: the folder is made this user's alone, as 700 is elsewhere: what it inherits goes
+ * (`icacls /inheritance:r`), and only this user, by its SID, gets everything, for what is in it too.
+ * Resolves to what people are to be told: where that could not be done, and where the folder is
+ * not in the user's own folder (`%USERPROFILE%`), which others of the computer often may read.
+ */
+export function restrictOnWindows(
+  dir: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  run: RunProgram = runProgram,
+): string[] {
+  const warnings: string[] = [];
+  const profile = env["USERPROFILE"];
+  if (!profile || !isInside(dir, profile))
+    warnings.push(
+      `数据目录 ${dir} 不在你的用户目录里：同一台电脑的其他用户可能读得到它，AnimaQuill 已经尽量只留给你自己。`,
+    );
+  try {
+    const line = run("whoami", ["/user", "/fo", "csv", "/nh"]).trim();
+    const sid = /"(S-1-[0-9-]+)"\s*$/.exec(line)?.[1];
+    if (!sid) throw new Error(`whoami said ${line}`);
+    run("icacls", [dir, "/inheritance:r", "/grant:r", `*${sid}:(OI)(CI)F`, "/Q"]);
+  } catch (error) {
+    warnings.push(
+      `没能把数据目录 ${dir} 设成只有你能访问（${(error as Error).message.split("\n")[0]}）：同一台电脑的其他用户可能读得到里面的密钥。`,
+    );
+  }
+  return warnings;
+}
+
+/** Whether a path of Windows is inside a folder, by Windows' rules (no matter the case). */
+const isInside = (path: string, folder: string) => {
+  const inside = win32.relative(win32.resolve(folder), win32.resolve(path));
+  return inside !== "" && !inside.startsWith("..") && !win32.isAbsolute(inside);
+};
+
 /**
  * Makes the folder where it is not there, and sees that only this user may get at it. Resolves
- * to the modes it made tighter, for the log.
+ * to the modes it made tighter, for the log, and what people are to be told (Windows).
  */
-export async function prepareDataDir(dir: string): Promise<{ readonly tightened: string[] }> {
+export async function prepareDataDir(
+  dir: string,
+  windows: {
+    readonly env?: Readonly<Record<string, string | undefined>>;
+    readonly run?: RunProgram;
+  } = {},
+): Promise<{ readonly tightened: string[]; readonly warnings: string[] }> {
+  if (unsafeDataDir(dir)) throw new DataDirRefused("name", dir);
   // The folders above are made the user's alone too, where they are made now: ~/.animaquill holds
   // the key of the relay of AI tools as well.
   await mkdir(dirname(dir), { recursive: true, mode: 0o700 });
@@ -56,7 +118,7 @@ export async function prepareDataDir(dir: string): Promise<{ readonly tightened:
   if (found.isSymbolicLink()) throw new DataDirRefused("link", dir);
   if (!found.isDirectory()) throw new DataDirRefused("notFolder", dir);
   const tightened: string[] = [];
-  if (!posix) return { tightened };
+  if (!posix) return { tightened, warnings: restrictOnWindows(dir, windows.env, windows.run) };
   if (found.uid !== me()) throw new DataDirRefused("owner", dir, found.mode & 0o777);
   if ((found.mode & 0o022) !== 0) throw new DataDirRefused("writable", dir, found.mode & 0o777);
   if ((found.mode & 0o077) !== 0) {
@@ -75,7 +137,7 @@ export async function prepareDataDir(dir: string): Promise<{ readonly tightened:
       tightened.push(path);
     }
   }
-  return { tightened };
+  return { tightened, warnings: [] };
 }
 
 /** Writes a file that only this user may read, all of it or nothing, in place of what was there. */
