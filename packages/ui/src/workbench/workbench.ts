@@ -3878,6 +3878,19 @@ export class Workbench {
    * imports at all: elsewhere a project folder opens as it is.
    */
   /**
+   * Whether there are repositories to open projects from: online, where the platform saves
+   * projects to repositories at all (one that saves them nowhere says so as people sign in).
+   */
+  get opensRepositories(): boolean {
+    if (this.mode !== "online" || !this.cloud || !this.#platform) return false;
+    const who = this.account?.getSnapshot();
+    if (who?.status === "signedIn" && who.repositories === "none") return false;
+    return who?.status === "signedIn" && who.repositories === "local"
+      ? true
+      : this.#platform.repository !== undefined;
+  }
+
+  /**
    * "从仓库打开" (the design of U1, 2.2): people choose a repository, and it opens as the project
    * of theirs that it is, comes back as a new project from what it has, or gets a new project.
    * Where the server keeps every project in a repository of its own, those that no project is
@@ -3886,7 +3899,7 @@ export class Workbench {
   async openRepository(): Promise<void> {
     const cloud = this.cloud;
     const platform = this.#platform;
-    if (this.mode !== "online" || !cloud || !platform) return;
+    if (!this.opensRepositories || !cloud || !platform) return;
     const who = this.account?.getSnapshot();
     const local = who?.status === "signedIn" && who.repositories === "local";
     const opening = new RepositoryOpening({
@@ -4663,6 +4676,8 @@ export class Workbench {
         title: (t) => t("openRepository.action"),
         run: () => void this.openRepository(),
         menu: { name: "file", group: "open" },
+        visible: () => this.opensRepositories,
+        enabled: () => this.opensRepositories,
       });
     }
     if (this.projectFolders) {

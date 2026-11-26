@@ -102,6 +102,8 @@ interface Situation {
   readonly canFolders: boolean;
   /** Offline: there is an online mode to sign in to, see `Host.goOnline`. */
   readonly canGoOnline: boolean;
+  /** Online: projects can be opened from repositories, see `Workbench.opensRepositories`. */
+  readonly opensRepositories?: boolean;
 }
 
 /** What exports that stopped halfway take on this device, which people can clear, see 6.1. */
@@ -724,12 +726,13 @@ function NewCards({
       {mode === "online" ? (
         <>
           {card("new", Plus, t("start.new.project"), t("start.new.onlineAbout"))}
-          {card(
-            "openRepository",
-            FolderGit2,
-            t("start.new.openRepository"),
-            t("start.new.openRepositoryAbout"),
-          )}
+          {situation.opensRepositories &&
+            card(
+              "openRepository",
+              FolderGit2,
+              t("start.new.openRepository"),
+              t("start.new.openRepositoryAbout"),
+            )}
           {card("import", FolderInput, t("start.new.import"), t("start.new.importAbout"))}
         </>
       ) : canFolders ? (
@@ -1377,6 +1380,7 @@ export function StartPage() {
     mode: workbench.mode,
     canFolders: workbench.canFolders,
     canGoOnline: workbench.canGoOnline,
+    opensRepositories: workbench.opensRepositories,
   };
   const cards = useMemo(() => composeCards(lists, organized), [lists, organized]);
   const sections = sectionsOf({
