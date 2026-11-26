@@ -17,6 +17,7 @@ const PORTS: Readonly<Record<string, number>> = {
 
 let backend: Backend;
 
+// oxlint-disable-next-line eslint/no-empty-pattern -- Playwright gives the fixtures first
 test.beforeAll(async ({}, info) => {
   test.setTimeout(180_000);
   backend = new Backend(PORTS[info.project.name] ?? 7656);
@@ -100,20 +101,20 @@ test("with nothing online yet, the start page says where the projects of the off
     () =>
       new Promise<void>((done, fail) => {
         const request = indexedDB.open("aq-offline-animaquill", 1);
-        request.onupgradeneeded = () => {
+        request.addEventListener("upgradeneeded", () => {
           request.result.createObjectStore("projects", { keyPath: "id" });
           request.result.createObjectStore("updates", { keyPath: "seq", autoIncrement: true });
-        };
-        request.onerror = () => fail(request.error);
-        request.onsuccess = () => {
+        });
+        request.addEventListener("error", () => fail(request.error));
+        request.addEventListener("success", () => {
           const database = request.result;
           const writing = database.transaction("projects", "readwrite");
           writing.objectStore("projects").put({ id: "from-before", name: "以前的片子" });
-          writing.oncomplete = () => {
+          writing.addEventListener("complete", () => {
             database.close();
             done();
-          };
-        };
+          });
+        });
       }),
   );
   await page.goto(await backend.addressToOpen());

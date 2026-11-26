@@ -23,6 +23,8 @@ import { startBackend, type StartedBackend } from "./run.ts";
  * and scripts/oss-local-run of AnimaQuill Cloud as one of a container's own.
  */
 
+/** The password of the tests' PostgreSQL. */
+const OURS = `test-${process.pid}`;
 const root = process.platform !== "win32" && process.getuid?.() === 0;
 const programs = await findPrograms().catch((error: unknown) => {
   if (error instanceof NoPostgres) return undefined;
@@ -65,7 +67,7 @@ describe.skipIf(!runs)("PostgreSQL of the data folder", () => {
     const postgres = new Postgres({
       programs: programs!,
       dataDir: dir,
-      password: "the-password",
+      password: OURS,
       logFile: join(dir, "pg.log"),
     });
     expect(await postgres.isMade()).toBe(false);
@@ -80,7 +82,7 @@ describe.skipIf(!runs)("PostgreSQL of the data folder", () => {
     expect(lines[4]).toBe("");
     expect(lines[5]).toBe("127.0.0.1");
     const { Client } = await import("pg");
-    const wrong = new Client({ ...postgres.connection(), password: "nope" });
+    const wrong = new Client({ ...postgres.connection(), password: `${OURS}-not` });
     await expect(wrong.connect()).rejects.toMatchObject({ code: "28P01" });
     const client = new Client(postgres.connection());
     await client.connect();

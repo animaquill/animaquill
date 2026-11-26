@@ -1,15 +1,18 @@
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import {
+  appendFile,
   lstat,
+  mkdir,
+  open,
   readFile,
   rename,
   rm,
+  stat,
   symlink,
   writeFile,
-  appendFile,
-  mkdir,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 import { dirname, join, relative, resolve } from "node:path";
 import { Client } from "pg";
@@ -121,41 +124,57 @@ export async function makeLinks(root: string): Promise<void> {
   }
 }
 
-/** What runs a program of PostgreSQL: its output, for the log and for what went wrong. */
+/**
+ * What runs a program of PostgreSQL: its output, for the log and for what went wrong. The output
+ * goes through a file, never a pipe: `pg_ctl start` leaves PostgreSQL running, which on Windows
+ * inherits the handles of `pg_ctl`, and would hold a pipe open for as long as it runs.
+ */
 async function run(
   program: string,
   args: readonly string[],
-  options: { readonly detached?: boolean; readonly timeoutMs?: number } = {},
+  options: {
+    readonly detached?: boolean;
+    readonly timeoutMs?: number;
+    readonly outputFile?: string;
+  } = {},
 ): Promise<{ code: number | null; output: string }> {
   // What PostgreSQL would take from the environment of whoever started this, it does not.
   const env = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !key.startsWith("PG")),
   );
-  return new Promise((done, fail) => {
-    const child = spawn(program, [...args], {
-      env: { ...env, LC_ALL: "C" },
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-      // A process group of its own, so that Ctrl+C in the terminal reaches only this process,
-      // which stops PostgreSQL in its order.
-      detached: options.detached === true && process.platform !== "win32",
+  const outputFile =
+    options.outputFile ?? join(tmpdir(), `animaquill-pg-${process.pid}-${Date.now()}.log`);
+  const file = await open(outputFile, "a", 0o600);
+  const from = (await file.stat()).size;
+  try {
+    const { code } = await new Promise<{ code: number | null }>((done, fail) => {
+      const child = spawn(program, [...args], {
+        env: { ...env, LC_ALL: "C" },
+        stdio: ["ignore", file.fd, file.fd],
+        windowsHide: true,
+        // A process group of its own, so that Ctrl+C in the terminal reaches only this process,
+        // which stops PostgreSQL in its order.
+        detached: options.detached === true && process.platform !== "win32",
+      });
+      const timer =
+        options.timeoutMs === undefined
+          ? undefined
+          : setTimeout(() => child.kill("SIGKILL"), options.timeoutMs);
+      child.on("error", (error) => {
+        clearTimeout(timer);
+        fail(error);
+      });
+      child.on("exit", (exitCode) => {
+        clearTimeout(timer);
+        done({ code: exitCode });
+      });
     });
-    let output = "";
-    child.stdout.on("data", (chunk: Buffer) => (output += chunk.toString()));
-    child.stderr.on("data", (chunk: Buffer) => (output += chunk.toString()));
-    const timer =
-      options.timeoutMs === undefined
-        ? undefined
-        : setTimeout(() => child.kill("SIGKILL"), options.timeoutMs);
-    child.on("error", (error) => {
-      clearTimeout(timer);
-      fail(error);
-    });
-    child.on("close", (code) => {
-      clearTimeout(timer);
-      done({ code, output });
-    });
-  });
+    const text = await readFile(outputFile, "utf8").catch(() => "");
+    return { code, output: Buffer.from(text).subarray(from).toString() };
+  } finally {
+    await file.close();
+    if (options.outputFile === undefined) await rm(outputFile, { force: true });
+  }
 }
 
 /** PostgreSQL did not do what it was asked: what it said is in `output` and the log. */
@@ -187,9 +206,12 @@ export interface PostgresOptions {
   /** The data folder of the backend: `pg18/` is in it. */
   readonly dataDir: string;
   readonly password: string;
-  /** The log of PostgreSQL. */
+  /** The log of PostgreSQL; what `initdb` and `pg_ctl` say goes next to it (`.ctl`). */
   readonly logFile: string;
 }
+
+/** Where a log is longer than this as PostgreSQL starts, the one before is kept, and no more. */
+const LOG_MOST = 10 * 1024 * 1024;
 
 const CONFIG = `
 # Written by AnimaQuill: only this machine, by TCP with a password, never a Unix socket.
@@ -237,17 +259,22 @@ export class Postgres {
     // initdb reads the password from a file, of its own for the moment.
     const passwordFile = `${making}.pw`;
     await writeFile(passwordFile, `${this.#options.password}\n`, { mode: 0o600 });
-    const made = await run(this.#options.programs.initdb, [
-      "-D",
-      making,
-      "-U",
-      USER,
-      `--pwfile=${passwordFile}`,
-      "--auth=scram-sha-256",
-      "--encoding=UTF8",
-      "--no-locale",
-      "--no-instructions",
-    ]);
+    await mkdir(dirname(this.#options.logFile), { recursive: true });
+    const made = await run(
+      this.#options.programs.initdb,
+      [
+        "-D",
+        making,
+        "-U",
+        USER,
+        `--pwfile=${passwordFile}`,
+        "--auth=scram-sha-256",
+        "--encoding=UTF8",
+        "--no-locale",
+        "--no-instructions",
+      ],
+      { outputFile: this.#ctlLog },
+    );
     await rm(passwordFile, { force: true });
     if (made.code !== 0) throw new PostgresFailed("initdb", made.code, made.output);
     await appendFile(join(making, "postgresql.conf"), CONFIG);
@@ -255,9 +282,16 @@ export class Postgres {
     await rename(making, this.folder);
   }
 
+  get #ctlLog(): string {
+    return `${this.#options.logFile}.ctl`;
+  }
+
   /** Starts it, and makes its database where there is none. */
   async start(): Promise<void> {
     await mkdir(dirname(this.#options.logFile), { recursive: true });
+    for (const log of [this.#options.logFile, this.#ctlLog])
+      if (((await stat(log).catch(() => undefined))?.size ?? 0) > LOG_MOST)
+        await rename(log, `${log}.old`).catch(() => {});
     for (let attempt = 0; ; attempt++) {
       const port = await freePort();
       const started = await run(
@@ -274,7 +308,7 @@ export class Postgres {
           "-o",
           `-p ${port}`,
         ],
-        { detached: true },
+        { detached: true, outputFile: this.#ctlLog },
       );
       if (started.code === 0) {
         this.#port = port;
