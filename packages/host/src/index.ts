@@ -2012,6 +2012,21 @@ export interface LfsAccount {
   readonly acknowledgedAt?: number;
   /** By repository, the largest first. */
   readonly repositories: readonly LfsRepositoryUse[];
+  /**
+   * The large file storage of the server's own repositories, where it keeps projects there (an
+   * open-source server without GitHub): all of it together, the largest file it takes, and how
+   * much more it takes now, by the limit it is set up for or the room of its disk.
+   */
+  readonly local?: LocalLfsUse;
+}
+
+/** See `LfsAccount.local`. Bytes. */
+export interface LocalLfsUse {
+  readonly usedBytes: number;
+  readonly fileBytes: number;
+  readonly maxBytes?: number;
+  readonly leftBytes?: number;
+  readonly leftBy?: "max" | "disk";
 }
 
 /**

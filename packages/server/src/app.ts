@@ -277,6 +277,7 @@ export const buildApp = (
     limits: platform.limits,
     access,
     gate,
+    localLfs: async () => (platform.ready() ? platform.lfs?.()?.localSummary() : undefined),
   });
   // What changed of people's lists, at once.
   if (platform.events)

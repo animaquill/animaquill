@@ -376,7 +376,13 @@ function DefaultStorageRows({
   const rows = useMemo(
     () =>
       state && online && uploads.available
-        ? placeRows(state, snapshot.items, new Set(missing.keys()), workbench.here())
+        ? placeRows(
+            state,
+            snapshot.items,
+            new Set(missing.keys()),
+            workbench.here(),
+            workbench.uploads.fileMost,
+          )
         : [],
     [state, online, uploads, snapshot.items, missing, workbench],
   );

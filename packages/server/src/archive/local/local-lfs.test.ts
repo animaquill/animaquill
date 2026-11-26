@@ -367,4 +367,28 @@ describe.skipIf(!TEST_DATABASE)("large files of repositories here, on a database
       objects: [{ oid: oidOf(bad), state: "missing" }],
     });
   });
+
+  test("people hear what the repositories here hold, the largest file, and how much more they take", async () => {
+    const m = await made();
+    await sent(m.project.id, randomBytes(3000));
+    local.fileBytes = 1000 * 1024 ** 2;
+    room = { free: 100 * GIB, total: 1000 * GIB };
+    const read = async () => (await l.p.send("GET", "/api/me/lfs")).json.local;
+    // By the disk: 100 GiB free, of which 5 % of 1000 GiB stays.
+    expect(await read()).toEqual({
+      usedBytes: 3000,
+      fileBytes: 1000 * 1024 ** 2,
+      leftBytes: 50 * GIB,
+      leftBy: "disk",
+    });
+    // By the limit the server is set up for, where that is less.
+    local.maxBytes = 10_000;
+    expect(await read()).toEqual({
+      usedBytes: 3000,
+      fileBytes: 1000 * 1024 ** 2,
+      maxBytes: 10_000,
+      leftBytes: 7000,
+      leftBy: "max",
+    });
+  });
 });

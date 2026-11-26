@@ -10,7 +10,10 @@ import styles from "./UploadsSection.module.css";
 
 /** How the files on their way go, all of them together. */
 export function uploadTotals(snapshot: UploadsSnapshot) {
-  const going = snapshot.items.filter(isGoing);
+  // What waits for the disk of the server is not on its way: nothing of it goes now.
+  const going = snapshot.items.filter(
+    (item) => isGoing(item) && !(item.phase === "busy" && item.diskFull === true),
+  );
   const size = going.reduce((all, item) => all + item.size, 0);
   const received = going.reduce((all, item) => all + Math.min(item.received, item.size), 0);
   const speed = going.reduce((all, item) => all + (item.speed ?? 0), 0);
@@ -55,7 +58,15 @@ export function UploadsSection({ focused }: { focused: boolean }) {
   const summary = useMemo(
     () =>
       placeSummary(
-        state ? placeRows(state, snapshot.items, new Set(missing.keys()), workbench.here()) : [],
+        state
+          ? placeRows(
+              state,
+              snapshot.items,
+              new Set(missing.keys()),
+              workbench.here(),
+              workbench.uploads.fileMost,
+            )
+          : [],
       ),
     [state, snapshot.items, missing, workbench],
   );
@@ -92,7 +103,7 @@ export function UploadsSection({ focused }: { focused: boolean }) {
           )}
           {item.phase === "blocked" && snapshot.blocked
             ? t(`storage.uploads.blocked.${snapshot.blocked}`)
-            : phaseText(t, item)}
+            : phaseText(t, item, workbench.uploadLimitWords())}
         </span>
         <span className={styles.buttons}>
           {item.phase === "failed" && (

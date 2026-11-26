@@ -184,6 +184,7 @@ import {
   type UploadProblem,
   type UploadProject,
 } from "../storage/uploads.ts";
+import type { UploadLimitWords } from "../storage/upload-text.ts";
 import { GITHUB_BILLING } from "../storage/links.ts";
 import {
   AssetDownloads,
@@ -1216,7 +1217,31 @@ export class Workbench {
       dismiss: (id) => this.notifications.dismiss(id),
       failed: (message) => this.notifications.push(message),
       sizes: { large: LARGE_IMPORT_BYTES, most: LFS_FILE_MOST, batch: BATCH_IMPORT_BYTES },
+      fileMost: async () => {
+        if (this.lfsAccount.getSnapshot().account?.local === undefined)
+          await this.lfsAccount.refresh();
+        return this.uploads.fileMost;
+      },
     });
+    // The largest file a server of its own takes, as it says: what fits is judged by it.
+    const followFileMost = () =>
+      this.uploads.setFileMost(
+        this.lfsAccount.getSnapshot().account?.local?.fileBytes ?? LFS_FILE_MOST,
+      );
+    this.lfsAccount.subscribe(followFileMost);
+    followFileMost();
+    // Asked once someone is signed in on a server that keeps projects in repositories of its own.
+    const askLocal = () => {
+      const who = this.account?.getSnapshot();
+      if (
+        who?.status === "signedIn" &&
+        who.repositories === "local" &&
+        this.lfsAccount.getSnapshot().status !== "ready"
+      )
+        void this.lfsAccount.refresh();
+    };
+    this.account?.subscribe(askLocal);
+    askLocal();
     // Said elsewhere, as in the dialog: what waited for it goes.
     this.lfsAccount.subscribe(() => {
       if (this.lfsAccount.acknowledged) this.newAssets.knownNow();
@@ -3554,6 +3579,15 @@ export class Workbench {
     if (!this.lfsAccount.acknowledged) await this.lfsAccount.refresh();
     if (this.lfsAccount.acknowledged) await this.uploads.add(assets);
     else await this.choosePlaces(assets);
+  }
+
+  /** The numbers failures of uploads are said with, see `UploadLimitWords`. */
+  uploadLimitWords(): UploadLimitWords {
+    const max = this.lfsAccount.getSnapshot().account?.local?.maxBytes;
+    return {
+      most: formatSize(this.uploads.fileMost),
+      max: max === undefined ? this.t("storage.uploads.space.someLimit") : formatSize(max),
+    };
   }
 
   /**

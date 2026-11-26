@@ -64,7 +64,16 @@ export function PlacesDialog({ request }: { request: PlacesRequest }) {
   const dialog = useRef<HTMLDialogElement>(null);
 
   const rows = useMemo(
-    () => (state ? placeRows(state, items, new Set(missing.keys()), workbench.here()) : []),
+    () =>
+      state
+        ? placeRows(
+            state,
+            items,
+            new Set(missing.keys()),
+            workbench.here(),
+            workbench.uploads.fileMost,
+          )
+        : [],
     [state, items, missing, workbench],
   );
   const [chosen, setChosen] = useState<ReadonlySet<string>>(() =>
@@ -91,11 +100,9 @@ export function PlacesDialog({ request }: { request: PlacesRequest }) {
   const sorted = sortRows(rows, order);
   const { shown, folded } = unfolded ? { shown: sorted, folded: [] } : foldRows(sorted);
   const { count, bytes } = totalOf(rows, chosen);
-  // Nothing of GitHub's to say yes to for a repository of the server's own.
-  const asks =
-    !workbench.localRepository() &&
-    account.account?.acknowledgedAt === undefined &&
-    account.status !== "none";
+  // Nothing of GitHub's to say yes to, or to pay, for a repository of the server's own.
+  const local = workbench.localRepository();
+  const asks = !local && account.account?.acknowledgedAt === undefined && account.status !== "none";
   const repo = status?.repository?.fullName;
 
   const toggle = (row: PlaceRow) => {
@@ -133,7 +140,9 @@ export function PlacesDialog({ request }: { request: PlacesRequest }) {
       case "on":
         return t("storage.uploads.dialog.on");
       case "tooLarge":
-        return t("storage.uploads.dialog.tooLarge");
+        return t("storage.uploads.dialog.tooLarge", {
+          most: formatSize(workbench.uploads.fileMost),
+        });
       case "noFile":
         return t("storage.uploads.dialog.noFile");
       default:
@@ -259,18 +268,21 @@ export function PlacesDialog({ request }: { request: PlacesRequest }) {
         <div className={styles.summary} role="status">
           <p className={styles.total}>
             <span>{t("storage.uploads.dialog.total", { count, size: formatSize(bytes) })}</span>
-            {repo && (
+            {repo && !local && (
               <span className={styles.repo}>
                 {t("storage.uploads.dialog.repository", { repo })}
               </span>
             )}
           </p>
-          <p>
-            {t("storage.uploads.dialog.cost")}{" "}
-            <a href={GITHUB_BILLING} target="_blank" rel="noopener noreferrer">
-              {t("storage.uploads.dialog.seeQuota")} ↗
-            </a>
-          </p>
+          {/* GitHub's room and what it costs: nothing of a repository of the server's own. */}
+          {!local && (
+            <p>
+              {t("storage.uploads.dialog.cost")}{" "}
+              <a href={GITHUB_BILLING} target="_blank" rel="noopener noreferrer">
+                {t("storage.uploads.dialog.seeQuota")} ↗
+              </a>
+            </p>
+          )}
           <details>
             <summary>{t("storage.uploads.dialog.kinds")}</summary>
             {(["here", "lfs", "platform", "remote"] as const).map((kind) => (

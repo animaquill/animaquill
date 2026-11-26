@@ -6,7 +6,7 @@ import type { MenuItem } from "../app/Menu.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import { formatSize } from "../transfer/transfer.ts";
 import { percentOf } from "./upload-text.ts";
-import { LFS_FILE_MOST, type UploadItem, type UploadProblem } from "./uploads.ts";
+import type { UploadItem, UploadProblem } from "./uploads.ts";
 import styles from "./marks.module.css";
 
 /** What the picture of an asset says of where its file is, see `UploadMark`. */
@@ -55,6 +55,7 @@ export function useAssetMarks(): ReadonlyMap<string, AssetMark> {
 /** A small sign in the corner of the picture of an asset, with its words on hover. */
 export function UploadMark({ mark }: { mark: AssetMark | undefined }) {
   const { t } = useTranslation();
+  const limits = useWorkbench().uploadLimitWords();
   if (!mark) return null;
   const title =
     mark.kind === "lfs"
@@ -64,7 +65,7 @@ export function UploadMark({ mark }: { mark: AssetMark | undefined }) {
         : mark.kind === "uploading"
           ? t("storage.uploads.badge.uploading", { percent: mark.percent })
           : t("storage.uploads.badge.failed", {
-              reason: t(`storage.uploads.problem.${mark.problem}`),
+              reason: t(`storage.uploads.problem.${mark.problem}`, limits),
             });
   return (
     <span
@@ -122,7 +123,7 @@ export function usePlaceMenu(): (assets: readonly string[]) => MenuItem | undefi
     const allHere = files.every(({ asset }) => asset.storage === "local");
     const can = files.filter(
       ({ id, asset }) =>
-        asset.storage === "local" && !going.has(id) && (asset.size ?? 0) <= LFS_FILE_MOST,
+        asset.storage === "local" && !going.has(id) && (asset.size ?? 0) <= uploads.fileMost,
     );
     const bytes = can.reduce((all, { asset }) => all + (asset.size ?? 0), 0);
     const isCloud = cloud?.getSnapshot().kind === "linked";

@@ -134,7 +134,7 @@ const checkLfs = async (
   host: LocalGitRepoHost,
   link: { readonly projectId: string; readonly repoId: number } & Parameters<typeof placeOf>[0],
   log: Logger,
-  at: Date,
+  checkedAt: Date,
 ): Promise<void> => {
   const place = placeOf(link) as LocalPlace;
   const noted = await db
@@ -183,10 +183,10 @@ const checkLfs = async (
       eq(lfsObjects.oid, object.oid),
     );
     if (await host.lfsIsWhole(place, object)) {
-      await db.update(lfsObjects).set({ confirmedAt: at }).where(which);
+      await db.update(lfsObjects).set({ confirmedAt: checkedAt }).where(which);
       continue;
     }
-    await host.lfsPutAside(place, object.oid, at);
+    await host.lfsPutAside(place, object.oid, checkedAt);
     await db.delete(lfsObjects).where(which);
     log.warn(
       { project: link.projectId, size: object.size },

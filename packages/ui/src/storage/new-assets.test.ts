@@ -15,6 +15,7 @@ function world({
   place = { chosen: "lfs", written: false, effective: "lfs" } as DefaultPlace,
   acknowledgeTakes = true,
   local = false,
+  fileMost = undefined as number | undefined,
 } = {}) {
   const state = {
     key: "p1" as string | undefined,
@@ -64,6 +65,7 @@ function world({
     dismiss: (id) => notices.delete(id),
     failed: (message) => failed.push(message),
     sizes: { large: 100 * MB, most: 2 * 1024 * MB, batch: 1024 * MB },
+    fileMost: async () => fileMost,
   });
   const press = async (id: number, label: string) => {
     const action = notices.get(id)?.options.actions?.find((each) => each.label === label);
@@ -271,6 +273,15 @@ describe("assets just imported, before people said they know", () => {
     expect(w.sent).toEqual([["a", "b", "e"], ["d"]]);
     expect([...w.notices.values()].map(({ message }) => message)).toEqual([
       "storage.uploads.notice.tooLargeOne(1:c.mov)",
+    ]);
+  });
+
+  it("of a server of its own set up for smaller files keep what is larger here, and say how large it takes", async () => {
+    const w = world({ local: true, fileMost: 500 * MB });
+    await w.assets.imported(["a", "b", "e"]);
+    expect(w.sent).toEqual([["a", "b"]]);
+    expect([...w.notices.values()].map(({ message }) => message)).toEqual([
+      "storage.uploads.notice.tooLargeOne(1:e.mov)",
     ]);
   });
 });

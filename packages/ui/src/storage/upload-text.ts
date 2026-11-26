@@ -35,8 +35,14 @@ export function progressText(
     : t("storage.uploads.row.progressEta", { ...values, eta });
 }
 
+/**
+ * The numbers a failure is said with, where the storage has them: the largest file (`most`) and all
+ * of it together (`max`), as a server of its own is set up for. See `Workbench.uploadLimitWords`.
+ */
+export type UploadLimitWords = { readonly most: string; readonly max: string };
+
 /** The state of a file in a list, short: "排队", "62% · 12 MB/s", "离线，联网后接着传"… */
-export function phaseText(t: TFunction, item: UploadItem): string {
+export function phaseText(t: TFunction, item: UploadItem, limits?: UploadLimitWords): string {
   switch (item.phase) {
     case "sending":
       return item.speed === undefined
@@ -46,7 +52,7 @@ export function phaseText(t: TFunction, item: UploadItem): string {
             speed: formatSize(item.speed),
           });
     case "failed":
-      return t(`storage.uploads.problem.${item.problem ?? "refused"}`);
+      return t(`storage.uploads.problem.${item.problem ?? "refused"}`, limits ?? {});
     case "blocked":
       return t("storage.uploads.phase.queued");
     case "busy":

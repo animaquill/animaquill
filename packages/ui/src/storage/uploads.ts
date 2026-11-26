@@ -389,6 +389,24 @@ export class AssetUploads {
   subscribe = this.#emitter.subscribe;
   getSnapshot = (): UploadsSnapshot => this.#snapshot;
 
+  #fileMost = LFS_FILE_MOST;
+
+  /**
+   * The largest file the large file storage takes: GitHub's, or the one a server of its own is set
+   * up for (`LfsAccount.local`), which can be less.
+   */
+  get fileMost(): number {
+    return this.#fileMost;
+  }
+
+  setFileMost(bytes: number): void {
+    if (bytes === this.#fileMost) return;
+    this.#fileMost = bytes;
+    // A new snapshot, so that what is shown of what fits is drawn again.
+    this.#snapshot = { ...this.#snapshot };
+    this.#emitter.emit();
+  }
+
   /** Whether uploads can be kept at all in this browser, with a platform that takes them. */
   get available(): boolean {
     return this.#options.store !== undefined && this.#options.lfs() !== undefined;
@@ -661,7 +679,7 @@ export class AssetUploads {
     const oid = oidOf(record.hash);
     try {
       if (oid === undefined) throw new Failed("refused");
-      if (record.size > LFS_FILE_MOST) throw new Failed("tooLarge");
+      if (record.size > this.#fileMost) throw new Failed("tooLarge");
       this.#setLive(record.asset, { phase: "reading", received: record.received ?? 0 });
       let file = await this.#file(record, false, signal);
       let restarts = 0;
@@ -975,7 +993,7 @@ export class AssetUploads {
     const fresh = new Map<string, UploadRecord>();
     for (const asset of new Set(assets)) {
       const found = state.assets?.[asset];
-      if (found?.hash === undefined || found.size === undefined || found.size > LFS_FILE_MOST)
+      if (found?.hash === undefined || found.size === undefined || found.size > this.#fileMost)
         continue;
       // There already, for this very content, where it counts: in the repository of the project.
       if (this.#isThere(asset)) continue;

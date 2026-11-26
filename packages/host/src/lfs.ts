@@ -5,6 +5,7 @@ import {
   LfsRefused,
   type LfsAccess,
   type LfsAccount,
+  type LocalLfsUse,
   type LfsAccountAccess,
   type LfsObjectState,
   type LfsRefusal,
@@ -308,10 +309,28 @@ export const lfsAccountOf = (value: unknown): LfsAccount | undefined => {
   const account = text(value.account);
   if (account === undefined || !Array.isArray(value.repositories)) return undefined;
   const acknowledgedAt = count(value.acknowledgedAt);
+  const local = localOf(value.local);
   return {
     account,
     ...optional("acknowledgedAt", acknowledgedAt),
     repositories: value.repositories.flatMap((each) => repositoryOf(each) ?? []),
+    ...optional("local", local),
+  };
+};
+
+/** What the server says of its own repositories' storage, or undefined where it is not that. */
+const localOf = (value: unknown): LocalLfsUse | undefined => {
+  if (!isObject(value)) return undefined;
+  const usedBytes = count(value.usedBytes);
+  const fileBytes = count(value.fileBytes);
+  if (usedBytes === undefined || fileBytes === undefined) return undefined;
+  const leftBy = value.leftBy === "max" || value.leftBy === "disk" ? value.leftBy : undefined;
+  const leftBytes = count(value.leftBytes);
+  return {
+    usedBytes,
+    fileBytes,
+    ...optional("maxBytes", count(value.maxBytes)),
+    ...(leftBytes !== undefined && leftBy !== undefined && { leftBytes, leftBy }),
   };
 };
 

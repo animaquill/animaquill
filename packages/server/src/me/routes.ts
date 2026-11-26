@@ -11,6 +11,7 @@ import { usageOf, NO_USAGE } from "../library/usage.ts";
 import { NO_LIMITS, type PersonLimits } from "../limits.ts";
 import type { Sealer } from "../seal.ts";
 import { changeLfs, lfsChangesOf, readLfs } from "./lfs.ts";
+import type { LocalLfsSummary } from "../lfs/uploads.ts";
 import { imageStartOf, isImageHash, type ChatImages } from "./chat-images.ts";
 import { PLATFORM_ID } from "../sync/hub.ts";
 import { aiChangesOf, applyAiSync, readAiSync } from "./ai-sync.ts";
@@ -113,6 +114,11 @@ export interface MeRoutesOptions {
   readonly oldestEditor?: string | undefined;
   /** How much each person may have, see limits.ts: nothing is limited unless said. */
   readonly limits?: PersonLimits | undefined;
+  /**
+   * The large file storage of the server's own repositories, as people are told of it with theirs
+   * (`local` of /api/me/lfs): none where there is none.
+   */
+  readonly localLfs?: (() => Promise<LocalLfsSummary | undefined>) | undefined;
 }
 
 /** The header a page of the editor says its version in, with the conversations it writes. */
@@ -254,8 +260,9 @@ export const meRoutes = async (app: FastifyInstance, options: MeRoutesOptions) =
       const database = db();
       if (!user || !database) return reply;
       const found = await readLfs(database, user.userId, options.access ?? OWNER_ONLY);
+      const local = await options.localLfs?.();
       reply.header("cache-control", "no-store");
-      return { account: user.userId, ...found };
+      return { account: user.userId, ...found, ...(local && { local }) };
     },
   );
 

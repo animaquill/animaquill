@@ -1,5 +1,5 @@
 import { placedAsset } from "@animaquill/core";
-import { CircleAlert, Cloud, Download, ExternalLink, Upload } from "lucide-react";
+import { CircleAlert, Cloud, Download, ExternalLink, HardDrive, Upload } from "lucide-react";
 import { useSyncExternalStore, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
@@ -123,7 +123,7 @@ export function AssetPlace({ asset }: { asset: string }) {
         <>
           <p className={styles.problem} role="alert">
             <CircleAlert size={13} aria-hidden />
-            {t(`storage.uploads.problem.${problem}`)}
+            {t(`storage.uploads.problem.${problem}`, workbench.uploadLimitWords())}
           </p>
           <Buttons>
             {/* What has to be said first comes first; trying again before it fails again. */}
@@ -160,9 +160,13 @@ export function AssetPlace({ asset }: { asset: string }) {
         </>,
       );
     }
-    const headline = going.replaced
-      ? t("storage.uploads.row.replaced")
-      : t("storage.uploads.row.uploading");
+    // Waiting for the disk of the server: nothing goes, and nothing looks as if it did.
+    const waitsForDisk = going.phase === "busy" && going.diskFull === true;
+    const headline = waitsForDisk
+      ? t("storage.uploads.row.waitingDisk")
+      : going.replaced
+        ? t("storage.uploads.row.replaced")
+        : t("storage.uploads.row.uploading");
     const line =
       going.phase === "queued"
         ? going.ahead
@@ -176,27 +180,31 @@ export function AssetPlace({ asset }: { asset: string }) {
               ? t("storage.uploads.row.paused", { percent: percentOf(going) })
               : going.phase === "blocked"
                 ? t(`storage.uploads.blocked.${snapshot.blocked ?? "notCloud"}`)
-                : going.phase === "offline" || going.phase === "busy"
-                  ? `${phaseText(t, going)} · ${percentOf(going)}%`
-                  : progressText(t, going);
+                : waitsForDisk
+                  ? phaseText(t, going)
+                  : going.phase === "offline" || going.phase === "busy"
+                    ? `${phaseText(t, going)} · ${percentOf(going)}%`
+                    : progressText(t, going);
     const bar = going.phase === "checking" || going.phase === "pushing" ? 100 : percentOf(going);
     return frame(
       "going",
       <>
         <p className={styles.headline}>
-          <Upload size={13} aria-hidden />
+          {waitsForDisk ? <HardDrive size={13} aria-hidden /> : <Upload size={13} aria-hidden />}
           {headline}
         </p>
-        <div
-          className={styles.bar}
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={bar}
-          aria-label={headline}
-        >
-          <span style={{ width: `${bar}%` }} />
-        </div>
+        {!waitsForDisk && (
+          <div
+            className={styles.bar}
+            role="progressbar"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={bar}
+            aria-label={headline}
+          >
+            <span style={{ width: `${bar}%` }} />
+          </div>
+        )}
         <p className={styles.note} role="status">
           {line}
         </p>

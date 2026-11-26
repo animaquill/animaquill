@@ -56,6 +56,11 @@ export interface NewAssetsOptions {
    * files together, told of.
    */
   readonly sizes: { readonly large: number; readonly most: number; readonly batch: number };
+  /**
+   * The largest file the storage of the open project takes, where the server says (one of its own
+   * can be set up for less than `sizes.most`), asked for as it is needed.
+   */
+  readonly fileMost?: () => Promise<number | undefined>;
 }
 
 /** What waits for people to say they know, for one project. */
@@ -126,7 +131,9 @@ export class NewAssets {
     const { project, assets } = this.#options;
     const open = project();
     if (!open || ids.length === 0) return;
-    const sizes = this.#sizesFor(open);
+    const sizes = await this.#sizesFor(open);
+    // Another project meanwhile: these are not its assets.
+    if (project()?.key !== open.key) return;
     const plan = planImport(ids, assets(), open.place.effective, sizes);
     if (plan.send.length === 0 && plan.tooLarge.length === 0) return;
     const knows =
@@ -142,9 +149,11 @@ export class NewAssets {
   }
 
   /** What is told of, for a project: of a repository of the server's own, only what it does not take. */
-  #sizesFor(open: { readonly local?: boolean }): NewAssetsOptions["sizes"] {
+  async #sizesFor(open: { readonly local?: boolean }): Promise<NewAssetsOptions["sizes"]> {
     const { sizes } = this.#options;
-    return open.local === true ? { ...sizes, large: Infinity, batch: Infinity } : sizes;
+    if (open.local !== true) return sizes;
+    const most = (await this.#options.fileMost?.()) ?? sizes.most;
+    return { large: Infinity, batch: Infinity, most: Math.min(most, sizes.most) };
   }
 
   #bytes(ids: Iterable<string>): number {
@@ -166,11 +175,12 @@ export class NewAssets {
     };
   }
 
-  #text(key: keyof typeof TEXTS, ids: Iterable<string>): string {
+  #text(key: keyof typeof TEXTS, ids: Iterable<string>, most?: number): string {
     const { t } = this.#options;
     const said = this.#names(ids);
     return t(TEXTS[key][said.count === 1 ? 0 : 1], {
       ...said,
+      most: formatSize(most ?? this.#options.sizes.most),
       interpolation: { escapeValue: false },
     });
   }
@@ -198,7 +208,7 @@ export class NewAssets {
         : large.length > 0
           ? [this.#text("large", large)]
           : []),
-      ...(tooLarge.length > 0 ? [this.#text("tooLarge", tooLarge)] : []),
+      ...(tooLarge.length > 0 ? [this.#text("tooLarge", tooLarge, sizes.most)] : []),
     ];
     if (lines.length === 0) return;
     const ok = { label: t("storage.uploads.notice.ok"), run: () => {} };

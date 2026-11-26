@@ -4,11 +4,50 @@ import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import { httpsLink } from "../app/links.ts";
 import { formatSize } from "../transfer/transfer.ts";
+import type { LocalLfsUse } from "@animaquill/host";
 import { GITHUB_BILLING } from "./links.ts";
 import styles from "./StorageSpace.module.css";
 
 const noSubscription = () => () => {};
 const noAccount = () => undefined;
+
+/**
+ * The large file storage of the server's own repositories, in numbers: what all of it comes to, how
+ * much more it takes (by the limit the server is set up for or the room of its disk, which it says)
+ * and the largest file.
+ */
+function LocalUse({ use, failed }: { use: LocalLfsUse | undefined; failed: boolean }) {
+  const { t } = useTranslation();
+  if (!use)
+    return (
+      <p className={styles.muted} role="status" data-storage-state={failed ? "failed" : "loading"}>
+        {t(failed ? "storage.uploads.space.failed" : "storage.uploads.space.loading")}
+      </p>
+    );
+  return (
+    <div data-storage-state="local">
+      <p className={styles.total}>
+        <strong>{formatSize(use.usedBytes)}</strong>{" "}
+        <span className={styles.muted}>
+          {t("storage.uploads.space.localUsed", { used: formatSize(use.usedBytes) })}
+        </span>
+      </p>
+      {use.leftBytes !== undefined && (
+        <p className={styles.muted} data-storage-left={use.leftBy}>
+          {use.leftBy === "max"
+            ? t("storage.uploads.space.localLeftMax", {
+                left: formatSize(use.leftBytes),
+                max: formatSize(use.maxBytes ?? 0),
+              })
+            : t("storage.uploads.space.localLeftDisk", { left: formatSize(use.leftBytes) })}
+        </p>
+      )}
+      <p className={styles.muted}>
+        {t("storage.uploads.space.localFile", { most: formatSize(use.fileBytes) })}
+      </p>
+    </div>
+  );
+}
 
 /**
  * "存储空间" of the start page (docs/design/asset-storage.md of AnimaQuill Cloud, 4.3, screen U4,
@@ -53,7 +92,9 @@ export function StorageSpace() {
           )}
         </div>
         <p className={styles.muted}>{t("storage.uploads.space.lfsAbout")}</p>
-        {local ? null : !signedIn ? (
+        {local ? (
+          <LocalUse use={snapshot.account?.local} failed={snapshot.status === "failed"} />
+        ) : !signedIn ? (
           <p className={styles.muted} data-storage-state="signedOut">
             {t("storage.uploads.space.signIn")}{" "}
             <button type="button" className={styles.button} onClick={() => void workbench.signIn()}>

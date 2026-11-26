@@ -120,5 +120,23 @@ describe("the large file storage of an account, as the platform says it", () => 
     });
     expect(lfsAccountOf({ repositories: [] })).toBeUndefined();
     expect(lfsAccountOf([])).toBeUndefined();
+    // A server of its own says what its repositories hold, and how much more they take.
+    const local = { usedBytes: 10, fileBytes: 1000, maxBytes: 50, leftBytes: 40, leftBy: "max" };
+    expect(lfsAccountOf({ account: "u1", repositories: [], local })).toEqual({
+      account: "u1",
+      repositories: [],
+      local,
+    });
+    expect(
+      lfsAccountOf({
+        account: "u1",
+        repositories: [],
+        local: { usedBytes: 10, fileBytes: 1000, leftBytes: 5 },
+      }),
+    ).toEqual({ account: "u1", repositories: [], local: { usedBytes: 10, fileBytes: 1000 } });
+    expect(lfsAccountOf({ account: "u1", repositories: [], local: { usedBytes: -1 } })).toEqual({
+      account: "u1",
+      repositories: [],
+    });
   });
 });

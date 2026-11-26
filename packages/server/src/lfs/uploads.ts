@@ -158,6 +158,16 @@ export interface LocalLfs {
   sameDisk(path: string): Promise<boolean>;
 }
 
+/** See `LfsUploads.localSummary`. */
+export interface LocalLfsSummary {
+  readonly usedBytes: number;
+  readonly fileBytes: number;
+  readonly maxBytes?: number;
+  readonly leftBytes?: number;
+  /** What `leftBytes` is by: the limit the server is set up for, or the room of its disk. */
+  readonly leftBy?: "max" | "disk";
+}
+
 /**
  * What the disk of the server's own repositories keeps free whatever comes in: 2 GiB, or 5 % of
  * it where that is more (D of the design of O8, 2026-11-23).
@@ -261,6 +271,38 @@ export class LfsUploads {
     this.#now = options.now ?? (() => new Date());
     this.#hashing = new Slots(this.#limits.hashing);
     this.#writing = new Slots(this.#limits.writing);
+  }
+
+  /**
+   * The large file storage of the server's own repositories as people are told of it (/api/me/lfs):
+   * what all of it comes to, the largest file, and how much more it takes now, by the limit the
+   * server is set up for or the room its disk keeps, whichever is less. Undefined where there is
+   * none here.
+   */
+  async localSummary(): Promise<LocalLfsSummary | undefined> {
+    const here = this.#options.local;
+    if (!here) return undefined;
+    const [kept] = await this.#options.db
+      .select({ bytes: sql<string>`coalesce(sum(${lfsObjects.size}), 0)` })
+      .from(lfsObjects)
+      .where(eq(lfsObjects.provider, "local"));
+    const usedBytes = Number(kept?.bytes ?? 0);
+    const room = await here.room();
+    const byDisk =
+      room === undefined ? undefined : Math.max(0, room.free - localFloorOf(room.total));
+    const byMax = here.maxBytes === undefined ? undefined : Math.max(0, here.maxBytes - usedBytes);
+    const left =
+      byMax !== undefined && (byDisk === undefined || byMax <= byDisk)
+        ? { leftBytes: byMax, leftBy: "max" as const }
+        : byDisk !== undefined
+          ? { leftBytes: byDisk, leftBy: "disk" as const }
+          : {};
+    return {
+      usedBytes,
+      fileBytes: Math.min(this.#limits.fileBytes, here.fileBytes),
+      ...(here.maxBytes !== undefined && { maxBytes: here.maxBytes }),
+      ...left,
+    };
   }
 
   /** The most bytes a piece may have, which a request is never read beyond, see routes.ts. */
@@ -396,8 +438,12 @@ export class LfsUploads {
     // GitHub has it, as from another project in the repository, or a push of Git LFS.
     if (!hosts?.has(link.provider)) throw new UploadRefused("unavailable", 503);
     const session = hosts.open(placeOf(link));
+    // Outside the lock under which uploads are counted, and of any transaction: a repository here
+    // reads what it has under the oid through (seconds for 2 GiB), with the files that are
+    // checked as they come in, so many at a time (`hashing`).
+    const asked = () => session.lfsHave([{ oid, size }], "upload");
     const [answer] = await this.#asking(projectId, () =>
-      session.lfsHave([{ oid, size }], "upload"),
+      repo.provider === "local" ? this.#hashing.run(asked) : asked(),
     );
     if (answer?.kind === "present") {
       // It goes by the oid: how large what it has is, the storage says itself, and only that is

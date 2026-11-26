@@ -52,6 +52,8 @@ export function placeRows(
   uploads: readonly UploadItem[],
   missing: ReadonlySet<string>,
   here?: Here,
+  /** The largest file the storage takes. */
+  most = LFS_FILE_MOST,
 ): PlaceRow[] {
   const rows: PlaceRow[] = [];
   const going = new Map(uploads.map((item) => [item.asset, item]));
@@ -68,7 +70,7 @@ export function placeRows(
           item.phase !== "done" &&
           item.phase !== "failed"
         ? "on"
-        : found.size > LFS_FILE_MOST
+        : found.size > most
           ? "tooLarge"
           : missing.has(asset)
             ? "noFile"
