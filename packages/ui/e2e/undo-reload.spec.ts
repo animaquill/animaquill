@@ -1,6 +1,6 @@
 import type { Page } from "@playwright/test";
 import { closeSettings, goToSettingsGroup, openSettingsPage, settingsOf } from "./ai-support.ts";
-import { content, devPageOnly, expect, test } from "./support.ts";
+import { content, devPageOnly, editorReady, expect, test } from "./support.ts";
 import { aiAdds, execute, markers, reload, send } from "./undo-support.ts";
 
 /**
@@ -158,6 +158,7 @@ test.describe("a project of the platform", () => {
         );
     });
     await page.goto("/?account=fake&cloud=fake");
+    await editorReady(page);
     await page.evaluate(() =>
       (
         window as unknown as { aqCloud: { seed(name: string, options: object): string } }
