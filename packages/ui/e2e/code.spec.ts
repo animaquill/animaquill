@@ -27,6 +27,7 @@ import {
   tab,
   test,
 } from "./scene-support.ts";
+import { showTab } from "./support.ts";
 
 /** Monaco's list of suggestions has no roles that say what is in it. */
 const suggestion = (page: Page, text: RegExp) =>
@@ -60,7 +61,7 @@ test.describe("files and code", () => {
     const asked: string[] = [];
     page.on("request", (request) => asked.push(request.url()));
     await open(page, { "main.js": "let a = 1;\n" });
-    await tab(page, "files").click();
+    await showTab(page, "files");
     await expect(row(page, "main.js")).toBeVisible();
     await page.keyboard.press("Alt+Shift+2");
     await expect(tab(page, "code")).toBeVisible();
@@ -71,7 +72,7 @@ test.describe("files and code", () => {
 
   test("lists the scenes with their files, and shared code", async ({ page }) => {
     await open(page, { "main.js": "", "js/deep.js": "" });
-    await tab(page, "files").click();
+    await showTab(page, "files");
     await expect(row(page, "场景 a")).toBeVisible();
     await expect(row(page, "index.html")).toBeVisible();
     await expect(row(page, "deep.js")).toBeVisible();
@@ -82,7 +83,7 @@ test.describe("files and code", () => {
 
   test("makes, renames and removes files, each of them one step to undo", async ({ page }) => {
     await open(page);
-    await tab(page, "files").click();
+    await showTab(page, "files");
     await row(page, "index.html").click({ button: "right" });
     await page.getByRole("menuitem", { name: "新建文件" }).click();
     await page.getByRole("dialog").getByRole("textbox").fill("new.js");
@@ -92,7 +93,7 @@ test.describe("files and code", () => {
     // A new file is there to be written in.
     await expect(code(page).locator("textarea")).toBeFocused(LOADING);
 
-    await tab(page, "files").click();
+    await showTab(page, "files");
     await row(page, "new.js").click({ button: "right" });
     await page.getByRole("menuitem", { name: "改名" }).click();
     await page.getByRole("dialog").getByRole("textbox").fill("renamed.js");
@@ -101,7 +102,7 @@ test.describe("files and code", () => {
     await expect(row(page, "new.js")).toBeHidden();
     await expect(editorTab(page, "renamed.js")).toBeVisible();
 
-    await tab(page, "files").click();
+    await showTab(page, "files");
     await row(page, "renamed.js").click({ button: "right" });
     await page.getByRole("menuitem", { name: "删除" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "删除" }).click();
@@ -109,15 +110,15 @@ test.describe("files and code", () => {
     await expect(editorTab(page, "renamed.js")).toBeHidden();
 
     await row(page, "index.html").click();
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await page.keyboard.press("Control+z");
-    await tab(page, "files").click();
+    await showTab(page, "files");
     await expect(row(page, "renamed.js")).toBeVisible();
   });
 
   test("works with the keyboard", async ({ page }) => {
     await open(page, { "main.js": "" });
-    await tab(page, "files").click();
+    await showTab(page, "files");
     await row(page, "main.js").click();
     await files(page).getByRole("tree").focus();
     await page.keyboard.press("F2");
@@ -134,7 +135,7 @@ test.describe("files and code", () => {
     page,
   }) => {
     await open(page, { "other.html": "<!doctype html>" });
-    await tab(page, "files").click();
+    await showTab(page, "files");
     await row(page, "index.html").click({ button: "right" });
     await page.getByRole("menuitem", { name: "删除" }).click();
     await page.getByRole("dialog").getByRole("button", { name: "删除" }).click();
@@ -213,7 +214,7 @@ test.describe("files and code", () => {
     await save(page);
     await expect(editorTab(page, "a.js")).toHaveText("a.js");
     // Undoing in the project takes the change back, and the tab follows.
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await page.keyboard.press("Control+z");
     await expect(lines(page)).toContainText("one");
     await expect(lines(page)).not.toContainText("xone");
@@ -279,7 +280,7 @@ test.describe("files and code", () => {
     await page.waitForTimeout(500);
     await page.reload();
     await expect(page.getByText("找回了 1 个没保存的文件")).toBeVisible(LOADING);
-    await tab(page, "code").click();
+    await showTab(page, "code");
     await expect(editorTab(page, "● a.js")).toBeVisible();
     await expect(lines(page)).toContainText("mine-one", LOADING);
     // The project itself never got it.
@@ -398,8 +399,8 @@ test.describe("problems", () => {
       status(page).getByRole("button", { name: "问题：1 个错误，0 个警告" }),
     ).toBeVisible();
     await expect(problems(page).getByText("scenes/a/a.js")).toBeVisible();
-    await tab(page, "timeline").click();
-    await tab(page, "problems").click();
+    await showTab(page, "timeline");
+    await showTab(page, "problems");
     await listed.click();
     // The cursor is where the problem is, and the keyboard is in the editor.
     await expect(code(page).locator("textarea")).toBeFocused();
@@ -511,7 +512,7 @@ test.describe("saving a scene", () => {
     await goTo(page, "0:01/00");
     await expect(status(page).getByRole("button", { name: /问题：6 个错误/ })).toBeVisible();
     await expect(page.getByText(/^“场景 a”：/)).toHaveCount(1);
-    await tab(page, "problems").click();
+    await showTab(page, "problems");
     await expect(problems(page).getByRole("button", { name: /第 2 行/ })).toBeVisible();
     // The errors of the scene are its own, and they get logged as such.
     logged.splice(0);

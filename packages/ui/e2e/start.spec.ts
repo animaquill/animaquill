@@ -79,14 +79,18 @@ const updatesIn = (page: Page) =>
       }),
   );
 
-/** A new project in a folder of that name, in the offline mode, through the dialog. */
-async function newInFolder(page: Page, name: string, folder: string) {
+/** A new project in a folder of its name, in that place, in the offline mode, through the dialog. */
+async function newInFolder(page: Page, name: string, place: string) {
   await page.evaluate((chosen) => {
     window.chosenFolder = chosen;
-  }, folder);
+  }, place);
   await sidebar(page).getByRole("button", { name: "新建项目" }).click();
   await page.getByRole("textbox", { name: "项目名称" }).fill(name);
-  await page.getByRole("button", { name: "选文件夹…" }).click();
+  await dialog(page)
+    .getByRole("button", { name: /^(选择|更改)…$/ })
+    .click();
+  await expect(dialog(page).locator("[data-place]")).toHaveText(place);
+  await page.getByRole("button", { name: "新建", exact: true }).click();
   await expect(tab(page, "preview")).toBeVisible();
   await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
 }
@@ -315,7 +319,10 @@ test.describe("the start page of the offline mode, with folders", () => {
     await openCard(page, "课程片头 第二版");
     await expect(page).toHaveTitle("课程片头 第二版 - AnimaQuill");
     await expect
-      .poll(async () => JSON.parse((await privateText(page, "intro/animaquill.json")) ?? "{}").name)
+      .poll(
+        async () =>
+          JSON.parse((await privateText(page, "intro/课程片头/animaquill.json")) ?? "{}").name,
+      )
       .toBe("课程片头 第二版");
   });
 });

@@ -1,7 +1,7 @@
 import type { Download, Locator, Page } from "@playwright/test";
 import type { RenderLayer, RenderPlan } from "@animaquill/core";
 import { importClips } from "./project-files.ts";
-import { content, expect, findCompositor, tab, tabScrolls, test } from "./support.ts";
+import { content, expect, findCompositor, tabScrolls, test, showTab } from "./support.ts";
 
 /**
  * Effects: the effects tab, what it puts on clips, the list of a clip in the properties tab, and
@@ -33,7 +33,7 @@ async function open(page: Page) {
     { id: "b", name: "绿", start: "3", duration: "3", source: { kind: "color", color: "#00ff00" } },
     { id: "c", name: "蓝", start: "6", duration: "3", source: { kind: "color", color: "#0000ff" } },
   ]);
-  await tab(page, "effects").click();
+  await showTab(page, "effects");
   await expect(panel(page)).toBeVisible();
 }
 
@@ -110,14 +110,14 @@ test("go last on the clip they are dropped on, which lights up first, and undo t
     await expect.poll(async () => (await timelineShot(page)).equals(plain)).toBe(false);
     await content(page, "timeline").screenshot(shot("effects-drop.png"));
   });
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(effectsOn(page)).toHaveCount(1);
   await expect(clips(page).nth(1)).toHaveAttribute("data-effects", "1");
   await expect(clips(page).nth(0)).not.toHaveAttribute("data-effects");
 
-  await tab(page, "effects").click();
+  await showTab(page, "effects");
   await drag(page, "裁切", await onClip(page, 1));
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   expect(await names(page)).toEqual(["亮度", "裁切"]);
   await content(page, "timeline").screenshot(shot("effects-mark.png"));
 
@@ -174,7 +174,7 @@ test("go on once more with each click, and say so where they went", async ({ pag
 
   // With one clip, its list goes to the one that is new, which stands out for a moment.
   await page.mouse.click(...xy(await onClip(page, 1)));
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await item(page, "亮度").click();
   await expect.poll(() => names(page)).toEqual(["模糊", "模糊", "亮度"]);
   await expect(effectsOn(page).nth(2)).toHaveAttribute("data-fresh", "true");
@@ -238,7 +238,7 @@ test("show on the clip as a band where they work, with their names, dimmed when 
 
   // All off, it stays where it was, dimmed.
   await page.mouse.click(...xy(await onClip(page, 0)));
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await effectList(page).getByRole("checkbox", { name: "启用亮度" }).uncheck();
   await expect(clip).toHaveAttribute("data-effect-band", "1.5-3");
   await effectList(page).getByRole("checkbox", { name: "启用模糊" }).uncheck();
@@ -261,7 +261,7 @@ test("work for a time of the clip, which their bar under the clip and the proper
     },
   ]);
   await page.mouse.click(...xy(await onClip(page, 0)));
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   const range = effectsOn(page).nth(0).getByRole("group", { name: "生效时间" });
   const start = range.getByRole("textbox", { name: "开始" });
   const end = range.getByRole("textbox", { name: "结束" });
@@ -352,7 +352,7 @@ test.describe("in the properties tab", () => {
       },
     ]);
     await page.mouse.click(...xy(await onClip(page, 0)));
-    await tab(page, "properties").click();
+    await showTab(page, "properties");
     await expect(effectsOn(page)).toHaveCount(3);
   }
 
@@ -402,7 +402,7 @@ test.describe("in the properties tab", () => {
       "aria-pressed",
       "true",
     );
-    await tab(page, "keyframes").click();
+    await showTab(page, "keyframes");
     const tree = content(page, "keyframes");
     const node = (name: string) => tree.getByRole("treeitem", { name, exact: true });
     await tree.getByRole("button", { name: "展开 灰", exact: true }).click();
@@ -433,7 +433,7 @@ test.describe("in the properties tab", () => {
       },
     ]);
     await page.mouse.click(...xy(await onClip(page, 0)));
-    await tab(page, "properties").click();
+    await showTab(page, "properties");
     const compositor = await findCompositor(page);
     if (!compositor) throw new Error("No compositor");
     /** The red of the preview at its left edge and in its middle. */

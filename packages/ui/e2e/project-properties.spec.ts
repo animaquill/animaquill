@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { footer, nameIn, openDropped, projectOnDisk, text } from "./folder-support.ts";
 import { openCard, projectCard } from "./start-support.ts";
-import { content, devPageOnly, editorReady, expect, tab, test } from "./support.ts";
+import { content, devPageOnly, editorReady, expect, test, showTab } from "./support.ts";
 
 /**
  * The project properties (docs/design/settings-and-properties.md of AnimaQuill Cloud, 5 and step
@@ -176,7 +176,7 @@ test.describe("the project properties of a project folder", () => {
     expect(text(disk, "timelines/main/timeline.json")).toBe(timeline);
     // What is off the frames of 25 is listed as problems, which no export stops for.
     await page.keyboard.press("Escape");
-    await tab(page, "problems").click();
+    await showTab(page, "problems");
     await expect(content(page, "problems")).toContainText("不在 25 帧的格子上");
   });
 

@@ -189,33 +189,64 @@
 }
 
 /* New, or from a folder: two tabs over the dialog, as one dialog with two ways in. */
-.ways {
-  display: flex;
-  gap: 4px;
-  margin: 4px 0 16px;
-  border-bottom: 1px solid var(--aq-border);
-}
-
-.ways button {
-  margin-bottom: -1px;
-  padding: 6px 12px;
-  color: var(--aq-text-muted);
-  background: none;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  cursor: pointer;
-}
-
-.ways button:hover {
-  color: var(--aq-text-strong);
-}
-
-.ways button[aria-pressed="true"] {
-  color: var(--aq-text-strong);
-  border-bottom-color: var(--aq-accent);
-}
-
 .format {
   gap: 10px 18px;
   margin: 0 0 16px;
+}
+
+/* The repository chosen in "从仓库打开", with the way to choose another. */
+.chosen {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  background: var(--aq-bg-input);
+  border-radius: 6px;
+}
+
+/* Where a new folder goes offline, and what it will be called there. */
+.place {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 16px;
+}
+
+.placeRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.placeName {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: calc(34px * var(--aq-size-scale));
+  padding: 0 10px;
+  overflow: hidden;
+  color: var(--aq-text-strong);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+}
+
+.placeName[data-none] {
+  color: var(--aq-text-muted);
+}
+
+.placeRow button {
+  flex: none;
+}
+
+.placePreview {
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-12);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }

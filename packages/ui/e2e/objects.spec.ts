@@ -10,11 +10,10 @@ import {
   openForScenes,
   projectFolder,
   sceneFrames,
-  tab,
   test,
   type SceneClip,
 } from "./scene-support.ts";
-import { chooseLayout } from "./support.ts";
+import { chooseLayout, showTab } from "./support.ts";
 
 /**
  * What a scene registers and what its clip holds for it: keys on code objects, elements and
@@ -97,7 +96,7 @@ test("an element with an id is there to change in the properties tab", async ({ 
     <div id="${"long".repeat(17)}">一段 ID 最长 64 个字符</div>`;
   await importFolder(page, projectFolder({ a: { "index.html": logo } }, [{}]));
   await clickFirstClip(page);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   // Inside of what holds all elements, which a flat list says by name.
   const element = content(page, "properties").getByRole("region", { name: "元素 › logo" });
   await expect(element).toBeVisible();
@@ -156,7 +155,7 @@ test("keys of a renamed object stay, and go back to work where people connect th
     aqExecute({ type: "file.write", params: { path: "scenes/a/index.html", text } });
   }, arm("arm2"));
   await expect.poll(() => said(page, "x")).toBe("0");
-  await tab(page, "problems").click();
+  await showTab(page, "problems");
   await expect(content(page, "problems")).toContainText("object.arm.x 没有对象认领");
   await animate(page);
   await open(page, "场景");
@@ -206,7 +205,7 @@ test("an element shows the value of the frame whatever transitions it has, and g
     });
   await expect.poll(look).toEqual({ opacity: "0.5", translate: "none", inline: "opacity: 0.5;" });
   await clickFirstClip(page);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   const element = elementRegion(page, "logo");
   await typeInto(element.getByRole("spinbutton", { name: "不透明度", exact: true }), "25");
   await typeInto(element.getByRole("spinbutton", { name: "位置 X", exact: true }), "30");
@@ -248,7 +247,7 @@ test("an element of SVG with a transform of its own moves and turns around where
   if (!before) throw new Error("no rect");
   expect(before).toMatchObject({ rotate: "none", style: "" });
   await clickFirstClip(page);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   const element = elementRegion(page, "r");
   await typeInto(element.getByRole("spinbutton", { name: "位置 X", exact: true }), "10");
   const moved = { x: before.x + 10, y: before.y, own: before.own };
@@ -309,7 +308,7 @@ test("what code registers counts for the parameters it went by, and for nothing 
     projectFolder({ a: { "index.html": bars } }, clips, undefined, { a: { params } }),
   );
   await expect.poll(() => said(page, "x")).toBe("0");
-  await tab(page, "problems").click();
+  await showTab(page, "problems");
   const problems = content(page, "problems");
   // The scene of the first clip has one bar, which says nothing about the second clip.
   await page.waitForTimeout(1500);
@@ -344,7 +343,7 @@ test("code that stops in its frame is not known to have registered all of it", a
     page,
     projectFolder({ a: { "index.html": html } }, [{ properties: { "object.arm.x": keys } }]),
   );
-  await tab(page, "problems").click();
+  await showTab(page, "problems");
   const problems = content(page, "problems");
   await expect(problems).toContainText("missing is not defined");
   await page.waitForTimeout(1500);
@@ -376,7 +375,7 @@ test("a big registration gets to the editor whole", async ({ page }) => {
   await importFolder(page, projectFolder({ a: { "index.html": html } }, [clip]));
   await goTo(page, "0:01/00");
   await expect.poll(() => said(page, "last")).toBe("100");
-  await tab(page, "problems").click();
+  await showTab(page, "problems");
   // All of it came, so what is not there is known not to be.
   await expect(content(page, "problems")).toContainText("object.rig.bone1600.x 没有对象认领");
   await expect(content(page, "problems")).not.toContainText("object.rig.bone1599");
@@ -403,7 +402,7 @@ test("a registration that keeps changing does not take the scene away", async ({
   await page.keyboard.press("Space");
   await page.waitForTimeout(8000);
   await page.keyboard.press("Space");
-  await tab(page, "problems").click();
+  await showTab(page, "problems");
   const problems = content(page, "problems");
   await expect(problems).toContainText("的描述一直在变");
   await expect(problems).not.toContainText("发的消息太多");

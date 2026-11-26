@@ -1,0 +1,53 @@
+.dialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.filter {
+  flex: 1;
+  min-width: 0;
+}
+
+.choices {
+  min-height: 160px;
+  max-height: min(360px, 50vh);
+  align-content: start;
+}
+
+.choices:focus-visible {
+  outline: 1px solid var(--aq-accent);
+}
+
+.row {
+  cursor: pointer;
+}
+
+.row[aria-selected="true"],
+.row[aria-selected="true"]:hover {
+  background: var(--aq-bg-hover);
+  box-shadow: inset 2px 0 0 var(--aq-accent);
+}
+
+.row[data-unusable] {
+  cursor: default;
+}
+
+.choice {
+  cursor: inherit;
+}
+
+.spin {
+  color: var(--aq-text-muted);
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}

@@ -24,6 +24,7 @@ import {
   group,
   tab,
   test,
+  showTab,
 } from "./support.ts";
 
 const RED = [255, 0, 0] as const;
@@ -982,7 +983,7 @@ test.describe("with changes written right away", () => {
     expect(outside).toBeLessThan(inside);
 
     await goTo(page, "0:02/00");
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     const clip = await clips(page).first().boundingBox();
     if (!clip) throw new Error("no clip");
     // The end of the clip goes in front of the last key, which stays on the clock of the clip.

@@ -15,6 +15,7 @@ import {
 import {
   FolderError,
   type AccessAnswer,
+  type ChooseFolderOptions,
   type Dropped,
   type FolderRecord,
   type FolderStatus,
@@ -40,6 +41,7 @@ import {
   FolderProjects,
   type FolderLook,
   type FoundAgain,
+  type ProjectPlace,
   type ReadingOptions,
 } from "../folder/projects.ts";
 import {
@@ -133,6 +135,11 @@ export interface ProjectFoldersOptions {
   readonly timing?: Partial<FolderTiming>;
   /** Which windows have which projects open, which a move into a folder has to know. */
   readonly presence?: ProjectPresence;
+  /** Where the last new project went, for the next one, see `SavedFolders.lastPlace`. */
+  readonly places?: {
+    last(): Promise<LocalFolder | undefined>;
+    keep(folder: LocalFolder): Promise<void>;
+  };
   /**
    * What closed windows left on a project of this browser, by its key: something tried out, code
    * typed and not saved, see `Host.trials` and `Host.drafts`. Nothing where it is not given.
@@ -216,6 +223,8 @@ export class ProjectFolders {
   #waiting: WaitingFolder | undefined;
   /** The folder the address asks for, once the page is there to ask people anything. */
   #pending: FolderRecord | undefined;
+  /** Where the next new project goes, as people chose in the dialog, see `choosePlace`. */
+  #newPlace: LocalFolder | undefined;
   #snapshot = NOTHING;
   /** What of the folder did not come in, and why, as problems. */
   #notes: readonly Listed[] = [];
@@ -624,12 +633,83 @@ export class ProjectFolders {
   }
 
   /**
-   * Makes a new project of this name in a folder people choose, see `create`. Has to be called
-   * right after people did something: the browser only asks for a folder then.
+   * Makes a new project of this name in a folder of its own, called after it, in the place people
+   * chose for it (the design of U1, 2.3): the one they chose in the dialog, or the last one, or one
+   * they choose now. Has to be called right after people did something: the browser only asks for
+   * a folder, or to be let at one, then.
    */
   async createNamed(name: string, format?: NewFormat): Promise<void> {
-    const folder = await this.#choose();
-    if (folder) await this.#createIn(folder, name, format);
+    const last = this.#newPlace ?? (await this.lastPlace());
+    let place = last;
+    if (place) {
+      const answer = await place.requestAccess().catch((): AccessAnswer => "refused");
+      if (answer !== "granted") place = undefined;
+    }
+    place ??= await this.#choose({ purpose: "place", ...(last && { startIn: last }) });
+    if (!place) return;
+    const { t } = this.#options;
+    let where: ProjectPlace;
+    try {
+      where = await this.projects.placeIn(place, name);
+    } catch (error) {
+      this.#failed(error);
+      return;
+    }
+    if (where.kind !== "ok") {
+      // No place for a project, as one in a project would be taken for a part of it.
+      this.#newPlace = undefined;
+      const [title, message] =
+        where.kind === "inside"
+          ? [
+              t("folder.insideTitle", { folder: place.name }),
+              t("folder.insideMessage", { name: where.record.name }),
+            ]
+          : where.kind === "incomplete"
+            ? [t("folder.incompleteTitle"), t("folder.incompleteForNew")]
+            : [t("folder.isProjectTitle", { folder: place.name }), t("folder.placeIsProject")];
+      await this.#notice(title, message);
+      return;
+    }
+    let record: FolderRecord;
+    try {
+      record = await this.projects.create(name, place, where.inside, format);
+    } catch (error) {
+      console.warn("A project could not be made in a folder", error);
+      this.#options.notifications.push(t("folder.createFailed"));
+      return;
+    }
+    this.#newPlace = undefined;
+    await this.#options.places?.keep(place).catch(() => {});
+    await this.#options.changeProject(() => this.#open(record));
+  }
+
+  /** Where people last put a new project, if they did, and it is still there. */
+  async lastPlace(): Promise<LocalFolder | undefined> {
+    const place = await this.#options.places?.last().catch(() => undefined);
+    if (!place) return undefined;
+    const status = await place.status().catch((): FolderStatus => "gone");
+    return status === "gone" || status === "blocked" ? undefined : place;
+  }
+
+  /**
+   * Asks people where new projects go, for the next one, see `createNamed`. Has to be called right
+   * after people did something. Resolves to what they chose, or undefined where they did not.
+   */
+  async choosePlace(): Promise<LocalFolder | undefined> {
+    const last = this.#newPlace ?? (await this.lastPlace());
+    const chosen = await this.#choose({ purpose: "place", ...(last && { startIn: last }) });
+    if (chosen) this.#newPlace = chosen;
+    return chosen;
+  }
+
+  /**
+   * What the folder of a new project of this name would be called in a place, as the dialog shows
+   * it before people go on: undefined where it cannot go there, or the place cannot be read now.
+   */
+  async folderNameIn(place: LocalFolder, name: string): Promise<string | undefined> {
+    if ((await place.status().catch(() => "gone")) !== "ready") return undefined;
+    const where = await this.projects.placeIn(place, name).catch(() => undefined);
+    return where?.kind === "ok" ? where.inside : undefined;
   }
 
   /** Asks for a folder, and opens the project in it. */
@@ -975,9 +1055,9 @@ export class ProjectFolders {
     });
   }
 
-  async #choose(): Promise<LocalFolder | undefined> {
+  async #choose(options?: ChooseFolderOptions): Promise<LocalFolder | undefined> {
     try {
-      return await this.#options.folders.choose();
+      return await this.#options.folders.choose(options);
     } catch (error) {
       this.#failed(error);
       return undefined;

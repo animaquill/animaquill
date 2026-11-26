@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { createProject, writeProject, type SoundManifest } from "@animaquill/schema";
 import type { Locator, Page } from "@playwright/test";
 import { importFolder } from "./scene-support.ts";
-import { chooseLayout, content, expect, tab, test } from "./support.ts";
+import { chooseLayout, content, expect, tab, test, showTab } from "./support.ts";
 
 // Making a sound starts a page and a worker, which takes its time on a busy computer.
 test.describe.configure({ timeout: 90_000 });
@@ -200,16 +200,16 @@ test.describe("the mixer", () => {
     await expect(header).toHaveAttribute("aria-pressed", "false");
 
     await strip(page).getByRole("button", { name: "配音", exact: true }).click();
-    await tab(page, "properties").click();
+    await showTab(page, "properties");
     const properties = content(page, "properties");
     await expect(properties.getByRole("slider", { name: "音量" })).toBeVisible();
     await expect(properties.getByRole("slider", { name: "声像" })).toBeVisible();
     // The fader stays in sight beside them.
     await expect(fader(page)).toBeVisible();
-    await tab(page, "keyframes").click();
+    await showTab(page, "keyframes");
     await expect(content(page, "keyframes").getByText("轨道", { exact: true })).toBeVisible();
     // The pan knob writes what the properties show.
-    await tab(page, "mixer").click();
+    await showTab(page, "mixer");
     const knob = strip(page).getByRole("slider", { name: "配音 声像" });
     const box = await knob.boundingBox();
     if (!box) throw new Error("no knob");
@@ -218,7 +218,7 @@ test.describe("the mixer", () => {
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 50, { steps: 5 });
     await page.mouse.up();
     await expect(knob).toHaveAttribute("aria-valuetext", "L 50");
-    await tab(page, "properties").click();
+    await showTab(page, "properties");
     await expect(properties.getByRole("slider", { name: "声像" })).toHaveAttribute(
       "aria-valuetext",
       "L 50",

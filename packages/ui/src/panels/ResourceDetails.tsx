@@ -5,6 +5,7 @@ import {
   usesOf,
   type MissingResource,
   type ResourceUse,
+  type TimelineState,
 } from "@animaquill/core";
 import { describeMissing, describeMissingEffect, parseTime, toSeconds } from "@animaquill/schema";
 import { FileQuestion, Library } from "lucide-react";
@@ -23,7 +24,8 @@ import { storedIn } from "../storage/places.ts";
 import { AssetPlace } from "../storage/AssetPlace.tsx";
 import { formatSize } from "../transfer/transfer.ts";
 import { textOf } from "../properties/names.ts";
-import { EffectIcon } from "./EffectsPanel.tsx";
+import { isSoundEffect } from "../resources/effects.ts";
+import { EffectIcon, SoundEffectIcon } from "./EffectsPanel.tsx";
 import { TransitionIcon } from "./TransitionsPanel.tsx";
 import styles from "./ResourceDetails.module.css";
 import { commandFailedText } from "../i18n/failures.ts";
@@ -43,7 +45,11 @@ export function ResourcePicture({ resource, playing }: ResourceIconProps<Explore
     case "transition":
       return <TransitionIcon resource={as(resource, data.item)} playing={playing} />;
     case "effect":
-      return <EffectIcon resource={as(resource, data.item)} playing={playing} />;
+      return isSoundEffect(data.item) ? (
+        <SoundEffectIcon resource={as(resource, data.item)} playing={playing} />
+      ) : (
+        <EffectIcon resource={as(resource, data.item)} playing={playing} />
+      );
     case "missing":
       return data.missing.kind === "library" ? (
         <Library size={24} aria-hidden />
@@ -323,8 +329,38 @@ function missingOf(state: Parameters<typeof missingIn>[0]): readonly MissingReso
 }
 
 /** Where a resource is used, in words: which clip, which part of it, when, and in which version. */
+/** What a track of the timeline is called, as its header says: its name, or "音频 2". */
+function trackNameOf(t: TFunction, timeline: TimelineState, id: string): string | undefined {
+  const track = timeline.tracks[id];
+  if (!track) return undefined;
+  const number = orderedTracks(timeline)
+    .filter(({ kind }) => kind === track.kind)
+    .findIndex((each) => each.id === id);
+  return track.name ?? t(`timeline.track.${track.kind}`, { number: number + 1 });
+}
+
+/** Where an effect of the mix is, a track, a bus or the master, in words; undefined for a clip. */
+function mixPlaceOf(
+  t: TFunction,
+  timeline: TimelineState | undefined,
+  use: ResourceUse,
+): string | undefined {
+  if (use.master) return t("explorer.uses.master");
+  if (use.track !== undefined) {
+    const name = timeline && trackNameOf(t, timeline, use.track);
+    return name === undefined ? t("explorer.uses.gone") : t("explorer.uses.track", { name });
+  }
+  if (use.bus !== undefined) {
+    const bus = timeline?.mix?.buses?.find(({ id }) => id === use.bus);
+    return t("explorer.uses.bus", { name: bus?.name ?? use.bus });
+  }
+  return undefined;
+}
+
 function labelOfUse(t: TFunction, state: Parameters<typeof usesOf>[0], use: ResourceUse): string {
   const timeline = state.timelines[use.timeline];
+  const mix = mixPlaceOf(t, timeline, use);
+  if (mix !== undefined) return mix;
   const clip = use.clip === undefined ? undefined : timeline?.clips[use.clip];
   if (!clip) return t("explorer.uses.gone");
   const kind = clip.source.kind;
@@ -354,14 +390,9 @@ function labelOfUse(t: TFunction, state: Parameters<typeof usesOf>[0], use: Reso
 function placeOfUse(t: TFunction, state: Parameters<typeof usesOf>[0], use: ResourceUse): string {
   const timeline = state.timelines[use.timeline];
   const clip = use.clip === undefined ? undefined : timeline?.clips[use.clip];
-  const track = clip && timeline?.tracks[clip.track];
   const parts = [timeline?.name ?? use.timeline];
-  if (timeline && track) {
-    const number = orderedTracks(timeline)
-      .filter(({ kind }) => kind === track.kind)
-      .findIndex(({ id }) => id === track.id);
-    parts.push(track.name ?? t(`timeline.track.${track.kind}`, { number: number + 1 }));
-  }
+  const trackName = clip && timeline && trackNameOf(t, timeline, clip.track);
+  if (trackName !== undefined) parts.push(trackName);
   parts.push(labelOfUse(t, state, use));
   return parts.join(" · ");
 }
@@ -548,11 +579,12 @@ function ResourceDetails({
             const label = state ? labelOfUse(t, state, use) : "";
             return (
               <li
-                key={`${use.timeline}/${use.clip ?? ""}/${use.join ?? ""}/${use.edge ?? ""}/${use.effect ?? ""}/${use.version ?? ""}/${index}`}
+                key={`${use.timeline}/${use.clip ?? use.track ?? use.bus ?? (use.master ? "~master" : "")}/${use.join ?? ""}/${use.edge ?? ""}/${use.effect ?? ""}/${use.version ?? ""}/${index}`}
               >
                 <button
                   type="button"
-                  disabled={elsewhere}
+                  // A bus has no place to go to yet: the mixer shows no buses.
+                  disabled={elsewhere || use.bus !== undefined}
                   title={
                     elsewhere
                       ? t("explorer.uses.elsewhere", { timeline: timelineName(use.timeline) })

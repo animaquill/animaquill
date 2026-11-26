@@ -12,6 +12,7 @@ import {
   sceneFrames,
   test,
 } from "./scene-support.ts";
+import { newAsset } from "./support.ts";
 
 // A trace waits for every frame after every step, so with a frame that stands still it would hold
 // the test up along with it. What runs here does not care for traces anyway.
@@ -66,7 +67,7 @@ async function openOne(page: Page, html: string): Promise<void> {
 async function expectEditorWorks(page: Page): Promise<void> {
   const clips = content(page, "timeline").getByRole("option");
   const count = await clips.count();
-  await content(page, "timeline").getByRole("button", { name: "纯色片段" }).click();
+  await newAsset(page, "纯色片段");
   await expect(clips).toHaveCount(count + 1);
   await page.keyboard.press("Control+z");
   await expect(clips).toHaveCount(count);

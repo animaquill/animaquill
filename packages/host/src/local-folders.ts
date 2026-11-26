@@ -88,8 +88,14 @@ export interface RecordStore {
 
 /** What folders on this computer need from where they are. */
 export interface LocalFoldersEnvironment {
-  /** Asks people for a folder to read and write, as `showDirectoryPicker` does. */
-  readonly pick: () => Promise<DirectoryHandleLike>;
+  /**
+   * Asks people for a folder to read and write, as `showDirectoryPicker` does: for a place, where
+   * a new project goes, the dialog remembers where it was apart from the folders of projects.
+   */
+  readonly pick: (options?: {
+    readonly purpose?: "place";
+    readonly startIn?: DirectoryHandleLike | undefined;
+  }) => Promise<DirectoryHandleLike>;
   /** Asks people for files to read, as `showOpenFilePicker` does, where the browser can. */
   readonly pickFiles?:
     ((near: DirectoryHandleLike | undefined) => Promise<readonly FileHandleLike[]>) | undefined;
@@ -1143,9 +1149,16 @@ export function createLocalFolders(environment: LocalFoldersEnvironment): LocalF
   };
 
   return {
-    async choose() {
+    async choose(options) {
       try {
-        return folderOf(await environment.pick());
+        return folderOf(
+          await environment.pick(
+            options && {
+              ...(options.purpose && { purpose: options.purpose }),
+              ...(options.startIn && { startIn: directoryOf(options.startIn) }),
+            },
+          ),
+        );
       } catch (error) {
         // Changing one's mind is no failure, and neither is a folder that the browser does not
         // give out, such as the documents themselves: it says why itself.
@@ -1208,7 +1221,11 @@ const isDirectoryHandle = (value: unknown): value is DirectoryHandleLike =>
 type DirectoryPicker = (options: {
   readonly id: string;
   readonly mode: "readwrite";
+  readonly startIn?: DirectoryHandleLike;
 }) => Promise<DirectoryHandleLike>;
+
+/** Where the dialog for the place of a new project starts when no folder says, see `pick`. */
+const PLACE_PICKER_ID = "animaquill-new-project-place";
 
 type FilePicker = (options: {
   readonly id: string;
@@ -1238,7 +1255,12 @@ export function browserLocalFolders(
     "createWritable" in FileSystemFileHandle.prototype;
   if (typeof showDirectoryPicker !== "function" || !canWrite) return undefined;
   return createLocalFolders({
-    pick: () => showDirectoryPicker.call(globalThis, { id: PICKER_ID, mode: "readwrite" }),
+    pick: (options) =>
+      showDirectoryPicker.call(globalThis, {
+        id: options?.purpose === "place" ? PLACE_PICKER_ID : PICKER_ID,
+        mode: "readwrite",
+        ...(options?.startIn && { startIn: options.startIn }),
+      }),
     pickFiles:
       typeof showOpenFilePicker === "function"
         ? (near) =>

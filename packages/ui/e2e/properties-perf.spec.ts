@@ -9,9 +9,9 @@ import {
   openForScenes,
   projectFolder,
   sceneFrames,
-  tab,
   test,
 } from "./scene-support.ts";
+import { showTab } from "./support.ts";
 
 /** A skeleton with as many bones as a big one has, each with what a bone has, all of them turning. */
 const BONES = 300;
@@ -138,7 +138,7 @@ test(`a clip with ${BONES * 4} properties plays smoothly with its properties ope
   const alone = await play(page, "nothing selected");
 
   await clickFirstClip(page);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   const panel = content(page, "properties");
   await expect(panel.getByRole("region", { name: "骨骼 0", exact: true })).toBeVisible({
     timeout: 15_000,

@@ -2,9 +2,13 @@ import { UploadMark, useAssetMarks, usePlaceMenu } from "../storage/marks.tsx";
 import { Boxes, FolderTree, Library, TriangleAlert } from "lucide-react";
 import { useMemo, useRef, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { useWorkbench } from "../app/context.ts";
+import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import { useResourceCatalog, type ExplorerItem } from "../resources/catalog.ts";
-import { EFFECT_RESOURCE_TYPES } from "../resources/effects.ts";
+import {
+  EFFECT_RESOURCE_TYPES,
+  effectResourceTypes,
+  effectTypesUsed,
+} from "../resources/effects.ts";
 import { EXPLORER_NODES, parentOf, type ExplorerNode } from "../resources/explorer.ts";
 import { ResourceBrowser } from "../resources/ResourceBrowser.tsx";
 import { PROJECT_TYPES, type ProjectItem } from "../resources/project-resources.ts";
@@ -25,6 +29,7 @@ const TYPES: readonly string[] = [
   ...TRANSITION_TYPES,
   ...FADE_TYPES,
   ...EFFECT_RESOURCE_TYPES,
+  ...effectResourceTypes("sound"),
   "transition",
   "effect",
   "library",
@@ -43,20 +48,25 @@ export function ExplorerPanel() {
   const { explorer, timeline, resourceHabits: habits } = workbench;
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(explorer.subscribe, explorer.getSnapshot);
-  const { transitions, fades, effects, own, gone } = useResourceCatalog();
+  const { transitions, fades, effects, soundEffects, own, gone } = useResourceCatalog();
+  const { store } = useSession();
+  const state = useProject(store);
+  const used = useMemo(() => (state ? effectTypesUsed(state) : new Set<string>()), [state]);
 
   const listOf = (node: ExplorerNode): readonly Resource<ExplorerItem>[] => {
     const ofKind = (kind: ProjectItem["kind"]) =>
       own.filter(({ data }) => data.kind === "project" && data.item.kind === kind);
     switch (node) {
       case "built-in":
-        return [...transitions, ...fades, ...effects];
+        return [...transitions, ...fades, ...effects, ...soundEffects];
       case "built-in.transitions":
         return transitions;
       case "built-in.fades":
         return fades;
       case "built-in.effects":
         return effects;
+      case "built-in.soundEffects":
+        return soundEffects;
       case "project":
         return own;
       case "project.media":
@@ -65,17 +75,25 @@ export function ExplorerPanel() {
         return ofKind("scene");
       case "project.sounds":
         return ofKind("sound");
+      case "project.effects":
+        return effects.filter(({ data }) => data.kind === "effect" && used.has(data.item.type));
+      case "project.soundEffects":
+        return soundEffects.filter(
+          ({ data }) => data.kind === "effect" && used.has(data.item.type),
+        );
       case "missing":
         return gone;
       case "project.transitions":
-      case "project.effects":
       case "libraries":
         return [];
     }
   };
   const { node } = snapshot;
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- listOf only reads what is listed here
-  const resources = useMemo(() => listOf(node), [node, own, transitions, fades, effects, gone]);
+  const resources = useMemo(
+    () => listOf(node),
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- listOf only reads what is listed here
+    [node, own, transitions, fades, effects, soundEffects, used, gone],
+  );
   const actions = useResourceActions();
   const placeMenu = usePlaceMenu();
   const marks = useAssetMarks();
@@ -108,7 +126,7 @@ export function ExplorerPanel() {
     if (at === "missing")
       return resources.length === 0 ? t("explorer.noMissing") : t("explorer.notes.missing");
     if (at.startsWith("built-in")) return t("explorer.notes.built-in");
-    if (at === "project.transitions" || at === "project.effects" || at === "libraries") {
+    if (at === "project.transitions" || at === "libraries") {
       return textOf(t, `explorer.notes.${at.replace(".", "_")}`, at);
     }
     return undefined;
@@ -127,7 +145,7 @@ export function ExplorerPanel() {
         />
         <div className={styles.main}>
           {note && <p className={styles.note}>{note}</p>}
-          {node !== "libraries" && node !== "project.transitions" && node !== "project.effects" && (
+          {node !== "libraries" && node !== "project.transitions" && (
             <div className={styles.browser}>
               <ResourceBrowser<ExplorerItem>
                 tab="explorer"
@@ -148,6 +166,10 @@ export function ExplorerPanel() {
                 multiple
                 mark={markOf}
                 {...(node === "missing" && { empty: t("explorer.noMissing") })}
+                {...(node === "project.effects" && { empty: t("explorer.emptyUsed.effects") })}
+                {...(node === "project.soundEffects" && {
+                  empty: t("explorer.emptyUsed.soundEffects"),
+                })}
                 canDrag={({ data }) =>
                   data.kind === "transition" ||
                   data.kind === "effect" ||

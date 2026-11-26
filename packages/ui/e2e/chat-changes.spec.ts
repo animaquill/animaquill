@@ -7,7 +7,7 @@ import {
   closeSettings,
   isConnectionTest,
 } from "./ai-support.ts";
-import { content, devPageOnly, expect, tab, test } from "./support.ts";
+import { content, devPageOnly, expect, test, showTab } from "./support.ts";
 
 /**
  * The card of a task opens each line to what it changed, before and after (S-D1 of the design of
@@ -138,7 +138,7 @@ async function aiChanges(page: Page) {
   });
   await addAnthropic(page, "sk-ant-test-0123456789abcdef", "claude-test");
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   const box = chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
   await box.fill("把标题挪进来，淡入，Logo 短一点，常量改一下");
   await box.press("Enter");
@@ -157,7 +157,7 @@ async function reload(page: Page) {
     await hooks.aqUndoSaved();
   });
   await page.reload();
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
 }
 
 /** Opens a line and resolves to what it shows. */
@@ -218,7 +218,7 @@ test("each line opens to before and after: a value, keys, code, the picture", as
   ).toContainText("0:02/15");
 
   // Code: the lines that changed with two around each, red and green; side by side in the editor.
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await opener(row(page, "标题")).click();
   await expect(title).toBeHidden();
   const file = await openLine(row(page, "改了文件「code/helper.js」"));
@@ -251,7 +251,7 @@ test("each line opens to before and after: a value, keys, code, the picture", as
 
   // The width of a phone.
   await page.setViewportSize({ width: 390, height: 844 });
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await opener(row(page, "改了文件「code/helper.js」")).click();
   await opener(row(page, "标题")).click();
   await row(page, "标题").getByTestId("chat-change-pictures").scrollIntoViewIfNeeded();

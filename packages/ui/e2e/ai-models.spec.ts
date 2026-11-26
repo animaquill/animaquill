@@ -7,7 +7,7 @@ import {
   openSettingsPage,
   settingsOf,
 } from "./ai-support.ts";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, test, showTab } from "./support.ts";
 
 /**
  * The page of AI models, as pi-web's (S-M2): the tree and what is picked in it, as people set up a
@@ -407,7 +407,7 @@ test("a server of one's own: the picker, its settings one under another, models 
   await expect(inTree(page, "qwen3-max").getByRole("button", { name: "默认模型" })).toBeVisible();
   await noAutoTitle(page);
   await leaveSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByTestId("chat-model")).toHaveText("Qwen3 Max");
   await chat(page).getByTestId("chat-reasoning").click();
   const menu = chat(page).getByTestId("chat-reasoning-menu");
@@ -594,7 +594,7 @@ test("headers go with every request, a model that cannot see is said, the order 
   await inTree(page, "qwen3-max").getByTestId("ai-model-open").press("Alt+ArrowUp");
   expect(await order()).toEqual(["qwen-max", "qwen3-max", "qwen3-vl-plus"]);
   await leaveSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await chat(page).getByTestId("chat-model").click();
   expect(
     await chat(page)

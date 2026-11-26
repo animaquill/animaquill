@@ -35,6 +35,19 @@ export function GroupStrip({ group }: IDockviewHeaderActionsProps) {
     put("--aq-strip-width", width);
     put("--aq-strip-peek", peekWidth);
   }, [group, width, peekWidth]);
+  // Folded up, its names come out over the group next to it, which the element of the group would
+  // cut off: dockview has that on the element itself, see dock.css for the rest.
+  const collapsed = strips.isCollapsed(group);
+  useLayoutEffect(() => {
+    const { style } = group.element;
+    if (!collapsed) return;
+    const before = style.getPropertyValue("overflow");
+    style.setProperty("overflow", "visible");
+    return () => {
+      if (before) style.setProperty("overflow", before);
+      else style.removeProperty("overflow");
+    };
+  }, [group, collapsed]);
 
   const start = (what: "strip" | "names") => (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
@@ -86,6 +99,7 @@ export function GroupStrip({ group }: IDockviewHeaderActionsProps) {
       data-strip={strip}
       data-pinned={pinned}
       data-peek={peek && !strips.isResting(group)}
+      data-collapsed={collapsed || undefined}
     >
       {strip !== "top" && (
         <div

@@ -82,6 +82,8 @@ describe("the resources of a project", () => {
     expect(nodeOfResource(projectResourceId("p1", "sound", "s"))).toBe("project.sounds");
     expect(nodeOfResource("transition:built-in:fade:enter")).toBe("built-in.transitions");
     expect(nodeOfResource("effect:built-in:blur")).toBe("built-in.effects");
+    expect(nodeOfResource("effect:built-in:eq")).toBe("built-in.soundEffects");
+    expect(nodeOfResource("effect:built-in:limiter")).toBe("built-in.soundEffects");
     expect(nodeOfResource("something else")).toBeUndefined();
   });
 });

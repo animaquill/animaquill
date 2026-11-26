@@ -12,8 +12,9 @@ import {
   expect,
   needsDevPage,
   resourcesIn,
-  tab,
   test,
+  newAsset,
+  showTab,
 } from "./support.ts";
 
 // Making a sound starts a page and a worker, which takes its time on a busy computer.
@@ -324,7 +325,7 @@ test.describe("a new sound", () => {
   test("can be heard without writing any code", async ({ page }) => {
     await hearEverything(page);
     await page.reload();
-    await content(page, "assets").getByRole("button", { name: "新建声音" }).click();
+    await newAsset(page, "代码生成的声音");
     await expect(clips(page)).toHaveCount(1);
     await isReady(page, "声音 1");
     await expect.poll(() => hasWaveform(page)).toBe(true);
@@ -339,7 +340,7 @@ test.describe("a new sound", () => {
   });
 
   test("goes on the timeline in one step, and goes when that is undone", async ({ page }) => {
-    await content(page, "assets").getByRole("button", { name: "新建声音" }).click();
+    await newAsset(page, "代码生成的声音");
     await expect(clips(page)).toHaveCount(1);
     await page.keyboard.press("Control+z");
     await expect(clips(page)).toHaveCount(0);
@@ -349,7 +350,7 @@ test.describe("a new sound", () => {
   test("offers its volume, and people hear what they are trying", async ({ page }) => {
     await hearEverything(page);
     await page.reload();
-    await content(page, "assets").getByRole("button", { name: "新建声音" }).click();
+    await newAsset(page, "代码生成的声音");
     await isReady(page, "声音 1");
     const volume = content(page, "properties").getByRole("spinbutton", { name: "音量" });
     await typeInto(volume, "-60");
@@ -651,7 +652,7 @@ test.describe("a sound that failed", () => {
       timeout: 20_000,
     });
     await clickFirstClip(page);
-    await tab(page, "properties").click();
+    await showTab(page, "properties");
     const retry = content(page, "properties").getByRole("button", { name: "重试" });
     await expect(retry).toBeVisible();
     const runs = countRuns(page);
@@ -741,7 +742,7 @@ test.describe("sounds nobody needs", () => {
 
 test.describe("a project that goes away", () => {
   test("takes its sound along", async ({ page }) => {
-    await content(page, "assets").getByRole("button", { name: "新建声音" }).click();
+    await newAsset(page, "代码生成的声音");
     await isReady(page, "声音 1");
     await page.goto("/");
     await createInEditor(page, "另一个");

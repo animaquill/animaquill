@@ -1,5 +1,14 @@
 import type { Locator, Page } from "@playwright/test";
-import { chooseLayout, content, expect, waitSaved, tab, test } from "./support.ts";
+import {
+  chooseLayout,
+  content,
+  expect,
+  newAsset,
+  waitSaved,
+  tab,
+  test,
+  showTab,
+} from "./support.ts";
 
 const panel = (page: Page) => content(page, "timeline");
 /** The clips, and not the keys that show under them. */
@@ -7,14 +16,15 @@ const clips = (page: Page) =>
   panel(page).getByRole("listbox", { name: "时间轴片段", exact: true }).getByRole("option");
 const timecode = (page: Page) => content(page, "preview").locator("output");
 const playhead = (page: Page) => panel(page).getByRole("slider", { name: "播放头" });
-const addColorButton = (page: Page) => panel(page).getByRole("button", { name: "纯色片段" });
 const stage = (page: Page) => panel(page).getByRole("group", { name: "时间轴" });
 const trackHeader = (page: Page, name: string) => panel(page).getByText(name, { exact: true });
 
 async function addColor(page: Page, count = 1) {
   const before = await clips(page).count();
-  for (let index = 0; index < count; index++) await addColorButton(page).click();
+  for (let index = 0; index < count; index++) await newAsset(page, "纯色片段");
   await expect(clips(page)).toHaveCount(before + count);
+  // The new menu is in the assets: the keys go to the timeline again, as with its old button.
+  await showTab(page, "timeline");
 }
 
 async function boxOf(locator: Locator) {
@@ -67,7 +77,7 @@ async function settle(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await expect(panel(page)).toBeVisible();
 });
 
@@ -619,7 +629,7 @@ test.describe("deleting", () => {
   test("works right after clicking the tab of the timeline", async ({ page }) => {
     await addColor(page);
     await content(page, "preview").click();
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await page.keyboard.press("Home");
     await expect(timecode(page)).toHaveText("0:00/00");
   });
@@ -724,7 +734,7 @@ test.describe("several windows", () => {
   async function secondWindow(page: Page) {
     const other = await page.context().newPage();
     await other.goto(page.url());
-    await tab(other, "timeline").click();
+    await showTab(other, "timeline");
     await expect(panel(other)).toBeVisible();
     return other;
   }
@@ -800,23 +810,23 @@ test.describe("behind another tab", () => {
   };
 
   test("a new project opens, and draws once its tab is shown", async ({ page }) => {
-    await tab(page, "problems").click();
+    await showTab(page, "problems");
     await page.waitForTimeout(700);
     await newProject(page, "另一个");
     await expect(content(page, "problems")).toBeVisible();
-    await tab(page, "timeline").click();
-    await expect(addColorButton(page)).toBeVisible();
+    await showTab(page, "timeline");
+    await expect(stage(page)).toBeVisible();
     await expect.poll(() => pixelAt(page, 5, 5)).toEqual([24, 24, 24]);
     await expect.poll(() => pixelAt(page, 400, 250)).toEqual([22, 22, 22]);
   });
 
   test("a reload does not stop anything, and it draws its real colours", async ({ page }) => {
     await addColor(page);
-    await tab(page, "problems").click();
+    await showTab(page, "problems");
     await page.waitForTimeout(700);
     await page.reload();
     await expect(content(page, "problems")).toBeVisible();
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await expect(clips(page)).toHaveCount(1);
     await expect.poll(() => pixelAt(page, 5, 5)).toEqual([24, 24, 24]);
   });
@@ -828,7 +838,7 @@ test.describe("behind another tab", () => {
     await page.getByRole("menuitem", { name: "放大" }).click();
     await page.getByRole("button", { name: "视图" }).click();
     await page.getByRole("menuitem", { name: "时间轴" }).click();
-    await expect(addColorButton(page)).toBeVisible();
+    await expect(stage(page)).toBeVisible();
     await addColor(page);
   });
 
@@ -845,7 +855,7 @@ test.describe("behind another tab", () => {
     await page.keyboard.press("Control+Shift+KeyM");
     await expect(content(page, "problems")).toBeVisible();
     await page.mouse.up();
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await settle(page);
     const area = await boxOf(stage(page));
     await page.mouse.click(area.x + area.width - 40, y);
@@ -860,8 +870,8 @@ test.describe("behind another tab", () => {
     await page.keyboard.press("End");
     await settle(page);
     const before = await boxOf(clips(page).first());
-    await tab(page, "problems").click();
-    await tab(page, "timeline").click();
+    await showTab(page, "problems");
+    await showTab(page, "timeline");
     await settle(page);
     const after = await boxOf(clips(page).first());
     expect(after.x).toBeCloseTo(before.x, 0);
@@ -1243,7 +1253,7 @@ test.describe("the preview", () => {
   }) => {
     await stage(page).focus();
     await page.keyboard.press("Space");
-    await tab(page, "problems").click();
+    await showTab(page, "problems");
     await expect(timecode(page)).not.toHaveText("0:00/00");
     const running = await timecode(page).textContent();
     await expect(timecode(page)).not.toHaveText(running ?? "");
@@ -1369,8 +1379,8 @@ test.describe("as part of the editor", () => {
 
   test("comes back when its tab is shown again", async ({ page }) => {
     await addColor(page);
-    await tab(page, "problems").click();
-    await tab(page, "timeline").click();
+    await showTab(page, "problems");
+    await showTab(page, "timeline");
     await expect(clips(page)).toHaveCount(1);
     await expect(timecode(page)).toHaveText("0:05/00");
   });
@@ -1405,7 +1415,7 @@ test.describe("as part of the editor", () => {
     await page.getByRole("textbox", { name: "项目名称" }).fill("另一个");
     await page.keyboard.press("Enter");
     await waitSaved(page);
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await expect(clips(page)).toHaveCount(0);
     await expect(timecode(page)).toHaveText("0:00/00");
   });

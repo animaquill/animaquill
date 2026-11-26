@@ -14,7 +14,7 @@ import {
   settingsOf,
 } from "./ai-support.ts";
 import { chooseFolder } from "./scene-support.ts";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, tab, test, showTab } from "./support.ts";
 
 /**
  * AI hears the sound itself, and the conversation makes room when it fills up (mcp.md 8, 6.11a of
@@ -221,7 +221,7 @@ async function setUp(page: Page, width = 1440) {
   await expect(tab(page, "preview")).toBeVisible();
   await addAnthropic(page, KEY, "claude-test");
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
 }
 
@@ -301,7 +301,7 @@ test("AI hears the sound: loudness, peak, clips and silence over a small picture
   ).toContainText("0:22/03");
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await mix.getByTestId("chat-tool-summary").scrollIntoViewIfNeeded();
   await expect(mix.getByTestId("chat-tool-summary")).toBeInViewport();
   await shoot(page, "L1-listen-390");

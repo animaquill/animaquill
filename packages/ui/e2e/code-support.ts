@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { content, expect, tab } from "./support.ts";
+import { content, expect, showTab } from "./support.ts";
 
 /** Working with files and the code editor, the way people do. */
 
@@ -14,7 +14,7 @@ export const editorTab = (page: Page, name: string) => code(page).getByRole("tab
 export const lines = (page: Page) => code(page).locator(".view-lines");
 
 export async function openFile(page: Page, name: string): Promise<void> {
-  await tab(page, "files").click();
+  await showTab(page, "files");
   await row(page, name).click();
   await expect(lines(page)).toBeVisible(LOADING);
   await expect(editorTab(page, name)).toHaveAttribute("aria-selected", "true");

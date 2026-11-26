@@ -113,13 +113,7 @@ export function createView(input: CreateViewInput, t: TFunction): CreateView {
       isOver || (isCloud && need !== undefined) || asksAboutCancel
         ? undefined
         : {
-            label: t(
-              hasFailed
-                ? "newProject.retry"
-                : kind === "local"
-                  ? "newProject.chooseFolder"
-                  : "newProject.submit",
-            ),
+            label: t(hasFailed ? "newProject.retry" : "newProject.submit"),
             enabled: canSubmit,
           },
     close: {

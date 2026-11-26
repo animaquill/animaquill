@@ -16,7 +16,7 @@ import {
 } from "./ai-support.ts";
 import { clips, goTo } from "./property-helpers.ts";
 import { canCapture, chooseFolder, openForScenes, openScene } from "./scene-support.ts";
-import { content, editorReady, expect, tab, test } from "./support.ts";
+import { content, editorReady, expect, tab, test, showTab } from "./support.ts";
 
 /**
  * What people point at in their words to AI (docs/design/settings-and-properties.md of AnimaQuill
@@ -115,7 +115,7 @@ async function setUp(page: Page, count = 3) {
   await expect(tab(page, "preview")).toBeVisible();
   await addAnthropic(page, KEY, "claude-test");
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
 }
 
@@ -160,11 +160,11 @@ test("the time and the objects selected go in as blocks, and AI gets them as lin
   const objects = chat(page).getByTestId("chat-tool-selection");
   await expect(objects).toHaveAttribute("aria-disabled", "true");
   // All of the first track and the caption.
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await stage(page).focus();
   await page.keyboard.press("Control+a");
   await goTo(page, "0:01/00");
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(objects).not.toHaveAttribute("aria-disabled");
   await expect(objects).toContainText("4");
 
@@ -191,10 +191,10 @@ test("the time and the objects selected go in as blocks, and AI gets them as lin
 
   // A block lights up what it points at, in the preview, and goes there.
   const overlay = content(page, "preview").locator("[data-outlined]");
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await stage(page).focus();
   await page.keyboard.press("Escape");
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await chips.nth(2).hover();
   await expect(overlay).toHaveAttribute("data-outlined", /clip_0/);
   await box(page).hover({ position: { x: 2, y: 2 } });
@@ -241,7 +241,7 @@ const clipNamed = (page: Page, name: RegExp) =>
 
 /** Selects a clip, the way people do: a click on it, where the list of clips says it is. */
 async function clickClip(page: Page, name: RegExp) {
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   const place = await clipNamed(page, name).boundingBox();
   if (!place) throw new Error(`no clip ${String(name)}`);
   await page.mouse.click(place.x + 12, place.y + 10);
@@ -273,7 +273,7 @@ test("AI reads what was selected as a message was sent, though people selected a
   await setUp(page);
   await clickClip(page, /^城市，/);
   await expect(clipNamed(page, /^城市，/)).toHaveAttribute("aria-selected", "true");
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await box(page).fill("把这个放慢一点");
   await box(page).press("Enter");
   await expect(chat(page).getByTestId("chat-user")).toContainText("把这个放慢一点");
@@ -281,7 +281,7 @@ test("AI reads what was selected as a message was sent, though people selected a
   await clickClip(page, /^纯色，.*0:02\/00 到/);
   await expect(clipNamed(page, /^纯色，.*0:02\/00 到/)).toHaveAttribute("aria-selected", "true");
   selectedAgain();
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByTestId("chat-answer")).toHaveText("看到了。");
 
   // The words went as they were, without what was selected.
@@ -306,10 +306,10 @@ test("more than eight objects are the first three and one block for the rest", a
   test.setTimeout(90_000);
   const sent = await pretend(page);
   await setUp(page, 10);
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await stage(page).focus();
   await page.keyboard.press("Control+a");
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await chat(page).getByTestId("chat-tool-selection").click();
   const chips = box(page).getByTestId("chat-chip");
   await expect(chips).toHaveCount(4);
@@ -331,7 +331,7 @@ test("a frame of the playhead goes as a JPEG 1568 wide, with the line that says 
   const sent = await pretend(page);
   await setUp(page);
   await goTo(page, "0:01/00");
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await box(page).click();
   const started = Date.now();
   await page.keyboard.press("Alt+s");
@@ -403,7 +403,7 @@ test("a frame of the playhead goes as a JPEG 1568 wide, with the line that says 
   await expect(chat(page).getByTestId("chat-picture-info").nth(1)).toHaveText(/^红\.png · 16×16/);
   // They stay with the draft through a reload.
   await page.reload();
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(picture).toHaveCount(4);
   await chat(page).getByTestId("chat-picture-remove").first().click();
   await expect(picture).toHaveCount(3);
@@ -435,9 +435,9 @@ test("a model that takes no pictures: held, with another model or without them a
   await say("claude-test", false);
   await say("claude-eyes", true);
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await goTo(page, "0:01/00");
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await box(page).click();
   await page.keyboard.press("Alt+s");
   await expect(chat(page).getByTestId("chat-picture")).toHaveAttribute("data-state", "ready");
@@ -526,7 +526,7 @@ test("links of the editor in an answer are blocks that go where they point, grey
   await expect(clips(page).nth(1)).toHaveAttribute("aria-selected", "true");
   await stage(page).focus();
   await page.keyboard.press("Delete");
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(links.nth(2)).toHaveAttribute("data-gone", "");
   await expect(links.nth(2)).toContainText("已删除");
   await shoot(page, "answer-links", chat(page).getByTestId("chat"));
@@ -614,7 +614,7 @@ test("blocks: Ctrl+Z takes one back, copied ones paste as blocks, a moment shows
   await pretend(page);
   await setUp(page);
   await goTo(page, "0:01/00");
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await box(page).click();
   await box(page).pressSequentially("看");
   await page.keyboard.press("Alt+t");
@@ -660,7 +660,7 @@ test("pictures dropped anywhere on the chat; a lost one holds the message; forma
   test.setTimeout(90_000);
   const sent = await pretend(page);
   await setUp(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   // A 2×1 PNG whose second pixel is transparent: it goes as PNG, keeping that.
   const clear = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAIAAAABCAYAAAD0In+KAAAAD0lEQVR4nGP4z8AARAwMAAz8Af9c/RSVAAAAAElFTkSuQmCC",
@@ -767,7 +767,7 @@ test("an input method: Enter picks a word and sends nothing, a block waits for t
   const sent = await pretend(page);
   await setUp(page);
   await goTo(page, "0:01/00");
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await box(page).click();
   await box(page).pressSequentially("看");
   const ime = await page.context().newCDPSession(page);
@@ -822,7 +822,7 @@ test("a 1080p frame of a scene for the chat takes at most two seconds", async ({
   await addAnthropic(page, KEY, "claude-test");
   await closeSettings(page);
   await goTo(page, "0:01/00");
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await box(page).click();
   const started = Date.now();
   await page.keyboard.press("Alt+s");

@@ -1,6 +1,14 @@
 import { crc32, deflateSync } from "node:zlib";
 import type { Locator, Page } from "@playwright/test";
-import { compositor, content, expect, findCompositor, resourcesIn, tab } from "./support.ts";
+import {
+  compositor,
+  content,
+  expect,
+  findCompositor,
+  resourcesIn,
+  newAsset,
+  showTab,
+} from "./support.ts";
 
 export type Color = readonly [red: number, green: number, blue: number];
 
@@ -58,20 +66,20 @@ export async function goTo(page: Page, time: string) {
 }
 
 export async function placeImage(page: Page, file = red) {
-  await tab(page, "assets").click();
+  await showTab(page, "assets");
   const chooser = page.waitForEvent("filechooser");
   await content(page, "assets").getByRole("button", { name: "导入" }).click();
   await (await chooser).setFiles(file);
   await resourcesIn(page, "assets").first().dblclick();
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(field(page, "位置 X")).toBeVisible();
 }
 
 export async function addColor(page: Page) {
-  await tab(page, "timeline").click();
-  await content(page, "timeline").getByRole("button", { name: "纯色片段" }).click();
+  await showTab(page, "timeline");
+  await newAsset(page, "纯色片段");
   await expect(clips(page)).toHaveCount(1);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await goTo(page, "0:01/00");
   await expect(field(page, "位置 X")).toBeVisible();
 }

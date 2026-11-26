@@ -194,6 +194,92 @@ test.describe("making a new project", () => {
   });
 });
 
+test.describe("opening from a repository", () => {
+  const opening = (page: Page) => page.getByRole("dialog", { name: "从仓库打开" });
+  const choice = (id: number, name: string, more: object = {}) => ({
+    id,
+    owner: "octo",
+    name,
+    fullName: `octo/${name}`,
+    private: true,
+    pushable: true,
+    empty: false,
+    archived: false,
+    linked: false,
+    ...more,
+  });
+
+  test("opens a project of one's own, and makes a new one in an empty repository", async ({
+    page,
+  }) => {
+    await arrive(page);
+    const own = await withLab(page, (lab) => lab.seed("旧片子", { repository: "old-film" }));
+    await withLab(
+      page,
+      (lab, choices) => {
+        lab.repositories.choices = choices;
+      },
+      [
+        choice(1, "old-film", { linked: true, linkedProject: { id: own, name: "旧片子" } }),
+        choice(2, "someone-elses", { linked: true }),
+        choice(3, "read-only", { pushable: false }),
+        choice(4, "empty-one", { empty: true }),
+      ],
+    );
+    // Three ways in, as the online mode has them.
+    await expect(page.locator("[data-new]")).toHaveCount(3);
+    await page.locator('[data-new="openRepository"]').click();
+    const box = opening(page);
+    await expect(box.getByRole("option")).toHaveCount(4);
+    await expect(box.getByRole("option", { name: /someone-elses/ })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    await expect(box.getByRole("option", { name: /read-only/ })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    // Grey ones are no choice: a click selects nothing.
+    await box.getByRole("option", { name: /someone-elses/ }).click({ force: true });
+    await expect(box.getByRole("button", { name: "打开", exact: true })).toBeDisabled();
+    await box.getByRole("option", { name: /empty-one/ }).click();
+    await expect(box.getByRole("button", { name: "在这里新建项目" })).toBeEnabled();
+    await shot(page, "open-repository");
+    await box.getByRole("option", { name: /old-film/ }).dblclick();
+    await expect(page).toHaveTitle("旧片子 - AnimaQuill");
+
+    // The menu has it too; an empty repository gets a new project, saved to it.
+    await chooseFrom(page, "文件", "从仓库打开…");
+    await opening(page)
+      .getByRole("option", { name: /empty-one/ })
+      .click();
+    await opening(page).getByRole("button", { name: "在这里新建项目" }).click();
+    const making = page.locator("dialog[data-create-phase]");
+    await expect(making.locator('[data-repository="octo/empty-one"]')).toBeVisible();
+    await expect(making.getByRole("textbox", { name: "仓库名" })).toHaveCount(0);
+    await shot(page, "new-in-repository");
+    await making.getByRole("textbox", { name: "项目名称" }).fill("新片子");
+    await making.getByRole("button", { name: "新建", exact: true }).click();
+    await expect(making).toHaveAttribute("data-create-phase", /archiving|done/);
+    await making.getByRole("button", { name: /^(关闭|完成)$/ }).click();
+    await expect(page).toHaveTitle("新片子 - AnimaQuill");
+    expect(
+      await withLab(page, ({ repositories }) =>
+        [...repositories.statuses.values()].map((each) => each.repository?.fullName),
+      ),
+    ).toContain("octo/empty-one");
+  });
+
+  test("lets a new project have only a new repository", async ({ page }) => {
+    await arrive(page);
+    await page.getByRole("button", { name: "新建项目" }).first().click();
+    const box = page.locator("dialog[data-create-phase]");
+    await expect(box.getByRole("textbox", { name: "仓库名" })).toBeVisible();
+    await expect(box.getByRole("radio", { name: "用已有的仓库" })).toHaveCount(0);
+    await expect(box.getByRole("button", { name: "从文件夹导入" })).toHaveCount(0);
+  });
+});
+
 test.describe("the panel of the platform", () => {
   /** A new project of the platform, made in the dialog. */
   async function connected(page: Page) {

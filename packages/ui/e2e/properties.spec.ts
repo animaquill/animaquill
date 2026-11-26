@@ -27,12 +27,12 @@ import {
   typeInto,
   type Color,
 } from "./property-helpers.ts";
-import { content, expect, findCompositor, tab, test } from "./support.ts";
+import { content, expect, findCompositor, test, newAsset, showTab } from "./support.ts";
 
 test.use({ trying: false });
 
 test("says what to do while nothing is selected", async ({ page }) => {
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(panel(page)).toContainText("选中时间轴上的片段");
   await expect(panel(page).getByRole("spinbutton")).toHaveCount(0);
 });
@@ -109,12 +109,12 @@ test("survives a reload with its keys", async ({ page }) => {
   await goTo(page, "0:01/00");
   await typeInto(field(page, "位置 X"), "300");
   await page.reload();
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   // The list of clips is for finding them. The mouse goes to what is drawn underneath.
   await expect(clips(page)).toHaveCount(1);
   const box = await clips(page).first().boundingBox();
   await page.mouse.click((box?.x ?? 0) + 20, (box?.y ?? 0) + 10);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(field(page, "位置 X")).toHaveValue("300");
   await goTo(page, "0:00/00");
   await expect(field(page, "位置 X")).toHaveValue("0");
@@ -355,9 +355,9 @@ test("does not let anything change while the playhead is outside of the clip", a
 test("shows the clip of a locked track, and changes nothing", async ({ page }) => {
   await addColor(page);
   await typeInto(field(page, "位置 X"), "50");
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await content(page, "timeline").getByRole("button", { name: /^锁定/ }).first().click();
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
 
   // It stays selected through locking, and what it shows is what the clip has.
   await expect(panel(page).getByRole("status")).toContainText("轨道已锁定");
@@ -367,7 +367,7 @@ test("shows the clip of a locked track, and changes nothing", async ({ page }) =
   await expect(keyButton(page, "位置 X")).toHaveAttribute("aria-disabled", "true");
 
   // A click on the clip selects it just the same.
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   const clip = clips(page).first();
   const box = await clip.boundingBox();
   if (!box) throw new Error("No clip on the screen");
@@ -376,13 +376,13 @@ test("shows the clip of a locked track, and changes nothing", async ({ page }) =
   await expect(clip).toHaveAttribute("aria-selected", "false");
   await page.mouse.click(box.x + box.width / 2, y);
   await expect(clip).toHaveAttribute("aria-selected", "true");
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(field(page, "位置 X")).toHaveValue("50");
 
   // Unlocked again, it can be changed from where it was.
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await content(page, "timeline").getByRole("button", { name: /^锁定/ }).first().click();
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(panel(page).getByRole("status")).toHaveCount(0);
   await typeInto(field(page, "位置 X"), "60");
   await expect(field(page, "位置 X")).toHaveValue("60");
@@ -390,11 +390,13 @@ test("shows the clip of a locked track, and changes nothing", async ({ page }) =
 
 test("shows one clip at a time", async ({ page }) => {
   await addColor(page);
-  await tab(page, "timeline").click();
-  await content(page, "timeline").getByRole("button", { name: "纯色片段" }).click();
+  await showTab(page, "timeline");
+  await newAsset(page, "纯色片段");
   await expect(clips(page)).toHaveCount(2);
+  // The new menu is in the assets: the keys go to the timeline again.
+  await showTab(page, "timeline");
   await page.keyboard.press("Control+a");
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(panel(page)).toContainText("选中了 2 个有画面的片段");
   await expect(panel(page).getByRole("spinbutton")).toHaveCount(0);
 });
@@ -783,21 +785,21 @@ test("puts a fade in on a clip from the transitions tab, which the properties ta
   const half: Color = [red / 2, green / 2, blue / 2];
 
   // With the clip selected, a fade in from the transitions tab goes at its start.
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   const clip = clips(page).first();
   const box = await clip.boundingBox();
   if (!box) throw new Error("no clip on screen");
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2 + 8);
-  await tab(page, "transitions").click();
+  await showTab(page, "transitions");
   await content(page, "transitions").getByRole("option", { name: "淡入", exact: true }).click();
   // Its block at the top of the clip selects it, and the properties tab shows what a transition
   // has, and no more.
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   const after = await clip.boundingBox();
   if (!after) throw new Error("no clip on screen");
   // Past the button for what shows under the track, which a selected clip has at its start.
   await page.mouse.click(after.x + Math.max(30, after.width * 0.05), after.y + 6);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   const transition = panel(page).getByRole("region", { name: "淡入" });
   await expect(transition).toBeVisible();
   await expect(transition).toContainText("的入转场");
@@ -839,7 +841,7 @@ test("puts a fade in on a clip from the transitions tab, which the properties ta
   await expect(linear).toHaveAttribute("aria-pressed", "true");
 
   // Delete on the timeline takes the transition away, and leaves the clip.
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await content(page, "timeline").getByRole("group", { name: "时间轴" }).focus();
   await page.keyboard.press("Delete");
   await expectColor(page, 100, 100, [red, green, blue], 3);
@@ -867,4 +869,62 @@ test("a clip fades in and out, on top of its opacity, as it always did", async (
       element.contentWindow?.postMessage({ type: "seek", seconds: 4.5, jump: true }, "*");
     });
   await expectColor(page, 960, 540, [64, 0, 0], 3);
+});
+
+test.describe("groups of properties", () => {
+  // Its name, and "有关键帧" after it once it is folded with keys in it.
+  const heading = (page: Page, name: string) =>
+    panel(page).getByRole("button", { name: new RegExp(`^${name}( 有关键帧)?$`) });
+
+  test("fold up with a click on their title, all of them with Alt, and stay so for the kind of clip", async ({
+    page,
+  }) => {
+    await addColor(page);
+    await expect(heading(page, "变换")).toHaveAttribute("aria-expanded", "true");
+    await panel(page).screenshot({ path: test.info().outputPath("groups-open.png") });
+    await heading(page, "变换").click();
+    await expect(heading(page, "变换")).toHaveAttribute("aria-expanded", "false");
+    await expect(field(page, "位置 X")).toHaveCount(0);
+    await expect(field(page, "不透明度")).toBeVisible();
+    // A key in a folded group shows on its title.
+    await expect(heading(page, "变换").getByRole("img", { name: "有关键帧" })).toHaveCount(0);
+    await heading(page, "变换").click();
+    await row(page, "位置 X").getByRole("button", { name: "添加关键帧" }).click();
+    await heading(page, "变换").click();
+    await expect(heading(page, "变换").getByRole("img", { name: "有关键帧" })).toBeVisible();
+    // Alt and a click: every group goes the way the one clicked goes, as in After Effects.
+    await heading(page, "不透明度").click({ modifiers: ["Alt"] });
+    await expect(heading(page, "变换")).toHaveAttribute("aria-expanded", "false");
+    await expect(heading(page, "不透明度")).toHaveAttribute("aria-expanded", "false");
+    await heading(page, "不透明度").click({ modifiers: ["Alt"] });
+    await expect(heading(page, "变换")).toHaveAttribute("aria-expanded", "true");
+    await expect(heading(page, "不透明度")).toHaveAttribute("aria-expanded", "true");
+    await heading(page, "变换").click({ modifiers: ["Alt"] });
+    await expect(heading(page, "不透明度")).toHaveAttribute("aria-expanded", "false");
+    await panel(page).screenshot({ path: test.info().outputPath("groups-folded.png") });
+
+    // Another clip of the same kind is the same, also after a reload.
+    await showTab(page, "timeline");
+    await newAsset(page, "纯色片段");
+    await showTab(page, "properties");
+    await expect(heading(page, "变换")).toHaveAttribute("aria-expanded", "false");
+    await page.reload();
+    await showTab(page, "timeline");
+    // The list of clips is for finding them. The mouse goes to what is drawn underneath.
+    await expect(clips(page)).toHaveCount(2);
+    const box = await clips(page).first().boundingBox();
+    await page.mouse.click((box?.x ?? 0) + 20, (box?.y ?? 0) + 10);
+    await showTab(page, "properties");
+    await expect(heading(page, "不透明度")).toHaveAttribute("aria-expanded", "false");
+    // The keyboard: Enter opens one, Alt and Enter all of them the way that one goes.
+    await heading(page, "不透明度").focus();
+    await page.keyboard.press("Enter");
+    await expect(field(page, "不透明度")).toBeVisible();
+    await expect(heading(page, "变换")).toHaveAttribute("aria-expanded", "false");
+    await page.keyboard.press("Alt+Enter");
+    await expect(heading(page, "不透明度")).toHaveAttribute("aria-expanded", "false");
+    await page.keyboard.press("Alt+Enter");
+    await expect(heading(page, "变换")).toHaveAttribute("aria-expanded", "true");
+    await expect(heading(page, "不透明度")).toHaveAttribute("aria-expanded", "true");
+  });
 });

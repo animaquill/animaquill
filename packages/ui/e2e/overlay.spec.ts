@@ -19,7 +19,7 @@ import {
   projectFolder,
   sceneFrames,
 } from "./scene-support.ts";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, test, showTab } from "./support.ts";
 
 /**
  * The handles on the picture. They are drawn on a canvas over the compositor, which also lists
@@ -385,7 +385,7 @@ test.describe("code objects", () => {
     await openForScenes(page);
     await importFolder(page, projectFolder({ a: { "index.html": arm } }, [{}]));
     await clickFirstClip(page);
-    await tab(page, "properties").click();
+    await showTab(page, "properties");
     const tip = handle(page, "手臂 的手柄 tip");
     await expect(tip).toBeAttached();
     // What would reach outside of the object itself is left out.

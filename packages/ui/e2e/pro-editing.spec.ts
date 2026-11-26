@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Locator, Page } from "@playwright/test";
-import { content, expect, resourcesIn, tab, test } from "./support.ts";
+import { content, expect, resourcesIn, test, newAsset, showTab } from "./support.ts";
 
 /** In and out, and J, K and L (pro-editing P1 of AnimaQuill Cloud). */
 
@@ -38,7 +38,7 @@ async function stepRight(page: Page, frames: number) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await expect(panel(page)).toBeVisible();
   await stage(page).focus();
 });
@@ -202,12 +202,12 @@ test.describe("J, K and L", () => {
 
 test.describe("Alt+K", () => {
   test("keys the row last worked with, on the selected clip only", async ({ page }) => {
-    await panel(page).getByRole("button", { name: "纯色片段" }).click();
+    await newAsset(page, "纯色片段");
     // Into the clip, where its properties can change.
     await stage(page).focus();
     await page.keyboard.press("Home");
     await stepRight(page, 30);
-    await tab(page, "properties").click();
+    await showTab(page, "properties");
     const row = content(page, "properties").getByRole("group", { name: "位置 X", exact: true });
     await row.getByRole("spinbutton").click();
     await page.keyboard.press("Alt+KeyK");
@@ -221,7 +221,7 @@ test.describe("Alt+K", () => {
       "false",
     );
     // Nothing selected: nothing to key, and the menu says so.
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await stage(page).focus();
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "时间轴", exact: true }).click();
@@ -514,7 +514,7 @@ async function middleOf(locator: Locator) {
 
 /** A video with sound in the project, and nothing of it on the timeline yet. */
 async function importVideo(page: Page) {
-  await tab(page, "assets").click();
+  await showTab(page, "assets");
   const chooser = page.waitForEvent("filechooser");
   await content(page, "assets").getByRole("button", { name: "导入" }).click();
   await (await chooser).setFiles(VIDEO);
@@ -810,10 +810,10 @@ test.describe("only the picture or only the sound of a video", () => {
 /** The same video again at the playhead, after the one there is. */
 async function placeAgain(page: Page) {
   const before = await clips(page).count();
-  await tab(page, "assets").click();
+  await showTab(page, "assets");
   await cards(page).first().click();
   await expect(clips(page)).toHaveCount(before + 2);
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await stage(page).focus();
 }
 

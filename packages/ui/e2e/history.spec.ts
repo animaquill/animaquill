@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, tab, test, newAsset, showTab } from "./support.ts";
 
 /**
  * The last operation in the status bar, and the list of the latest ones behind it: taking back what
@@ -15,8 +15,8 @@ const items = (page: Page) =>
 const clips = (page: Page) => content(page, "timeline").getByRole("option");
 
 async function newScene(page: Page) {
-  await tab(page, "assets").click();
-  await content(page, "assets").getByRole("button", { name: "新建场景" }).click();
+  await showTab(page, "assets");
+  await newAsset(page, "场景");
 }
 
 async function rename(page: Page, name: string) {

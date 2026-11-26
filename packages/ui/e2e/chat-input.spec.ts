@@ -9,7 +9,7 @@ import {
   goToSettingsGroup,
   settingsOf,
 } from "./ai-support.ts";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, test, showTab } from "./support.ts";
 
 /**
  * The input box, the bubble of models and the list of conversations, against a pretend Anthropic:
@@ -98,7 +98,7 @@ test("each conversation keeps its own model; the star changes the default, for n
   await addAnthropic(page, KEY, "claude-test");
   await addModel(page, "claude-other");
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
 
   // The bubble: the models that are on, by service, the tick on this conversation's with the pack
@@ -202,12 +202,12 @@ test("a draft stays through a reload, and messages queue while a task runs", asy
   });
   await addAnthropic(page, KEY, "claude-test");
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
 
   // Typed and not sent: there again after a reload.
   await box(page).fill("还没写完的话");
   await page.reload();
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect.poll(() => draft(page)).toBe("还没写完的话");
   // The box grows with what is in it, up to ten lines.
   const before = (await box(page).boundingBox())?.height ?? 0;
@@ -259,7 +259,7 @@ test("the list: rename, search, delete; a new conversation from a turn; quoting 
   });
   await addAnthropic(page, KEY, "claude-test");
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await send(page, "把字幕往上挪一点");
   await expect(chat(page).getByText("字幕往上挪了 12 像素。")).toBeVisible({ timeout: 15_000 });
   await send(page, "开场放慢一点");
@@ -329,7 +329,7 @@ test("before any service: where the key goes, and one click to adding Anthropic,
   test.setTimeout(60_000);
   await page.setViewportSize({ width: 2000, height: 1000 });
   await page.route(ANTHROPIC, (route) => answer(route, "OK"));
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   const start = chat(page).getByTestId("chat-onboarding");
   await expect(start).toContainText("key 不经过我们");
   await expect(start.getByTestId("chat-onboard-service")).toHaveCount(3);
@@ -367,7 +367,7 @@ test("sends with Ctrl+Enter where people chose that, and Enter is a new line the
     .getByRole("radio", { name: "Ctrl+Enter" })
     .click();
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(box(page)).toHaveAttribute(
     "data-placeholder",
     "给 AI 发消息，Ctrl+Enter 发送，Enter 换行",

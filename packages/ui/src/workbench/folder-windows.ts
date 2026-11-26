@@ -3,7 +3,7 @@
  * window has a workbench, and they share the disk, the log of projects and the address.
  */
 import { memoryOrganizer } from "@animaquill/host";
-import type { FolderAccess, Host, LocalFolders } from "@animaquill/host";
+import type { FolderAccess, Host, LocalFolder, LocalFolders, SavedFolders } from "@animaquill/host";
 import { MemoryDisk, memoryFolders } from "@animaquill/host/memory";
 import { MANIFEST_FILE } from "@animaquill/schema";
 import { expect, vi } from "vitest";
@@ -43,6 +43,22 @@ export function browserOf(disk = new MemoryDisk()) {
     /** Which windows have which projects open: every window of the browser shares it. */
     presence: new MemoryPresence(),
     organizer: memoryOrganizer(),
+    savedFolders: memorySavedFolders(),
+  };
+}
+
+/** The folders a browser keeps for later, as a database of it does, see `SavedFolders`. */
+function memorySavedFolders(): SavedFolders {
+  const saved = new Map<string, LocalFolder>();
+  let place: LocalFolder | undefined;
+  return {
+    get: async (project) => saved.get(project),
+    put: async (project, folder) => void saved.set(project, folder),
+    forget: async (project) => void saved.delete(project),
+    lastPlace: async () => place,
+    keepPlace: async (folder) => {
+      place = folder;
+    },
   };
 }
 
@@ -81,6 +97,7 @@ export function windowOf(
     drafts: new MemoryTrials(),
     exports: new MemoryExports(),
     presence: browser.presence.window(),
+    savedFolders: browser.savedFolders,
   };
   const workbench = new Workbench({
     host,

@@ -10,7 +10,16 @@ import type { Page } from "@playwright/test";
 import { chromeRefuses } from "../../host/src/chrome-names.ts";
 import { folderNameFor } from "../../host/src/paths.ts";
 import { cardMenu, noProjects } from "./start-support.ts";
-import { content, createProject, expect, resourcesIn, waitSaved, tab, test } from "./support.ts";
+import {
+  content,
+  createProject,
+  expect,
+  resourcesIn,
+  waitSaved,
+  tab,
+  test,
+  showTab,
+} from "./support.ts";
 
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
@@ -290,7 +299,7 @@ async function exportProject(page: Page) {
 }
 
 async function bringInFiles(page: Page) {
-  await tab(page, "assets").click();
+  await showTab(page, "assets");
   const chooser = page.waitForEvent("filechooser");
   await content(page, "assets").getByRole("button", { name: "导入" }).click();
   await (await chooser).setFiles([files.video, files.sound, files.image]);
@@ -303,7 +312,7 @@ async function buildProject(page: Page) {
   for (const name of ["红色.webm", "配音.wav", "封面.png"]) {
     await items(page).filter({ hasText: name }).dblclick();
   }
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await content(page, "timeline").getByRole("button", { name: "添加轨道" }).click();
   await page.getByRole("menuitem", { name: "字幕轨道" }).click();
   await expect(clips(page)).toHaveCount(3);
@@ -411,10 +420,10 @@ test.describe("a project that travels", () => {
     await expect(page.getByText("“测试项目”已导入。")).toBeVisible();
     await expect(dialog(page)).toHaveCount(0);
     await expect(tab(page, "preview")).toBeVisible();
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     await expect(items(page)).toHaveCount(3);
     await expect(items(page).filter({ hasText: "封面.png" }).locator("img")).toBeVisible();
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await expect(clips(page)).toHaveCount(3);
     expect(await clips(page).evaluateAll((list) => list.map((clip) => clip.ariaLabel))).toEqual(
       labels,
@@ -471,7 +480,7 @@ test.describe("a project that travels", () => {
     await expect(
       page.locator("footer").getByRole("button", { name: "测试项目（副本）" }),
     ).toBeVisible();
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await expect(clips(page)).toHaveCount(3);
     await expect.poll(() => isRed(page)).toBe(true);
 
@@ -479,7 +488,7 @@ test.describe("a project that travels", () => {
     await expect(page.getByRole("listitem")).toHaveCount(2);
     await page.getByRole("link", { name: /^原来的项目/ }).click();
     await expect(page.locator("footer").getByRole("button", { name: "原来的项目" })).toBeVisible();
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await expect(clips(page)).toHaveCount(3);
     const after = await stored(page);
     expect(after.media).toBeGreaterThanOrEqual(before.media + 3);
@@ -530,7 +539,7 @@ test.describe("a project that travels", () => {
     await expect(report.getByText(/缺失的资源.*导入同样的文件/)).toBeVisible();
     await closeDialog(page);
 
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await expect(clips(page)).toHaveCount(3);
     await expect(page.getByText("有素材在这个浏览器里解不了或者找不到")).toBeVisible();
     await expect.poll(() => isRed(page)).toBe(false);
@@ -556,7 +565,7 @@ test.describe("a project that travels", () => {
     await closeDialog(page);
 
     await expect.poll(() => isRed(page)).toBe(false);
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     await expect(items(page).filter({ hasText: "封面.png" }).locator("img")).toHaveCount(0);
 
     const chooser = page.waitForEvent("filechooser");
@@ -730,7 +739,7 @@ test.describe("a folder with something wrong with it", () => {
   /** The project that is open is the one from before, with all of it there. */
   async function expectNothingChanged(page: Page, before: Awaited<ReturnType<typeof stored>>) {
     expect(await stored(page)).toEqual(before);
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await expect(clips(page)).toHaveCount(3);
     await expect(page.locator("footer").getByRole("button", { name: "测试项目" })).toBeVisible();
     await expect.poll(() => isRed(page)).toBe(true);
@@ -795,9 +804,9 @@ test.describe("a folder with something wrong with it", () => {
     writeFileSync(join(folder, "timelines/main/timeline.json"), "{ 不是 JSON");
     const before = await stored(page);
     await skipBroken(page, "时间轴 main");
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await expect(clips(page)).toHaveCount(0);
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     await expect(items(page)).toHaveCount(3);
     await comesBackWhole(page);
     expect((await stored(page)).projects.length).toBeGreaterThan(before.projects.length);
@@ -808,17 +817,17 @@ test.describe("a folder with something wrong with it", () => {
   }) => {
     writeFileSync(join(folder, "assets.json"), "{ 不是 JSON");
     await skipBroken(page, "所有素材");
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await expect(clips(page)).toHaveCount(3);
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     await expect(items(page)).toHaveCount(0);
 
     // All of it is drawn and played without what it refers to.
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await clips(page).first().click({ force: true });
     await expect(clips(page).first()).toHaveAttribute("aria-selected", "true");
-    await tab(page, "properties").click();
-    await tab(page, "timeline").click();
+    await showTab(page, "properties");
+    await showTab(page, "timeline");
     await page.keyboard.press("Space");
     await page.keyboard.press("Space");
     await comesBackWhole(page);
@@ -1052,7 +1061,7 @@ test.describe("a project on its way in", () => {
     await page.evaluate(() => window.release?.());
     await expect(page.getByText("“测试项目”已导入。")).toBeVisible();
     await expect.poll(() => isRed(page)).toBe(true);
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     await expect(items(page).filter({ hasText: "封面.png" }).locator("img")).toBeVisible();
   });
 });
@@ -1109,7 +1118,7 @@ test.describe("a browser that cannot write to folders", () => {
     await importFromStart(page, join(folder, "测试项目"));
 
     await expect(page.getByText("“测试项目”已导入。")).toBeVisible();
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await expect(clips(page)).toHaveCount(3);
     await expect.poll(() => isRed(page)).toBe(true);
   });
@@ -1446,7 +1455,7 @@ test.describe("a project brought into a window that keeps nothing on the disk", 
     await expect(page.getByText("有素材在这个浏览器里解不了或者找不到")).toBeVisible();
     await expect.poll(() => isRed(page)).toBe(false);
 
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     const chooser = page.waitForEvent("filechooser");
     await content(page, "assets").getByRole("button", { name: "导入" }).click();
     await (await chooser).setFiles([files.video]);

@@ -1,3 +1,4 @@
+import { BUILT_IN_EFFECTS } from "@animaquill/schema";
 import { Emitter } from "../workbench/emitter.ts";
 import { parseProjectResourceId } from "./project-resources.ts";
 import { isBuiltInSoundId } from "./transitions.ts";
@@ -13,12 +14,14 @@ export const EXPLORER_NODES = [
   "built-in.transitions",
   "built-in.fades",
   "built-in.effects",
+  "built-in.soundEffects",
   "project",
   "project.media",
   "project.scenes",
   "project.sounds",
   "project.transitions",
   "project.effects",
+  "project.soundEffects",
   "missing",
   "libraries",
 ] as const;
@@ -43,7 +46,11 @@ export interface ExplorerSnapshot {
 export function nodeOfResource(id: string): ExplorerNode | undefined {
   if (isBuiltInSoundId(id)) return "built-in.fades";
   if (id.startsWith("transition:built-in:")) return "built-in.transitions";
-  if (id.startsWith("effect:built-in:")) return "built-in.effects";
+  if (id.startsWith("effect:built-in:")) {
+    const type = id.slice("effect:built-in:".length);
+    const spec = Object.hasOwn(BUILT_IN_EFFECTS, type) ? BUILT_IN_EFFECTS[type] : undefined;
+    return spec?.media.includes("sound") ? "built-in.soundEffects" : "built-in.effects";
+  }
   const project = parseProjectResourceId(id);
   if (!project) return undefined;
   return project.kind === "asset"

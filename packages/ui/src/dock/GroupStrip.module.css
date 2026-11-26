@@ -33,8 +33,9 @@
   right: calc(var(--aq-strip-peek, var(--aq-strip-width)) - 3px);
 }
 
+/* Only once the names are out, see dock.css: hidden, it cannot catch the mouse either. */
 .edge[data-edge="names"] {
-  display: none;
+  visibility: hidden;
 }
 
 .edge:hover,

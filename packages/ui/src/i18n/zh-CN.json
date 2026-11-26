@@ -407,6 +407,7 @@
     "top": "选项卡在上方",
     "left": "选项卡在左侧",
     "right": "选项卡在右侧",
+    "collapse": "收起这一组",
     "pin": "钉住选项卡",
     "peek": "鼠标悬停时展开",
     "edge": "选项卡栏的宽度",
@@ -1228,6 +1229,15 @@
       "high": "高频",
       "lp": "低通"
     },
+    "section": {
+      "transform": "变换",
+      "opacity": "不透明度",
+      "speed": "速度",
+      "sound": "声音",
+      "master": "主输出",
+      "other": "其他",
+      "hasKeys": "有关键帧"
+    },
     "name": {
       "transform": {
         "x": "X",
@@ -1338,7 +1348,7 @@
     "hide": "隐藏 {{track}}",
     "mute": "静音 {{track}}",
     "solo": "独奏 {{track}}",
-    "emptyHint": "把素材拖到这里，或者点上方的“纯色片段”",
+    "emptyHint": "把素材拖到这里",
     "dropNewTrack": "新建{{track}}",
     "dropAt": "松手放到{{track}}，{{start}}",
     "dropOver": "，会覆盖 {{count}} 处",
@@ -1497,8 +1507,6 @@
       "snapping": "拖动时贴到片段边缘和播放头，按住 Alt 暂时不吸附。",
       "overwriting": "打开后拖到别的片段上会盖住它们。关闭时片段落到最近的空位。",
       "inserting": "打开后拖放和粘贴的片段插进去，后面的内容往后让。按住 Shift 拖动也是插入。",
-      "addColor": "在播放头处放一段纯色，这里没有空位时放到新轨道。",
-      "addScene": "在播放头处放一段用 HTML 和 CSS 写的动画，先用内置的模板。",
       "addTrack": "添加一条视频、音频或字幕轨道。",
       "zoomOut": "缩小时间轴，看到更长的时间。",
       "zoomIn": "放大时间轴，看清每一帧。",
@@ -1720,10 +1728,14 @@
     "importing": "正在导入 {{count}} 个文件",
     "empty": "把视频、音频或图片拖到这里，或者点导入。素材保存在这个浏览器里。",
     "addToTimeline": "添加到时间轴",
+    "new": "新建",
+    "newItem": {
+      "scene": "场景",
+      "color": "纯色片段",
+      "sound": "代码生成的声音"
+    },
     "remove": "删除素材",
-    "newScene": "新建场景",
     "removeScene": "删除场景",
-    "newSound": "新建声音",
     "removeSound": "删除声音",
     "emptyFolder": "把视频、音频或图片拖到这里，或者点导入。它们会复制进项目文件夹的 assets 文件夹；已经在项目文件夹里的文件直接用，不复制。"
   },
@@ -2043,6 +2055,7 @@
   "files": {
     "scenes": "场景",
     "sounds": "声音",
+    "newScene": "新建场景",
     "shared": "共用代码",
     "newFile": "新建文件",
     "newFileTitle": "新建文件（放在 {{folder}} 里，名字里可以带文件夹）",
@@ -2492,7 +2505,7 @@
   "folder": {
     "chooseHint": "下一步选一个放项目的文件夹，也可以在里面新建一个。浏览器不允许直接选“文档”“桌面”“下载”本身，选它们里面的文件夹就可以。",
     "chooseFolder": "选文件夹…",
-    "openAction": "打开项目文件夹…",
+    "openAction": "从文件夹打开…",
     "droppedNoFolder": "拖进来的不是文件夹。要打开项目，请把项目的文件夹拖进来。",
     "droppedWhileAsking": "先回答对话框里的问题，再把文件夹拖进来。",
     "droppedNoFolders": "这个浏览器不能打开电脑上的文件夹。请用 Chrome 或 Edge 的新版本。",
@@ -2599,6 +2612,7 @@
     "recordsFailed": "这个浏览器记下的项目文件夹读不出来，项目没有打开。数据没有改动，可以刷新页面再试。",
     "removeOnlyCopy": "文件夹现在找不到，或者还有改动没写进去：这个浏览器里的就是唯一的一份。移除以后找不回来。",
     "isProjectElsewhere": "这里不能新建项目，请换一个文件夹。",
+    "placeIsProject": "这个文件夹本身是一个项目。新项目会在选的位置里新建一个文件夹，请选放项目的上一层文件夹。",
     "insideTitle": "“{{folder}}”在一个项目里面",
     "insideMessage": "它在项目“{{name}}”的文件夹里，在这里新建会被那个项目当成自己的文件。请在别处新建。",
     "notEmptyClashes": "里面已经有项目会用到的文件（{{files}}，共 {{count}} 个），只能在里面新建一个文件夹“{{inside}}”来放项目。",
@@ -2672,7 +2686,7 @@
       "removeIsFolder": "“{{name}}”已经移到了文件夹里，在“最近的项目”里。要从列表移除请在那里操作。"
     },
     "saveAs": {},
-    "droppedOnline": "在线模式不直接打开文件夹：要把它变成在线项目，用“新建项目 › 从文件夹导入”。"
+    "droppedOnline": "在线模式不直接打开文件夹：要把它变成在线项目，用“从文件夹导入”。"
   },
   "github": {
     "text": {
@@ -2926,12 +2940,14 @@
       "built-in_transitions": "转场",
       "built-in_fades": "过渡",
       "built-in_effects": "效果",
+      "built-in_soundEffects": "声音效果",
       "project": "本项目",
       "project_media": "素材",
       "project_scenes": "场景",
       "project_sounds": "声音",
       "project_transitions": "转场",
       "project_effects": "效果",
+      "project_soundEffects": "声音效果",
       "missing": "缺失的资源",
       "libraries": "关联的素材库"
     },
@@ -2939,13 +2955,16 @@
     "search": "搜索资源",
     "list": "{{node}}的资源",
     "notes": {
-      "built-in": "编辑器自带的转场和效果，只读。",
+      "built-in": "编辑器自带的转场、过渡和效果，只读。",
       "project_transitions": "项目里还不能放自己的转场，以后再做。现在用的都是内置转场，在“内置”里能看到它们用在了哪里。",
-      "project_effects": "项目里还不能放自己的效果，以后再做。现在用的都是内置效果，在“内置”里能看到它们用在了哪里。",
       "missing": "文件找不到、素材库没装、或者这一版的编辑器不认识的资源。片段还留着，找回来就能用。",
       "libraries": "关联素材库和素材库一起做（阶段 8）：到时可以在这里关联电脑上的文件夹或者 GitHub 上的库，看版本、更新和信任。"
     },
     "noMissing": "没有缺失的资源。",
+    "emptyUsed": {
+      "effects": "这个项目还没用效果。",
+      "soundEffects": "这个项目还没用声音效果。"
+    },
     "details": "详情",
     "fields": {
       "type": "类型",
@@ -2977,6 +2996,9 @@
       "exit": "{{name}} 的出转场，{{time}}",
       "join": "{{name}} 后面的衔接转场，{{time}}",
       "effect": "{{name}} 的效果，{{time}}",
+      "track": "{{name}} 的效果器",
+      "bus": "总线 {{name}} 的效果器",
+      "master": "主输出的效果器",
       "version": "{{place}}（版本 {{version}}）",
       "elsewhere": "在时间轴“{{timeline}}”上：这一版只能打开第一个时间轴",
       "gone": "这个片段已经不在了",
@@ -4322,17 +4344,20 @@
     "new": {
       "label": "新建",
       "project": "新建项目",
-      "onlineAbout": "存在服务器上，自动存进你的 GitHub 仓库，换一台电脑接着做。",
-      "onlineAbout_local": "存在服务器上，自动存进服务器的本机 Git 仓库，换一台电脑接着做。",
-      "localAbout": "选一个文件夹，项目就放在那里。",
+      "onlineAbout": "存在服务器上，同时新建一个 GitHub 仓库存它，换一台电脑接着做。",
+      "onlineAbout_local": "存在服务器上，同时新建一个本机 Git 仓库存它，换一台电脑接着做。",
+      "openRepository": "从仓库打开",
+      "openRepositoryAbout": "打开 GitHub 仓库里的项目。",
+      "openRepositoryAbout_local": "打开服务器本机仓库里的项目。",
+      "localAbout": "新建一个文件夹放这个项目。",
       "browserAbout": "项目存在这个浏览器里。",
-      "open": "打开文件夹",
+      "open": "从文件夹打开",
       "openAbout": "打开这台电脑上已有的项目文件夹。也可以把文件夹拖进来。",
       "import": "从文件夹导入",
-      "importAbout": "把电脑上的项目文件夹复制成在线项目，带上素材。",
+      "importAbout": "把电脑上的项目文件夹复制成在线项目，新建一个仓库存它。",
+      "importAbout_local": "把电脑上的项目文件夹复制成在线项目，新建一个本机仓库存它。",
       "importHere": "导入项目文件夹",
-      "importHereAbout": "把一个项目文件夹复制到这个浏览器里。",
-      "restoreLocalAbout": "服务器上有 {{count}} 个本机仓库没有对应的项目，选一个恢复成在线项目。"
+      "importHereAbout": "把一个项目文件夹复制到这个浏览器里。"
     },
     "welcome": "欢迎使用 AnimaQuill",
     "welcomeAbout": "新建一个项目开始，或者打开电脑上已有的项目文件夹。",
@@ -4388,8 +4413,7 @@
       "setCover": "设置封面…",
       "autoCover": "恢复自动封面",
       "saveToFolder": "保存到文件夹…",
-      "renameOffline": "连上以后才能改",
-      "restoreLocal": "从本机仓库恢复…"
+      "renameOffline": "连上以后才能改"
     },
     "cover": {
       "notPicture": "“{{file}}”不是图片。请选 JPEG、PNG、WebP、GIF 或 AVIF 图片。",
@@ -4889,17 +4913,7 @@
       },
       "noteKept": "这台电脑上原来的内容在接回的改动同步到服务器之前一直留在这个浏览器里。"
     },
-    "connectUndone": "服务器没有建成这个项目。项目还在这个浏览器里，内容没有动。",
-    "restoreLocal": {
-      "title": "从本机仓库恢复",
-      "message": "这些本机仓库没有对应的在线项目（项目删了，或者服务器的数据是更早的）。选一个恢复成在线项目，以后照常存回这个仓库。",
-      "loading": "正在查…",
-      "empty": "没有可以恢复的本机仓库。",
-      "failed": "现在查不了，请稍后再试。",
-      "confirm": "恢复",
-      "choice": "{{name}} · {{time}}存档 · {{size}}",
-      "choiceNever": "{{name}} · 还没存过档 · {{size}}"
-    }
+    "connectUndone": "服务器没有建成这个项目。项目还在这个浏览器里，内容没有动。"
   },
   "repository": {
     "switchTitle": "换一个仓库",
@@ -5422,6 +5436,11 @@
       "signIn": "登录后才能新建在线项目。登录时页面会离开一下，再回到这里，已经填的都还在。"
     },
     "submit": "新建",
+    "location": "位置",
+    "noLocation": "还没选",
+    "chooseLocation": "选择…",
+    "changeLocation": "更改…",
+    "changeRepository": "换一个",
     "retry": "再试一次",
     "step": {
       "upload": "在服务器上建项目",
@@ -5461,16 +5480,26 @@
       "failed": "导入的素材没能放进这个浏览器，什么都还没有建。可以再试一次。"
     },
     "importFromFolder": "从文件夹导入…",
-    "waysLabel": "新建的方式",
-    "wayNew": "从头新建",
-    "wayImport": "从文件夹导入",
-    "chooseFolder": "选文件夹…",
     "browser": {
       "title": "项目会存在这个浏览器里",
       "message": "这个浏览器不能用电脑上的文件夹，项目会存在浏览器里。清理浏览器数据时会丢，记得经常“另存一份”。换用 Chrome 或 Edge 可以存进文件夹。",
       "ok": "知道了",
       "notKept": "浏览器没有答应一直保留这个网站的数据，空间紧张时可能清掉项目。记得经常另存一份。"
     }
+  },
+  "openRepository": {
+    "action": "从仓库打开…",
+    "title": "从仓库打开",
+    "title_local": "从本机仓库打开",
+    "filter": "筛选仓库",
+    "list": "仓库",
+    "open": "打开",
+    "createHere": "在这里新建项目",
+    "isProject": "在线项目“{{name}}”",
+    "archived": "{{time}}存档",
+    "neverArchived": "还没存过档",
+    "empty": "没有能打开的仓库。",
+    "empty_local": "服务器上没有别的本机仓库。"
   },
   "aiSync": {
     "retry": "重试",

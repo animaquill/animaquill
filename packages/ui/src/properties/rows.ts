@@ -41,6 +41,9 @@ export class PropertyRows {
   #moment: Moment | undefined;
   readonly #looked = new Map<string, WeakMap<PropertySpec, Looked>>();
   readonly #places = new Map<string, PlaceSignature>();
+  /** Whether properties have keys, which does not change with the playhead: see `keyed`. */
+  #keyedMoment: Omit<Moment, "frame"> | undefined;
+  readonly #keyed = new Map<string, WeakMap<readonly PropertySpec[], boolean>>();
 
   constructor(sources: RowSources) {
     this.#sources = sources;
@@ -104,6 +107,33 @@ export class PropertyRows {
     const looked = { inspected, signature: signatureOf(inspected) };
     own.set(spec, looked);
     return looked;
+  }
+
+  /**
+   * Whether any of these properties of a clip has keys, as a group that is folded up says. The
+   * same list for as long as the project stays the same, also while the playhead moves.
+   */
+  keyed(clip: string, specs: readonly PropertySpec[]): boolean {
+    const now = this.#now();
+    if (!now) return false;
+    const last = this.#keyedMoment;
+    const same =
+      last !== undefined &&
+      last.state === now.state &&
+      last.model === now.model &&
+      last.tried === now.tried &&
+      last.look === now.look;
+    if (!same) {
+      this.#keyedMoment = { state: now.state, model: now.model, tried: now.tried, look: now.look };
+      this.#keyed.clear();
+    }
+    let own = this.#keyed.get(clip);
+    if (!own) this.#keyed.set(clip, (own = new WeakMap()));
+    const known = own.get(specs);
+    if (known !== undefined) return known;
+    const keyed = specs.some((spec) => this.inspect(clip, spec)?.row.animated === true);
+    own.set(specs, keyed);
+    return keyed;
   }
 
   /** What a row shows, as text: the same as long as nothing it shows changed. */

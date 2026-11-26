@@ -116,7 +116,8 @@ async function newFolderProject() {
   browser.disk.folder(ROOT);
   // Watches that say what changed right away, so that what they would say is said in the test.
   const workbench = windowOf(browser, memoryFolders(browser.disk, FAST), undefined, maker);
-  browser.disk.chooseNext(ROOT);
+  // The place it goes in: the project gets the folder of its name there, empty as it is.
+  browser.disk.chooseNext("文档");
   const creating = workbench.newProject();
   await fillNew(workbench, "片子");
   await creating;

@@ -1050,6 +1050,128 @@ test.describe("tabs down a side", () => {
     await expect(content(page, "assets")).toBeVisible();
   });
 
+  test("bring their names out only once the mouse stayed for two seconds, and in at once", async ({
+    page,
+  }) => {
+    await away(page);
+    const icon = await settledBox(tab(page, "assets"));
+    await page.mouse.move(icon.x + icon.width / 2, icon.y + icon.height / 2);
+    await page.waitForTimeout(1200);
+    expect(await widthOf(page, "assets")).toBeLessThan(50);
+    await expect.poll(() => widthOf(page, "assets"), { timeout: 4000 }).toBeGreaterThan(100);
+    // Leaving takes them in right away: no waiting on the way back.
+    await away(page);
+    await page.waitForTimeout(250);
+    expect(await widthOf(page, "assets")).toBeLessThan(50);
+    // The keyboard has them at once: it cannot tell the tabs apart without them.
+    await tabButton(page, "assets").focus();
+    await page.keyboard.press("ArrowDown");
+    await expect.poll(() => widthOf(page, "assets"), { timeout: 1000 }).toBeGreaterThan(100);
+  });
+
+  test("keep their icons where they are on either side while the names come out", async ({
+    page,
+  }) => {
+    for (const type of ["assets", "properties"]) {
+      await away(page);
+      const before = await settledBox(tab(page, type).locator("svg").first());
+      await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+      await expect.poll(() => widthOf(page, type), { timeout: 4000 }).toBeGreaterThan(100);
+      await transitionsOver(group(page, type));
+      const after = await box(tab(page, type).locator("svg").first());
+      expect(Math.abs(after.x - before.x)).toBeLessThan(1);
+      // The names come out on the inner side of the icon, over what is next to the strip.
+      const title = await box(tab(page, type).getByText(type === "assets" ? "素材" : "属性"));
+      if (type === "assets") expect(title.x).toBeGreaterThan(after.x);
+      else expect(title.x + title.width).toBeLessThan(after.x);
+      // The close button is at the other end of the line, away from the icon.
+      const close = await box(
+        group(page, type).getByRole("button", {
+          name: `关闭 ${type === "assets" ? "素材" : "属性"}`,
+        }),
+      );
+      const line = await box(tab(page, type));
+      if (type === "assets") expect(close.x + close.width).toBeGreaterThan(line.x + line.width - 8);
+      else expect(close.x).toBeLessThan(line.x + 8);
+      await group(page, type).screenshot({
+        path: test.info().outputPath(`strip-${type}-names.png`),
+      });
+    }
+  });
+
+  test("fold their group up with a click on the icon that shows, as in VS Code", async ({
+    page,
+  }) => {
+    const saved = await savedLayout(page);
+    const wide = await settledBox(group(page, "properties"));
+    const preview = await settledBox(content(page, "preview"));
+    await tab(page, "properties").click();
+    await expect(content(page, "properties")).toBeHidden();
+    await expect.poll(async () => (await box(group(page, "properties"))).width).toBeLessThan(50);
+    // What was next to it takes the room.
+    await expect
+      .poll(async () => (await box(content(page, "preview"))).width)
+      .toBeGreaterThan(preview.width + wide.width - 60);
+    await waitForSave(page, saved);
+    await page.reload();
+    await expect(tab(page, "properties")).toBeVisible();
+    await expect.poll(async () => (await box(group(page, "properties"))).width).toBeLessThan(50);
+    await expect(content(page, "properties")).toBeHidden();
+
+    // Another icon shows that one, and opens the group as wide as it was.
+    await tab(page, "chat").click();
+    await expect(content(page, "chat")).toBeVisible();
+    await expect
+      .poll(async () => (await box(group(page, "chat"))).width)
+      .toBeGreaterThan(wide.width - 2);
+    // The icon that shows folds it again, and Enter on it opens it.
+    await tab(page, "chat").click();
+    await expect(content(page, "chat")).toBeHidden();
+    await tabButton(page, "chat").focus();
+    await page.keyboard.press("Enter");
+    await expect(content(page, "chat")).toBeVisible();
+    // Whatever asks for a panel of a folded group opens it, as the view menu does.
+    await tab(page, "chat").click();
+    await expect(content(page, "chat")).toBeHidden();
+    await chooseFromView(page, "属性");
+    await expect(content(page, "properties")).toBeVisible();
+  });
+
+  test("bring the names of a folded group out over the group next to it", async ({ page }) => {
+    await tab(page, "properties").click();
+    await expect.poll(async () => (await box(group(page, "properties"))).width).toBeLessThan(50);
+    await away(page);
+    const icon = await settledBox(tab(page, "chat"));
+    await page.mouse.move(icon.x + icon.width / 2, icon.y + icon.height / 2);
+    await expect.poll(() => widthOf(page, "chat"), { timeout: 4000 }).toBeGreaterThan(100);
+    await transitionsOver(group(page, "chat"));
+    // Over the preview, and not cut off by the edge of its own folded group.
+    const title = await box(tab(page, "chat").getByText("聊天"));
+    const onTop = await page.evaluate(
+      ({ x, y }) =>
+        document.elementFromPoint(x, y)?.closest("[data-tab]")?.getAttribute("data-tab"),
+      { x: title.x + title.width / 2, y: title.y + title.height / 2 },
+    );
+    expect(onTop).toBe("chat");
+    expect(title.x).toBeLessThan((await box(group(page, "chat"))).x);
+    await page.screenshot({ path: test.info().outputPath("strip-folded-names.png") });
+  });
+
+  test("do not fold up a group as wide as the window", async ({ page }) => {
+    const before = await settledBox(group(page, "timeline"));
+    await tab(page, "timeline").click();
+    await page.waitForTimeout(300);
+    await expect(content(page, "timeline")).toBeVisible();
+    expect((await box(group(page, "timeline"))).width).toBeCloseTo(before.width, 0);
+    await tab(page, "timeline").click({ button: "right" });
+    await expect(check(page, "收起这一组")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    // A group that can has it in its menu too, for the keyboard.
+    await tab(page, "assets").click({ button: "right" });
+    await check(page, "收起这一组").click();
+    await expect(content(page, "assets")).toBeHidden();
+  });
+
   test("close with their button once their names are out, and not while only icons show", async ({
     page,
   }) => {

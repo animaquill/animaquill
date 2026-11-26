@@ -2,7 +2,7 @@ import type { Locator, Page } from "@playwright/test";
 import { closeSettings, goToSettingsGroup, settingsOf } from "./ai-support.ts";
 import { BLACK, expectColor, field, goTo, placeImage } from "./property-helpers.ts";
 import { clickFirstClip } from "./scene-support.ts";
-import { animateBesideTimeline, content, expect, tab, test } from "./support.ts";
+import { animateBesideTimeline, content, expect, test, showTab } from "./support.ts";
 
 /**
  * Automatic keys (docs/design/keyframes-and-fit.md of AnimaQuill Cloud, 1.4): a round switch in the
@@ -94,11 +94,11 @@ test("the switch in the keyframes is the same, with a red frame there too", asyn
   await expect(inKeys).toHaveAttribute("aria-pressed", "true");
   await expect(frameIn(page, "keyframes")).toBeVisible();
   await expect(frameIn(page, "preview")).toBeVisible();
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(recordIn(page, "properties")).toHaveAttribute("aria-pressed", "true");
   await recordIn(page, "properties").click();
   await expect(frameIn(page, "preview")).toHaveCount(0);
-  await tab(page, "keyframes").click();
+  await showTab(page, "keyframes");
   await expect(inKeys).toHaveAttribute("aria-pressed", "false");
   await expect(frameIn(page, "keyframes")).toHaveCount(0);
 });
@@ -120,9 +120,9 @@ test("recording starts off again after a reload", async ({ page }) => {
   await recordIn(page, "properties").click();
   await expect(recordIn(page, "properties")).toHaveAttribute("aria-pressed", "true");
   await page.reload();
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await clickFirstClip(page);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(recordIn(page, "properties")).toHaveAttribute("aria-pressed", "false");
   await expect(frameIn(page, "preview")).toHaveCount(0);
 });

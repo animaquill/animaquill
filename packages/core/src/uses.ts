@@ -40,8 +40,14 @@ export interface ResourceUse {
   readonly join?: string;
   /** The transition at this edge of the clip uses it. */
   readonly edge?: "enter" | "exit";
-  /** The effect of the clip that is it, by its id. */
+  /** The effect of the clip that is it, by its id; or of the track, bus or master below. */
   readonly effect?: string;
+  /** A track of sound whose effect it is, by its id, in place of a clip. */
+  readonly track?: string;
+  /** A bus of the mix whose effect it is, by its id. */
+  readonly bus?: string;
+  /** The master of the timeline has it among its effects. */
+  readonly master?: true;
   /** A version shows the clip with it, by the name of the version in `overrides`. */
   readonly version?: string;
 }
@@ -183,6 +189,23 @@ function usesIn(id: string, timeline: TimelineState, resource: UsedResource): Re
         for (const [effect, type] of effectsIn(clip)) {
           if (type === resource.type) uses.push({ timeline: id, clip: clip.id, effect });
         }
+      }
+      // Effects of sound also work on tracks, buses and the master, as the mixer has them.
+      const ofType = (effects: readonly { id: string; type: string }[] | undefined) =>
+        (effects ?? []).filter((effect) => effect.type === resource.type);
+      for (const [track, state] of Object.entries(timeline.tracks)) {
+        if (state.kind !== "audio") continue;
+        for (const effect of ofType(state.effects)) {
+          uses.push({ timeline: id, track, effect: effect.id });
+        }
+      }
+      for (const bus of timeline.mix?.buses ?? []) {
+        for (const effect of ofType(bus.effects)) {
+          uses.push({ timeline: id, bus: bus.id, effect: effect.id });
+        }
+      }
+      for (const effect of ofType(timeline.mix?.master?.effects)) {
+        uses.push({ timeline: id, master: true, effect: effect.id });
       }
       return uses;
     case "transition": {

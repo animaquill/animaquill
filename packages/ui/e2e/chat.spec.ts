@@ -7,7 +7,7 @@ import {
   settingsOf,
 } from "./ai-support.ts";
 import { clips } from "./property-helpers.ts";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, test, showTab } from "./support.ts";
 
 /**
  * The chat with AI in the browser, against a pretend Anthropic: the page talks to the real address
@@ -28,7 +28,7 @@ async function setUpService(page: Page) {
   await expect(keys).toHaveText("AI 服务的 key：1 个");
   await expect(keys).toHaveAttribute("data-where", "animaquill-keys");
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
   await expect(chat(page).getByRole("textbox", { name: /给 AI 发消息/ })).toBeVisible();
 }
@@ -321,7 +321,7 @@ test("AI changes the timeline, and the whole task goes back in one step", async 
 
   // The conversation is still there after a reload, with its summary; the key never shows.
   await page.reload();
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByText("加了一个蓝色片段和一个标记。")).toBeVisible();
   await expect(chat(page).getByTestId("chat-change")).toHaveCount(2);
   expect(await page.content()).not.toContain("SECRET");
@@ -413,7 +413,7 @@ test("an earlier conversation with the tools before goes on, with those calls as
     await new Promise((resolve) => write.transaction.addEventListener("complete", resolve));
   });
   await page.reload();
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await openProcess(page);
   await expect(chat(page).getByTestId("chat-tool")).toContainText("读项目结构");
   await send(page, "继续");
@@ -463,7 +463,7 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
   await expect(shown).not.toBeChecked();
   await shown.check();
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await openOthers();
   await hiddenItem.getByRole("menuitemradio").click();
   await page.keyboard.press("Escape");
@@ -475,7 +475,7 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
   await shown.uncheck();
   await expect(packs.getByTestId("pack-viewer-facts")).toContainText("claude-test");
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByTestId("chat-pack")).toHaveText(
     "适配包：对照用的 2026.1 旧写法(内置)",
   );
@@ -495,7 +495,7 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
   await menu.getByRole("menuitemradio").first().click();
   await page.keyboard.press("Escape");
   await page.reload();
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByTestId("chat-pack")).toHaveText(
     "适配包：对照用的 2026.1 旧写法(内置)",
   );
@@ -518,7 +518,7 @@ test("keeps the last answer when the page goes right after it came", async ({ pa
   await chat(page).getByTestId("chat-title").click();
   await expect(chat(page).getByTestId("chat-list").getByTestId("chat-conversation")).toHaveCount(1);
   await page.reload();
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   // What came back from what this browser kept, once the page is up again.
   await expect(chat(page).getByText("这是最后一句。")).toBeVisible({ timeout: 20_000 });
 });
@@ -537,7 +537,7 @@ test("keeps the last answer when the page goes the moment it shows", async ({ pa
   await expect(chat(page).getByText("这是最后一句。")).toBeVisible({ timeout: 30_000 });
   await page.reload();
   await client.send("Emulation.setCPUThrottlingRate", { rate: 1 });
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByText("这是最后一句。")).toBeVisible({ timeout: 20_000 });
 });
 
@@ -725,7 +725,7 @@ test("what a conversation took: in the bar on top, and a line under each turn", 
   );
   await addAnthropic(page, KEY, "claude-opus-5");
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await send(page, "你好");
   await expect(chat(page).getByText("好的。")).toBeVisible();
   // 380k of the 1M Claude Opus 5 takes in, at its listed prices.
@@ -851,7 +851,7 @@ test("the states of a turn, at 420 and 320 wide: done, open, running, stopped, f
   });
   await addAnthropic(page, KEY, "claude-opus-5");
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
 
   // Done: the process folded, the failed call open, the answer, the card, what it took.
   await send(page, "把开场放慢一点，字幕跟着对齐");
@@ -882,7 +882,7 @@ test("the states of a turn, at 420 and 320 wide: done, open, running, stopped, f
   await settingsOf(page).getByRole("textbox", { name: "一次任务最多调用工具" }).fill("3");
   await settingsOf(page).getByRole("textbox", { name: "一次任务最多调用工具" }).press("Enter");
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await newConversation(page);
   await send(page, "一直读");
   const limit = chat(page).getByTestId("chat-limit");

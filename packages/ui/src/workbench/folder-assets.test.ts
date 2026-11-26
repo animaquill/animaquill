@@ -41,7 +41,8 @@ async function newFolderProject() {
   const browser = browserOf();
   browser.disk.folder(ROOT);
   const workbench = windowOf(browser);
-  browser.disk.chooseNext(ROOT);
+  // The place it goes in: the project gets the folder of its name there, empty as it is.
+  browser.disk.chooseNext("文档");
   const creating = workbench.newProject();
   await fillNew(workbench, "片子");
   await creating;

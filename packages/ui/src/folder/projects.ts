@@ -83,6 +83,15 @@ export type NewPlace =
    */
   | { readonly kind: "other"; readonly inside: string; readonly clashes: readonly string[] };
 
+/**
+ * Where a new project goes in a place people chose for it (the design of U1, 2.3): always in a
+ * folder of its own, called after it. Not in a project, nor in what an export left.
+ */
+export type ProjectPlace =
+  /** In the folder `inside`: a new one, or one of that name that is there and empty. */
+  | { readonly kind: "ok"; readonly inside: string }
+  | Exclude<NewPlace, { readonly kind: "empty" } | { readonly kind: "other" }>;
+
 /** What came of finding a folder again that was not where it was. */
 export type FoundAgain = "found" | "not-a-project" | "other-project" | "too-new" | "taken";
 
@@ -235,6 +244,40 @@ export class FolderProjects {
       inside: newNameFor(name, topNames(paths)),
       clashes: paths.filter(isProjectPlace),
     };
+  }
+
+  /**
+   * Where a new project of this name goes in a place people chose, see `ProjectPlace`. Only the
+   * top of the place is read: a place can be as large as the documents of a person. A folder of
+   * the name that is there already is used where it is empty; else the name moves on, "片子 (2)".
+   */
+  async placeIn(place: LocalFolder, name: string): Promise<ProjectPlace> {
+    const known = await this.#folders.records.find(place);
+    if (known) return { kind: "known", record: known };
+    const around = await this.#around(place);
+    if (around) return { kind: "inside", record: around };
+    const names = new Set<string>();
+    const files = await collect(
+      place.list({
+        // Called for what is at the top, which is all that is wanted here, files and folders.
+        includes: (path, kind) => {
+          if (path.includes("/")) return false;
+          if (!isNoneOfIt(path)) names.add(path);
+          return kind === "file";
+        },
+      }),
+    );
+    if (files.includes(MANIFEST_FILE)) return { kind: "project" };
+    if (files.includes(INCOMPLETE_FILE)) return { kind: "incomplete" };
+    const plain = newNameFor(name, []);
+    const free = newNameFor(name, names);
+    if (free !== plain) {
+      const same = await place.inside(plain).catch(() => undefined);
+      if (same && (await filesIn(same).catch(() => ["?"])).length === 0) {
+        return { kind: "ok", inside: plain };
+      }
+    }
+    return { kind: "ok", inside: free };
   }
 
   /**

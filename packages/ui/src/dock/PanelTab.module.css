@@ -35,14 +35,21 @@
 }
 
 /*
- * Down a side: as wide as the strip, with the icon where it stays when only icons show. The close
- * button comes with the mouse, over the end of the name, so that the strip can stay narrow.
+ * Down a side: as wide as the strip, with the icon at its outer edge, where it stays when only
+ * icons show and when the names come out over what is next to it: on the left the names are to the
+ * right of the icon, on the right to the left of it. The close button comes with the mouse, at the
+ * end of the line farthest from the icon, so that a click meant for the icon never finds it.
  */
 :global(.dv-tabs-container-vertical) .tab {
   position: relative;
   height: calc(36px * var(--aq-size-scale));
   padding: 0 8px 0 12px;
   gap: 10px;
+}
+
+:global(.dv-groupview-header-right) :global(.dv-tabs-container-vertical) .tab {
+  flex-direction: row-reverse;
+  padding: 0 12px 0 8px;
 }
 
 /* Bigger down a side, where often only the icons show. */
@@ -59,10 +66,19 @@
   text-overflow: ellipsis;
 }
 
+:global(.dv-groupview-header-right) :global(.dv-tabs-container-vertical) .title {
+  text-align: end;
+}
+
 :global(.dv-tabs-container-vertical) .close {
   position: absolute;
-  top: 8px;
+  top: calc(50% - 10px);
   right: 4px;
+}
+
+:global(.dv-groupview-header-right) :global(.dv-tabs-container-vertical) .close {
+  right: auto;
+  left: 4px;
 }
 
 :global(.dv-tabs-container-vertical) .tab:not(:hover) .close:not(:focus-visible) {
@@ -73,10 +89,26 @@
   padding-right: 28px;
 }
 
+:global(.dv-groupview-header-right) :global(.dv-tabs-container-vertical) .tab:hover {
+  padding-right: 12px;
+  padding-left: 28px;
+}
+
 /* Only the icon has room: a close button would be over it, waiting for a click meant to switch. */
 @container (max-width: 80px) {
   .close {
     display: none;
+  }
+
+  :global(.dv-tabs-container-vertical) .tab:hover,
+  :global(.dv-groupview-header-right) :global(.dv-tabs-container-vertical) .tab:hover {
+    padding-right: 8px;
+    padding-left: 12px;
+  }
+
+  :global(.dv-groupview-header-right) :global(.dv-tabs-container-vertical) .tab:hover {
+    padding-right: 12px;
+    padding-left: 8px;
   }
 }
 

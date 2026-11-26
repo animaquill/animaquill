@@ -1094,13 +1094,15 @@ function browserAddress(mode: "online" | "offline"): ProjectAddress {
  * online-offline.md of AnimaQuill Cloud, 2.1): the screen and the keyboard are this computer's,
  * whichever mode and account it is in. How the editor looks, which web/public/boot.js puts on the
  * page before anything knows the mode; the layouts and how panels are placed in them; the keys;
- * whether a mouse or a trackpad scrolls. None of it goes to a backend.
+ * whether a mouse or a trackpad scrolls; which groups of the properties tab are folded up. None of
+ * it goes to a backend.
  */
 export const DEVICE_SETTINGS: ReadonlySet<string> = new Set([
   "appearance",
   "layout",
   "keybindings",
   "input",
+  "properties",
 ]);
 
 /** Session storage has the lifetime of a tab, and a duplicated tab starts with a copy of it. */
@@ -1361,6 +1363,8 @@ export function createBrowserHost(
     windowMemory,
     folders: browserFolders(),
     ...(localFolders && { localFolders }),
+    // Offline it keeps where new projects went, see `SavedFolders.lastPlace`.
+    ...(localFolders && { savedFolders: browserSavedFolders(localFolders) }),
     ...(persistence && { persistence }),
     making,
     trials: trials.store,
@@ -1611,6 +1615,8 @@ export async function clearIfAsked(
 
 const SAVED_FOLDERS_DATABASE = "animaquill-saved-folders";
 const SAVED = "folders";
+/** Where the last new project of the offline mode went, see `SavedFolders.lastPlace`. */
+const PLACE_KEY = ["place", "newProject"];
 
 function openSavedFolders(factory: IDBFactory, name: string): Promise<IDBDatabase> {
   const request = factory.open(name, 1);
@@ -1638,6 +1644,12 @@ export function browserSavedFolders(
     },
     put: (project, folder) => change((store) => store.put(folders.keep(folder), project)),
     forget: (project) => change((store) => store.delete(project)),
+    // A key that is a list is never one of the ids of projects, which are strings.
+    async lastPlace() {
+      const read = (await database()).transaction(SAVED).objectStore(SAVED).get(PLACE_KEY);
+      return folders.fromKept(await resultOf<unknown>(read));
+    },
+    keepPlace: (folder) => change((store) => store.put(folders.keep(folder), PLACE_KEY)),
   };
 }
 

@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { createProject, writeProject } from "@animaquill/schema";
 import type { Page } from "@playwright/test";
 import { chooseFolder } from "./scene-support.ts";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, tab, test, showTab } from "./support.ts";
 
 /**
  * The volume line on clips of sound (audio-mixing.md 1.1 and 1.2 of AnimaQuill Cloud, M2): over the
@@ -92,7 +92,7 @@ function soundFolder(properties: Record<string, unknown> = {}, picture = false):
 async function open(page: Page, properties: Record<string, unknown> = {}, picture = false) {
   await chooseFolder(page, soundFolder(properties, picture));
   await expect(tab(page, "preview")).toBeVisible({ timeout: 30_000 });
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
 }
 
 /** The clip on the canvas, where the list of clips says it is. */
@@ -128,7 +128,7 @@ test("a drag on the line sets the volume of the clip, and undo takes it back", a
   await page.mouse.up();
   // A click on the line selects the clip as anywhere else on it.
   await page.mouse.click(box.x + box.width / 2, box.y + box.height - 6);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(volumeField(page)).toHaveAttribute("aria-valuetext", /^−\d+\.\d dB$/u);
   const value = Number(await volumeField(page).getAttribute("aria-valuenow"));
   expect(value).toBeLessThan(-1);
@@ -136,9 +136,9 @@ test("a drag on the line sets the volume of the clip, and undo takes it back", a
     "aria-valuetext",
     "C",
   );
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await page.keyboard.press("Control+z");
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(volumeField(page)).toHaveAttribute("aria-valuetext", "0.0 dB");
 });
 
@@ -183,7 +183,7 @@ test("a drag of the volume or the pan in the properties is one step to undo", as
   await open(page);
   const box = await clipBox(page);
   await page.mouse.click(box.x + box.width / 2, box.y + box.height - 6);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   const properties = content(page, "properties");
   /** Drags a slider through several places to its left end, and lets go. */
   const dragLeft = async (name: string) => {
@@ -203,14 +203,14 @@ test("a drag of the volume or the pan in the properties is one step to undo", as
   await expect(pan).toHaveAttribute("aria-valuetext", "L 100");
   const volume = await dragLeft("音量");
   await expect(volume).toHaveAttribute("aria-valuetext", "−∞ dB");
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await page.keyboard.press("Control+z");
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(volume).toHaveAttribute("aria-valuetext", "0.0 dB");
   await expect(pan).toHaveAttribute("aria-valuetext", "L 100");
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await page.keyboard.press("Control+z");
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(pan).toHaveAttribute("aria-valuetext", "C");
 
   // A double click goes back to the middle, as one step too.
@@ -220,9 +220,9 @@ test("a drag of the volume or the pan in the properties is one step to undo", as
   if (!place) throw new Error("no slider");
   await page.mouse.dblclick(place.x + place.width * 0.2, place.y + place.height / 2);
   await expect(pan).toHaveAttribute("aria-valuetext", "C");
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await page.keyboard.press("Control+z");
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(pan).toHaveAttribute("aria-valuetext", "L 100");
 });
 
@@ -235,7 +235,7 @@ test("a picture and its sound, selected together, show the volume of the sound u
     .boundingBox();
   if (!picture) throw new Error("no picture");
   await page.mouse.click(picture.x + picture.width / 2, picture.y + picture.height / 2);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   const properties = content(page, "properties");
   // The picture's own rows, and the sound under them.
   await expect(properties.getByRole("spinbutton", { name: "不透明度" })).toBeVisible();

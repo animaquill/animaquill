@@ -24,35 +24,56 @@ import type { Workbench } from "./workbench.ts";
 afterEach(closeWindows);
 
 describe("a new project", () => {
-  it("goes into the folder people choose, and the folder gets all of it", async () => {
+  it("goes into a folder of its own in the place people choose, and gets all of it", async () => {
     const browser = browserOf();
-    browser.disk.folder("文档/新的");
+    browser.disk.write("文档/README.md", "# 说明");
     const workbench = windowOf(browser);
-    browser.disk.chooseNext("文档/新的");
+    browser.disk.chooseNext("文档");
     const creating = workbench.newProject();
     await fillNew(workbench, "我的片子");
     await creating;
     await vi.waitFor(() => expect(nameOf(workbench)).toBe("我的片子"));
     await written(workbench);
-    expect(manifestOn(browser.disk, "文档/新的")).toMatchObject({ name: "我的片子" });
+    expect(manifestOn(browser.disk, "文档/我的片子")).toMatchObject({ name: "我的片子" });
+    expect(browser.disk.text("文档/README.md")).toBe("# 说明");
     // The window shows it by the number of the folder, which its log has too.
     const record = folderOf(workbench)?.record;
     expect(browser.address.read()).toBe(record?.id);
-    expect(record?.id).not.toBe(manifestOn(browser.disk, "文档/新的").id);
+    expect(record?.id).not.toBe(manifestOn(browser.disk, "文档/我的片子").id);
   });
 
-  it("goes into a folder of its own where other things are, unless people say otherwise", async () => {
+  it("goes where the last one went without asking, by a name nothing there has", async () => {
     const browser = browserOf();
-    browser.disk.write("文档/仓库/README.md", "# 说明");
+    browser.disk.folder("文档");
     const workbench = windowOf(browser);
-    browser.disk.chooseNext("文档/仓库");
-    const creating = workbench.newProject();
-    await fillNew(workbench, "我的片子");
-    expect(await answer(workbench, "inside")).toMatchObject({ kind: "choice" });
+    browser.disk.chooseNext("文档");
+    let creating = workbench.newProject();
+    await fillNew(workbench, "片子");
     await creating;
     await written(workbench);
-    expect(manifestOn(browser.disk, "文档/仓库/我的片子").name).toBe("我的片子");
-    expect(browser.disk.text("文档/仓库/README.md")).toBe("# 说明");
+    // Nothing is chosen this time: a dialog for a folder would have nothing to give, and fail.
+    creating = workbench.newProject();
+    await fillNew(workbench, "片子");
+    await creating;
+    await vi.waitFor(() => expect(folderOf(workbench)?.record.folder.name).toBe("片子 (2)"));
+    await written(workbench);
+    expect(manifestOn(browser.disk, "文档/片子 (2)").name).toBe("片子");
+    expect(manifestOn(browser.disk, "文档/片子").name).toBe("片子");
+  });
+
+  it("is not made in a project, and nothing is kept as the place then", async () => {
+    const browser = browserOf();
+    putProject(browser.disk, fixture(), "文档/原子");
+    const workbench = windowOf(browser);
+    browser.disk.chooseNext("文档/原子");
+    const creating = workbench.newProject();
+    await fillNew(workbench, "片子");
+    expect(await answer(workbench, true)).toMatchObject({
+      title: expect.stringContaining("folder.isProjectTitle"),
+    });
+    await creating;
+    expect(browser.disk.has("文档/原子/片子")).toBe(false);
+    expect(await workbench.projectFolders?.lastPlace()).toBeUndefined();
   });
 });
 
@@ -405,19 +426,17 @@ describe("a folder this browser knows", () => {
 });
 
 describe("a new project", () => {
-  it("does not go right into a folder where a project would take files for its own", async () => {
+  it("goes into a folder of its own also where a project would take files for its own", async () => {
     const browser = browserOf();
     browser.disk.write("文档/仓库/README.md", "# 说明");
     browser.disk.write("文档/仓库/code/util.py", "print('别人的')\n");
     const workbench = windowOf(browser);
     browser.disk.chooseNext("文档/仓库");
     const asked = await answering(workbench, workbench.newProject(), (dialog) =>
-      dialog.kind === "prompt" ? "我的片子" : dialog.kind === "choice" ? "inside" : true,
+      dialog.kind === "prompt" ? "我的片子" : true,
     );
-    const choice = asked.find(({ kind }) => kind === "choice") as unknown as {
-      choices: { id: string }[];
-    };
-    expect(choice.choices.map(({ id }) => id)).toEqual(["inside"]);
+    // Nothing to choose: a new project always gets a folder of its own.
+    expect(asked.some(({ kind }) => kind === "choice")).toBe(false);
     await written(workbench);
     expect(manifestOn(browser.disk, "文档/仓库/我的片子").name).toBe("我的片子");
     expect(browser.disk.text("文档/仓库/code/util.py")).toBe("print('别人的')\n");
@@ -680,12 +699,12 @@ describe("leaving the page for a moment, as signing in does", () => {
     workbench.session.store?.execute({ type: "project.rename", params: { name: "改过" } });
     expect(await workbench.leavePage()).toBe(true);
     expect(workbench.dialogs.getSnapshot()).toBeUndefined();
-    expect(manifestOn(browser.disk, "文档/新的").name).toBe("改过");
+    expect(manifestOn(browser.disk, "文档/新的/我的片子").name).toBe("改过");
   });
 
   it("asks when the folder could not be written, and stays when people say so", async () => {
     const { browser, workbench } = await inFolder();
-    browser.disk.failWrites("文档/新的/animaquill.json", { times: 1000 });
+    browser.disk.failWrites("文档/新的/我的片子/animaquill.json", { times: 1000 });
     workbench.session.store?.execute({ type: "project.rename", params: { name: "写不进去" } });
     const leaving = workbench.leavePage();
     expect(await answer(workbench, false)).toMatchObject({

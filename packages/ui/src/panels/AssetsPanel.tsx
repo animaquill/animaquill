@@ -1,7 +1,7 @@
-import { AudioWaveform, CodeXml, Film, Upload } from "lucide-react";
-import { useEffect, useMemo, useState, useSyncExternalStore, type DragEvent } from "react";
+import { AudioWaveform, Film, Plus, Upload } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from "react";
 import { useTranslation } from "react-i18next";
-import type { MenuItem } from "../app/Menu.tsx";
+import { PopupMenu, type MenuItem } from "../app/Menu.tsx";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import { NO_PROGRESS } from "../folder/assets.ts";
 import { ProjectIcon } from "../resources/ProjectIcon.tsx";
@@ -96,6 +96,8 @@ export function AssetsPanel() {
   );
   const [reading] = progress.reading;
   const [over, setOver] = useState(false);
+  const [newMenu, setNewMenu] = useState<{ readonly x: number; readonly y: number }>();
+  const newButton = useRef<HTMLButtonElement>(null);
   const [notice, say] = useNotice();
   // What `,` and `.` put on the timeline goes with the tab: closed, it is no longer chosen.
   useEffect(() => () => timeline.chooseMedia(undefined), [timeline]);
@@ -206,6 +208,7 @@ export function AssetsPanel() {
       <div className={styles.toolbar}>
         <button
           type="button"
+          className={styles.tool}
           onClick={() => void workbench.pickFiles()}
           aria-label={t("assets.import")}
           title={t("assets.import")}
@@ -214,24 +217,54 @@ export function AssetsPanel() {
           <span className={styles.label}>{t("assets.import")}</span>
         </button>
         <button
+          ref={newButton}
           type="button"
-          onClick={() => timeline.createScene()}
-          aria-label={t("assets.newScene")}
-          title={t("assets.newScene")}
+          className={styles.tool}
+          aria-label={t("assets.new")}
+          title={t("assets.new")}
+          aria-haspopup="menu"
+          aria-expanded={newMenu !== undefined}
+          onClick={(event) => {
+            // Under the button, on a layer of its own: the tab is narrow and cuts off what is in it.
+            const box = event.currentTarget.getBoundingClientRect();
+            setNewMenu(newMenu ? undefined : { x: box.left, y: box.bottom + 4 });
+          }}
         >
-          {/* As scenes and sounds look in the lists: told apart also without their names. */}
-          <CodeXml size={14} />
-          <span className={styles.label}>{t("assets.newScene")}</span>
+          <Plus size={14} aria-hidden />
+          <span className={styles.label}>{t("assets.new")}</span>
         </button>
-        <button
-          type="button"
-          onClick={() => timeline.createSound()}
-          aria-label={t("assets.newSound")}
-          title={t("assets.newSound")}
-        >
-          <AudioWaveform size={14} />
-          <span className={styles.label}>{t("assets.newSound")}</span>
-        </button>
+        {newMenu && (
+          <PopupMenu
+            label={t("assets.new")}
+            x={newMenu.x}
+            y={newMenu.y}
+            groups={[
+              [
+                {
+                  id: "scene",
+                  label: t("assets.newItem.scene"),
+                  run: () => timeline.createScene(),
+                },
+                {
+                  id: "color",
+                  label: t("assets.newItem.color"),
+                  run: () => timeline.addColorClip(),
+                  // A colour is a clip, not a resource: it needs a timeline to go on.
+                  disabled: timeline.model === undefined,
+                },
+                {
+                  id: "sound",
+                  label: t("assets.newItem.sound"),
+                  run: () => timeline.createSound(),
+                },
+              ],
+            ]}
+            onClose={() => {
+              setNewMenu(undefined);
+              newButton.current?.focus({ preventScroll: true });
+            }}
+          />
+        )}
         {importing > 0 && !copying && (
           <span role="status">{t("assets.importing", { count: importing })}</span>
         )}
@@ -251,7 +284,7 @@ export function AssetsPanel() {
         {copying && (
           <span role="status">
             {t(`folder.copy.${copying.stage}`, { name: copying.name, percent: copying.percent })}
-            <button type="button" onClick={copying.stop}>
+            <button type="button" className={styles.tool} onClick={copying.stop}>
               {t("folder.copy.stop")}
             </button>
           </span>

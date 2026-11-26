@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardE
 import { useTranslation } from "react-i18next";
 import type { DialogRequest, FormAnswer, ProgressRequest } from "../workbench/dialogs.ts";
 import { useWorkbench } from "./context.ts";
+import { OpenRepositoryDialog } from "./OpenRepositoryDialog.tsx";
 import { NewProjectDialog } from "./NewProjectDialog.tsx";
 import { ConflictsDialog } from "./ConflictsDialog.tsx";
 import { ReconcileDialog } from "./ReconcileDialog.tsx";
@@ -58,6 +59,7 @@ type QuestionRequest = Exclude<
   DialogRequest,
   | Extract<DialogRequest, { kind: "places" }>
   | Extract<DialogRequest, { kind: "conflicts" }>
+  | Extract<DialogRequest, { kind: "openRepository" }>
   | ProgressRequest
   | FormRequest
   | RepositoryRequest
@@ -318,6 +320,8 @@ export function DialogHost() {
   if (request.kind === "form") return <Form key={request.id} request={request} />;
   if (request.kind === "repository") return <RepositoryDialog key={request.id} request={request} />;
   if (request.kind === "create") return <NewProjectDialog key={request.id} request={request} />;
+  if (request.kind === "openRepository")
+    return <OpenRepositoryDialog key={request.id} request={request} />;
   if (request.kind === "reconcile") return <ReconcileDialog key={request.id} request={request} />;
   if (request.kind === "places") return <PlacesDialog key={request.id} request={request} />;
   if (request.kind === "conflicts") return <ConflictsDialog key={request.id} request={request} />;

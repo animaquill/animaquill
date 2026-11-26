@@ -29,7 +29,6 @@ import {
 import { isSameHash } from "@animaquill/media";
 import type { TFunction } from "i18next";
 import { placedT } from "../i18n/i18n.ts";
-import { formatSize } from "../transfer/transfer.ts";
 import type { Dialogs } from "../workbench/dialogs.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import type { Notifications } from "../workbench/notifications.ts";
@@ -42,7 +41,6 @@ import {
   connectRepositoryName,
   copyProblemText,
   divergedOutcome,
-  momentText,
   pathList,
   pauseText,
 } from "./repository-text.ts";
@@ -1904,55 +1902,6 @@ export class CloudProjects {
     const access = this.#options.cloud.repository;
     if (!access?.localRepositories) return [];
     return access.localRepositories();
-  }
-
-  /**
-   * "从本机仓库恢复…": people choose one of the repositories of the server's own that no project is
-   * saved to, and it is restored as `restoreFromRepository` does one on GitHub. Resolves to
-   * whether a project opened.
-   */
-  async restoreLocalRepository(): Promise<boolean> {
-    const { dialogs, notifications, t } = this.#options;
-    let list: readonly LocalRepository[];
-    try {
-      list = await this.localRepositories();
-    } catch {
-      notifications.push(t("cloud.restoreLocal.failed"));
-      return false;
-    }
-    if (list.length === 0) {
-      notifications.push(t("cloud.restoreLocal.empty"));
-      return false;
-    }
-    const chosen = await dialogs.choose({
-      title: t("cloud.restoreLocal.title"),
-      message: t("cloud.restoreLocal.message"),
-      stacked: true,
-      choices: list.map((repository, index) => ({
-        id: repository.dir,
-        // Two of one name are told apart by when they were archived into, and their size.
-        label: t(
-          repository.archivedAt === undefined
-            ? "cloud.restoreLocal.choiceNever"
-            : "cloud.restoreLocal.choice",
-          {
-            name: repository.name,
-            size: formatSize(repository.bytes ?? 0),
-            ...(repository.archivedAt !== undefined && {
-              time: momentText(repository.archivedAt, Date.now(), t),
-            }),
-            interpolation: { escapeValue: false },
-          },
-        ),
-        ...(index === 0 && { kind: "primary" as const }),
-      })),
-    });
-    const repository = list.find((each) => each.dir === chosen);
-    if (!repository) return false;
-    return this.restoreFromRepository(
-      { dir: repository.dir, fullName: repository.name },
-      { asked: true },
-    );
   }
 
   /** Asks the platform for the working copy of a project, see `CloudAccess.wake`. */

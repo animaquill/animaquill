@@ -9,6 +9,7 @@ import {
   resourcesIn,
   tab,
   test,
+  showTab,
 } from "./support.ts";
 
 const video = {
@@ -38,7 +39,7 @@ const isRed = async (page: Page) => {
 };
 
 async function putVideoOnTimeline(page: Page) {
-  await tab(page, "assets").click();
+  await showTab(page, "assets");
   const chooser = page.waitForEvent("filechooser");
   await content(page, "assets").getByRole("button", { name: "导入" }).click();
   await (await chooser).setFiles(video);
@@ -115,7 +116,7 @@ async function importAndPlace(
   page: Page,
   file: { name: string; mimeType: string; buffer: Buffer },
 ) {
-  await tab(page, "assets").click();
+  await showTab(page, "assets");
   const chooser = page.waitForEvent("filechooser");
   await content(page, "assets").getByRole("button", { name: "导入" }).click();
   await (await chooser).setFiles(file);

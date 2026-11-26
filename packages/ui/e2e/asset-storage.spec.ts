@@ -13,7 +13,7 @@ import { ProjectStore } from "@animaquill/core";
 import { createProject } from "@animaquill/schema";
 import type { Page } from "@playwright/test";
 import { drop, footer } from "./folder-support.ts";
-import { content, expect, findCompositor, resourcesIn, tab, test } from "./support.ts";
+import { content, expect, findCompositor, resourcesIn, tab, test, showTab } from "./support.ts";
 
 const RED = fileURLToPath(new URL("./fixtures/red.webm", import.meta.url));
 const RED_BLUE = fileURLToPath(new URL("./fixtures/red-blue.webm", import.meta.url));
@@ -114,7 +114,7 @@ const details = (page: Page) => content(page, "code").getByRole("region", { name
 
 /** What the explorer and the details of each asset say. */
 async function expectExplorer(page: Page) {
-  await tab(page, "explorer").click();
+  await showTab(page, "explorer");
   const missing = node(page, "missing");
   // Only the file that is nowhere else is missing.
   await expect(missing).toHaveText("缺失的资源（1）", { timeout: 10_000 });
@@ -154,7 +154,7 @@ test.describe("a project folder", () => {
     // The file in GitHub LFS comes from the folder, like any other.
     await expect.poll(() => isRed(page), FIRST_FRAME).toBe(true);
 
-    await tab(page, "problems").click();
+    await showTab(page, "problems");
     const problems = content(page, "problems");
     const away = problems.getByRole("listitem").filter({ hasText: "assets/服务器.webm" }).last();
     await expect(away).toContainText("素材文件不在这台电脑上，原片存在云端空间。", {

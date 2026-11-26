@@ -1,6 +1,6 @@
 import type { Locator, Page } from "@playwright/test";
 import { addAnthropic, closeSettings } from "./ai-support.ts";
-import { content, expect, group, tab, test } from "./support.ts";
+import { content, expect, group, tab, test, showTab } from "./support.ts";
 
 // Where panels go from the view menu, and what the menu says about them: section 11 of
 // docs/design/settings-and-properties.md of AnimaQuill Cloud. The numbers are the rows of 11.5.
@@ -122,7 +122,7 @@ test("14: a ticked panel behind another tab comes to the front with the keyboard
   // With a service, the chat has its box to put the keyboard in.
   await addAnthropic(page, "sk-ant-test-0123456789abcdefSECRET", "claude-test");
   await closeSettings(page);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(content(page, "chat")).toBeHidden();
   await chooseFromView(page, "聊天");
   await expect(tab(page, "chat")).toHaveCount(1);
@@ -130,7 +130,7 @@ test("14: a ticked panel behind another tab comes to the front with the keyboard
   await expect(group(page, "properties").locator('[data-tab="chat"]')).toHaveCount(1);
   await expect(page.getByTestId("chat-input")).toBeFocused();
   // Again, while it is in front: still there, still focused.
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await chooseFromView(page, "聊天");
   await chooseFromView(page, "聊天");
   await expect(content(page, "chat")).toBeVisible();
@@ -146,14 +146,14 @@ test("1: effects go into the group of the preview, the only large one", async ({
 
 test("2: explorer goes into the tall group used last", async ({ page }) => {
   await tableLayout(page);
-  await tab(page, "files").click();
-  await tab(page, "chat").click();
+  await showTab(page, "files");
+  await showTab(page, "chat");
   await chooseFromView(page, "资源管理器");
   await expect(group(page, "chat").locator('[data-tab="explorer"]')).toHaveCount(1);
   await expect(content(page, "explorer")).toBeVisible();
   // And the other way round, which is row 3.
   await close(page, "explorer");
-  await tab(page, "files").click();
+  await showTab(page, "files");
   await chooseFromView(page, "资源管理器");
   await expect(group(page, "files").locator('[data-tab="explorer"]')).toHaveCount(1);
 });

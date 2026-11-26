@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import type { Page } from "@playwright/test";
 import { footer } from "./folder-support.ts";
 import { createOnline } from "./online-support.ts";
-import { devPageOnly, editorReady, expect, tab, test } from "./support.ts";
+import { devPageOnly, editorReady, expect, tab, test, showTab } from "./support.ts";
 
 /**
  * Files of assets into the large file storage of GitHub, as people go through it
@@ -84,7 +84,7 @@ async function chooseFrom(page: Page, menu: string, item: string) {
 }
 
 async function importFiles(page: Page, ...list: (typeof files)[keyof typeof files][]) {
-  await tab(page, "assets").click();
+  await showTab(page, "assets");
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "导入" }).click();
   await (await chooser).setFiles(list);
@@ -93,7 +93,7 @@ async function importFiles(page: Page, ...list: (typeof files)[keyof typeof file
 
 /** The explorer, with the assets of the project. */
 async function explorer(page: Page) {
-  await tab(page, "explorer").click();
+  await showTab(page, "explorer");
 }
 
 const place = (page: Page) => page.getByRole("region", { name: "存放位置" });
@@ -126,7 +126,7 @@ const defaultStorage = (page: Page) =>
 
 /** A file of a picture this large, dropped on the assets panel, made in the page. */
 async function dropLarge(page: Page, name: string, bytes: number) {
-  await tab(page, "assets").click();
+  await showTab(page, "assets");
   // Dropped where the import button is: it is in the panel, which takes what is dropped on it.
   await page.getByRole("button", { name: "导入" }).evaluate(
     (element, { file, length, png }) => {

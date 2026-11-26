@@ -22,7 +22,7 @@ import {
   test,
   type Color,
 } from "./scene-support.ts";
-import { createProject, resourcesIn, waitSaved } from "./support.ts";
+import { createProject, resourcesIn, waitSaved, newAsset, showTab } from "./support.ts";
 
 const clips = (page: Page) => content(page, "timeline").getByRole("option");
 const items = (page: Page) => resourcesIn(page, "assets");
@@ -234,9 +234,9 @@ test.describe("a scene from the start", () => {
     test("does not start over while somebody drags the size of its box", async ({ page }) => {
       await openScene(page, SLIDE);
       await expect.poll(() => squareIsAt(page, 0)).toBe(true);
-      await tab(page, "timeline").click();
+      await showTab(page, "timeline");
       await clickFirstClip(page);
-      await tab(page, "properties").click();
+      await showTab(page, "properties");
       const [frame] = sceneFrames(page);
       const box = await field(page, "大小 宽").boundingBox();
       if (!box) throw new Error("no field");
@@ -257,9 +257,9 @@ test.describe("a scene from the start", () => {
       await expect
         .poll(() => sceneFrames(page)[0] && width(sceneFrames(page)[0] as Frame))
         .toBe(1920);
-      await tab(page, "timeline").click();
+      await showTab(page, "timeline");
       await clickFirstClip(page);
-      await tab(page, "properties").click();
+      await showTab(page, "properties");
       await field(page, "大小 宽").click();
       await field(page, "大小 宽").fill("800");
       await field(page, "大小 宽").press("Enter");
@@ -279,7 +279,7 @@ test.describe("a scene from the start", () => {
       await page.waitForTimeout(1500);
       await expect(page.getByText("浏览器没有绘制这一帧")).toHaveCount(0);
       // Coming back shows where the playhead went in the meantime, without it having to move.
-      await tab(page, "preview").click();
+      await showTab(page, "preview");
       await expect.poll(() => squareIsAt(page, 3)).toBe(true);
     });
 
@@ -428,9 +428,9 @@ test.describe("a scene from the start", () => {
     test("stretches its picture to a box that is only being tried", async ({ page }) => {
       await openScene(page, HALVES);
       await expect.poll(() => isNear(page, 100, 540, [255, 0, 0])).toBe(true);
-      await tab(page, "timeline").click();
+      await showTab(page, "timeline");
       await clickFirstClip(page);
-      await tab(page, "properties").click();
+      await showTab(page, "properties");
       await field(page, "大小 宽").click();
       await field(page, "大小 宽").fill("960");
       await field(page, "大小 宽").press("Enter");
@@ -459,9 +459,9 @@ test.describe("a scene from the start", () => {
     }) => {
       await openScene(page, HALVES);
       await expect.poll(() => isNear(page, 100, 540, [255, 0, 0])).toBe(true);
-      await tab(page, "timeline").click();
+      await showTab(page, "timeline");
       await clickFirstClip(page);
-      await tab(page, "properties").click();
+      await showTab(page, "properties");
       await field(page, "位置 X").click();
       await field(page, "位置 X").fill("500");
       await field(page, "位置 X").press("Enter");
@@ -490,11 +490,11 @@ test.describe("the size of a box that is being tried", () => {
   }
 
   async function select(page: Page): Promise<void> {
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     const box = await content(page, "timeline").getByRole("option", { name: /场景/ }).boundingBox();
     if (!box) throw new Error("No clip");
     await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-    await tab(page, "properties").click();
+    await showTab(page, "properties");
     await expect(field(page, WIDTH)).toBeVisible();
   }
 
@@ -507,8 +507,8 @@ test.describe("the size of a box that is being tried", () => {
 
   /** What makes a new plan, with what is being tried on top of it. */
   async function addClip(page: Page, clipsAfter: number): Promise<void> {
-    await tab(page, "timeline").click();
-    await content(page, "timeline").getByRole("button", { name: "纯色片段" }).click();
+    await showTab(page, "timeline");
+    await newAsset(page, "纯色片段");
     await expect(clips(page)).toHaveCount(clipsAfter);
   }
 
@@ -598,8 +598,9 @@ test.describe("a scene the editor did not answer for at first", () => {
   test("still comes when it is back after undo and redo", async ({ page, problems }) => {
     await openForScenes(page);
     await createProject(page);
-    const newScene = content(page, "timeline").getByRole("button", { name: "新建场景" });
-    await expect(newScene).toBeVisible();
+    await expect(
+      content(page, "assets").getByRole("button", { name: "新建", exact: true }),
+    ).toBeVisible();
     await expect.poll(async () => (await findCompositor(page)) !== undefined).toBe(true);
     await page.waitForTimeout(1000);
     // The compositor is busy while the scene comes and goes, so that it asks when it is gone.
@@ -610,7 +611,7 @@ test.describe("a scene the editor did not answer for at first", () => {
       })
       .catch(() => {});
     await page.waitForTimeout(300);
-    await newScene.click();
+    await newAsset(page, "场景");
     await expect(clips(page)).toHaveCount(1);
     await page.keyboard.press("Control+z");
     await expect(clips(page)).toHaveCount(0);
@@ -648,8 +649,7 @@ test.describe("code in a project that comes in", () => {
 });
 
 test.describe("a new scene", () => {
-  const newScene = (page: Page) =>
-    content(page, "timeline").getByRole("button", { name: "新建场景" }).click();
+  const newScene = (page: Page) => newAsset(page, "场景");
 
   test("goes on the timeline with its name, in one step", async ({ page }) => {
     await newScene(page);
@@ -657,7 +657,7 @@ test.describe("a new scene", () => {
     expect(await clips(page).first().getAttribute("aria-label")).toContain("场景 1");
     await page.keyboard.press("Control+z");
     await expect(clips(page)).toHaveCount(0);
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     await expect(items(page)).toHaveCount(0);
     await page.keyboard.press("Control+Shift+z");
     await expect(items(page)).toHaveCount(1);
@@ -665,29 +665,29 @@ test.describe("a new scene", () => {
 
   test("shows in the list, and a second clip of it can go on the timeline", async ({ page }) => {
     await newScene(page);
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     await expect(items(page).filter({ hasText: "场景 1" })).toHaveCount(1);
     await items(page).first().dblclick();
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await expect(clips(page)).toHaveCount(2);
   });
 
   test("counts on from the ones that are there", async ({ page }) => {
     await newScene(page);
     await newScene(page);
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     await expect(items(page).filter({ hasText: "场景 2" })).toHaveCount(1);
   });
 
   test("can come from the list too", async ({ page }) => {
-    await tab(page, "assets").click();
-    await content(page, "assets").getByRole("button", { name: "新建场景" }).click();
+    await showTab(page, "assets");
+    await newAsset(page, "场景");
     await expect(items(page)).toHaveCount(1);
   });
 
   test("goes with its clips only once people agree, as one step", async ({ page }) => {
     await newScene(page);
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     await items(page).first().click({ button: "right" });
     await page.getByRole("menuitem", { name: "在资源管理器里显示" }).click();
     // A click on a scene opens its code: the details are in its menu.
@@ -699,17 +699,17 @@ test.describe("a new scene", () => {
     await details.getByRole("button", { name: "删除…" }).click();
     await expect(page.getByRole("dialog")).toContainText("时间轴上有 1 处用到它");
     await page.getByRole("dialog").getByRole("button", { name: "一起删除" }).click();
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await expect(clips(page)).toHaveCount(0);
     await page.keyboard.press("Control+z");
     await expect(clips(page)).toHaveCount(1);
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     await expect(items(page)).toHaveCount(1);
   });
 
   test("offers the properties of what is on the picture, and nothing to fit", async ({ page }) => {
     await newScene(page);
-    await tab(page, "properties").click();
+    await showTab(page, "properties");
     await expect(field(page, "位置 X")).toBeVisible();
     await expect(content(page, "properties").getByText("适配")).toHaveCount(0);
   });
@@ -718,9 +718,9 @@ test.describe("a new scene", () => {
     await newScene(page);
     await waitSaved(page);
     await page.reload();
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await expect(clips(page)).toHaveCount(1);
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     await expect(items(page)).toHaveCount(1);
   });
 
@@ -759,14 +759,14 @@ test.describe("a browser that cannot capture", () => {
   const placeholder = async (page: Page) => distance(await colorAt(page, 960, 540), [0, 0, 0]) > 8;
 
   test("shows a placeholder and says why", async ({ page }) => {
-    await content(page, "timeline").getByRole("button", { name: "新建场景" }).click();
+    await newAsset(page, "场景");
     await expect(content(page, "preview").getByText("这个浏览器不能捕获场景")).toBeVisible();
     await expect.poll(() => placeholder(page)).toBe(true);
     await expect.poll(() => sceneFrames(page).length).toBe(0);
   });
 
   test("everything else goes on working", async ({ page }) => {
-    await content(page, "timeline").getByRole("button", { name: "新建场景" }).click();
+    await newAsset(page, "场景");
     await expect(content(page, "preview").getByText("这个浏览器不能捕获场景")).toBeVisible();
     await page.keyboard.press("Control+z");
     await expect(clips(page)).toHaveCount(0);
@@ -781,10 +781,10 @@ test.describe("a scene from a folder", () => {
   test("is in the list, and goes on the timeline", async ({ page }) => {
     const folder = projectFolder({ a: { "index.html": "<p>a</p>" } }, []);
     await importFolder(page, folder);
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     await expect(items(page).filter({ hasText: "场景 a" })).toHaveCount(1);
     await items(page).first().dblclick();
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await expect(clips(page)).toHaveCount(1);
   });
 });

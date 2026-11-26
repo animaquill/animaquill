@@ -70,6 +70,45 @@ describe("a new project", () => {
   });
 });
 
+describe("a place people put new projects in", () => {
+  it("gets a folder of its own for each, called after it, which moves on where it is taken", async () => {
+    const { disk, projects, choose } = setup();
+    const place = await choose("文档");
+    expect(await projects.placeIn(place, "片子")).toEqual({ kind: "ok", inside: "片子" });
+    // A folder of that name with something in it, also deep down, is somebody else's.
+    disk.write("文档/片子/素材/旧的.mp4", "旧的");
+    expect(await projects.placeIn(place, "片子")).toEqual({ kind: "ok", inside: "片子 (2)" });
+    // So is a file of that name.
+    disk.write("文档/镜头", "不是文件夹");
+    expect(await projects.placeIn(place, "镜头")).toEqual({ kind: "ok", inside: "镜头 (2)" });
+    // An empty one of that name is taken as it is.
+    disk.folder("文档/空的");
+    expect(await projects.placeIn(place, "空的")).toEqual({ kind: "ok", inside: "空的" });
+    // A name the system does not take is made into one it does.
+    expect(await projects.placeIn(place, "片头: 第一版")).toMatchObject({ kind: "ok" });
+    const record = await projects.create("片子", place, "片子 (2)");
+    expect(record.folder.name).toBe("片子 (2)");
+    expect(disk.has("文档/片子/素材/旧的.mp4")).toBe(true);
+  });
+
+  it("is never a project, in one, or what is left of an export", async () => {
+    const { disk, projects, choose } = setup();
+    putProject(disk, fixture(), "文档/原子");
+    const atom = await choose("文档/原子");
+    expect(await projects.placeIn(atom, "片子")).toEqual({ kind: "project" });
+    const record = await projects.create("新的", await choose("文档/新的"));
+    expect(await projects.placeIn(record.folder, "片子")).toMatchObject({ kind: "known" });
+    disk.folder("文档/新的/镜头");
+    expect(await projects.placeIn(await choose("文档/新的/镜头"), "片子")).toMatchObject({
+      kind: "inside",
+    });
+    disk.write("文档/半个/导出未完成.txt", "导出没有完成");
+    expect(await projects.placeIn(await choose("文档/半个"), "片子")).toEqual({
+      kind: "incomplete",
+    });
+  });
+});
+
 describe("a folder people open", () => {
   it("that this browser does not know is read once, into a log of a new number", async () => {
     const { disk, library, projects, choose } = setup();

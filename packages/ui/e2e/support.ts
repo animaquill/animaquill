@@ -14,6 +14,28 @@ export { expect };
 
 export const tab = (page: Page, type: string) => page.locator(`[data-tab="${type}"]`);
 export const content = (page: Page, type: string) => page.locator(`[data-panel="${type}"]`);
+
+/**
+ * Brings a tab to the front, as a click on it does, and puts the keyboard in it. A click on a tab
+ * down a side that shows already folds its group up (as in VS Code), so that one only gets the
+ * keyboard, as the click would give it.
+ */
+export async function showTab(page: Page, type: string): Promise<void> {
+  const shows = await tab(page, type).evaluate((element) => {
+    const group = element.closest(".dv-groupview");
+    return (
+      element.closest(".dv-tab")?.classList.contains("dv-active-tab") === true &&
+      group?.querySelector('[data-collapsed="true"]') === null
+    );
+  });
+  if (!shows) {
+    await tab(page, type).click();
+    return;
+  }
+  const panel = content(page, type);
+  await expect(panel).toBeVisible();
+  await panel.focus();
+}
 /**
  * What a tab of resources lists, each once: those used lately show again in a group of their own
  * first, which this leaves out.
@@ -404,4 +426,13 @@ export async function waitSaved(page: Page) {
       { intervals: [400], timeout: 10_000 },
     )
     .toBe(true);
+}
+
+/**
+ * Makes something new from the "新建" menu of the assets tab: a scene, a clip of a colour at the
+ * playhead, or a sound made by code, see the design of U1, 1.
+ */
+export async function newAsset(page: Page, item: "场景" | "纯色片段" | "代码生成的声音") {
+  await content(page, "assets").getByRole("button", { name: "新建", exact: true }).click();
+  await page.getByRole("menuitem", { name: item, exact: true }).click();
 }

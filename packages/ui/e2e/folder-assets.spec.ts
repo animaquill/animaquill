@@ -22,7 +22,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Page } from "@playwright/test";
 import { dialog, drop, footer, openDropped, projectOnDisk, text } from "./folder-support.ts";
-import { content, expect, findCompositor, resourcesIn, tab, test } from "./support.ts";
+import { content, expect, findCompositor, resourcesIn, tab, test, showTab } from "./support.ts";
 
 test.use({
   folders: true,
@@ -56,7 +56,7 @@ const assetsIn = (disk: string) =>
 
 /** Drops files of the disk on the assets panel, with what happens right before letting go. */
 async function dropOnAssets(page: Page, paths: string[], meanwhile?: () => Promise<unknown>) {
-  await tab(page, "assets").click();
+  await showTab(page, "assets");
   const box = await assets(page).boundingBox();
   if (!box) throw new Error("The assets panel has no box");
   const at = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
@@ -151,7 +151,7 @@ test.describe("the assets of a project folder", () => {
     const disk = projectOnDisk();
     putFile(disk, "footage/在里面.webm", RED);
     await openDropped(page, disk);
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     const before = await items(page).count();
 
     await dropOnAssets(page, [join(disk, "footage/在里面.webm")]);
@@ -211,7 +211,7 @@ test.describe("the assets of a project folder", () => {
 
     copyFileSync(RED_BLUE, join(disk, "assets/红色.webm"));
     await toTheFront(page);
-    await tab(page, "problems").click();
+    await showTab(page, "problems");
     // The innermost of the lists: problems are listed by file.
     const replaced = problems(page)
       .getByRole("listitem")
@@ -239,7 +239,7 @@ test.describe("the assets of a project folder", () => {
     mkdirSync(join(disk, "footage"), { recursive: true });
     renameSync(join(disk, "assets/红色.webm"), join(disk, "footage/红色.webm"));
     await toTheFront(page);
-    await tab(page, "problems").click();
+    await showTab(page, "problems");
     const moved = problems(page)
       .getByRole("listitem")
       .filter({ hasText: "footage/红色.webm" })
@@ -265,7 +265,7 @@ test.describe("the assets of a project folder", () => {
     mkdirSync(join(disk, "footage"), { recursive: true });
     renameSync(join(disk, "assets/红色.webm"), join(disk, "footage/红色.webm"));
     await toTheFront(page);
-    await tab(page, "explorer").click();
+    await showTab(page, "explorer");
     const explorer = content(page, "explorer");
     const missing = explorer.locator('[data-node="missing"]');
     await expect(missing).toHaveText("缺失的资源（1）", { timeout: 10_000 });
@@ -324,7 +324,7 @@ test.describe("a project folder opened for the first time in a browser", () => {
     await expect(waiting).toContainText("正在核对素材，预览在等：assets/大.mp4", {
       timeout: 10_000,
     });
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     const reading = assets(page).getByRole("status").filter({ hasText: "正在核对" });
     await expect(reading).toContainText("正在核对“assets/大.mp4”");
   });

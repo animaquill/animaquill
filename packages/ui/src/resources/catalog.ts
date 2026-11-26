@@ -1,5 +1,5 @@
 import { missingIn, type MissingResource, type UsedResource } from "@animaquill/core";
-import type { TransitionMedia, TransitionRef } from "@animaquill/schema";
+import type { EffectMedia, TransitionMedia, TransitionRef } from "@animaquill/schema";
 import type { TFunction } from "i18next";
 import { useMemo, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
@@ -87,6 +87,7 @@ export interface ResourceCatalog {
   readonly transitions: readonly Resource<ExplorerItem>[];
   readonly fades: readonly Resource<ExplorerItem>[];
   readonly effects: readonly Resource<ExplorerItem>[];
+  readonly soundEffects: readonly Resource<ExplorerItem>[];
   /** What the project has itself. */
   readonly own: readonly Resource<ExplorerItem>[];
   /**
@@ -116,13 +117,14 @@ export function useResourceCatalog({ missing: withMissing = true } = {}): Resour
   const transitions = useMemo(() => transitionsOf("picture"), [t]);
   // oxlint-disable-next-line react-hooks/exhaustive-deps -- transitionsOf only reads t
   const fades = useMemo(() => transitionsOf("sound"), [t]);
-  const effects = useMemo(
-    () =>
-      builtInEffects(t).map((resource) =>
-        as(resource, { kind: "effect", item: resource.data } as ExplorerItem),
-      ),
-    [t],
-  );
+  const effectsOf = (media: EffectMedia) =>
+    builtInEffects(t, media).map((resource) =>
+      as(resource, { kind: "effect", item: resource.data } as ExplorerItem),
+    );
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- effectsOf only reads t
+  const effects = useMemo(() => effectsOf("picture"), [t]);
+  // oxlint-disable-next-line react-hooks/exhaustive-deps -- effectsOf only reads t
+  const soundEffects = useMemo(() => effectsOf("sound"), [t]);
   const own = useMemo(
     () =>
       project
@@ -151,12 +153,12 @@ export function useResourceCatalog({ missing: withMissing = true } = {}): Resour
   const byId = useMemo(
     () =>
       new Map(
-        [...transitions, ...fades, ...effects, ...own, ...gone].map((resource) => [
+        [...transitions, ...fades, ...effects, ...soundEffects, ...own, ...gone].map((resource) => [
           resource.id,
           resource,
         ]),
       ),
-    [transitions, fades, effects, own, gone],
+    [transitions, fades, effects, soundEffects, own, gone],
   );
-  return { transitions, fades, effects, own, gone, byId };
+  return { transitions, fades, effects, soundEffects, own, gone, byId };
 }

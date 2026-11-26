@@ -1,10 +1,11 @@
 import { StorageSpace } from "../storage/StorageSpace.tsx";
-import { OFFLINE_HINT_KEY, type FolderStatus, type LocalRepository } from "@animaquill/host";
+import { OFFLINE_HINT_KEY, type FolderStatus } from "@animaquill/host";
 import {
   ChevronDown,
   Clock,
   Cloud,
   Ellipsis,
+  FolderGit2,
   FolderInput,
   FolderOpen,
   HardDrive,
@@ -16,7 +17,6 @@ import {
   Settings,
   Star,
   TriangleAlert,
-  Server,
   X,
 } from "lucide-react";
 import {
@@ -700,10 +700,7 @@ function NewCards({
   large,
   onNew,
 }: {
-  situation: Situation & {
-    /** Repositories of the server's own that no project is saved to, see `localRepositories`. */
-    readonly localRepositories?: number;
-  };
+  situation: Situation;
   large: boolean;
   onNew: (kind: NewKind) => void;
 }) {
@@ -727,19 +724,18 @@ function NewCards({
       {mode === "online" ? (
         <>
           {card("new", Plus, t("start.new.project"), t("start.new.onlineAbout"))}
+          {card(
+            "openRepository",
+            FolderGit2,
+            t("start.new.openRepository"),
+            t("start.new.openRepositoryAbout"),
+          )}
           {card("import", FolderInput, t("start.new.import"), t("start.new.importAbout"))}
-          {(situation.localRepositories ?? 0) > 0 &&
-            card(
-              "restoreLocal",
-              Server,
-              t("start.menu.restoreLocal"),
-              t("start.new.restoreLocalAbout", { count: situation.localRepositories }),
-            )}
         </>
       ) : canFolders ? (
         <>
           {card("new", Plus, t("start.new.project"), t("start.new.localAbout"))}
-          {card("open", FolderOpen, t("start.new.open"), t("start.new.openAbout"))}
+          {card("openFolder", FolderOpen, t("start.new.open"), t("start.new.openAbout"))}
         </>
       ) : (
         <>
@@ -752,10 +748,10 @@ function NewCards({
 }
 
 /**
- * What a card of the new ones does: a new project, one opened from a folder, one imported, or one
- * restored from a repository of the server's own.
+ * What a card of the new ones does: a new project; online one from a repository, or one imported
+ * from a folder; offline one opened from a folder (the design of U1, 2.1).
  */
-type NewKind = "new" | "open" | "import" | "restoreLocal";
+type NewKind = "new" | "openRepository" | "import" | "openFolder";
 
 // ---- the projects
 
@@ -1361,17 +1357,6 @@ export function StartPage() {
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, [refresh]);
-  // Repositories of the server's own to restore, where it saves every project to one: asked once.
-  const [localRepositories, setLocalRepositories] = useState<readonly LocalRepository[]>([]);
-  useEffect(() => {
-    let isCurrent = true;
-    void workbench.localRepositories().then((found) => {
-      if (isCurrent) setLocalRepositories(found);
-    });
-    return () => {
-      isCurrent = false;
-    };
-  }, [workbench]);
   // Looking at a folder can take a while, as on a network: the page does not wait for it.
   useEffect(() => {
     if (!projectFolders) return;
@@ -1393,7 +1378,6 @@ export function StartPage() {
     mode: workbench.mode,
     canFolders: workbench.canFolders,
     canGoOnline: workbench.canGoOnline,
-    localRepositories: localRepositories.length,
   };
   const cards = useMemo(() => composeCards(lists, organized), [lists, organized]);
   const sections = sectionsOf({
@@ -1474,16 +1458,16 @@ export function StartPage() {
     const into = group;
     const before = workbench.session.key;
     const work =
-      kind === "open"
+      kind === "openFolder"
         ? workbench.openFolder()
         : kind === "import"
           ? workbench.importProject()
-          : kind === "restoreLocal"
-            ? workbench.restoreLocalRepository()
+          : kind === "openRepository"
+            ? workbench.openRepository()
             : workbench.newProject();
     void work.then(async () => {
       const key = workbench.session.key;
-      if (into !== undefined && key !== undefined && key !== before && kind !== "open") {
+      if (into !== undefined && key !== undefined && key !== before && kind !== "openFolder") {
         const link = await cloud?.linkOf(key).catch(() => undefined);
         const target: MarksTarget = link ? { key: cloudMarksKey(link.project) } : { key };
         await organizer.moveToGroup(target, into);

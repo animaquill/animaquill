@@ -2,7 +2,7 @@ import type { Locator, Page } from "@playwright/test";
 import { closeSettings, goToSettingsGroup, settingsOf } from "./ai-support.ts";
 import { lines, openFile } from "./code-support.ts";
 import { importFolder, projectFolder } from "./scene-support.ts";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, test, showTab } from "./support.ts";
 
 /**
  * The theme and the size of words (docs/design/settings-and-properties.md of AnimaQuill Cloud,
@@ -58,7 +58,7 @@ test.describe("a system in light colours", () => {
     await expect(root(page)).toHaveAttribute("data-theme", "light");
     await expect(root(page)).toHaveAttribute("data-font-size", "normal");
     expect(await background(page)).toBe("rgb(243, 243, 243)");
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await expect.poll(() => timelineColor(page)).toBe("248,248,248");
 
     await page.emulateMedia({ colorScheme: "dark" });
@@ -140,7 +140,7 @@ for (const [option, value, pixels, taller] of [
     const bar = page.locator("header").first();
     const trackRow = () =>
       content(page, "timeline").getByText("视频 1", { exact: true }).locator("xpath=..");
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     const before = { bar: await bar.boundingBox(), row: await trackRow().boundingBox() };
     await openGeneral(page);
     await choose(page, "界面字号", option);
@@ -162,7 +162,7 @@ for (const [option, value, pixels, taller] of [
     await page.keyboard.press("Escape");
 
     // The names of the tracks fit their rows, which the canvas draws beside them.
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     const header = content(page, "timeline").getByText("视频 1", { exact: true });
     const row = header.locator("xpath=..");
     const [name, around] = [await header.boundingBox(), await row.boundingBox()];
@@ -178,9 +178,9 @@ for (const [option, value, pixels, taller] of [
     expect(after.row?.height ?? 0).toBeCloseTo((before.row?.height ?? 0) * taller, 0);
 
     // The buttons over the assets stay in one line, with their words or as icons.
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     const tops = await content(page, "assets")
-      .getByRole("button", { name: /^(导入|新建场景|新建声音)$/ })
+      .getByRole("button", { name: /^(导入|新建)$/ })
       .evaluateAll((all) => all.map((each) => Math.round(each.getBoundingClientRect().top)));
     expect(new Set(tops).size).toBe(1);
 

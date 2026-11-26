@@ -14,7 +14,7 @@ import {
   settingsOf,
 } from "./ai-support.ts";
 import { chooseFolder } from "./scene-support.ts";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, tab, test, showTab } from "./support.ts";
 
 /**
  * AI looks at the picture itself (mcp.md 8, 6.11a of AnimaQuill Cloud): aq_render_frames renders
@@ -182,7 +182,7 @@ async function setUp(page: Page, folder = colorProject(), width = 1440, problems
   }
   await addAnthropic(page, KEY, "claude-test");
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
 }
 
@@ -273,7 +273,7 @@ test("AI looks at frames: small pictures with their times and boxes, a line of w
 
   // The same row at the width of a phone.
   await page.setViewportSize({ width: 390, height: 844 });
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   // Its words wrap there: what it cost shows too.
   await row.getByTestId("chat-tool-summary").scrollIntoViewIfNeeded();
   await expect(row.getByTestId("chat-tool-summary")).toBeInViewport();
@@ -485,7 +485,7 @@ test("a model that cannot see gets the list only, and the row says so", async ({
   await image.check();
   await image.uncheck();
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await ask(page, "看一眼");
   await expect(chat(page).getByTestId("chat-answer")).toHaveText("清单里标题超出了右边。", {
     timeout: 60_000,

@@ -18,6 +18,7 @@ export function RepositoryFields({
   nameInput,
   onOpenProject,
   onRestore,
+  only,
 }: {
   readonly picker: RepositoryPicker;
   /**
@@ -43,6 +44,8 @@ export function RepositoryFields({
         readonly public: boolean;
       }) => void)
     | undefined;
+  /** Only a new repository, as for a new project, which has nothing to choose between. */
+  readonly only?: "create" | undefined;
 }) {
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(picker.subscribe, picker.getSnapshot);
@@ -56,20 +59,22 @@ export function RepositoryFields({
 
   return (
     <>
-      <div className={styles.modes} role="radiogroup" aria-label={t("repository.mode")}>
-        {(["create", "existing"] as const).map((id) => (
-          <label key={id} className={styles.mode}>
-            <input
-              type="radio"
-              name="repository-mode"
-              checked={mode === id}
-              disabled={isBusy}
-              onChange={() => picker.setMode(id)}
-            />
-            {t(id === "create" ? "repository.modeCreate" : "repository.modeExisting")}
-          </label>
-        ))}
-      </div>
+      {only === undefined && (
+        <div className={styles.modes} role="radiogroup" aria-label={t("repository.mode")}>
+          {(["create", "existing"] as const).map((id) => (
+            <label key={id} className={styles.mode}>
+              <input
+                type="radio"
+                name="repository-mode"
+                checked={mode === id}
+                disabled={isBusy}
+                onChange={() => picker.setMode(id)}
+              />
+              {t(id === "create" ? "repository.modeCreate" : "repository.modeExisting")}
+            </label>
+          ))}
+        </div>
+      )}
 
       {mode === "create" ? (
         <div className={styles.section}>

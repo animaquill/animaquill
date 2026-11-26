@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { Download, Frame, Page } from "@playwright/test";
 import { field, panel, placeImage, png as pngOf, red, typeInto } from "./property-helpers.ts";
-import { needsDevPage, resourcesIn } from "./support.ts";
+import { needsDevPage, resourcesIn, showTab } from "./support.ts";
 import {
   canCapture,
   content,
@@ -10,7 +10,6 @@ import {
   importFolder,
   openScene,
   projectFolder,
-  tab,
   test,
 } from "./scene-support.ts";
 
@@ -27,7 +26,7 @@ const video = {
 };
 
 async function placeVideo(page: Page) {
-  await tab(page, "assets").click();
+  await showTab(page, "assets");
   const chooser = page.waitForEvent("filechooser");
   await content(page, "assets").getByRole("button", { name: "导入" }).click();
   await (await chooser).setFiles(video);
@@ -351,7 +350,7 @@ test.describe("a frame with a scene", () => {
     }) => {
       await openScene(page, SLIDE, { above: true });
       // It goes under the scene, which covers it, and it still has to be there.
-      await tab(page, "assets").click();
+      await showTab(page, "assets");
       const chooser = page.waitForEvent("filechooser");
       await content(page, "assets").getByRole("button", { name: "导入" }).click();
       await (await chooser).setFiles(red);

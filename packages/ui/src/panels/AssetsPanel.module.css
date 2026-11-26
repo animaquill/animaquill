@@ -22,7 +22,7 @@
   font-size: var(--aq-font-12);
 }
 
-.toolbar button {
+.toolbar .tool {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -34,11 +34,12 @@
   cursor: pointer;
 }
 
-.toolbar button:hover {
+.toolbar .tool:hover,
+.toolbar .tool[aria-expanded="true"] {
   background: var(--aq-bg-hover);
 }
 
-/* Too narrow for the three buttons with their words, at the size of words people chose: icons. */
+/* Too narrow for the two buttons with their words, at the size of words people chose: icons. */
 @container assets (max-width: 246px) {
   .toolbar .label {
     display: none;

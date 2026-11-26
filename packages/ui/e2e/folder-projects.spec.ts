@@ -32,18 +32,60 @@ test.use({
 });
 
 test.describe("a project folder", () => {
-  test("is where a new project goes, and gets all of it", async ({ page }) => {
+  test("is where a new project goes, in a folder of its own, and gets all of it", async ({
+    page,
+  }) => {
     await installChosen(page);
     await page.reload();
     await page.getByRole("button", { name: "新建项目" }).first().click();
     await page.getByRole("textbox", { name: "项目名称" }).fill("新的片子");
-    // The offline mode, also on the site: the name, and then the folder.
-    await dialog(page).getByRole("button", { name: "选文件夹…" }).click();
+    // The offline mode, also on the site: the name, and where it goes, chosen the first time.
+    await expect(dialog(page).locator("[data-place]")).toHaveText("还没选");
+    await dialog(page).getByRole("button", { name: "新建", exact: true }).click();
     await expect(tab(page, "preview")).toBeVisible();
     await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
     await expect
-      .poll(async () => JSON.parse((await privateText(page, "选的/animaquill.json")) ?? "{}").name)
+      .poll(
+        async () =>
+          JSON.parse((await privateText(page, "选的/新的片子/animaquill.json")) ?? "{}").name,
+      )
       .toBe("新的片子");
+  });
+
+  test("goes where the last one went, by a name nothing there has", async ({ page }) => {
+    await installChosen(page);
+    await page.reload();
+    await putPrivate(page, "选的/片子", { "笔记.txt": "别人的" });
+    await page.getByRole("button", { name: "新建项目" }).first().click();
+    await page.getByRole("textbox", { name: "项目名称" }).fill("第一个");
+    await dialog(page).getByRole("button", { name: "新建", exact: true }).click();
+    await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
+    await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
+    await page.getByRole("menuitem", { name: "关闭项目", exact: true }).click();
+    // The dialog for a folder is not asked again: it would give another one now.
+    await page.evaluate(() => {
+      window.chosenFolder = "别处";
+    });
+    await page.getByRole("button", { name: "新建项目" }).first().click();
+    await page.getByRole("textbox", { name: "项目名称" }).fill("片子");
+    await expect(dialog(page).locator("[data-place]")).toHaveText("选的");
+    await expect(dialog(page).locator("[data-new-folder]")).toHaveText("选的 › 片子 (2)");
+    await page.screenshot({ path: test.info().outputPath("new-offline-place.png") });
+    await dialog(page).getByRole("button", { name: "新建", exact: true }).click();
+    await expect(footer(page).getByText("已保存")).toBeVisible({ timeout: 10_000 });
+    await expect
+      .poll(
+        async () =>
+          JSON.parse((await privateText(page, "选的/片子 (2)/animaquill.json")) ?? "{}").name,
+      )
+      .toBe("片子");
+    expect(await privateText(page, "选的/片子/笔记.txt")).toBe("别人的");
+    // Where it goes can be changed in the dialog.
+    await page.locator("header").getByRole("button", { name: "文件", exact: true }).click();
+    await page.getByRole("menuitem", { name: "关闭项目", exact: true }).click();
+    await page.getByRole("button", { name: "新建项目" }).first().click();
+    await dialog(page).getByRole("button", { name: "更改…" }).click();
+    await expect(dialog(page).locator("[data-place]")).toHaveText("别处");
   });
 
   test("opens from where people choose, and stays as it was written", async ({ page }) => {
@@ -51,7 +93,7 @@ test.describe("a project folder", () => {
     await page.reload();
     const files = exampleProject();
     await putPrivate(page, "选的", files);
-    await page.getByRole("button", { name: /^打开文件夹/ }).click();
+    await page.getByRole("button", { name: /^从文件夹打开/ }).click();
     await agreeToCode(page);
     await expect(tab(page, "preview")).toBeVisible();
     await expect(footer(page).getByText("原子是什么")).toBeVisible();

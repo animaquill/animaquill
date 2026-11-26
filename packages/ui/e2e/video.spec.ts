@@ -5,7 +5,7 @@ import { createProject, writeProject, type SoundManifest } from "@animaquill/sch
 import type { Page } from "@playwright/test";
 import { ALL_FORMATS, BufferSource, EncodedPacketSink, Input } from "mediabunny";
 import { png } from "./property-helpers.ts";
-import { chooseLayout, waitSaved } from "./support.ts";
+import { chooseLayout, waitSaved, showTab } from "./support.ts";
 import {
   canCapture,
   chooseFolder,
@@ -184,7 +184,7 @@ const fileWritten = (page: Page, timeout = 60_000) =>
 
 /** Clicks a clip on the canvas, where the list of clips says it is. */
 async function clickClip(page: Page, index: number): Promise<void> {
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   const box = await content(page, "timeline").getByRole("option").nth(index).boundingBox();
   if (!box) throw new Error("No clip");
   await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
@@ -1249,7 +1249,7 @@ test.describe("the volume and the pan of a clip in the sound of a video", () => 
     const timelineBox = await content(page, "timeline").getByRole("option").nth(1).boundingBox();
     if (!timelineBox) throw new Error("No clip");
     await page.mouse.click(timelineBox.x + timelineBox.width / 2, timelineBox.y + 6);
-    await tab(page, "properties").click();
+    await showTab(page, "properties");
     const pan = content(page, "properties").getByRole("slider", { name: "声像" });
     await expect(pan).toHaveAttribute("aria-valuetext", "C");
     const box = await pan.boundingBox();
@@ -1278,7 +1278,7 @@ test.describe("the volume and the pan of a clip in the sound of a video", () => 
     for (const level of left.right) expect(level).toBeLessThan(-60);
 
     // One step back, and it is in the middle again.
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await page.keyboard.press("Control+z");
     await expect(pan).toHaveAttribute("aria-valuetext", "C");
   });
@@ -1385,7 +1385,7 @@ test.describe("a video of what this editor does not do yet", () => {
       ),
     );
     // The list of problems has it, as what makes the video otherwise than the project.
-    await tab(page, "problems").click();
+    await showTab(page, "problems");
     // The innermost line: the group of the problems without a file holds it too.
     const listed = content(page, "problems")
       .getByRole("listitem")
@@ -1943,7 +1943,7 @@ test.describe("cuts and encoders", () => {
         color("blue", "6/30", "24/30", "#0000ff"),
       ]),
     );
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     await clickClip(page, 0);
     await page.keyboard.press("Control+a");
     await startExport(page);

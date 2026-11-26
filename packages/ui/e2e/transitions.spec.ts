@@ -7,7 +7,7 @@ import {
   type RenderPlan,
 } from "@animaquill/core";
 import { importClips } from "./project-files.ts";
-import { content, expect, findCompositor, tab, test } from "./support.ts";
+import { content, expect, findCompositor, test, showTab } from "./support.ts";
 
 /**
  * What transitions look like, as the compositor draws them from a plan it gets straight from here:
@@ -638,7 +638,7 @@ test.describe("joins on the timeline", () => {
     await page.keyboard.down("Shift");
     await page.mouse.click(second.x + second.width / 2, second.y + second.height / 2 + 8);
     await page.keyboard.up("Shift");
-    await tab(page, "transitions").click();
+    await showTab(page, "transitions");
     await content(page, "transitions").getByRole("option", { name: "叠化", exact: true }).click();
   }
 

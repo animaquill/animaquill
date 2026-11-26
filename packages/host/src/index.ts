@@ -2628,6 +2628,12 @@ export interface SavedFolders {
   get(project: string): Promise<LocalFolder | undefined>;
   put(project: string, folder: LocalFolder): Promise<void>;
   forget(project: string): Promise<void>;
+  /**
+   * Where people last put a new project of the offline mode, in a folder of its own inside: the
+   * place the next one starts out in. Undefined where people never chose one.
+   */
+  lastPlace?(): Promise<LocalFolder | undefined>;
+  keepPlace?(folder: LocalFolder): Promise<void>;
 }
 
 /**
@@ -3118,6 +3124,17 @@ export interface FolderAccess {
   readonly savesInBrowser: boolean;
 }
 
+/** What a dialog for choosing a folder is for, see `LocalFolders.choose`. */
+export interface ChooseFolderOptions {
+  /**
+   * "place": where a new project goes, in a folder of its own inside, which the dialog remembers
+   * apart from the folders of projects that people open.
+   */
+  readonly purpose?: "place";
+  /** Where the dialog starts. */
+  readonly startIn?: LocalFolder | undefined;
+}
+
 /**
  * Folders on this computer that the editor reads and writes as people work, such as the folder of a
  * project. Choosing and dropping get a folder, and the records remember the folders for next time.
@@ -3128,7 +3145,7 @@ export interface LocalFolders {
    * something. Resolves to undefined when they changed their minds, and also when the browser did not
    * let them have that folder, such as their documents themselves: the browser says why itself.
    */
-  choose(): Promise<LocalFolder | undefined>;
+  choose(options?: ChooseFolderOptions): Promise<LocalFolder | undefined>;
   /**
    * Folders and files that people dropped. It has to run in the `drop` event before anything there
    * waits, because the browser takes away what was dropped right after. They can be read. To write a

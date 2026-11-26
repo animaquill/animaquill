@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { createProject, writeProject, type SoundManifest } from "@animaquill/schema";
 import type { Locator, Page } from "@playwright/test";
 import { importFolder } from "./scene-support.ts";
-import { chooseLayout, content, expect, tab, test } from "./support.ts";
+import { chooseLayout, content, expect, test, showTab } from "./support.ts";
 
 /**
  * Effects of sound in the interface (audio-mixing.md 1.3, 1.6): the tab of sound effects, the
@@ -82,7 +82,7 @@ async function boxOf(locator: Locator) {
 
 /** Drags an effect from the tab of sound effects onto a place. */
 async function dragEffect(page: Page, name: string, to: Locator) {
-  await tab(page, "soundEffects").click();
+  await showTab(page, "soundEffects");
   const item = soundTab(page).getByRole("option", { name, exact: true }).first();
   await item.scrollIntoViewIfNeeded();
   const from = await boxOf(item);
@@ -106,7 +106,7 @@ test.describe("effects of sound", () => {
     page,
   }) => {
     await open(page);
-    await tab(page, "soundEffects").click();
+    await showTab(page, "soundEffects");
     const groups = soundTab(page).getByRole("group");
     await expect(groups.nth(0)).toHaveAccessibleName("均衡");
     await expect(groups.nth(1)).toHaveAccessibleName("动态");
@@ -268,7 +268,7 @@ test("pictures to look at: the tab, the four panels, the mixer in both themes", 
   }
   await master(page).getByRole("button", { name: "添加效果" }).click();
   await page.getByRole("menuitem", { name: "均衡" }).click();
-  await tab(page, "soundEffects").click();
+  await showTab(page, "soundEffects");
   for (const theme of ["dark", "light"] as const) {
     await page.emulateMedia({ colorScheme: theme });
     await soundTab(page).screenshot(out(`tab-${theme}.png`));

@@ -30,6 +30,8 @@ import {
   ReverbPresets,
 } from "./sound-effects/SoundEffectViews.tsx";
 import { standsFor } from "../mixer/track-clip.ts";
+import { SectionHeading, useFoldedOf } from "./SectionHeading.tsx";
+import { effectSectionId } from "./sections.ts";
 
 /** What a drag of an effect within its list carries: its id. */
 const ORDER_DRAG_TYPE = "application/x-animaquill-effect-order";
@@ -191,6 +193,7 @@ export function EffectsSection({
   const [dragged, setDragged] = useState<string>();
   const [target, setTarget] = useState<number>();
   const fresh = useFresh(clip.id);
+  const isFolded = useFoldedOf();
   const listRef = useRef<HTMLOListElement>(null);
   useEffect(() => {
     if (fresh === undefined) return;
@@ -238,6 +241,10 @@ export function EffectsSection({
           const object = byId.get(effectObjectId(id));
           const on = enabled !== false;
           const known = object !== undefined && object.properties.length > 0;
+          const fold = effectSectionId(type);
+          // One that just went on shows what it takes, also where its kind is folded up.
+          const folded = isFolded(fold) && fresh !== id;
+          const contentId = `effect-${clip.id}-${id}`;
           return (
             <li
               key={id}
@@ -289,8 +296,21 @@ export function EffectsSection({
                   aria-label={t("effect.on", { name })}
                   onChange={(event) => timeline.setEffectEnabled(clip.id, id, event.target.checked)}
                 />
-                <span className={styles.effectName}>{name}</span>
-                {!on && <span className={styles.effectOff}>{t("effect.off")}</span>}
+                <SectionHeading
+                  id={fold}
+                  title={name}
+                  folded={folded}
+                  controls={contentId}
+                  className={styles.effectName}
+                  keyed={
+                    folded && known
+                      ? () => propertyRows.keyed(clip.id, (object as ObjectDescriptor).properties)
+                      : undefined
+                  }
+                  subscribe={propertyRows.subscribe}
+                >
+                  {!on && <span className={styles.effectOff}>{t("effect.off")}</span>}
+                </SectionHeading>
                 <RowButton
                   name={t("effect.remove", { name })}
                   usage={t("effect.remove", { name })}
@@ -300,31 +320,37 @@ export function EffectsSection({
                   <Trash2 size={12} />
                 </RowButton>
               </div>
-              {/* A track and the master have their effects work all along. */}
-              {standsFor(clip.id) === undefined && (
-                <RangeRow clip={clip} effect={effect} readOnly={readOnly} />
-              )}
-              {known && Object.hasOwn(VIEWS, type)
-                ? (() => {
-                    const View = VIEWS[type as keyof typeof VIEWS];
-                    return (
-                      <View
-                        rows={propertyRows}
-                        clip={clip.id}
-                        object={object}
-                        readOnly={readOnly}
-                      />
-                    );
-                  })()
-                : null}
-              {/* The equalizer has its numbers under its graph, a band to a row. */}
-              {known ? (
-                type === "eq" ? null : (
-                  rows.get(object.id)
-                )
-              ) : (
-                <p className={styles.effectMissing}>{t("effect.missing")}</p>
-              )}
+              <div id={contentId} hidden={folded}>
+                {!folded && (
+                  <>
+                    {/* A track and the master have their effects work all along. */}
+                    {standsFor(clip.id) === undefined && (
+                      <RangeRow clip={clip} effect={effect} readOnly={readOnly} />
+                    )}
+                    {known && Object.hasOwn(VIEWS, type)
+                      ? (() => {
+                          const View = VIEWS[type as keyof typeof VIEWS];
+                          return (
+                            <View
+                              rows={propertyRows}
+                              clip={clip.id}
+                              object={object}
+                              readOnly={readOnly}
+                            />
+                          );
+                        })()
+                      : null}
+                    {/* The equalizer has its numbers under its graph, a band to a row. */}
+                    {known ? (
+                      type === "eq" ? null : (
+                        rows.get(object.id)
+                      )
+                    ) : (
+                      <p className={styles.effectMissing}>{t("effect.missing")}</p>
+                    )}
+                  </>
+                )}
+              </div>
             </li>
           );
         })}

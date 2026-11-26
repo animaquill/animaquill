@@ -75,6 +75,24 @@ describe("where a resource is used", () => {
   });
 });
 
+describe("where an effect of sound is used", () => {
+  it("finds it on clips, tracks of sound, buses and the master", () => {
+    const state = example().getState();
+    expect(usesOf(state, { kind: "effect", type: "eq" })).toEqual([
+      { timeline: "main", clip: "clip_voice", effect: "fx_clean" },
+    ]);
+    expect(usesOf(state, { kind: "effect", type: "compressor" })).toEqual([
+      { timeline: "main", track: "track_music", effect: "fx_tame" },
+    ]);
+    expect(usesOf(state, { kind: "effect", type: "reverb" })).toEqual([
+      { timeline: "main", bus: "bus_room", effect: "fx_room" },
+    ]);
+    expect(usesOf(state, { kind: "effect", type: "limiter" })).toEqual([
+      { timeline: "main", master: true, effect: "fx_limit" },
+    ]);
+  });
+});
+
 describe("what is missing", () => {
   it("lists what clips use that is not there, with where", () => {
     const state = example().getState();

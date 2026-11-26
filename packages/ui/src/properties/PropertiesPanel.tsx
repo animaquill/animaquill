@@ -1,4 +1,4 @@
-import { EFFECT_OBJECT_TYPES, SCENE_OBJECT_TYPES, objectsOf } from "@animaquill/core";
+import { SCENE_OBJECT_TYPES, effectsOf, objectsOf } from "@animaquill/core";
 import {
   CLIP_SOUND,
   MASTER_SOUND,
@@ -10,6 +10,7 @@ import { ChevronLeft, ChevronRight, Diamond, RotateCcw, SlidersHorizontal } from
 import {
   memo,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -28,6 +29,8 @@ import { groupOf, nameOf, textOf } from "./names.ts";
 import styles from "./PropertiesPanel.module.css";
 import { placeOf, PropertyRows } from "./rows.ts";
 import { EffectsSection } from "./EffectsSection.tsx";
+import { SectionHeading, SectionsScope, useFolded } from "./SectionHeading.tsx";
+import { effectSectionId, isEffectObject, sectionsOf, type PropertySection } from "./sections.ts";
 import { TransitionProperties } from "./TransitionProperties.tsx";
 import { MASTER_CLIP, trackClipId, withTrackClip } from "../mixer/track-clip.ts";
 import { useTrackName } from "../mixer/names.ts";
@@ -252,17 +255,23 @@ interface SectionProps {
   readonly object: ObjectDescriptor;
   readonly name: string | undefined;
   readonly eager: boolean;
+  /** A group that folds up, by its id, see sections.ts. Without one it always shows. */
+  readonly fold?: string | undefined;
 }
 
 /**
- * The properties of one object. Only what is near the screen has rows: a skeleton has hundreds of
- * bones, and each row follows the playhead.
+ * The properties of one object, or of one group of them. Only what is near the screen has rows: a
+ * skeleton has hundreds of bones, and each row follows the playhead. A group that is folded up has
+ * only its title, which says whether there are keys in it.
  */
-const Section = memo(function Section({ rows, clip, object, name, eager }: SectionProps) {
+const Section = memo(function Section({ rows, clip, object, name, eager, fold }: SectionProps) {
   const element = useRef<HTMLElement>(null);
+  const heading = useRef<HTMLButtonElement>(null);
+  const contentId = useId();
   // A field that somebody is in stays, also when they scroll away from it.
   const [focused, setFocused] = useState(false);
-  const near = useNearScreen(element, eager) || focused;
+  const folded = useFolded(fold);
+  const near = (useNearScreen(element, eager) || focused) && !folded;
   const { properties } = object;
   // What it took when it showed, which is what it takes when it does not, so that nothing jumps.
   const [height, setHeight] = useState<number>();
@@ -273,29 +282,52 @@ const Section = memo(function Section({ rows, clip, object, name, eager }: Secti
     observer.observe(shown);
     return () => observer.disconnect();
   }, [near]);
+  // Folded up while somebody was in one of its fields: the keyboard stays here, on its title.
+  useEffect(() => {
+    if (folded && focused && !element.current?.contains(document.activeElement)) {
+      heading.current?.focus({ preventScroll: true });
+    }
+  }, [folded, focused]);
   const estimate = (name === undefined ? 0 : HEADING_HEIGHT) + properties.length * ROW_HEIGHT;
   return (
     <section
       ref={element}
       className={styles.object}
       {...(name !== undefined && { "aria-label": name })}
-      style={near ? undefined : { height: height ?? estimate }}
+      data-section={fold}
+      data-folded={folded || undefined}
+      style={near || folded ? undefined : { height: height ?? estimate }}
       onFocus={() => setFocused(true)}
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
       }}
     >
-      {name !== undefined && <h3 className={styles.objectName}>{name}</h3>}
-      {near &&
-        properties.map((spec, index) => (
-          <Row
-            key={spec.path}
-            rows={rows}
-            clip={clip}
-            spec={spec}
-            startsGroup={properties[index - 1]?.group !== spec.group}
+      {name !== undefined &&
+        (fold === undefined ? (
+          <h3 className={styles.objectName}>{name}</h3>
+        ) : (
+          <SectionHeading
+            ref={heading}
+            id={fold}
+            title={name}
+            folded={folded}
+            controls={contentId}
+            keyed={folded ? () => rows.keyed(clip, properties) : undefined}
+            subscribe={rows.subscribe}
           />
         ))}
+      <div id={contentId} hidden={folded}>
+        {near &&
+          properties.map((spec, index) => (
+            <Row
+              key={spec.path}
+              rows={rows}
+              clip={clip}
+              spec={spec}
+              startsGroup={properties[index - 1]?.group !== spec.group}
+            />
+          ))}
+      </div>
     </section>
   );
 });
@@ -358,6 +390,16 @@ function ownName(t: TFunction, { type, name, id }: ObjectDescriptor): string | u
   return name ?? id;
 }
 
+/** What a group of the properties tab is called, see sections.ts. */
+function sectionName(
+  t: TFunction,
+  section: PropertySection,
+  byId: ReadonlyMap<string, ObjectDescriptor>,
+): string {
+  if (section.kind !== "object") return t(`property.section.${section.kind}`);
+  return objectName(t, section.object, byId) ?? t("property.section.other");
+}
+
 /** Objects can be inside each other, which a flat list says with the names of what they are in. */
 const MAX_NAMED_PARENTS = 4;
 
@@ -386,10 +428,23 @@ function ClipProperties({ selected, rows }: { selected: ClipSelected; rows: Prop
   const byId = new Map(objects.map((object) => [object.id, object]));
   const { kind } = box.clip.source;
   const kindName = textOf(t, `timeline.kind.${kind}`, kind);
-  const shown = objects.filter((object) => object.properties.length > 0 && !isEffect(object));
+  const sections = useMemo(() => sectionsOf(objects), [objects]);
+  const sound = selected.sound;
+  const soundSections = useMemo(
+    () => sectionsOf(sound?.objects.filter((object) => object.type === "clip.sound") ?? []),
+    [sound],
+  );
   const effectRows = effectRowsOf(rows, box.id, objects);
+  const ids = useMemo(
+    () => [
+      ...sections.map(({ id }) => id),
+      ...effectsOf(box.clip).map(({ type }) => effectSectionId(type)),
+      ...soundSections.map(({ id }) => id),
+    ],
+    [sections, soundSections, box.clip],
+  );
   return (
-    <>
+    <SectionsScope kind={kind} ids={ids}>
       <header className={styles.header}>
         <span className={styles.title}>{box.clip.name ?? kindName}</span>
         {box.clip.name !== undefined && <span className={styles.kind}>{kindName}</span>}
@@ -400,14 +455,15 @@ function ClipProperties({ selected, rows }: { selected: ClipSelected; rows: Prop
       {kind === "sound" && <SoundStatus clip={box.clip} />}
       {blocked && <BlockedHint blocked={blocked} firstFrame={firstFrame} />}
       <div className={styles.rows} data-readonly={blocked !== undefined || undefined}>
-        {shown.map((object, index) => (
+        {sections.map((section, index) => (
           // Another clip gets fields of its own, so nothing typed can end up on the wrong one.
           <Section
-            key={`${box.id} ${object.id}`}
+            key={`${box.id} ${section.id}`}
             rows={rows}
             clip={box.id}
-            object={object}
-            name={objectName(t, object, byId)}
+            object={section.object}
+            name={sectionName(t, section, byId)}
+            fold={section.id}
             eager={index < EAGER_SECTIONS}
           />
         ))}
@@ -418,34 +474,29 @@ function ClipProperties({ selected, rows }: { selected: ClipSelected; rows: Prop
           rows={effectRows}
           propertyRows={rows}
         />
-        {selected.sound?.objects
-          .filter((object) => object.type === "clip.sound")
-          .map((object) => (
+        {sound &&
+          soundSections.map((section) => (
             // The sound linked to the picture: its own clip, with its own playhead and keys.
             <Section
-              key={`${selected.sound?.box.id} ${object.id}`}
+              key={`${sound.box.id} ${section.id}`}
               rows={rows}
-              clip={(selected.sound as { box: ClipBox }).box.id}
-              object={object}
+              clip={sound.box.id}
+              object={section.object}
               name={t("keyframes.objects.sound")}
+              fold={section.id}
               eager
             />
           ))}
       </div>
-    </>
+    </SectionsScope>
   );
 }
-
-/** Whether an object holds effects, or is one: those show in the list of effects. */
-const isEffect = (object: ObjectDescriptor) =>
-  object.type === EFFECT_OBJECT_TYPES.effects ||
-  object.type?.startsWith(EFFECT_OBJECT_TYPES.prefix) === true;
 
 /** The rows of what each effect of a clip takes, by its object, for the list of its effects. */
 function effectRowsOf(rows: PropertyRows, clip: string, objects: readonly ObjectDescriptor[]) {
   return new Map(
     objects
-      .filter((object) => isEffect(object) && object.properties.length > 0)
+      .filter((object) => isEffectObject(object) && object.properties.length > 0)
       .map((object) => [
         object.id,
         <Section
@@ -478,8 +529,13 @@ function StandInProperties({ track, rows }: { track: string; rows: PropertyRows 
   const row = master ? undefined : model?.rows.find((one) => one.id === track);
   if (!box || (!master && !row)) return null;
   const objects = objectsOf(box.clip);
+  const own = master ? MASTER_SOUND : CLIP_SOUND;
+  const ids = [
+    master ? "master" : "sound",
+    ...effectsOf(box.clip).map(({ type }) => effectSectionId(type)),
+  ];
   return (
-    <>
+    <SectionsScope kind={master ? "master" : "track"} ids={ids}>
       <header className={styles.header}>
         <span className={styles.title}>{row ? trackName(row) : t("mixer.master")}</span>
         <span className={styles.headerEnd}>
@@ -492,8 +548,9 @@ function StandInProperties({ track, rows }: { track: string; rows: PropertyRows 
           key={clip}
           rows={rows}
           clip={clip}
-          object={master ? MASTER_SOUND : CLIP_SOUND}
-          name={undefined}
+          object={own}
+          name={t(master ? "property.section.master" : "property.section.sound")}
+          fold={master ? "master" : "sound"}
           eager
         />
         <EffectsSection
@@ -504,7 +561,7 @@ function StandInProperties({ track, rows }: { track: string; rows: PropertyRows 
           propertyRows={rows}
         />
       </div>
-    </>
+    </SectionsScope>
   );
 }
 

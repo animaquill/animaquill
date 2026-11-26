@@ -237,20 +237,6 @@ function Toolbar({ editor }: { editor: TimelineEditor }) {
               unavailable={linkAction === undefined}
               onClick={() => editor.toggleLink()}
             />
-            <ToolButton
-              name={t("timeline.color")}
-              usage={t("timeline.help.addColor")}
-              icon={Plus}
-              text={t("timeline.color")}
-              onClick={() => editor.addColorClip()}
-            />
-            <ToolButton
-              name={t("timeline.action.addScene")}
-              usage={t("timeline.help.addScene")}
-              icon={Plus}
-              text={t("timeline.scene")}
-              onClick={() => editor.createScene()}
-            />
           </div>
         </div>
         <div className={styles.zoneEnd} role="group" aria-label={t("timeline.zone.zoom")}>

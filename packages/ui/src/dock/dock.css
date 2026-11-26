@@ -123,41 +123,67 @@
   transition: width 0.12s ease;
 }
 
+/*
+ * The names come out over what is next to the strip when the mouse has stayed on it for a while,
+ * as in Edge, and go back in at once when it leaves (the way back has no delay). The keyboard has
+ * them at once: without the names it cannot tell the tabs apart. A screen without a mouse has no
+ * hovering, and a tap would leave one behind that brings the names out a moment later.
+ */
+:root {
+  --aq-strip-peek-delay: 2s;
+}
+
+@media (hover: hover) {
+  .dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"])
+    > .dv-tabs-and-actions-container:hover:not(:has([data-edge="strip"]:hover))
+    > * {
+    width: var(--aq-strip-peek, var(--aq-strip-width));
+    transition:
+      width 0.12s ease var(--aq-strip-peek-delay),
+      box-shadow 0.12s ease var(--aq-strip-peek-delay);
+  }
+
+  /* The edge the names come out to is there once they are, not before. */
+  .dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"])
+    > .dv-tabs-and-actions-container:hover:not(:has([data-edge="strip"]:hover))
+    [data-edge="names"] {
+    visibility: visible;
+    transition: visibility 0s linear var(--aq-strip-peek-delay);
+  }
+
+  .dv-groupview-header-left:has(
+      > .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"]
+    )
+    > .dv-tabs-and-actions-container:hover:not(:has([data-edge="strip"]:hover))
+    > * {
+    box-shadow: 8px 0 12px -8px var(--aq-strip-shadow);
+  }
+
+  .dv-groupview-header-right:has(
+      > .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"]
+    )
+    > .dv-tabs-and-actions-container:hover:not(:has([data-edge="strip"]:hover))
+    > * {
+    box-shadow: -8px 0 12px -8px var(--aq-strip-shadow);
+  }
+}
+
 .dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"])
-  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible)):not(
-    :has([data-edge="strip"]:hover)
-  )
+  > .dv-tabs-and-actions-container:has(:focus-visible):not(:has([data-edge="strip"]:hover))
   > * {
   width: var(--aq-strip-peek, var(--aq-strip-width));
-  transition-delay: 0.15s;
-}
-
-/*
- * While the names are out, their edge is the one to drag, and the edge of the strip under them is
- * not there. Coming in over the edge of the strip leaves the names in, for dragging that edge.
- */
-.dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"])
-  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible)):not(
-    :has([data-edge="strip"]:hover)
-  )
-  [data-edge="strip"] {
-  display: none;
 }
 
 .dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"])
-  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible)):not(
-    :has([data-edge="strip"]:hover)
-  )
+  > .dv-tabs-and-actions-container:has(:focus-visible):not(:has([data-edge="strip"]:hover))
   [data-edge="names"] {
-  display: block;
+  visibility: visible;
 }
 
 .dv-groupview-header-left:has(
     > .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"]
   )
-  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible)):not(
-    :has([data-edge="strip"]:hover)
-  )
+  > .dv-tabs-and-actions-container:has(:focus-visible):not(:has([data-edge="strip"]:hover))
   > * {
   box-shadow: 8px 0 12px -8px var(--aq-strip-shadow);
 }
@@ -165,11 +191,45 @@
 .dv-groupview-header-right:has(
     > .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"]
   )
-  > .dv-tabs-and-actions-container:is(:hover, :has(:focus-visible)):not(
-    :has([data-edge="strip"]:hover)
-  )
+  > .dv-tabs-and-actions-container:has(:focus-visible):not(:has([data-edge="strip"]:hover))
   > * {
   box-shadow: -8px 0 12px -8px var(--aq-strip-shadow);
+}
+
+/*
+ * While the names are out, their edge is the one to drag, and the edge of the strip under them is
+ * not there. Coming in over the edge of the strip leaves the names in, for dragging that edge.
+ */
+.dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"])
+  > .dv-tabs-and-actions-container:has(:focus-visible):not(:has([data-edge="strip"]:hover))
+  [data-edge="strip"] {
+  display: none;
+}
+
+@media (hover: hover) {
+  .dv-groupview:has(> .dv-tabs-and-actions-container [data-pinned="false"][data-peek="true"])
+    > .dv-tabs-and-actions-container:hover:not(:has([data-edge="strip"]:hover))
+    [data-edge="strip"] {
+    visibility: hidden;
+    transition: visibility 0s linear var(--aq-strip-peek-delay);
+  }
+}
+
+/*
+ * Folded up to its strip, as in VS Code (see `TabStrips.collapse`): what the group shows is out of
+ * the way, and the names that come out go over the group next to it, which dockview would cut off.
+ */
+.dv-groupview:has(> .dv-tabs-and-actions-container [data-collapsed="true"])
+  > .dv-content-container {
+  display: none;
+}
+
+.dv-view:has(> .dv-groupview > .dv-tabs-and-actions-container [data-collapsed="true"]) {
+  overflow: visible;
+}
+
+.dv-view:has(> .dv-groupview > .dv-tabs-and-actions-container [data-collapsed="true"]) {
+  z-index: 5;
 }
 
 /* Where the tabs go when the empty part of their strip is let go here. */

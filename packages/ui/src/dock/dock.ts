@@ -56,6 +56,27 @@ export function createDock(
   api.onWillDragGroup((event) => event.nativeEvent.preventDefault());
   // A group that comes later may get the id of one that went.
   api.onDidRemoveGroup((group) => strips.forget(group.id));
+  strips.attach(api);
+  /** While a whole layout comes in: what it says about folded groups comes after it. */
+  let arranging = false;
+  // Whatever shows another panel of a group that is folded up opens it: a click on another of its
+  // icons, the keys, a command, AI. A click on the icon that shows already does not change it.
+  const followGroup = (group: DockviewGroupPanel) =>
+    group.api.onDidActivePanelChange(() => {
+      if (!arranging && strips.isCollapsed(group)) strips.expand(group);
+    });
+  for (const group of api.groups) followGroup(group);
+  api.onDidAddGroup(followGroup);
+  /** Puts a whole layout in place, and then the folded groups as narrow as their strips. */
+  const arrange = (work: () => void) => {
+    arranging = true;
+    try {
+      work();
+    } finally {
+      arranging = false;
+    }
+    strips.fitCollapsed();
+  };
 
   const facts = {
     title: (type: string) => panels.get(type)?.title(t) ?? t("panel.unknown.title"),
@@ -175,18 +196,22 @@ export function createDock(
         return;
       }
       const state = toDockviewState(layout, api.width, api.height, facts);
-      api.fromJSON(state.dockview, REUSE_PANELS);
-      strips.reset(state.strips);
+      arrange(() => {
+        api.fromJSON(state.dockview, REUSE_PANELS);
+        strips.reset(state.strips);
+      });
     },
     restore(state) {
       assertUsable(state);
-      api.fromJSON(state.dockview, REUSE_PANELS);
-      // Panels that went: out of the layout, and their group with them where it is left empty.
-      for (const type of RETIRED_PANELS) {
-        const retired = api.getPanel(type);
-        if (retired) api.removePanel(retired);
-      }
-      strips.reset(parseLooks(state.strips) ?? {});
+      arrange(() => {
+        api.fromJSON(state.dockview, REUSE_PANELS);
+        // Panels that went: out of the layout, and their group with them where it is left empty.
+        for (const type of RETIRED_PANELS) {
+          const retired = api.getPanel(type);
+          if (retired) api.removePanel(retired);
+        }
+        strips.reset(parseLooks(state.strips) ?? {});
+      });
       // The saved titles may come from another language.
       for (const panel of api.panels) panel.api.setTitle(facts.title(typeOf(panel)));
     },
@@ -197,7 +222,11 @@ export function createDock(
     open(type, { used, focus: focusing }: PanelOpening) {
       const existing = api.getPanel(type);
       const definition = panels.get(type);
-      if (existing) existing.api.setActive();
+      if (existing) {
+        existing.api.setActive();
+        // Asked for, it shows, also where it was the one of its folded group already.
+        strips.expand(existing.group);
+      }
       // Still to come: it has no place yet, as in layouts.
       else if (definition && !definition.planned) {
         const where = placePanel(

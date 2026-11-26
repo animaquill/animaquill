@@ -17,9 +17,13 @@ import type {
   SignInOutcome,
   StoragePersistence,
   WindowMemory,
-  LocalRepository,
+  RepositoryChoice,
 } from "@animaquill/host";
 import { MixLevels } from "../mixer/levels.ts";
+import { MASTER_CLIP } from "../mixer/track-clip.ts";
+import { PropertySections } from "../properties/collapsed.ts";
+import { RepositoryOpening } from "../cloud/open-repository.ts";
+import { placedT } from "../i18n/i18n.ts";
 import type { TFunction } from "i18next";
 import {
   buildRenderPlan,
@@ -286,6 +290,8 @@ export class Workbench {
   readonly palette: CommandPalette;
   /** What people used of the resources lately, and how they like each tab of them grouped. */
   readonly resourceHabits: ResourceHabits;
+  /** Which groups of the properties tab people folded up, by the kind of clip. */
+  readonly propertySections: PropertySections;
   /** Where people are in the explorer, which every tab of resources can show something in. */
   readonly explorer = new ExplorerState();
   /** Which assets of the open project have no file, for the explorer and the assets tab. */
@@ -691,6 +697,7 @@ export class Workbench {
     this.autoConnect = new SwitchSetting(host.settings, "localAi.autoConnect", false);
     this.palette = new CommandPalette(host.settings, this.actions);
     this.resourceHabits = new ResourceHabits(host.settings);
+    this.propertySections = new PropertySections(host.settings);
     this.startHabits = new StartHabits(host.settings);
     this.#address = host.address;
     // A platform is for whoever is signed in to it: without an account, there is none.
@@ -1033,6 +1040,13 @@ export class Workbench {
             problems: this.problems,
             t,
             takeBack: (origin, direction) => this.undo.takeBack(origin, direction),
+            ...(host.savedFolders?.lastPlace &&
+              host.savedFolders.keepPlace && {
+                places: {
+                  last: () => host.savedFolders!.lastPlace!(),
+                  keep: (folder: LocalFolder) => host.savedFolders!.keepPlace!(folder),
+                },
+              }),
             startingFiles: () => this.startingFiles(),
             changeProject: (next) => this.#changeProject(next),
             warnAboutCode: (report) => this.transfer.warnAboutCode(report),
@@ -1786,8 +1800,18 @@ export class Workbench {
     readonly clip?: string;
     readonly join?: string;
     readonly edge?: "enter" | "exit";
+    /** An effect of a track of sound, or of the master: that one is selected, as in the mixer. */
+    readonly track?: string;
+    readonly master?: true;
   }): boolean {
     if (this.timeline.model?.id !== use.timeline) return false;
+    if (use.master || use.track !== undefined) {
+      const track = use.master ? MASTER_CLIP : (use.track as string);
+      this.timeline.selectTrack(track);
+      if (this.timeline.getSnapshot().track !== track) return false;
+      this.layout.openPanel("properties");
+      return true;
+    }
     const shown = this.timeline.revealClip(use.clip ?? "", {
       ...(use.edge && { edge: use.edge }),
       ...(use.join !== undefined && { join: use.join }),
@@ -2077,6 +2101,7 @@ export class Workbench {
       this.keybindings.load(),
       this.palette.load(),
       this.resourceHabits.load(),
+      this.propertySections.load(),
       this.startHabits.load(),
       this.timeline.load(),
       this.keyframes.load(),
@@ -2777,9 +2802,12 @@ export class Workbench {
   #newCreate({
     intent,
     imported,
+    repository,
   }: {
     readonly intent?: CreateIntent;
     readonly imported?: PreparedProject;
+    /** The repository people chose already, as "从仓库打开 › 在这里新建项目" does. */
+    readonly repository?: RepositoryChoice;
   }): CloudCreate {
     const cloud = this.#platform;
     const folders = this.projectFolders;
@@ -2830,6 +2858,7 @@ export class Workbench {
       leaving: () => this.leavingPage,
       memory: this.#memory,
       ...(intent && { intent }),
+      ...(repository && { repository }),
       window: this.windowId,
       editor: this.version,
     });
@@ -3857,19 +3886,51 @@ export class Workbench {
    * imports at all: elsewhere a project folder opens as it is.
    */
   /**
-   * The repositories of the server's own that no project is saved to, where the platform saves
-   * every project to one: what "从本机仓库恢复…" offers. None where it does not, or cannot say.
+   * "从仓库打开" (the design of U1, 2.2): people choose a repository, and it opens as the project
+   * of theirs that it is, comes back as a new project from what it has, or gets a new project.
+   * Where the server keeps every project in a repository of its own, those that no project is
+   * saved to are the list. Resolves once whatever was chosen is done.
    */
-  async localRepositories(): Promise<readonly LocalRepository[]> {
+  async openRepository(): Promise<void> {
+    const cloud = this.cloud;
+    const platform = this.#platform;
+    if (this.mode !== "online" || !cloud || !platform) return;
     const who = this.account?.getSnapshot();
-    if (this.mode !== "online" || who?.status !== "signedIn" || who.repositories !== "local")
-      return [];
-    return (await this.cloud?.localRepositories().catch(() => [])) ?? [];
-  }
-
-  /** "从本机仓库恢复…", see `CloudProjects.restoreLocalRepository`. */
-  async restoreLocalRepository(): Promise<void> {
-    await this.cloud?.restoreLocalRepository();
+    const local = who?.status === "signedIn" && who.repositories === "local";
+    const opening = new RepositoryOpening({
+      ...(!local && platform.repository && { access: platform.repository }),
+      ...(local && { localRepositories: () => cloud.localRepositories() }),
+      ...(this.account && { account: this.account }),
+    });
+    const { t } = this;
+    let chosen: Awaited<ReturnType<Dialogs["openRepository"]>>;
+    try {
+      chosen = await this.dialogs.openRepository({
+        title: placedT(t, local ? "local" : "github")("openRepository.title"),
+        opening,
+      });
+    } finally {
+      opening.close();
+    }
+    if (!chosen) return;
+    const { row, action } = chosen;
+    if (action.kind === "open") {
+      await cloud.openCloudProject(action.project.id, { name: action.project.name });
+    } else if (row.kind === "local") {
+      await cloud.restoreFromRepository(
+        { dir: row.repository.dir, fullName: row.repository.name },
+        { asked: true },
+      );
+    } else if (action.kind === "restore") {
+      const { choice } = row;
+      // The button said what happens: only a public one is asked about once more, for being public.
+      await cloud.restoreFromRepository(
+        { id: choice.id, fullName: choice.fullName, public: !choice.private },
+        { asked: choice.private },
+      );
+    } else {
+      await this.#showCreate(this.#newCreate({ repository: row.choice }));
+    }
   }
 
   async importProject(): Promise<void> {
@@ -4604,6 +4665,14 @@ export class Workbench {
       run: () => void this.newProject(),
       menu: { name: "file", group: "open" },
     });
+    if (this.mode === "online" && this.#platform) {
+      this.actions.register({
+        id: "project.openRepository",
+        title: (t) => t("openRepository.action"),
+        run: () => void this.openRepository(),
+        menu: { name: "file", group: "open" },
+      });
+    }
     if (this.projectFolders) {
       this.actions.register({
         id: "project.openFolder",

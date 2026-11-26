@@ -19,8 +19,8 @@ import {
   findCompositor,
   needsDevPage,
   resourcesIn,
-  tab,
   test,
+  showTab,
 } from "./support.ts";
 
 test.use({
@@ -77,7 +77,7 @@ async function goTo(page: Page, time: string) {
 
 /** Asks for the proxy of the video, from its menu in the explorer, as people do. */
 async function askForProxy(page: Page) {
-  await tab(page, "explorer").click();
+  await showTab(page, "explorer");
   await content(page, "explorer").getByRole("treeitem", { name: "素材", exact: true }).click();
   await resourcesIn(page, "explorer").filter({ hasText: "数字.mp4" }).click({
     button: "right",
@@ -154,7 +154,7 @@ test.describe("the proxy of a large video", () => {
       await goTo(page, time);
       await expect.poll(async () => (await shown(page)).index).toBe(index);
     }
-    await tab(page, "assets").click();
+    await showTab(page, "assets");
     await expect(content(page, "assets").getByText("代理", { exact: true })).toBeVisible();
   });
 

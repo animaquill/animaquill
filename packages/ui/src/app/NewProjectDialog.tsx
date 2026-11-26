@@ -1,15 +1,17 @@
-import { Check, Circle, CircleAlert, LoaderCircle } from "lucide-react";
+import type { LocalFolder } from "@animaquill/host";
+import { Check, Circle, CircleAlert, FolderOpen, Globe, LoaderCircle, Lock } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import type { ConnectStepState } from "../cloud/steps.ts";
-import type { PickerSnapshot } from "../cloud/repository-picker.ts";
+import type { PickerSnapshot, RepositoryPicker } from "../cloud/repository-picker.ts";
 import type { DialogRequest } from "../workbench/dialogs.ts";
+import type { ProjectFolders } from "../workbench/project-folders.ts";
 import styles from "./CloudSteps.module.css";
 import { createView } from "./create-view.ts";
 import { useWorkbench } from "./context.ts";
 import host from "./DialogHost.module.css";
 import own from "./NewProjectDialog.module.css";
-import picker from "./RepositoryDialog.module.css";
+import repo from "./RepositoryDialog.module.css";
 import { RepositoryFields } from "./RepositoryFields.tsx";
 
 type CreateRequest = Extract<DialogRequest, { kind: "create" }>;
@@ -33,7 +35,7 @@ const noPicker = (): PickerSnapshot | undefined => undefined;
  */
 export function NewProjectDialog({ request }: { request: CreateRequest }) {
   const workbench = useWorkbench();
-  const { dialogs, cloud } = workbench;
+  const { dialogs } = workbench;
   const { t } = useTranslation();
   const { create } = request;
   const snapshot = useSyncExternalStore(create.subscribe, create.getSnapshot);
@@ -111,38 +113,9 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
         }}
       >
         <h2>{view.title}</h2>
-        {/* Online a project is new or comes from a folder: two ways to the same dialog. */}
-        {kind === "cloud" && !isLocked && !create.takesBack && (
-          <div className={own.ways} role="group" aria-label={t("newProject.waysLabel")}>
-            <button
-              type="button"
-              aria-pressed={!request.imported}
-              onClick={() => {
-                if (!request.imported) return;
-                void giveUp().then((gone) => {
-                  if (gone) void workbench.newProject();
-                });
-              }}
-            >
-              {t("newProject.wayNew")}
-            </button>
-            <button
-              type="button"
-              aria-pressed={request.imported === true}
-              onClick={() => {
-                if (request.imported) return;
-                // Right in the click: the browser asks for a folder only then.
-                void workbench.importProject();
-                void giveUp();
-              }}
-            >
-              {t("newProject.wayImport")}
-            </button>
-          </div>
-        )}
         {request.imported && <p>{t("newProject.importAbout")}</p>}
 
-        <label className={picker.nameLabel}>
+        <label className={repo.nameLabel}>
           <span>{t("project.nameLabel")}</span>
           <input
             ref={nameInput}
@@ -154,6 +127,10 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
             onChange={(event) => create.setName(event.target.value)}
           />
         </label>
+
+        {kind === "local" && workbench.projectFolders && (
+          <Place folders={workbench.projectFolders} name={snapshot.name} disabled={isLocked} />
+        )}
 
         {view.format && (
           <div className={`${styles.format} ${own.format}`}>
@@ -220,15 +197,15 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
         )}
 
         {view.body === "need" && need !== undefined && (
-          <div className={picker.install} role="status" data-connect-need={need}>
-            <p className={picker.strong}>
+          <div className={repo.install} role="status" data-connect-need={need}>
+            <p className={repo.strong}>
               {need === "signIn" ? t("newProject.need.signIn") : t(`cloud.connect.need.${need}`)}
             </p>
             {need === "installApp" && <p>{t("cloud.connect.need.installAdvice")}</p>}
             {need === "signIn" && (
               <button
                 type="button"
-                className={picker.installButton}
+                className={repo.installButton}
                 onClick={() => void create.signIn()}
               >
                 {t("cloud.connect.signIn")}
@@ -237,7 +214,7 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
             {need === "installApp" && (
               <button
                 type="button"
-                className={picker.installButton}
+                className={repo.installButton}
                 onClick={() => void create.installApp()}
               >
                 {t("cloud.connect.install")}
@@ -249,24 +226,21 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
         {view.body === "choice" && create.picker && (
           <fieldset className={styles.choice} aria-label={t("cloud.connect.repository")}>
             <legend>{t("cloud.connect.repository")}</legend>
-            <RepositoryFields
-              picker={create.picker}
-              disabled={isLocked}
-              onOpenProject={
-                cloud &&
-                (({ id, name }) =>
+            {picked?.mode === "existing" ? (
+              // Chosen in "从仓库打开" already: that one, and the way back to choose another.
+              <ChosenRepository
+                picker={create.picker}
+                disabled={isLocked}
+                onAnother={() =>
                   void giveUp().then((gone) => {
-                    if (gone) void cloud.openCloudProject(id, { name });
-                  }))
-              }
-              onRestore={
-                cloud &&
-                ((repository) =>
-                  void giveUp().then((gone) => {
-                    if (gone) void cloud.restoreFromRepository(repository);
-                  }))
-              }
-            />
+                    if (gone) void workbench.openRepository();
+                  })
+                }
+              />
+            ) : (
+              // A new project gets a new repository; one people have is opened from, see 2.2.
+              <RepositoryFields picker={create.picker} disabled={isLocked} only="create" />
+            )}
           </fieldset>
         )}
 
@@ -352,3 +326,133 @@ export function NewProjectDialog({ request }: { request: CreateRequest }) {
     </dialog>
   );
 }
+
+/** The repository a new project goes to, chosen beforehand, see `RepositoryPicker.preselect`. */
+function ChosenRepository({
+  picker,
+  disabled,
+  onAnother,
+}: {
+  readonly picker: RepositoryPicker;
+  readonly disabled: boolean;
+  readonly onAnother: () => void;
+}) {
+  const { t } = useTranslation();
+  const snapshot = useSyncExternalStore(picker.subscribe, picker.getSnapshot);
+  const choice = picker.selectedChoice;
+  if (!choice) return null;
+  const isPublic = picker.isPublic(choice);
+  return (
+    <div className={repo.section}>
+      <div className={own.chosen} data-repository={choice.fullName}>
+        <span className={repo.choiceName}>
+          {choice.fullName}
+          <span className={repo.badge}>
+            {isPublic ? <Globe size={10} /> : <Lock size={10} />}
+            {t(isPublic ? "repository.public" : "repository.private")}
+          </span>
+        </span>
+        <button
+          type="button"
+          className={repo.openLinked}
+          disabled={disabled || snapshot.working}
+          onClick={onAnother}
+        >
+          {t("newProject.changeRepository")}
+        </button>
+      </div>
+      {isPublic && (
+        <div className={repo.public} role="status">
+          <p>{t("repository.publicWarning")}</p>
+          <label className={repo.mode}>
+            <input
+              type="checkbox"
+              checked={snapshot.publicConfirmed}
+              disabled={disabled || snapshot.working}
+              onChange={(event) => picker.confirmPublic(event.target.checked)}
+            />
+            {t("repository.publicConfirm")}
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Where a new project of the offline mode goes (the design of U1, 2.3): the place people put the
+ * last one, or chose now, and the folder of its own it gets there, as it will be called. The
+ * browser only gives the name of a folder, not where it is.
+ */
+function Place({
+  folders,
+  name,
+  disabled,
+}: {
+  readonly folders: ProjectFolders;
+  readonly name: string;
+  readonly disabled: boolean;
+}) {
+  const { t } = useTranslation();
+  const [place, setPlace] = useState<LocalFolder>();
+  // What the folder is called there, for the place and the name it was looked up for.
+  const [found, setFound] = useState<{ readonly for: string; readonly folder?: string }>();
+  const wanted = name.trim();
+  const lookingFor = place ? `${place.name}\n${wanted}` : undefined;
+  const folder = found && found.for === lookingFor ? found.folder : undefined;
+  useEffect(() => {
+    let isCurrent = true;
+    void folders.lastPlace().then((last) => {
+      if (isCurrent && last) setPlace((chosen) => chosen ?? last);
+    });
+    return () => {
+      isCurrent = false;
+    };
+  }, [folders]);
+  // A moment after people stop typing the name.
+  useEffect(() => {
+    if (!place || wanted === "" || lookingFor === undefined) return;
+    const over = new AbortController();
+    const timer = setTimeout(() => {
+      void folders.folderNameIn(place, wanted).then((inside) => {
+        if (!over.signal.aborted)
+          setFound({ for: lookingFor, ...(inside !== undefined && { folder: inside }) });
+      });
+    }, PREVIEW_DELAY_MS);
+    return () => {
+      over.abort();
+      clearTimeout(timer);
+    };
+  }, [folders, place, wanted, lookingFor]);
+  return (
+    <div className={own.place} role="group" aria-label={t("newProject.location")}>
+      <span>{t("newProject.location")}</span>
+      <div className={own.placeRow}>
+        <span className={own.placeName} data-none={place ? undefined : true} data-place="">
+          <FolderOpen size={14} aria-hidden />
+          {place ? place.name : t("newProject.noLocation")}
+        </span>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() =>
+            // Right in the click: the browser asks for a folder only then.
+            void folders.choosePlace().then((chosen) => {
+              if (chosen) setPlace(chosen);
+            })
+          }
+        >
+          {t(place ? "newProject.changeLocation" : "newProject.chooseLocation")}
+        </button>
+      </div>
+      {place && folder && (
+        <span className={own.placePreview} data-new-folder={folder}>
+          {`${place.name} › ${folder}`}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** How long after the last key the dialog looks at the place for the name of the folder. */
+const PREVIEW_DELAY_MS = 250;

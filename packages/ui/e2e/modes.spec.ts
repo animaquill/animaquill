@@ -155,10 +155,6 @@ test.describe("the online mode", () => {
   async function newOnline(page: Page, name: string) {
     await page.getByRole("button", { name: "新建项目" }).first().click();
     const box = page.locator("dialog[data-create-phase]");
-    await expect(box.getByRole("button", { name: "从头新建" })).toHaveAttribute(
-      "aria-pressed",
-      "true",
-    );
     await box.getByRole("textbox", { name: "项目名称" }).fill(name);
     await box.getByRole("button", { name: "新建", exact: true }).click();
     await expect(box).toHaveAttribute("data-create-phase", /archiving|done/);
@@ -174,7 +170,11 @@ test.describe("the online mode", () => {
     await editorReady(page);
     // No folders, no filters, no sign of where a project is.
     await expect(page.getByRole("group", { name: "筛选" })).toHaveCount(0);
-    await expect(page.locator('[data-new="open"]')).toHaveCount(0);
+    await expect(page.locator("[data-new]")).toHaveText([
+      /^新建项目/,
+      /^从仓库打开/,
+      /^从文件夹导入/,
+    ]);
     await shot(page, "online-start");
     await newOnline(page, "宣传片");
     await expect(page).toHaveURL(/\/p\//);

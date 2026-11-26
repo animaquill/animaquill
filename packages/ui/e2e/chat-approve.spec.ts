@@ -8,7 +8,7 @@ import {
   goToSettingsGroup,
   settingsOf,
 } from "./ai-support.ts";
-import { content, devPageOnly, expect, tab, test } from "./support.ts";
+import { content, devPageOnly, expect, test, showTab } from "./support.ts";
 import { execute } from "./undo-support.ts";
 
 /**
@@ -106,7 +106,7 @@ async function setUp(page: Page, answers: readonly Answer[], shot?: string) {
   await closeSettings(page);
   const made = { timeline: "main", id: "m0", time: "1", name: "片头" };
   expect(await execute(page, { type: "marker.add", params: made })).toBe(true);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   return { requests: () => requests };
 }
 

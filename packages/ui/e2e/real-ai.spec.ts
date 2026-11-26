@@ -1,6 +1,6 @@
 import type { Page, Route } from "@playwright/test";
 import { closeSettings, noAutoTitle, openSettingsPage, settingsOf } from "./ai-support.ts";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, test, showTab } from "./support.ts";
 
 /**
  * A smoke test with a real model: the browser assistant, from the settings to the answer, against a
@@ -102,12 +102,12 @@ test("a real model: edits, reads, looks, plans first", async ({ page }) => {
   await expect(settings.getByRole("button", { name: "默认模型" })).toBeVisible();
   await noAutoTitle(page);
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByTestId("chat-model")).toHaveText(/gpt-?6\.1/i);
 
   const usage: string[] = [];
   const clips = async () => {
-    await tab(page, "timeline").click();
+    await showTab(page, "timeline");
     return content(page, "timeline")
       .getByRole("option")
       .evaluateAll((each) => each.map((one) => one.getAttribute("aria-label")));
@@ -143,7 +143,7 @@ test("a real model: edits, reads, looks, plans first", async ({ page }) => {
     );
     expect(await failures().count(), "turn 1 failed").toBe(0);
     expect((await clips()).join()).toContain(CLIP);
-    await tab(page, "chat").click();
+    await showTab(page, "chat");
 
     // 2. Read.
     const before = called.length;
@@ -173,7 +173,7 @@ test("a real model: edits, reads, looks, plans first", async ({ page }) => {
     // 4. Plan first: a card, and nothing changed.
     const changes = await chat(page).getByTestId("chat-change").count();
     const timeline = (await clips()).join();
-    await tab(page, "chat").click();
+    await showTab(page, "chat");
     await chat(page).getByTestId("chat-plan-first").click();
     await expect(chat(page).getByTestId("chat-plan-first")).toHaveAttribute("aria-pressed", "true");
     await turn(

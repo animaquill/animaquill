@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import type { Locator, Page } from "@playwright/test";
-import { content, expect, resourcesIn, tab, tabScrolls, test } from "./support.ts";
+import { content, expect, resourcesIn, tabScrolls, test, newAsset, showTab } from "./support.ts";
 import { cardMenu } from "./start-support.ts";
 
 const assets = (page: Page) => content(page, "assets");
@@ -69,8 +69,8 @@ async function boxOf(locator: Locator) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await tab(page, "assets").click();
-  await tab(page, "timeline").click();
+  await showTab(page, "assets");
+  await showTab(page, "timeline");
 });
 
 test("brings in files, and they survive a reload", async ({ page }) => {
@@ -85,7 +85,7 @@ test("brings in files, and they survive a reload", async ({ page }) => {
 
 test("groups by type, finds by name, and plays under the pointer", async ({ page }) => {
   await importFiles(page, files.image, files.loud, files.changing);
-  await assets(page).getByRole("button", { name: "新建场景" }).click();
+  await newAsset(page, "场景");
   await expect(items(page)).toHaveCount(4);
   const groups = assets(page).locator('[role="group"]:not([data-group="recent"])');
   await expect(groups).toHaveCount(4);
@@ -320,7 +320,7 @@ test("is looked after in the explorer, which asks before a file in use goes", as
   const dialog = page.getByRole("dialog");
   await expect(dialog).toContainText("时间轴上有 1 处用到它");
   await dialog.getByRole("button", { name: "取消" }).click();
-  await tab(page, "assets").click();
+  await showTab(page, "assets");
   await expect(items(page)).toHaveCount(1);
   await expect(clips(page)).toHaveCount(1);
 });
@@ -382,7 +382,7 @@ test("a project saved before files existed still opens, and takes files", async 
   });
   await page.goto(url);
   await expect(page.getByRole("contentinfo")).toContainText("测试项目");
-  await tab(page, "assets").click();
+  await showTab(page, "assets");
   await importFiles(page, files.image);
   await expect(items(page)).toHaveCount(1);
 });
@@ -516,7 +516,33 @@ test("selecting a clip leaves the tab as it was, with no words about how to use 
   expect(await tabScrolls(page, "assets")).toBe(false);
   await assets(page).screenshot(shot("assets-closed-group.png"));
   await page.reload();
-  await tab(page, "assets").click();
+  await showTab(page, "assets");
   await expect(pictures).toHaveAttribute("aria-expanded", "false");
   await expect(items(page)).toHaveCount(2);
+});
+
+test("makes what is new from one menu next to the import, and the timeline has no buttons for it", async ({
+  page,
+}) => {
+  const toolbar = timeline(page).getByRole("group", { name: "操作" });
+  await expect(toolbar.getByRole("button", { name: /纯色片段|新建场景/ })).toHaveCount(0);
+  const button = assets(page).getByRole("button", { name: "新建", exact: true });
+  // With the keyboard, as any menu.
+  await button.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("menuitem")).toHaveText(["场景", "纯色片段", "代码生成的声音"]);
+  await assets(page).screenshot({ path: test.info().outputPath("assets-new-menu.png") });
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  // A colour goes onto the timeline at the playhead, as the timeline's button had it.
+  await expect(clips(page)).toHaveCount(1);
+  await expect(clips(page).first()).toHaveAccessibleName(/视频 1，0:00/);
+  await newAsset(page, "场景");
+  await newAsset(page, "代码生成的声音");
+  await expect(items(page)).toHaveCount(2);
+  // The commands are still there for the palette and the keys.
+  await page.keyboard.press("Control+Shift+P");
+  await page.keyboard.type("添加纯色片段");
+  await page.keyboard.press("Enter");
+  await expect(clips(page)).toHaveCount(4);
 });

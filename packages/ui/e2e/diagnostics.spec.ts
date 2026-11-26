@@ -1,6 +1,15 @@
 import { readFile } from "node:fs/promises";
 import type { Page } from "@playwright/test";
-import { compositor, content, devPageOnly, expect, resourcesIn, tab, test } from "./support.ts";
+import {
+  compositor,
+  content,
+  devPageOnly,
+  expect,
+  resourcesIn,
+  tab,
+  test,
+  showTab,
+} from "./support.ts";
 
 const panel = (page: Page) => content(page, "performance");
 const press = (page: Page, name: string) =>
@@ -52,7 +61,7 @@ test("the whole report can be read before anything leaves", async ({ page }) => 
 });
 
 test("the report has timings and leaves out names", async ({ page }) => {
-  await tab(page, "assets").click();
+  await showTab(page, "assets");
   const chooser = page.waitForEvent("filechooser");
   await content(page, "assets").getByRole("button", { name: "导入" }).click();
   await (
@@ -89,7 +98,7 @@ test("playing from one clip into the next needs no decoder to start", async ({ p
     await page.getByRole("textbox", { name: "当前时间" }).fill(time);
     await page.keyboard.press("Enter");
   };
-  await tab(page, "assets").click();
+  await showTab(page, "assets");
   for (const name of ["red-blue.webm", "red.webm"]) {
     const chooser = page.waitForEvent("filechooser");
     await content(page, "assets").getByRole("button", { name: "导入" }).click();

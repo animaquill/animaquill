@@ -9,7 +9,7 @@ import {
   openSettingsPage,
   settingsOf,
 } from "./ai-support.ts";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, tab, test, showTab } from "./support.ts";
 
 /**
  * The group of AI models in the settings: adding a service from the picker, testing it, the models
@@ -95,7 +95,7 @@ test("adds a service from the picker: its recommended models on, the first the d
   // The chat sends to the default model, and its bubble there goes to the settings.
   await noAutoTitle(page);
   await leaveSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByTestId("chat-model")).toHaveText("Claude Opus 5.5");
   const box = chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
   await box.fill("你好");
@@ -185,7 +185,7 @@ test("models: on and off, the default, at least one stays on, one got from the s
 
   await noAutoTitle(page);
   await leaveSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByTestId("chat-model")).toHaveText("Claude Opus 5.5");
   const box = chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
   await box.fill("你好");
@@ -345,7 +345,7 @@ test("settings of before come up with their services, models, choices and keys",
   await openSettingsPage(page, "AI 聊天");
   await expect(settings.getByRole("textbox", { name: "一次任务最多调用工具" })).toHaveValue("77");
   await leaveSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   // The pack chosen for the model before is said beside it.
   await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test · Claude 5");
 

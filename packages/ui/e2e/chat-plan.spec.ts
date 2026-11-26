@@ -6,7 +6,7 @@ import {
   anthropicSays,
   closeSettings,
 } from "./ai-support.ts";
-import { content, devPageOnly, expect, tab, test } from "./support.ts";
+import { content, devPageOnly, expect, test, showTab } from "./support.ts";
 import { markers, reload } from "./undo-support.ts";
 
 /**
@@ -102,7 +102,7 @@ test("plan first: changes are held, the plan is changed and accepted, and then A
   });
   await addAnthropic(page, "sk-ant-test-0123456789abcdef", "claude-test");
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
 
   // The switch: off in a new conversation, lit once on.
   await expect(toggle(page)).toHaveAttribute("aria-pressed", "false");
@@ -187,7 +187,7 @@ test("plan first: changes are held, the plan is changed and accepted, and then A
 
   // A phone: the buttons go into "+", the switch with them as an item to tick, a dot on "+".
   await page.setViewportSize({ width: 390, height: 844 });
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await card(page).scrollIntoViewIfNeeded();
   await expect(chat(page).getByTestId("chat-plan-first-dot")).toBeVisible();
   await expect(chat(page).getByTestId("chat-tools-more")).toBeVisible();

@@ -6,6 +6,7 @@ import {
   type MakingNotes,
   type MediaStore,
   type RepositoryAccess,
+  type RepositoryChoice,
   type RepositoryStatus,
   type WindowMemory,
 } from "@animaquill/host";
@@ -292,6 +293,8 @@ export interface CloudCreateOptions {
   readonly leaving?: () => boolean;
   readonly memory?: WindowMemory;
   readonly intent?: CreateIntent;
+  /** The repository people chose already, see `RepositoryPicker.preselect`. */
+  readonly repository?: RepositoryChoice;
   /** Which window this is, and the version of the editor, for the platform. */
   readonly window: string;
   readonly editor: string;
@@ -395,7 +398,8 @@ export class CloudCreate {
           clearTimeout: this.#env.clearTimeout,
         },
       });
-    const kind: CreateKind = intent || options.imported ? "cloud" : this.#defaultKind();
+    const kind: CreateKind =
+      intent || options.imported || options.repository ? "cloud" : this.#defaultKind();
     this.#snapshot = {
       kind,
       name: intent?.name ?? options.name,
@@ -414,7 +418,8 @@ export class CloudCreate {
       key: undefined,
     };
     this.#snapshot = { ...this.#snapshot, need: this.#needOf() };
-    if (intent && this.picker) {
+    if (options.repository && this.picker) this.picker.preselect(options.repository);
+    else if (intent && this.picker) {
       if (intent.touched) this.picker.setName(intent.repository);
       if (intent.mode === "existing") {
         this.#toSelect = intent.selected;

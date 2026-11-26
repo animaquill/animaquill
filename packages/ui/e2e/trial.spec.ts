@@ -13,7 +13,7 @@ import {
   row,
   typeInto,
 } from "./property-helpers.ts";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, tab, test, newAsset, showTab } from "./support.ts";
 import { sidebar } from "./start-support.ts";
 
 const RED = [255, 0, 0] as const;
@@ -190,8 +190,8 @@ test("undo goes through what was tried, in the order people worked in", async ({
   await addColor(page);
   await typeInto(field(page, "位置 X"), "100");
   await typeInto(field(page, "位置 X"), "200");
-  await tab(page, "timeline").click();
-  await content(page, "timeline").getByRole("button", { name: "纯色片段" }).click();
+  await showTab(page, "timeline");
+  await newAsset(page, "纯色片段");
   await expect(clips(page)).toHaveCount(2);
 
   // The second clip is the last thing that happened.
@@ -200,7 +200,7 @@ test("undo goes through what was tried, in the order people worked in", async ({
   await expect(count(page)).toHaveText("试改 1 处");
 
   await clips(page).first().click({ force: true });
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(field(page, "位置 X")).toHaveValue("200");
   await page.keyboard.press("Control+z");
   await expect(field(page, "位置 X")).toHaveValue("100");
@@ -347,7 +347,7 @@ test("the setting writes every change right away", async ({ page }) => {
   await page.getByRole("switch", { name: "先试改再保存" }).uncheck();
   await page.keyboard.press("Escape");
   await expect(page.getByTestId("settings")).toBeHidden();
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
 
   await typeInto(field(page, "位置 X"), "100");
   await expect(field(page, "位置 X")).toHaveValue("100");
@@ -377,7 +377,7 @@ test("the setting waits for what is being tried, and says so", async ({ page }) 
   await page.getByRole("switch", { name: "先试改再保存" }).uncheck();
   await expect(page.getByText("还有 1 处试改，保存或放弃之后才生效")).toBeVisible();
   await page.keyboard.press("Escape");
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await typeInto(field(page, "位置 X"), "200");
   await expect(count(page)).toHaveText("试改 1 处");
   await page.keyboard.press("Control+s");
@@ -413,7 +413,7 @@ test("comparing works while the picture plays", async ({ page }) => {
   await typeInto(field(page, "位置 X"), "-500");
   await goTo(page, "0:00/00");
   // Long enough to look at it a few times on a slow machine.
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   const box = await clips(page).first().boundingBox();
   const [right, y] = [(box?.x ?? 0) + (box?.width ?? 0) - 2, (box?.y ?? 0) + 10];
   await page.mouse.move(right, y);
@@ -442,11 +442,11 @@ test("another window changing the same property is marked, and people still win"
   const other = await page.context().newPage();
   await other.goto(page.url());
   await expect(tab(other, "preview")).toBeVisible();
-  await tab(other, "timeline").click();
+  await showTab(other, "timeline");
   await expect(clips(other)).toHaveCount(1);
   const box = await clips(other).first().boundingBox();
   await other.mouse.click((box?.x ?? 0) + 20, (box?.y ?? 0) + 10);
-  await tab(other, "properties").click();
+  await showTab(other, "properties");
   await expect(field(other, "位置 X")).toHaveValue("0");
   await typeInto(field(other, "位置 X"), "500");
   await other.keyboard.press("Control+s");
@@ -490,7 +490,7 @@ test("what one window tries stays out of another window, also after a reload", a
 
 /** Selects a clip, the way people do: the list of clips is only for finding it. */
 async function clickClip(page: Page, index = 0) {
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   const box = await clips(page).nth(index).boundingBox();
   await page.mouse.click((box?.x ?? 0) + 12, (box?.y ?? 0) + 10);
 }
@@ -500,14 +500,14 @@ test("cutting takes it to both parts, deleting sets it aside, and undo brings it
 }) => {
   await addColor(page);
   await typeInto(field(page, "位置 X"), "100");
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await goTo(page, "0:02/00");
   await page.keyboard.press("Control+k");
   await expect(clips(page)).toHaveCount(2);
   await expect(count(page)).toHaveText("试改 2 处");
 
   await clickClip(page, 1);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await goTo(page, "0:03/00");
   await expect(field(page, "位置 X")).toHaveValue("100");
 
@@ -540,7 +540,7 @@ test("deleting a clip and taking that back keeps it all, also through a reload",
   await page.reload();
   await expect(count(page)).toHaveText("试改 2 处");
   await clickClip(page);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await goTo(page, "0:01/00");
   await expect(field(page, "位置 X")).toHaveValue("100");
 });
@@ -570,12 +570,12 @@ test("moving a clip by cutting and pasting takes it along, and undo takes it bac
   await clickClip(page);
   await page.keyboard.press("Control+x");
   await goTo(page, "0:20/00");
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await page.keyboard.press("Control+v");
   await expect(clips(page)).toHaveCount(1);
   await expect(count(page)).toHaveText("试改 1 处");
   await expect(page.getByText("现在用不上")).toHaveCount(0);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await goTo(page, "0:21/00");
   await expect(field(page, "位置 X")).toHaveValue("100");
 
@@ -583,7 +583,7 @@ test("moving a clip by cutting and pasting takes it along, and undo takes it bac
   await expect(count(page)).toHaveText("试改 1 处");
   await goTo(page, "0:01/00");
   await clickClip(page);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(field(page, "位置 X")).toHaveValue("100");
   await page.keyboard.press("Control+Shift+z");
   await expect(count(page)).toHaveText("试改 1 处");
@@ -591,7 +591,7 @@ test("moving a clip by cutting and pasting takes it along, and undo takes it bac
   await expect(bar(page)).toHaveCount(0);
   await goTo(page, "0:21/00");
   await clickClip(page);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(field(page, "位置 X")).toHaveValue("100");
 });
 
@@ -599,17 +599,17 @@ test("going back past a cut and forward again leaves things on the part they wer
   page,
 }) => {
   await addColor(page);
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await goTo(page, "0:02/00");
   await page.keyboard.press("Control+k");
   await expect(clips(page)).toHaveCount(2);
   await clickClip(page, 0);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await goTo(page, "0:01/00");
   await typeInto(field(page, "位置 X"), "100");
   await expect(count(page)).toHaveText("试改 1 处");
 
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await page.keyboard.press("Control+z");
   await expect(bar(page)).toHaveCount(0);
   await page.keyboard.press("Control+z");
@@ -621,7 +621,7 @@ test("going back past a cut and forward again leaves things on the part they wer
   await expect(count(page)).toHaveText("试改 1 处");
 
   await clickClip(page, 1);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await goTo(page, "0:03/00");
   await expect(field(page, "位置 X")).toHaveValue("0");
   await expect(field(page, "位置 X")).not.toHaveAttribute("data-tried");
@@ -629,7 +629,7 @@ test("going back past a cut and forward again leaves things on the part they wer
 
 test("going back past growing a clip and forward again brings every key back", async ({ page }) => {
   await addColor(page);
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   const first = await clips(page).first().boundingBox();
   if (!first) throw new Error("no clip");
   const y = first.y + 10;
@@ -640,11 +640,11 @@ test("going back past growing a clip and forward again brings every key back", a
   await page.mouse.up();
   await goTo(page, "0:05/00");
   await clickClip(page);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await keyButton(page, "位置 X").click();
   await expect(count(page)).toHaveText("试改 1 处");
 
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   const moved = await clips(page).first().boundingBox();
   if (!moved) throw new Error("no clip");
   await page.mouse.move(moved.x + 2, y);
@@ -652,12 +652,12 @@ test("going back past growing a clip and forward again brings every key back", a
   await page.mouse.move(moved.x - 200, y, { steps: 8 });
   await page.mouse.up();
   await goTo(page, "0:01/10");
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await typeInto(field(page, "位置 X"), "50");
   await expect(field(page, "位置 X")).toHaveValue("50");
   await expect(count(page)).toHaveText("试改 1 处");
 
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await page.keyboard.press("Control+z");
   await page.keyboard.press("Control+z");
   await expect(count(page)).toHaveText("试改 1 处");
@@ -665,7 +665,7 @@ test("going back past growing a clip and forward again brings every key back", a
   await page.keyboard.press("Control+Shift+z");
   await expect(count(page)).toHaveText("试改 1 处");
   await expect(page.getByText("现在用不上")).toHaveCount(0);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await expect(field(page, "位置 X")).toHaveValue("50");
   await page.reload();
   await expect(count(page)).toHaveText("试改 1 处");
@@ -682,7 +682,7 @@ test("a window that gets reloaded finds its own, not what a closed window left",
   await other.goto(page.url());
   await expect(tab(other, "preview")).toBeVisible();
   await clickClip(other);
-  await tab(other, "properties").click();
+  await showTab(other, "properties");
   await goTo(other, "0:01/00");
   await typeInto(field(other, "位置 Y"), "200");
   await expect(count(other)).toHaveText("试改 1 处");
@@ -695,7 +695,7 @@ test("a window that gets reloaded finds its own, not what a closed window left",
   await other.reload();
   await expect(count(other)).toHaveText("试改 1 处");
   await clickClip(other);
-  await tab(other, "properties").click();
+  await showTab(other, "properties");
   await goTo(other, "0:01/00");
   await expect(field(other, "位置 Y")).toHaveValue("200");
   await expect(field(other, "位置 X")).toHaveValue("0");
@@ -753,11 +753,11 @@ test("what is set aside gets through saving, and through going back past where i
   page,
 }) => {
   await addColor(page);
-  await tab(page, "timeline").click();
-  await content(page, "timeline").getByRole("button", { name: "纯色片段" }).click();
+  await showTab(page, "timeline");
+  await newAsset(page, "纯色片段");
   await expect(clips(page)).toHaveCount(2);
   await clickClip(page, 0);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await goTo(page, "0:01/00");
   await typeInto(field(page, "位置 X"), "100");
   await page.keyboard.press("Control+s");
@@ -771,14 +771,14 @@ test("what is set aside gets through saving, and through going back past where i
   await expect.poll(async () => (await keptRecords(page)).length).toBe(1);
 
   await clickClip(page, 0);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await goTo(page, "0:02/00");
   await typeInto(field(page, "位置 Y"), "50");
   await expect(count(page)).toHaveText("试改 1 处");
   await page.keyboard.press("Control+s");
   await expect(bar(page)).toHaveCount(0);
 
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   for (let step = 0; step < 3; step += 1) await page.keyboard.press("Control+z");
   await expect(clips(page)).toHaveCount(2);
   for (let step = 0; step < 3; step += 1) await page.keyboard.press("Control+Shift+z");
@@ -801,7 +801,7 @@ test("keys that move in another window leave what is tried here as it is", async
   await other.goto(page.url());
   await expect(tab(other, "preview")).toBeVisible();
   await clickClip(other);
-  await tab(other, "properties").click();
+  await showTab(other, "properties");
 
   await goTo(page, "0:01/00");
   await typeInto(field(page, "位置 X"), "100");
@@ -859,11 +859,11 @@ test("leaving can save, and nothing is left to ask about after that", async ({ p
   await page.getByRole("link", { name: /^测试项目/ }).click();
   await expect(tab(page, "preview")).toBeVisible();
   await expect(bar(page)).toHaveCount(0);
-  await tab(page, "timeline").click();
+  await showTab(page, "timeline");
   await expect(clips(page)).toHaveCount(1);
   const box = await clips(page).first().boundingBox();
   await page.mouse.click((box?.x ?? 0) + 20, (box?.y ?? 0) + 10);
-  await tab(page, "properties").click();
+  await showTab(page, "properties");
   await goTo(page, "0:01/00");
   await expect(field(page, "位置 X")).toHaveValue("100");
 });

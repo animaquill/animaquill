@@ -9,7 +9,7 @@ import {
   openSettingsPage,
   settingsOf,
 } from "./ai-support.ts";
-import { content, expect, tab, test } from "./support.ts";
+import { content, expect, test, showTab } from "./support.ts";
 
 /**
  * Model packs: the page of them in the settings, as pi-web's Plugins (the packs on the left, the one
@@ -261,7 +261,7 @@ test("the chat says which pack a conversation has, and a new one when the model 
   });
   await setUpService(page, "claude-test");
   await leaveSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
 
   // No pack for this model: the top of the conversation says so.
   await expect(chat(page).getByTestId("chat-pack")).toHaveText(
@@ -280,7 +280,7 @@ test("the chat says which pack a conversation has, and a new one when the model 
   await dialog.getByTestId("pack-agree").check();
   await dialog.getByTestId("pack-confirm").click();
   await leaveSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByTestId("chat-pack")).toHaveText("适配包：No guard(本机)");
   await send(page, "你好");
   await expect(chat(page).getByText("回答 1")).toBeVisible({ timeout: 15_000 });
@@ -296,7 +296,7 @@ test("the chat says which pack a conversation has, and a new one when the model 
   await openSettingsPage(page, "AI 模型");
   await addModel(page, "claude-other");
   await leaveSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await chat(page).getByTestId("chat-model").click();
   await chat(page)
     .getByTestId("chat-model-bubble")
@@ -488,7 +488,7 @@ test("in the bubble only models; a model's packs are a menu beside it, chosen fo
   await page.getByTestId("pack-dialog").getByTestId("pack-confirm").click();
   await expect(packs.getByTestId("pack-item")).toHaveCount(2);
   await leaveSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await send(page, "一");
   await expect(chat(page).getByText("回答 1")).toBeVisible({ timeout: 15_000 });
   const systemOf = (request: Request | undefined) =>
@@ -572,7 +572,7 @@ test("in the bubble only models; a model's packs are a menu beside it, chosen fo
   // A reload in between: the next turn still takes it, and says so.
   await page.reload();
   await leaveSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await expect(chat(page).getByText("回答 1")).toBeVisible();
   await send(page, "二");
   await expect(chat(page).getByText("回答 2")).toBeVisible({ timeout: 15_000 });
@@ -1044,7 +1044,7 @@ test("settings that had the words to compare with on keep them for their model, 
   await expect(packs.getByTestId("pack-show-hidden")).toBeChecked();
   await expect(fact(page, "usedBy")).toHaveText("claude-test");
   await leaveSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
   await send(page, "你好");
   await expect(chat(page).getByText("好的。")).toBeVisible({ timeout: 15_000 });
   const sent = requests[0]?.postDataJSON() as { system?: unknown };

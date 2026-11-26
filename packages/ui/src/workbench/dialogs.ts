@@ -1,6 +1,7 @@
 import type { RepositoryConflict } from "@animaquill/host";
 import type { ConflictList } from "../cloud/conflicts.ts";
 import type { CloudCreate } from "../cloud/create.ts";
+import type { OpeningAction, OpeningRow, RepositoryOpening } from "../cloud/open-repository.ts";
 import type { RepositoryPicker } from "../cloud/repository-picker.ts";
 import { Emitter } from "./emitter.ts";
 
@@ -118,6 +119,18 @@ export interface CreateDialogOptions {
   readonly imported?: boolean;
 }
 
+/** "从仓库打开": the repositories, and what people chose to do with one of them. */
+export interface OpenRepositoryDialogOptions {
+  readonly title: string;
+  readonly opening: RepositoryOpening;
+}
+
+/** What people chose in "从仓库打开", which the workbench then does. */
+export interface OpenRepositoryChoice {
+  readonly row: OpeningRow;
+  readonly action: OpeningAction;
+}
+
 /** A file of the project that two sides have differently, for people to choose a side for. */
 export interface ReconcileItem {
   readonly path: string;
@@ -215,12 +228,13 @@ export type DialogRequest =
   | ({ readonly kind: "form"; readonly id: number } & FormOptions)
   | ({ readonly kind: "repository"; readonly id: number } & RepositoryDialogOptions)
   | ({ readonly kind: "create"; readonly id: number } & CreateDialogOptions)
+  | ({ readonly kind: "openRepository"; readonly id: number } & OpenRepositoryDialogOptions)
   | ({ readonly kind: "reconcile"; readonly id: number } & ReconcileDialogOptions)
   | ({ readonly kind: "places"; readonly id: number } & PlacesDialogOptions)
   | ({ readonly kind: "conflicts"; readonly id: number } & ConflictsDialogOptions)
   | ProgressRequest;
 
-type DialogValue = string | boolean | FormAnswer | undefined;
+type DialogValue = string | boolean | FormAnswer | OpenRepositoryChoice | undefined;
 
 /** Asks one thing at a time and answers with a promise. */
 export class Dialogs {
@@ -288,6 +302,16 @@ export class Dialogs {
    */
   async create(options: CreateDialogOptions): Promise<void> {
     await this.#ask({ kind: "create", id: this.#nextId++, ...options });
+  }
+
+  /** Resolves to what people chose to do with a repository, or undefined where they did not. */
+  async openRepository(
+    options: OpenRepositoryDialogOptions,
+  ): Promise<OpenRepositoryChoice | undefined> {
+    const answer = await this.#ask({ kind: "openRepository", id: this.#nextId++, ...options });
+    return typeof answer === "object" && "action" in answer
+      ? (answer as OpenRepositoryChoice)
+      : undefined;
   }
 
   /** Stays until `close`. Like every dialog it takes the place of the one before. */

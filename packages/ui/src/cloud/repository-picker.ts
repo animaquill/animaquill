@@ -247,6 +247,21 @@ export class RepositoryPicker {
     return unusableReason(choice, this.#snapshot.refused.get(choice.id), this.current?.id);
   }
 
+  /**
+   * One repository chosen beforehand, as "从仓库打开 › 在这里新建项目" does: the list is that one,
+   * selected, until people look for another.
+   */
+  preselect(choice: RepositoryChoice): void {
+    this.#set({
+      mode: "existing",
+      list: { ...this.#snapshot.list, state: "ready", repositories: [choice], more: false },
+      selected: choice.id,
+      publicConfirmed: false,
+      failure: undefined,
+    });
+    this.#checkSoon(0);
+  }
+
   select(id: number): void {
     const choice = this.#snapshot.list.repositories.find((each) => each.id === id);
     if (!choice || this.unusable(choice)) return;

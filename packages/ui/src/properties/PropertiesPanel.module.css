@@ -910,3 +910,81 @@
   font-size: var(--aq-font-11);
   font-variant-numeric: tabular-nums;
 }
+
+/* The title of a group that folds up: the whole line is the button, see SectionHeading. */
+.sectionHeading {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  min-height: calc(24px * var(--aq-size-scale));
+}
+
+.object > .sectionHeading {
+  margin: 4px 0 2px;
+}
+
+.object:first-child > .sectionHeading {
+  margin-top: 0;
+}
+
+.sectionToggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: calc(22px * var(--aq-size-scale));
+  padding: 0 4px 0 0;
+  color: var(--aq-text-muted);
+  font: inherit;
+  font-size: var(--aq-font-11);
+  font-weight: 600;
+  text-align: start;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.sectionToggle:hover {
+  color: var(--aq-text);
+  background: var(--aq-bg-hover);
+}
+
+.sectionToggle:focus-visible {
+  outline: 1px solid var(--aq-accent);
+}
+
+.sectionChevron {
+  flex: none;
+  transform: rotate(90deg);
+  transition: transform 0.12s ease;
+}
+
+.sectionToggle[aria-expanded="false"] .sectionChevron {
+  transform: none;
+}
+
+.sectionTitle {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.sectionKeyed {
+  flex: none;
+  margin-inline-start: auto;
+}
+
+/* An effect has its name in the button, and its switch and its bin after it. */
+.effectHeader .sectionToggle {
+  color: var(--aq-text);
+  font-size: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sectionChevron {
+    transition: none;
+  }
+}

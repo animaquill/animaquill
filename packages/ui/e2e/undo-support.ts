@@ -6,7 +6,7 @@ import {
   anthropicSays,
   closeSettings,
 } from "./ai-support.ts";
-import { content, expect, tab } from "./support.ts";
+import { content, expect, showTab } from "./support.ts";
 
 /**
  * What the tests of taking back AI tasks share: AI that adds markers, one task for each message;
@@ -52,7 +52,7 @@ export const reload = async (page: Page) => {
     await hooks.aqUndoSaved();
   });
   await page.reload();
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
 };
 
 /** AI answers each message with one task that adds these markers, then says it is done. */
@@ -87,7 +87,7 @@ export async function aiAdds(page: Page, tasks: readonly (readonly [string, stri
   });
   await addAnthropic(page, "sk-ant-test-0123456789abcdef", "claude-test");
   await closeSettings(page);
-  await tab(page, "chat").click();
+  await showTab(page, "chat");
 }
 
 export async function send(page: Page, text: string) {

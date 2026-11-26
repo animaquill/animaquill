@@ -116,7 +116,7 @@ export function FilesPanel() {
         </button>
         <button type="button" onClick={() => timeline.createScene()}>
           <Plus size={14} />
-          {t("assets.newScene")}
+          {t("files.newScene")}
         </button>
       </div>
       <div

@@ -13,6 +13,7 @@ import {
   useRef,
   useState,
   type FocusEvent,
+  type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
 } from "react";
@@ -75,6 +76,8 @@ export function DockArea() {
   const [hint, setHint] = useState<DropHint>();
   const stopDragging = useRef<() => void>(undefined);
   useEffect(() => () => stopDragging.current?.(), []);
+  /** The tab pressed on, and whether it was the one that shows then, before dockview switched. */
+  const pressed = useRef<{ readonly panel: IDockviewPanel; readonly showing: boolean }>(undefined);
 
   const groupAt = (target: Element): DockviewGroupPanel | undefined =>
     api.current?.groups.find((group) => group.element.contains(target));
@@ -121,6 +124,17 @@ export function DockArea() {
         run: () => strips.setStrip(group, choice),
       })),
     );
+    if (strips.canCollapse(group)) {
+      const collapsed = strips.isCollapsed(group);
+      groups.push([
+        {
+          id: "collapse",
+          label: t("strip.collapse"),
+          checked: collapsed,
+          run: () => strips.toggleCollapsed(group),
+        },
+      ]);
+    }
     if (strip !== "top") {
       groups.push([
         {
@@ -205,7 +219,7 @@ export function DockArea() {
       if (dragging && side) strips.setStrip(group, side);
       stop();
     };
-    const cancel = (key: KeyboardEvent) => {
+    const cancel = (key: globalThis.KeyboardEvent) => {
       if (key.key !== "Escape") return;
       key.preventDefault();
       key.stopPropagation();
@@ -217,6 +231,41 @@ export function DockArea() {
     window.addEventListener("pointerup", drop);
     window.addEventListener("pointercancel", stop);
     window.addEventListener("keydown", cancel, true);
+  };
+
+  /** The tab of ours under something, not its close button. */
+  const tabAt = (target: Element): IDockviewPanel | undefined =>
+    target.closest(HEADER) && target.closest('[role="tab"]') && !target.closest("button")
+      ? panelOf(target)
+      : undefined;
+
+  /** Before dockview has the tab show: whether it showed already, which is what a click goes by. */
+  const notePress = (event: PointerEvent) => {
+    const panel = event.button === 0 ? tabAt(event.target as Element) : undefined;
+    pressed.current = panel && { panel, showing: panel.group.activePanel === panel };
+  };
+
+  /**
+   * As in VS Code: a click on the icon that shows folds its group up to the strip, or opens it
+   * again; a click on another one shows that, and opens the group, see `createDock`.
+   */
+  const clickTab = (event: MouseEvent) => {
+    const press = pressed.current;
+    pressed.current = undefined;
+    if (!press || event.detail === 0 || tabAt(event.target as Element) !== press.panel) return;
+    const { group } = press.panel;
+    if (press.showing && strips.canCollapse(group)) strips.toggleCollapsed(group);
+  };
+
+  /** Enter or space on the tab that shows does what a click on it does. */
+  const keyTab = (event: KeyboardEvent) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const target = event.target as HTMLElement;
+    if (target.getAttribute("role") !== "tab") return;
+    const panel = panelOf(target);
+    if (!panel || panel.group.activePanel !== panel || !strips.canCollapse(panel.group)) return;
+    event.preventDefault();
+    strips.toggleCollapsed(panel.group);
   };
 
   /**
@@ -238,7 +287,10 @@ export function DockArea() {
         className="aq-dock"
         onFocus={followFocus}
         onContextMenu={openMenu}
+        onPointerDownCapture={notePress}
         onPointerDown={pressStrip}
+        onClick={clickTab}
+        onKeyDown={keyTab}
         onPointerOut={(event) => {
           // The names come out again once the mouse has left the strip it clicked on, also into
           // the page of a preview, which keeps its moves to itself.
