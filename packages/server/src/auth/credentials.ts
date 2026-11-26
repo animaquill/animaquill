@@ -18,7 +18,7 @@ import {
  *
  * - on a site of its own over HTTPS, as the platform and a server of people's own are,
  *   `HOSTED_CREDENTIALS`: the cookies have the `__Host-` prefix and are `Secure`, see cookies.ts;
- * - the backend of `npx animaquill` on its own machine (online-offline.md, O4b) has another: over
+ * - the backend of `npx animaquill` on its own machine has another: over
  *   plain HTTP on `localhost`, its cookie cannot have the prefix, nor be `Secure`, and a cookie alone
  *   is not enough there, as other programs of the machine reach the same host. It takes a key of
  *   binding besides, which pages send in a header of their own, or for a WebSocket, where a page

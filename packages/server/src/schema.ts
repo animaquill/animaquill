@@ -41,7 +41,7 @@ export const githubNumber = (name: string) => bigint(name, { mode: "number" });
 /**
  * Who a person is: `github`, known by the number of their GitHub account (the login can change);
  * or `local`, the one person of a backend of `npx animaquill` on its own machine, who signs in by
- * having started it (online-offline.md, O4), and has no number of GitHub, at most one such.
+ * having started it, and has no number of GitHub, at most one such.
  */
 export type UserKind = "github" | "local";
 
