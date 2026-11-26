@@ -3,7 +3,7 @@ import { constants } from "node:fs";
 import { chmod, lstat, mkdir, open, readdir, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { dirname, join, win32 } from "node:path";
+import { dirname, join, resolve, win32 } from "node:path";
 
 /**
  * The data folder of the backend of `npx animaquill` (design O4 of AnimaQuill Cloud, section 1):
@@ -52,6 +52,9 @@ export const unsafeDataDir = (dir: string, platform: NodeJS.Platform = process.p
 /** The user of this process, on POSIX. */
 const me = () => process.getuid?.();
 
+const SYSTEM_SID = "S-1-5-18";
+const ADMINISTRATORS_SID = "S-1-5-32-544";
+
 /** Runs a program of Windows to its end: its output. */
 export type RunProgram = (program: string, args: readonly string[]) => string;
 
@@ -64,7 +67,8 @@ const runProgram: RunProgram = (program, args) =>
 
 /**
  * Windows: the folder is made this user's alone, as 700 is elsewhere: what it inherits goes
- * (`icacls /inheritance:r`), and only this user, by its SID, gets everything, for what is in it too.
+ * (`icacls /inheritance:r`), and only this user, by its SID, and SYSTEM and the Administrators get
+ * everything, for what is in it too.
  * Resolves to what people are to be told: where that could not be done, and where the folder is
  * not in the user's own folder (`%USERPROFILE%`), which others of the computer often may read.
  */
@@ -83,7 +87,17 @@ export function restrictOnWindows(
     const line = run("whoami", ["/user", "/fo", "csv", "/nh"]).trim();
     const sid = /"(S-1-[0-9-]+)"\s*$/.exec(line)?.[1];
     if (!sid) throw new Error(`whoami said ${line}`);
-    run("icacls", [dir, "/inheritance:r", "/grant:r", `*${sid}:(OI)(CI)F`, "/Q"]);
+    // SYSTEM and the Administrators keep the folder too, as backups and repairs run as them; other
+    // users do not get at it.
+    run("icacls", [
+      dir,
+      "/inheritance:r",
+      "/grant:r",
+      `*${sid}:(OI)(CI)F`,
+      `*${SYSTEM_SID}:(OI)(CI)F`,
+      `*${ADMINISTRATORS_SID}:(OI)(CI)F`,
+      "/Q",
+    ]);
   } catch (error) {
     warnings.push(
       `没能把数据目录 ${dir} 设成只有你能访问（${(error as Error).message.split("\n")[0]}）：同一台电脑的其他用户可能读得到里面的密钥。`,
@@ -93,10 +107,24 @@ export function restrictOnWindows(
 }
 
 /** Whether a path of Windows is inside a folder, by Windows' rules (no matter the case). */
-const isInside = (path: string, folder: string) => {
+export const isInside = (path: string, folder: string) => {
   const inside = win32.relative(win32.resolve(folder), win32.resolve(path));
-  return inside !== "" && !inside.startsWith("..") && !win32.isAbsolute(inside);
+  // A folder named `..foo` is inside; only `..` itself and `..\` lead out.
+  return inside !== "" && !/^\.\.(?:[\\/]|$)/.test(inside) && !win32.isAbsolute(inside);
 };
+
+/**
+ * Whether two paths are the same folder or file: on Windows no matter the case (its file systems
+ * keep the case and do not tell by it), elsewhere exactly.
+ */
+export const samePath = (
+  a: string,
+  b: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean =>
+  platform === "win32"
+    ? win32.resolve(a).toLowerCase() === win32.resolve(b).toLowerCase()
+    : resolve(a) === resolve(b);
 
 /**
  * Makes the folder where it is not there, and sees that only this user may get at it. Resolves

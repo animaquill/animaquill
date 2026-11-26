@@ -8,6 +8,7 @@ import { NewerDatabase } from "@animaquill/server/database.ts";
 import { PortInUse, startLocalServer } from "./server.ts";
 import { DataDirRefused, defaultDataDir } from "./backend/data-dir.ts";
 import { adminRequest, LockHeld, readBackend } from "./backend/lock.ts";
+import { databaseFrom } from "./database-option.ts";
 import { checkedOpening, type Opening } from "./backend/open-page.ts";
 import {
   findPrograms,
@@ -218,8 +219,9 @@ function sayRefused(error: unknown, logFile: string | undefined): void {
     return;
   } else if (error instanceof LeftOverRunning) {
     console.error(
-      `数据目录里有一个数据库进程（进程 ${error.pid}）还在运行，但是没有回应：可能正在恢复，或者被暂停了，或者 pg18.password 被改过。` +
-        `等一会儿再试；确定它不再需要时，结束进程 ${error.pid} 后再试。`,
+      `数据目录里记着一个数据库进程（进程 ${error.pid}），它还活着，但是没有回应：可能正在恢复，或者被暂停了，或者 pg18.password 被改过，也可能这个进程号已经是别的程序的了。` +
+        `先确认进程 ${error.pid} 是不是数据库（Windows 在任务管理器里看，macOS 和 Linux 用 ps -p ${error.pid}）。` +
+        `是的话，等一会儿再试，确定它不再需要时再结束它；不是的话，删掉数据目录里的 pg18/postmaster.pid 后再试，不要结束它。`,
     );
   } else if (error instanceof PostgresFailed && error.missingLibrary) {
     console.error(
@@ -333,17 +335,6 @@ async function openRunning(argv: readonly string[]): Promise<number> {
   return 0;
 }
 
-/** The address of a database of people's own, from the environment, in place of `--database`. */
-const DATABASE_VARIABLE = "AQ_DATABASE_URL";
-
-const hasPassword = (address: string) => {
-  try {
-    return new URL(address).password !== "";
-  } catch {
-    return false;
-  }
-};
-
 const dataDirFrom = (given: string | undefined): string =>
   resolve(given ?? (process.env["AQ_DATA_DIR"] || defaultDataDir()));
 
@@ -387,14 +378,8 @@ async function main(argv: readonly string[]): Promise<number> {
   }
   const open = !options["no-open"];
   if (options.offline) return startOffline(port, open);
-  // The address of a database of people's own, with its password: better from the environment,
-  // as what is in a command line others of the computer can read.
-  const database = options.database ?? (process.env[DATABASE_VARIABLE] || undefined);
-  delete process.env[DATABASE_VARIABLE];
-  if (options.database !== undefined && hasPassword(options.database))
-    console.error(
-      `提醒：--database 里的密码，同一台电脑上的其他用户能看到（在进程列表里）。改用环境变量 ${DATABASE_VARIABLE} 给这个网址。`,
-    );
+  const { database, warning } = databaseFrom(options.database);
+  if (warning) console.error(warning);
   const why = await noBackendHere(database);
   if (why) {
     console.log(why);

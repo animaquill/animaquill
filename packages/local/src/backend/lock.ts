@@ -117,8 +117,16 @@ export async function takeLock(
     } catch {
       other = undefined;
     }
-    if (!other || !Number.isInteger(other.pid) || !isAlive(other.pid)) {
-      // A process that is gone, or a lock no start of ours wrote whole: taken over.
+    if (!other) {
+      // Nothing of it to read: on a disk without links (FAT) a lock is written after it is made,
+      // so its writer gets a moment before it is taken as one that was never written whole.
+      await wait(UNREADABLE_MS);
+      if ((await readFile(lockPath, "utf8").catch(() => undefined)) !== seen) continue;
+      await takeOver(lockPath, seen, wait);
+      continue;
+    }
+    if (!Number.isInteger(other.pid) || !isAlive(other.pid)) {
+      // A process that is gone, or a lock that says nothing of one: taken over.
       await takeOver(lockPath, seen, wait);
       continue;
     }
@@ -179,6 +187,9 @@ async function makeLock(lockPath: string, note: LockNote): Promise<boolean> {
     throw error;
   }
 }
+
+/** How long a lock that cannot be read is given, to be written, before it is taken over. */
+export const UNREADABLE_MS = 2000;
 
 /** How long one that takes a lock over may hold the right to: one older was left by a crash. */
 const TAKING_MS = 30_000;

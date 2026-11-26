@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import {
   appendFile,
@@ -13,7 +13,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:net";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, win32 } from "node:path";
 import { Client } from "pg";
 
 /**
@@ -236,6 +236,8 @@ export interface PostgresOptions {
   readonly logFile: string;
   /** Only tests: how long a PostgreSQL left running has to answer. */
   readonly answerMs?: number;
+  /** Only tests: the name of the program of a process, see `programNameOf`. */
+  readonly programNameOf?: (pid: number) => Promise<string | undefined>;
 }
 
 /** Where a log is longer than this as PostgreSQL starts, the one before is kept, and no more. */
@@ -492,6 +494,10 @@ export class Postgres {
     const found = await postmasterOf(this.folder);
     if (!found) return "none";
     if (!Number.isInteger(found.pid) || found.pid <= 0 || !isAlive(found.pid)) return "stale";
+    // After a restart the number is often another program's: that is a file left behind, and the
+    // process is not touched. Where the name cannot be had, it is taken to be one that may be ours.
+    const name = await (this.#options.programNameOf ?? programNameOf)(found.pid);
+    if (name !== undefined && !isPostgresName(name)) return "stale";
     if (
       Number.isInteger(found.port) &&
       found.port > 0 &&
@@ -503,6 +509,47 @@ export class Postgres {
     }
     throw new LeftOverRunning(found.pid);
   }
+}
+
+/** Whether the name of a program (a path on macOS, `.exe` on Windows) is PostgreSQL's. */
+export const isPostgresName = (name: string): boolean =>
+  basename(win32.basename(name.trim()))
+    .toLowerCase()
+    .replace(/\.exe$/, "") === "postgres";
+
+const outputOf = (program: string, args: readonly string[]): Promise<string | undefined> =>
+  new Promise((done) => {
+    execFile(
+      program,
+      [...args],
+      { encoding: "utf8", timeout: 5000, windowsHide: true },
+      (error, stdout) => done(error ? undefined : stdout),
+    );
+  });
+
+/**
+ * The name of the program a process runs, to see that a number is still PostgreSQL's: Linux reads
+ * `/proc/<pid>/comm`, macOS asks `ps -p <pid> -o comm=`, Windows `tasklist /FI "PID eq <pid>"`.
+ * Undefined where it cannot be had.
+ */
+export async function programNameOf(
+  pid: number,
+  platform: NodeJS.Platform = process.platform,
+  ask: (program: string, args: readonly string[]) => Promise<string | undefined> = outputOf,
+): Promise<string | undefined> {
+  if (platform === "win32") {
+    const line = (await ask("tasklist", ["/FI", `PID eq ${pid}`, "/FO", "CSV", "/NH"]))
+      ?.trim()
+      .split(/\r?\n/)[0];
+    return /^"([^"]+)","(\d+)"/.exec(line ?? "")?.[2] === String(pid)
+      ? /^"([^"]+)"/.exec(line ?? "")?.[1]
+      : undefined;
+  }
+  if (platform === "linux") {
+    const comm = await readFile(`/proc/${pid}/comm`, "utf8").catch(() => undefined);
+    if (comm?.trim()) return comm.trim();
+  }
+  return (await ask("ps", ["-p", String(pid), "-o", "comm="]))?.trim() || undefined;
 }
 
 export const isAlive = (pid: number): boolean => {

@@ -12,7 +12,9 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   DataDirRefused,
+  isInside,
   restrictOnWindows,
+  samePath,
   unsafeDataDir,
   defaultDataDir,
   masterKeyOf,
@@ -139,7 +141,16 @@ describe("on Windows", () => {
     expect(restrictOnWindows(dir, { USERPROFILE: "C:\\Users\\ada" }, run)).toEqual([]);
     expect(ran).toEqual([
       ["whoami", "/user", "/fo", "csv", "/nh"],
-      ["icacls", dir, "/inheritance:r", "/grant:r", "*S-1-5-21-1-2-3-1001:(OI)(CI)F", "/Q"],
+      [
+        "icacls",
+        dir,
+        "/inheritance:r",
+        "/grant:r",
+        "*S-1-5-21-1-2-3-1001:(OI)(CI)F",
+        "*S-1-5-18:(OI)(CI)F",
+        "*S-1-5-32-544:(OI)(CI)F",
+        "/Q",
+      ],
     ]);
   });
 
@@ -151,5 +162,17 @@ describe("on Windows", () => {
     expect(warnings).toHaveLength(2);
     expect(warnings[0]).toMatch(/^数据目录 D:\\aq 不在你的用户目录里/);
     expect(warnings[1]).toMatch(/没能把数据目录 D:\\aq 设成只有你能访问（拒绝访问。/);
+  });
+
+  test("paths are the same whatever their case, and a folder named ..foo is inside", () => {
+    expect(samePath("C:\\Users\\Ada\\AQ", "c:\\users\\ada\\aq\\", "win32")).toBe(true);
+    expect(samePath("C:\\Users\\Ada", "C:\\Users\\Bob", "win32")).toBe(false);
+    expect(samePath("/home/Ada", "/home/ada", "linux")).toBe(false);
+    expect(samePath("/home/ada/", "/home/ada", "linux")).toBe(true);
+    expect(isInside("C:\\Users\\ada\\..foo\\data", "C:\\Users\\ada")).toBe(true);
+    expect(isInside("C:\\USERS\\ADA\\x", "c:\\users\\ada")).toBe(true);
+    expect(isInside("C:\\Users\\other", "C:\\Users\\ada")).toBe(false);
+    expect(isInside("C:\\Users\\ada", "C:\\Users\\ada")).toBe(false);
+    expect(isInside("D:\\x", "C:\\Users\\ada")).toBe(false);
   });
 });

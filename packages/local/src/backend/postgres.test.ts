@@ -138,13 +138,14 @@ describe.skipIf(!runs)("PostgreSQL of the data folder", { timeout: 60_000 }, () 
       process.kill(stopped, "SIGCONT");
     }
     await after.stop(4000);
-    // A number that is another process's now, alive: not signalled either.
+    // A number that is another program's now, alive: a file left behind, and the program is not
+    // signalled (the names are tried in postgres-process.test.ts).
     const stranger = spawnSync("sh", ["-c", "sleep 30 >/dev/null 2>&1 & echo $!"], {
       encoding: "utf8",
     });
     const other = Number(stranger.stdout.trim());
     writeFileSync(file, `${other}\n${before.folder}\n1\n5432\n\n127.0.0.1\n`);
-    await expect(after.stopLeftOver()).rejects.toEqual(new LeftOverRunning(other));
+    expect(await after.stopLeftOver()).toBe("stale");
     expect(isAlive(other)).toBe(true);
     process.kill(other);
     // Gone: the file is stale, and PostgreSQL starts over it.

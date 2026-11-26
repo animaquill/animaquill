@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { lstat, readFile, readdir, rm } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { writePrivate } from "./data-dir.ts";
+import { samePath, writePrivate } from "./data-dir.ts";
 import type { BackendNote } from "./lock.ts";
 import { isAlive } from "./postgres.ts";
 
@@ -87,7 +87,7 @@ export async function checkedOpening(
   if (page === undefined) return { url };
   if (typeof page !== "string") return undefined;
   const path = resolve(page);
-  if (dirname(path) !== resolve(dataDir) || !PAGE_NAME.test(basename(path))) return undefined;
+  if (!samePath(dirname(path), dataDir) || !PAGE_NAME.test(basename(path))) return undefined;
   const found = await lstat(path).catch(() => undefined);
   if (!found?.isFile() || (process.getuid && found.uid !== process.getuid())) return undefined;
   if ((await readFile(path, "utf8").catch(() => "")) !== pageFor(url)) return undefined;

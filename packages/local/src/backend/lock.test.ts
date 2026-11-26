@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   STARTING_MS,
+  UNREADABLE_MS,
   takeOver,
   BACKEND_FILE,
   LOCK_FILE,
@@ -175,5 +176,38 @@ describe("the lock", () => {
     expect(JSON.parse(readFileSync(join(dir, LOCK_FILE), "utf8"))).toEqual(lock.note);
     const { readdirSync } = await import("node:fs");
     expect(readdirSync(dir).toSorted()).toEqual([LOCK_FILE]);
+  });
+
+  test("that cannot be read yet (a disk without links) is waited for, and taken over only if it stays so", async () => {
+    // Written whole while it is waited for: the writer keeps it.
+    const dir = folder();
+    const path = join(dir, LOCK_FILE);
+    writeFileSync(path, "");
+    backendOf(dir, { instance: "writer", port: 7651, adminKey: "k", origin: "x" });
+    const waited: number[] = [];
+    const whole = JSON.stringify({ pid: process.ppid, instance: "writer", startedAt: 1_000_000 });
+    const time = clock();
+    const found = await takeLock(dir, {
+      ...time,
+      wait: async (ms) => {
+        waited.push(ms);
+        if (ms === UNREADABLE_MS) writeFileSync(path, whole);
+        await time.wait(ms);
+      },
+      ping: async () => "ours",
+    });
+    expect(waited[0]).toBe(UNREADABLE_MS);
+    expect(readFileSync(path, "utf8")).toBe(whole);
+    expect(found).toMatchObject({ kind: "running" });
+    // Still empty after the wait: left by a crash, taken over.
+    const other = folder();
+    writeFileSync(join(other, LOCK_FILE), "{");
+    const waitedAgain: number[] = [];
+    const lock = (await takeLock(other, {
+      now: time.now,
+      wait: async (ms) => void waitedAgain.push(ms),
+    })) as HeldLock;
+    expect(waitedAgain[0]).toBe(UNREADABLE_MS);
+    expect(lock.note.pid).toBe(process.pid);
   });
 });
