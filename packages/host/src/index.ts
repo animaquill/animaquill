@@ -232,6 +232,12 @@ export interface Host {
    * backend, as the editor put on a site as plain files: then there is only the offline mode.
    */
   readonly goOnline?: () => void;
+  /**
+   * Online: how many projects the offline mode of this site has in this browser, kept here or in
+   * folders it opened, for the start page to say where they are. Missing where there is no offline
+   * mode; 0 where it cannot tell.
+   */
+  readonly offlineProjects?: () => Promise<number>;
   /** Online: what takes people to the offline mode of this site, staying signed in. */
   readonly goOffline?: () => void;
   /**
@@ -2346,6 +2352,12 @@ export interface AccountAccess {
   refresh(): Promise<void>;
   /** How the sign-in that brought this page here ended, once, and then undefined. */
   takeOutcome(): SignInOutcome | undefined;
+  /**
+   * Where signing in starts, where not from this page: "terminal" for the backend of `npx
+   * animaquill`, which signs in only the address that its terminal opens (`npx animaquill open`
+   * gives a new one). The entry page then says so, in place of a way to sign in.
+   */
+  readonly signInFrom?: "terminal";
   /**
    * Leaves the page to sign in, and comes back to this page as it is now, or to `returnTo`: a path
    * of this site, such as the online start page from the offline mode.

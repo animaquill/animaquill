@@ -263,6 +263,7 @@ function entryOn(element: HTMLElement) {
             waiting={options.waiting === true}
             offlineRefused={options.offlineRefused}
             signIn={() => options.account.signIn()}
+            fromTerminal={options.account.signInFrom === "terminal"}
             offline={options.offline}
             retry={options.retry}
           />

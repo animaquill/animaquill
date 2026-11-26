@@ -4457,7 +4457,10 @@
     "readAgain": "再读一次",
     "more": "“{{name}}”的更多操作",
     "welcomeOnline": "新建一个项目开始，或者把电脑上的项目文件夹导入进来。",
-    "welcomeBrowser": "新建一个项目开始，或者把项目文件夹导入进来。"
+    "welcomeBrowser": "新建一个项目开始，或者把项目文件夹导入进来。",
+    "offlineProjects": "你之前的项目在离线模式里。",
+    "offlineProjectsGo": "切到离线模式",
+    "offlineProjectsClose": "不再提示"
   },
   "cloud": {
     "openAction": "打开在线项目…",
@@ -6154,7 +6157,8 @@
     "retry": "再试一次",
     "safari": "Safari 会清掉 7 天没打开的网站的数据，离线请用 Chrome 或 Edge。",
     "safariSignIn": "登录用在线模式",
-    "connecting": "正在连接服务器…"
+    "connecting": "正在连接服务器…",
+    "fromTerminal": "请从启动 AnimaQuill 的终端里打开那个网址，或者运行 npx animaquill open。"
   },
   "saveToFolder": {
     "action": "保存到文件夹…",

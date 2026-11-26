@@ -2380,6 +2380,11 @@ export class Workbench {
     clear();
   }
 
+  /** Online: how many projects the offline mode has in this browser, see `Host.offlineProjects`. */
+  async offlineProjects(): Promise<number> {
+    return (await this.#host.offlineProjects?.().catch(() => 0)) ?? 0;
+  }
+
   /** Online: to the offline mode of this site, staying signed in, see `leavePage`. */
   async goOffline(): Promise<void> {
     const go = this.#host.goOffline;

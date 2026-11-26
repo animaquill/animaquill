@@ -22,6 +22,7 @@ export function EntryPage({
   waiting = false,
   offlineRefused,
   signIn,
+  fromTerminal = false,
   offline,
   retry,
 }: {
@@ -32,6 +33,11 @@ export function EntryPage({
   /** Safari: the offline mode is grey, and says why, see `startApp`. */
   readonly offlineRefused: boolean;
   readonly signIn: () => void;
+  /**
+   * Signing in starts from the terminal, as with the backend of `npx animaquill`: no way to sign in
+   * here, and the page says where it is.
+   */
+  readonly fromTerminal?: boolean;
   readonly offline: () => void;
   readonly retry: () => void;
 }) {
@@ -57,19 +63,26 @@ export function EntryPage({
             )}
           </p>
         )}
+        {fromTerminal && problem !== "connecting" && (
+          <p className={styles["note"]} role="status" data-testid="entry-terminal">
+            {t("entry.fromTerminal")}
+          </p>
+        )}
         <div className={styles["ways"]}>
-          <button
-            type="button"
-            className={styles["primary"]}
-            disabled={waiting}
-            onClick={signIn}
-            // The first thing people do here.
-            // oxlint-disable-next-line jsx-a11y/no-autofocus
-            autoFocus
-          >
-            <LogIn size={18} aria-hidden />
-            {t("entry.signIn")}
-          </button>
+          {!fromTerminal && (
+            <button
+              type="button"
+              className={styles["primary"]}
+              disabled={waiting}
+              onClick={signIn}
+              // The first thing people do here.
+              // oxlint-disable-next-line jsx-a11y/no-autofocus
+              autoFocus
+            >
+              <LogIn size={18} aria-hidden />
+              {t("entry.signIn")}
+            </button>
+          )}
           <button
             type="button"
             className={styles["secondary"]}
@@ -90,9 +103,11 @@ export function EntryPage({
             asked && (
               <p className={styles["note"]} role="status">
                 {t("entry.safari")}
-                <button type="button" className={styles["inline"]} onClick={signIn}>
-                  {t("entry.safariSignIn")}
-                </button>
+                {!fromTerminal && (
+                  <button type="button" className={styles["inline"]} onClick={signIn}>
+                    {t("entry.safariSignIn")}
+                  </button>
+                )}
               </p>
             )
           ) : (

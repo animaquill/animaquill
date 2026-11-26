@@ -13,6 +13,7 @@ import {
   browserRepository,
 } from "@animaquill/host/browser";
 import { EDITOR_HEADER, REQUEST_HEADER } from "./headers.ts";
+import { bindingFetch, fetchEventSource, syncProtocols } from "./local.ts";
 
 /**
  * The backend of the editor's site (`@animaquill/server`), for keeping projects in step with it:
@@ -31,12 +32,20 @@ export interface ServerCloudOptions {
   readonly editor: string;
   /** The version of this page, which the server asks of conversations. */
   readonly version: string;
+  /**
+   * The key of binding of this page, for the backend of `npx animaquill` (see local.ts): every
+   * request has it, and the WebSocket of syncing. None unless said.
+   */
+  readonly binding?: string | undefined;
 }
 
-export function serverCloud({ editor, version }: ServerCloudOptions): CloudAccess {
+export function serverCloud({ editor, version, binding }: ServerCloudOptions): CloudAccess {
   const api = (path: string) => `/api${path}`;
   const changeHeaders = { [REQUEST_HEADER]: "1" };
-  const projects = browserCloudProjects({ api, changeHeaders });
+  const request = binding === undefined ? undefined : bindingFetch(binding);
+  /** What every access is given besides: how requests go, where they need the key. */
+  const shared = request ? { fetch: request } : {};
+  const projects = browserCloudProjects({ api, changeHeaders, ...shared });
   return browserCloud({
     platform: editor,
     syncUrl: () => {
@@ -44,23 +53,28 @@ export function serverCloud({ editor, version }: ServerCloudOptions): CloudAcces
       url.protocol = url.protocol === "http:" ? "ws:" : "wss:";
       return url.href;
     },
+    ...(binding !== undefined && { syncProtocols: () => syncProtocols(binding) }),
     list: projects.list,
     remove: projects.remove,
     wake: projects.wake,
     rename: projects.rename,
     // What changed of the person's list on any computer, at once (me/events.ts).
-    events: browserPersonEvents({ url: "/api/me/events" }),
-    repository: browserRepository({ api, changeHeaders }),
-    lfs: browserLfs({ api, changeHeaders }),
-    lfsAccount: browserLfsAccount({ api, changeHeaders }),
-    cover: browserCoverAccess({ api, changeHeaders }),
-    organizer: browserOrganizerAccess({ api, changeHeaders }),
-    aiSync: browserAiSyncAccess({ api, changeHeaders }),
+    events: browserPersonEvents({
+      url: "/api/me/events",
+      ...(request && { open: (url: string) => fetchEventSource(url, request) }),
+    }),
+    repository: browserRepository({ api, changeHeaders, ...shared }),
+    lfs: browserLfs({ api, changeHeaders, ...shared }),
+    lfsAccount: browserLfsAccount({ api, changeHeaders, ...shared }),
+    cover: browserCoverAccess({ api, changeHeaders, ...shared }),
+    organizer: browserOrganizerAccess({ api, changeHeaders, ...shared }),
+    aiSync: browserAiSyncAccess({ api, changeHeaders, ...shared }),
     // The server takes conversations only from pages new enough not to lose what newer ones wrote.
     chats: browserChatSyncAccess({
       api,
       changeHeaders: { [REQUEST_HEADER]: "1", [EDITOR_HEADER]: version },
+      ...shared,
     }),
-    modelCatalog: browserModelCatalogAccess({ api }),
+    modelCatalog: browserModelCatalogAccess({ api, ...shared }),
   });
 }

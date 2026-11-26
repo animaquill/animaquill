@@ -17,6 +17,7 @@ import {
   Star,
   TriangleAlert,
   Server,
+  X,
 } from "lucide-react";
 import {
   useCallback,
@@ -154,6 +155,65 @@ function UnfinishedExports({
 /** A project folder that the address of this window asks for, which waits for people. */
 /** The views that are a page of their own, not a list of projects. */
 const isPage = (view: ViewId): boolean => view === "exports" || view === "storage";
+
+/** Where the hint about the projects of the offline mode was closed, on this computer. */
+const OFFLINE_HINT_KEY = "animaquill.offlineProjectsHint";
+
+const offlineHintClosed = (): boolean => {
+  try {
+    return localStorage.getItem(OFFLINE_HINT_KEY) === "closed";
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Online, with nothing in the list of the backend but projects in the offline mode of this browser,
+ * as for people of `npx animaquill` from before it had a backend: where theirs are, and the way
+ * there. Until it is closed, on this computer.
+ */
+function OfflineProjectsHint() {
+  const workbench = useWorkbench();
+  const { t } = useTranslation();
+  const [closed, setClosed] = useState(offlineHintClosed);
+  const [there, setThere] = useState(0);
+  useEffect(() => {
+    if (closed || workbench.mode !== "online" || !workbench.canGoOffline) return;
+    let isCurrent = true;
+    void workbench.offlineProjects().then((count) => {
+      if (isCurrent) setThere(count);
+    });
+    return () => {
+      isCurrent = false;
+    };
+  }, [workbench, closed]);
+  if (closed || there === 0) return null;
+  const close = () => {
+    try {
+      localStorage.setItem(OFFLINE_HINT_KEY, "closed");
+    } catch {
+      // Closed for this page all the same.
+    }
+    setClosed(true);
+  };
+  return (
+    <section className={styles.waiting} role="status" data-testid="offline-projects-hint">
+      <p>{t("start.offlineProjects")}</p>
+      <button type="button" className={styles.secondary} onClick={() => void workbench.goOffline()}>
+        {t("start.offlineProjectsGo")}
+      </button>
+      <button
+        type="button"
+        className={styles.quiet}
+        aria-label={t("start.offlineProjectsClose")}
+        title={t("start.offlineProjectsClose")}
+        onClick={close}
+      >
+        <X size={14} aria-hidden="true" />
+      </button>
+    </section>
+  );
+}
 
 function Waiting({ waiting }: { waiting: WaitingFolder }) {
   const { projectFolders } = useWorkbench();
@@ -1554,6 +1614,9 @@ export function StartPage() {
       />
       <main className={styles.main} ref={main} tabIndex={-1} data-view={current}>
         {folders.waiting && <Waiting waiting={folders.waiting} />}
+        {situation.mode === "online" && cloudState === "ready" && lists.cloud.length === 0 && (
+          <OfflineProjectsHint />
+        )}
         <div className={styles.head}>
           <h1>
             {current === "storage"

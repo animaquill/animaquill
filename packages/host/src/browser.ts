@@ -1399,6 +1399,44 @@ export function createOfflineHost({ goOnline }: OfflineHostOptions = {}): Host {
   };
 }
 
+/**
+ * How many projects the offline mode has in this browser, from a page of any scope, see
+ * `Host.offlineProjects`: those kept in the browser, and the folders opened, of the offline scope
+ * and of before the scopes. Nothing is made where it is not there; 0 where it cannot tell.
+ */
+export async function offlineProjectsHere(
+  factory: () => IDBFactory = () => indexedDB,
+): Promise<number> {
+  try {
+    const names = new Set((await factory().databases()).map((each) => each.name));
+    const count = async (name: string, store: string): Promise<number> => {
+      if (!names.has(name)) return 0;
+      const request = factory().open(name);
+      request.addEventListener("upgradeneeded", () => request.transaction?.abort());
+      let database: IDBDatabase;
+      try {
+        database = await resultOf(request);
+      } catch {
+        return 0;
+      }
+      try {
+        if (!database.objectStoreNames.contains(store)) return 0;
+        return await resultOf(database.transaction(store).objectStore(store).count());
+      } finally {
+        database.close();
+      }
+    };
+    let total = 0;
+    for (const prefix of [OFFLINE_SCOPE, ""])
+      total +=
+        (await count(`${prefix}${DATABASE}`, PROJECTS)) +
+        (await count(`${prefix}animaquill-folders`, "folders"));
+    return total;
+  } catch {
+    return 0;
+  }
+}
+
 /** What the online mode adds to the browser's host, see `Host`. */
 export interface OnlineHostOptions {
   /** The backend, as the site of the page: part of the scope. */
@@ -1452,6 +1490,7 @@ export function createOnlineHost({
     }),
     address: browserAddress("online"),
     ...(offlineAddress !== undefined && { goOffline: () => location.assign(offline()) }),
+    ...(offlineAddress !== undefined && { offlineProjects: () => offlineProjectsHere() }),
     ...(localFolders && { savedFolders: browserSavedFolders(localFolders) }),
     ...(localFolders &&
       offlineAddress !== undefined && {

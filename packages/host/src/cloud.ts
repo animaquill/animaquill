@@ -308,8 +308,8 @@ export function browserCloudLinks(factory: () => IDBFactory = () => indexedDB): 
 }
 
 /** A connection over a WebSocket, as a browser has it. */
-export function webSocketConnection(url: string): CloudConnection {
-  const socket = new WebSocket(url);
+export function webSocketConnection(url: string, protocols?: readonly string[]): CloudConnection {
+  const socket = protocols ? new WebSocket(url, [...protocols]) : new WebSocket(url);
   socket.binaryType = "arraybuffer";
   let listener: ((data: Uint8Array) => void) | undefined;
   const opened = new Promise<void>((resolve, reject) => {
@@ -372,6 +372,11 @@ export interface BrowserCloudOptions {
   readonly platform: string;
   /** Where the WebSocket for syncing is. */
   readonly syncUrl: () => string;
+  /**
+   * The subprotocols the WebSocket offers, where part of what shows the session goes there, as the
+   * backend of `npx animaquill` has it: none unless said.
+   */
+  readonly syncProtocols?: () => readonly string[];
   /** The projects of whoever is signed in, see `CloudAccess.list`. */
   readonly list: () => Promise<readonly CloudProjectSummary[]>;
   /** Takes a project without a repository away, where the platform does, see `CloudAccess.remove`. */
@@ -404,7 +409,7 @@ export function browserCloud(options: BrowserCloudOptions): CloudAccess {
   const locks = options.locks ?? (() => navigator.locks);
   return {
     platform: options.platform,
-    connect: () => webSocketConnection(options.syncUrl()),
+    connect: () => webSocketConnection(options.syncUrl(), options.syncProtocols?.()),
     list: options.list,
     links: browserCloudLinks(options.database),
     syncer: (key) => browserFolderWriter(key, locks, undefined, "animaquill.cloud-sync."),

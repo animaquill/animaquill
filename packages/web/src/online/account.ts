@@ -97,11 +97,20 @@ export const describeSpace = (body: unknown): AccountSpace => {
 export interface ServerAccountOptions {
   /** Where the pictures of accounts may come from: GitHub's unless said. */
   readonly pictures?: string;
+  /** How requests go to the server: the browser's `fetch` unless said, see `bindingFetch`. */
+  readonly fetch?: typeof fetch;
+  /**
+   * Where signing in starts: here through GitHub unless said; "terminal" for the backend of
+   * `npx animaquill`, where only the address its terminal opens signs in (see `AccountAccess`).
+   */
+  readonly signInFrom?: "terminal";
 }
 
 /** The account on the backend of this site. */
 export function serverAccount(options: ServerAccountOptions = {}): AccountAccess {
   const pictures = options.pictures ?? GITHUB_PICTURES;
+  const request = options.fetch ?? ((input, init) => fetch(input, init));
+  const terminal = options.signInFrom === "terminal";
   let outcome = takeOutcomeFromAddress();
   let snapshot: AccountSnapshot = { status: "unknown" };
   let askedAt = 0;
@@ -117,7 +126,7 @@ export function serverAccount(options: ServerAccountOptions = {}): AccountAccess
 
   const ask = async () => {
     try {
-      const response = await fetch("/api/auth/session", {
+      const response = await request("/api/auth/session", {
         cache: "no-store",
         signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
       });
@@ -151,7 +160,13 @@ export function serverAccount(options: ServerAccountOptions = {}): AccountAccess
       outcome = undefined;
       return taken;
     },
+    ...(terminal && { signInFrom: "terminal" as const }),
     signIn(returnTo) {
+      // Nothing here signs in: the entry page says how, see `signInFrom`.
+      if (terminal) {
+        location.assign(returnTo ?? location.pathname);
+        return;
+      }
       const back = returnTo === undefined ? here() : encodeURIComponent(returnTo);
       location.assign(`/api/auth/github/start?returnTo=${back}`);
     },
@@ -159,7 +174,7 @@ export function serverAccount(options: ServerAccountOptions = {}): AccountAccess
       location.assign(`/api/auth/github/install?returnTo=${here()}`);
     },
     async space() {
-      const response = await fetch("/api/me/storage", {
+      const response = await request("/api/me/storage", {
         cache: "no-store",
         signal: AbortSignal.timeout(ASK_TIMEOUT_MS),
       });
@@ -168,7 +183,7 @@ export function serverAccount(options: ServerAccountOptions = {}): AccountAccess
       return describeSpace(await response.json());
     },
     async signOut() {
-      const response = await fetch("/api/auth/logout", {
+      const response = await request("/api/auth/logout", {
         method: "POST",
         headers: { [REQUEST_HEADER]: "1" },
       });
