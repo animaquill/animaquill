@@ -7,8 +7,7 @@ import { REQUEST_HEADER } from "./headers.ts";
 
 /**
  * The online mode against the backend of the editor's own site (`@animaquill/server`, under /api of
- * the same origin; docs/design/online-offline.md of AnimaQuill Cloud): the account, keeping projects
- * and the relay of AI services. What a deployment has besides (its own report service, an invite
+ * the same origin): the account, keeping projects and the relay of AI services. What a deployment has besides (its own report service, an invite
  * page of its own) it adds around this.
  */
 
