@@ -108,6 +108,15 @@ export type ChatHold =
   /** The message has pictures, and the model of the conversation takes none. */
   | "noPictures";
 
+/** What a message keeps of the editor where nothing shows: no timeline, nothing selected. */
+const NOTHING_SHOWN: SelectionFacts = { timeline: undefined, playhead: undefined, clips: [] };
+
+/**
+ * What a message keeps of the editor where people took "带上" off for it: nothing, and that they
+ * did not share it, which is what AI is told (`aq_selection_read`).
+ */
+export const WITHHELD: SelectionFacts = { ...NOTHING_SHOWN, hidden: true };
+
 /** Where a conversation was copied from, see `ChatSession.fork`. */
 export interface ForkedFrom {
   readonly title: string;
@@ -501,7 +510,12 @@ export class ChatSession {
    * timeline, so that the message still says it has a record.
    */
   #shown(): SelectionFacts {
-    return this.#options.selection() ?? { timeline: undefined, playhead: undefined, clips: [] };
+    return this.#options.selection() ?? NOTHING_SHOWN;
+  }
+
+  /** What a message sent now would keep of the editor, see `#shown`: for the chat to show it. */
+  shownNow(): SelectionFacts {
+    return this.#shown();
   }
 
   /** The tools of one task, on the project that was open when it started, and only that one. */
@@ -884,11 +898,14 @@ export class ChatSession {
 
   /**
    * Queues a message to go once the task that runs is done, with what the editor shows now: as
-   * people send it, not as it goes.
+   * people send it, not as it goes. `WITHHELD` where people took that off for this message.
    */
-  queue(text: string, images: readonly AttachedImage[] = []): void {
+  queue(
+    text: string,
+    images: readonly AttachedImage[] = [],
+    selection: SelectionFacts = this.#shown(),
+  ): void {
     if (!text.trim() && images.length === 0) return;
-    const selection = this.#shown();
     const plan = this.#snapshot.planFirst;
     this.#set({
       queued: [

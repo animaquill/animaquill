@@ -132,6 +132,20 @@ async function shoot(page: Page, name: string, target?: Locator) {
   await page.addStyleTag({ content: `[data-testid="chat"] { width: auto !important; }` });
 }
 
+/** Makes the chat wider by the edge between it and what is left of it, as people drag it. */
+async function widen(page: Page, width: number) {
+  const edge = await chat(page).getByTestId("chat").boundingBox();
+  if (!edge) return;
+  const y = edge.y + edge.height / 2;
+  await page.mouse.move(edge.x - 1, y);
+  await page.mouse.down();
+  await page.mouse.move(edge.x - 1 - (width - edge.width), y, { steps: 5 });
+  await page.mouse.up();
+  await expect
+    .poll(async () => (await chat(page).getByTestId("chat").boundingBox())?.width ?? 0)
+    .toBeGreaterThan(400);
+}
+
 /** The width and height of a JPEG, from its frame header. */
 function jpegSize(bytes: Buffer): { width: number; height: number } | undefined {
   if (bytes[0] !== 0xff || bytes[1] !== 0xd8) return undefined;
@@ -156,17 +170,28 @@ test("the time and the objects selected go in as blocks, and AI gets them as lin
   test.setTimeout(120_000);
   const sent = await pretend(page);
   await setUp(page);
-  // Nothing selected: the button says where to select.
-  const objects = chat(page).getByTestId("chat-tool-selection");
-  await expect(objects).toHaveAttribute("aria-disabled", "true");
+  // Nothing selected: the item of "+" cannot be chosen, and says where to select.
+  const objects = chat(page).getByTestId("chat-plus-selection");
+  await chat(page).getByTestId("chat-plus").click();
+  await expect(objects).toBeDisabled();
+  await expect(objects).toHaveAttribute("title", "先在时间轴、预览或资源里选中");
+  await expect(chat(page).getByTestId("chat-plus-time")).toHaveText(/^插入播放头时间 0:00\/00/);
+  await page.keyboard.press("Escape");
   // All of the first track and the caption.
   await showTab(page, "timeline");
   await stage(page).focus();
   await page.keyboard.press("Control+a");
   await goTo(page, "0:01/00");
   await showTab(page, "chat");
-  await expect(objects).not.toHaveAttribute("aria-disabled");
-  await expect(objects).toContainText("4");
+  // "带上" says what the next message keeps of the editor; in full where the chat is not narrow.
+  await widen(page, 440);
+  await expect(chat(page).getByTestId("chat-carry")).toHaveText(/选中 4 个片段 · 播放头 0:01\/00/, {
+    useInnerText: true,
+  });
+  await chat(page).getByTestId("chat-plus").click();
+  await expect(objects).toBeEnabled();
+  await expect(objects).toHaveText(/^插入选中的 4 个/);
+  await page.keyboard.press("Escape");
 
   await box(page).click();
   await box(page).pressSequentially("把 ");
@@ -302,6 +327,55 @@ test("AI reads what was selected as a message was sent, though people selected a
   await shoot(page, "SEL-calls", chat(page).getByTestId("chat"));
 });
 
+test('"带上" says what a message keeps of the editor; taken off, that message keeps nothing and AI is told so', async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const sent: Sent[] = [];
+  await page.route(ANTHROPIC, async (route) => {
+    if (isConnectionTest(route)) return answer(route, "OK");
+    const body = route.request().postDataJSON() as Sent;
+    sent.push(body);
+    if (sent.length % 2 === 0) return answer(route, "看到了。");
+    return route.fulfill({
+      status: 200,
+      headers: { "content-type": "text/event-stream", "access-control-allow-origin": "*" },
+      body: anthropicCalls([{ name: "aq_selection_read", input: { at: "sent" } }]),
+    });
+  });
+  await setUp(page);
+  await clickClip(page, /^城市，/);
+  await goTo(page, "0:01/00");
+  await showTab(page, "chat");
+  await widen(page, 440);
+  const carry = chat(page).getByTestId("chat-carry");
+  await expect(carry).toHaveText("带上：选中 1 个片段 · 播放头 0:01/00", { useInnerText: true });
+  // Pointed at, the clips light up in the preview.
+  const overlay = content(page, "preview").locator("[data-outlined]");
+  await chat(page).getByTestId("chat-carry-clips").hover();
+  await expect(overlay).toHaveAttribute("data-outlined", /clip_0/);
+  // Taken off: for this message only, and it can come back.
+  await chat(page).getByTestId("chat-carry-off").click();
+  await expect(carry).toHaveText(/这一条不带选中和播放头/);
+  await chat(page).getByTestId("chat-carry-on").click();
+  await expect(carry).toHaveText(/选中 1 个片段/);
+  await chat(page).getByTestId("chat-carry-off").click();
+  await box(page).fill("这个先别看");
+  await box(page).press("Enter");
+  await expect(chat(page).getByTestId("chat-answer")).toHaveText("看到了。");
+  expect(toolResults(sent[1] as Sent)[0]).toContain("the user did not share the selection");
+  expect(toolResults(sent[1] as Sent)[0]).not.toContain("clip_0");
+  // The next message keeps it again.
+  await expect(carry).toHaveText(/选中 1 个片段 · 播放头 0:01\/00/, { useInnerText: true });
+  await box(page).fill("现在看");
+  await box(page).press("Enter");
+  await expect(chat(page).getByTestId("chat-answer")).toHaveCount(2);
+  expect(toolResults(sent[3] as Sent)[0]).toContain("selected clips (1): clip_0");
+  // Narrow, it says less.
+  await page.addStyleTag({ content: `[data-testid="chat"] { width: 320px !important; }` });
+  await expect(carry).toHaveText(/^1 个片段 · 0:01\/00$/, { useInnerText: true });
+});
+
 test("more than eight objects are the first three and one block for the rest", async ({ page }) => {
   test.setTimeout(90_000);
   const sent = await pretend(page);
@@ -310,7 +384,8 @@ test("more than eight objects are the first three and one block for the rest", a
   await stage(page).focus();
   await page.keyboard.press("Control+a");
   await showTab(page, "chat");
-  await chat(page).getByTestId("chat-tool-selection").click();
+  await chat(page).getByTestId("chat-plus").click();
+  await chat(page).getByTestId("chat-plus-selection").click();
   const chips = box(page).getByTestId("chat-chip");
   await expect(chips).toHaveCount(4);
   await expect(chips.last()).toHaveText("还有 8 个");
@@ -341,8 +416,8 @@ test("a frame of the playhead goes as a JPEG 1568 wide, with the line that says 
   await expect(chat(page).getByTestId("chat-picture-info")).toHaveText(
     /^画面 0:01\/00 · 1568×882 · \d+ KB$/,
   );
-  // Nobody said whether claude-test takes pictures: it goes, and the chat says so.
-  await expect(chat(page).getByTestId("chat-pictures-unsure")).toBeVisible();
+  // Nobody said whether claude-test takes pictures: it goes, and the chat says so, faintly.
+  await expect(chat(page).getByTestId("chat-pictures-warn")).toHaveAttribute("data-why", "unsure");
   await box(page).pressSequentially("标题是不是太靠下了");
   await shoot(page, "C1-frame", chat(page).getByTestId("chat"));
   await box(page).press("Enter");
@@ -388,7 +463,8 @@ test("a frame of the playhead goes as a JPEG 1568 wide, with the line that says 
   }, png.toString("base64"));
   await expect(picture).toHaveCount(2);
   const chooser = page.waitForEvent("filechooser");
-  await chat(page).getByTestId("chat-tool-picture").click();
+  await chat(page).getByTestId("chat-plus").click();
+  await chat(page).getByTestId("chat-plus-picture").click();
   await (await chooser).setFiles({ name: "选的.png", mimeType: "image/png", buffer: png });
   await expect(picture).toHaveCount(3);
   await box(page).evaluate((element, data) => {
@@ -442,18 +518,21 @@ test("a model that takes no pictures: held, with another model or without them a
   await page.keyboard.press("Alt+s");
   await expect(chat(page).getByTestId("chat-picture")).toHaveAttribute("data-state", "ready");
   await box(page).pressSequentially("按截图看，标题是不是太靠下了");
-  const blocked = chat(page).getByTestId("chat-pictures-blocked");
-  await expect(blocked).toHaveText(
-    "这个模型看不了图，图片不会发出去。 换个能看图的模型 · 去掉图片发送",
-  );
+  const blocked = chat(page).getByTestId("chat-pictures-warn");
+  await expect(blocked).toHaveAttribute("data-why", "blind");
+  await expect(blocked).toHaveAttribute("title", "claude-test 看不了图");
+  await expect(chat(page).getByTestId("chat-picture")).toHaveAttribute("data-blind", "");
   await expect(chat(page).getByTestId("chat-picture-info")).toHaveText("claude-test 看不了图");
-  await expect(chat(page).getByRole("button", { name: "发送", exact: true })).toBeDisabled();
+  // Neither Enter nor the button sends: the triangle shakes, to say why.
   await box(page).press("Enter");
+  await chat(page).getByTestId("chat-send").click();
+  await expect(blocked).toHaveAttribute("data-shake", "");
   expect(sent).toHaveLength(0);
   await shoot(page, "C2-blocked", chat(page).getByTestId("chat"));
 
   // Another model: only those that take pictures light up.
-  await blocked.getByRole("button", { name: "换个能看图的模型" }).click();
+  await blocked.click();
+  await chat(page).getByTestId("chat-pictures-vision").click();
   const bubble = chat(page).getByTestId("chat-model-bubble");
   await expect(bubble.getByTestId("chat-picker-pictures")).toBeVisible();
   await expect(bubble.locator('[data-model="claude-test"]')).toHaveAttribute("data-dim", "");
@@ -493,7 +572,10 @@ test("a model that takes no pictures: held, with another model or without them a
   await page.keyboard.press("Alt+s");
   await expect(chat(page).getByTestId("chat-picture")).toHaveAttribute("data-state", "ready");
   await box(page).pressSequentially("不带图");
-  await blocked.getByRole("button", { name: "去掉图片发送" }).click();
+  await blocked.click();
+  await chat(page).getByTestId("chat-pictures-remove-all").click();
+  await expect(blocked).toBeHidden();
+  await box(page).press("Enter");
   await expect(chat(page).getByTestId("chat-answer")).toHaveCount(3);
   expect(
     lastUser(sent[2] as Sent)
@@ -712,52 +794,69 @@ test("pictures dropped anywhere on the chat; a lost one holds the message; forma
   await box(page).press("Enter");
   await expect(picture).toHaveAttribute("data-state", "failed");
   await expect(chat(page).getByTestId("chat-picture-info")).toHaveText("图片不在这台设备上");
-  await expect(chat(page).getByTestId("chat-pictures-wait")).toBeVisible();
+  await expect(chat(page).getByTestId("chat-pictures-warn")).toHaveAttribute("data-why", "failed");
   expect(sent).toHaveLength(1);
 });
 
-test("narrower than 320, the buttons of the box are one menu", async ({ page }) => {
+test('"+" is one menu at every width, from the mouse and from the keyboard', async ({ page }) => {
   test.setTimeout(60_000);
   await pretend(page);
   await setUp(page);
   await page.addStyleTag({ content: `[data-testid="chat"] { width: 300px !important; }` });
-  await expect(chat(page).getByTestId("chat-tools")).toBeHidden();
-  await chat(page).getByTestId("chat-tools-more").click();
+  const plus = chat(page).getByTestId("chat-plus");
+  await plus.click();
   const menu = chat(page).getByRole("menu");
   await expect(menu.getByRole("menuitem")).toHaveText([
-    /插入播放头的时间\s*Alt\+T/,
+    /截取当前画面\s*Alt\+S/,
+    /添加图片…/,
+    /插入播放头时间 0:00\/00\s*Alt\+T/,
     /插入选中的对象\s*Alt\+O/,
-    /截取播放头的画面\s*Alt\+S/,
-    /添加图片/,
   ]);
   await chat(page).screenshot({ path: test.info().outputPath(`${SHOTS}-C1-menu-300.png`) });
-  await menu.getByRole("menuitem", { name: /插入播放头的时间/ }).click();
+  await menu.getByRole("menuitem", { name: /插入播放头时间/ }).click();
   await expect(box(page).getByTestId("chat-chip")).toHaveText(["0:00/00"]);
 
   // From the keyboard, as the other menus: Enter opens it on the first item, ↑ ↓ go round what
   // can be chosen (nothing is selected, so that one is left out), Esc goes back to the button.
-  const more = chat(page).getByTestId("chat-tools-more");
-  await more.focus();
+  await plus.focus();
   await page.keyboard.press("Enter");
   const items = menu.getByRole("menuitem");
   await expect(items.nth(0)).toBeFocused();
   await page.keyboard.press("ArrowDown");
+  await expect(items.nth(1)).toBeFocused();
+  await page.keyboard.press("ArrowDown");
   await expect(items.nth(2)).toBeFocused();
-  await page.keyboard.press("ArrowUp");
-  await expect(items.nth(0)).toBeFocused();
   // Last comes "先出方案", an item to tick.
-  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowDown");
   await expect(menu.getByRole("menuitemcheckbox", { name: "先出方案" })).toBeFocused();
-  await page.keyboard.press("ArrowUp");
-  await expect(items.nth(3)).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(menu).toBeHidden();
-  await expect(more).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(items.nth(0)).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(plus).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(items.nth(0)).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await expect(menu).toBeHidden();
   await expect(box(page).getByTestId("chat-chip")).toHaveCount(2);
+
+  // Alt+A from the box opens it, and Esc goes back to the box.
+  await box(page).focus();
+  await page.keyboard.press("Alt+a");
+  await expect(items.nth(0)).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(box(page)).toBeFocused();
+
+  // "先出方案" ticked: a pill on the row, whose × switches it off.
+  await plus.click();
+  await menu.getByRole("menuitemcheckbox", { name: "先出方案" }).click();
+  const pill = chat(page).getByTestId("chat-mode-plan");
+  await expect(pill).toBeVisible();
+  await chat(page).getByTestId("chat-mode-plan-off").click();
+  await expect(pill).toBeHidden();
 });
 
 test("an input method: Enter picks a word and sends nothing, a block waits for the word", async ({
@@ -787,8 +886,9 @@ test("an input method: Enter picks a word and sends nothing, a block waits for t
       );
     }
   });
-  // The button of the time meanwhile: the block waits for the word.
-  await chat(page).getByTestId("chat-tool-time").click();
+  // The time from "+" meanwhile: the block waits for the word.
+  await chat(page).getByTestId("chat-plus").click();
+  await chat(page).getByTestId("chat-plus-time").click();
   await expect(box(page).getByTestId("chat-chip")).toHaveCount(0);
   await ime.send("Input.insertText", { text: "你" });
   const chips = box(page).getByTestId("chat-chip");

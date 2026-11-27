@@ -4876,6 +4876,14 @@ export class Workbench {
       run: viaBox("picture"),
       enabled: () => this.session.store !== undefined,
     });
+    this.actions.register({
+      id: "chat.openPlus",
+      title: (t) => t("chat.action.openPlus"),
+      run: viaBox("plus"),
+      keys: keys("a"),
+      scope: "chat",
+      enabled: () => this.session.store !== undefined,
+    });
   }
 
   #registerCodeActions(): void {
@@ -5277,6 +5285,8 @@ export interface ComposeHandlers {
   readonly time: () => void;
   readonly selection: () => void;
   readonly picture: () => void;
+  /** Opens the "+" menu of the box, from the keyboard. */
+  readonly plus: () => void;
   readonly focus: () => void;
 }
 

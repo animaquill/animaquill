@@ -1,5 +1,5 @@
 import { Loader2, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
@@ -41,9 +41,10 @@ export function usePicture(
 }
 
 /**
- * The pictures that go with the next message, over the box: each small, with what it is, its size
- * and how much it takes; ✕ takes it out, a click shows it large. A frame being made turns and can
- * be cancelled. Where the model takes no pictures, each has a yellow frame and says so.
+ * The pictures that go with the next message, at the top of the input box: each small, with what
+ * it is, its size and how much it takes on pointing at it; ✕ takes it out, a click shows it large.
+ * A frame being made turns and can be cancelled. Where the model takes no pictures, each has a
+ * yellow frame; what to do about it is at the end of the row (`end`).
  */
 export function Attachments(props: {
   readonly project: string;
@@ -51,6 +52,8 @@ export function Attachments(props: {
   readonly items: readonly Attachment[];
   /** The name of the model of the conversation, where it takes no pictures. */
   readonly blind: string | undefined;
+  /** At the end of the row: what says why pictures cannot go, where they cannot. */
+  readonly end?: ReactNode;
 }) {
   const { chat } = useWorkbench();
   const [large, setLarge] = useState<{ url: string; label: string } | undefined>();
@@ -65,6 +68,7 @@ export function Attachments(props: {
           onOpen={(url, label) => setLarge({ url, label })}
         />
       ))}
+      {props.end}
       {large && <LargePicture {...large} onClose={() => setLarge(undefined)} />}
     </div>
   );
@@ -94,6 +98,13 @@ function Picture(props: {
       : item.state === "failed" && item.why === "missing"
         ? t("chat.pictures.missing")
         : t("chat.pictures.failed");
+  const said =
+    props.blind !== undefined && item.state === "ready"
+      ? t("chat.pictures.noVision", {
+          model: props.blind,
+          interpolation: { escapeValue: false },
+        })
+      : info;
   return (
     <figure
       className={styles.picture}
@@ -105,6 +116,7 @@ function Picture(props: {
         type="button"
         className={styles.pictureThumb}
         aria-label={t("chat.pictures.view")}
+        title={said === info ? info : `${info}\n${said}`}
         disabled={!url}
         onClick={() => url && props.onOpen(url, label)}
       >
@@ -129,13 +141,9 @@ function Picture(props: {
       >
         <X size={10} aria-hidden />
       </button>
-      <figcaption data-testid="chat-picture-info">
-        {props.blind !== undefined && item.state === "ready"
-          ? t("chat.pictures.noVision", {
-              model: props.blind,
-              interpolation: { escapeValue: false },
-            })
-          : info}
+      {/* Said on pointing at it, and to those who listen: the row stays one row of pictures. */}
+      <figcaption className={styles.pictureInfo} data-testid="chat-picture-info">
+        {said}
       </figcaption>
     </figure>
   );

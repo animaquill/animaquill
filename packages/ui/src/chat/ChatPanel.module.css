@@ -841,19 +841,13 @@
   font-variant-numeric: tabular-nums;
 }
 
-.notice,
-.hold {
+.notice {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
   margin: 0;
   color: var(--aq-warning);
-}
-
-.hold {
-  flex: none;
-  padding: 4px 8px;
 }
 
 .failure {
@@ -937,36 +931,21 @@
   font-variant-numeric: tabular-nums;
 }
 
-.compose {
-  position: relative;
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  gap: 6px;
-  padding: 6px 8px 8px;
-  border-top: 1px solid var(--aq-border);
-}
-
-/* The box people write in: text and blocks, 2 to 10 lines, then it scrolls. */
+/* The words of the input card: text and blocks, 1 to about 10 lines, then it scrolls. */
 .input {
-  min-height: calc(42px * var(--aq-size-scale));
-  max-height: 170px;
+  min-height: calc(20px * var(--aq-font-scale));
+  max-height: calc(182px * var(--aq-font-scale));
   overflow-y: auto;
-  padding: 4px 6px;
+  padding: 0 2px;
   color: var(--aq-text);
-  line-height: calc(18px * var(--aq-font-scale));
+  font-size: var(--aq-font-13);
+  line-height: calc(20px * var(--aq-font-scale));
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  background: var(--aq-bg-input);
-  border: 1px solid transparent;
-  border-radius: 3px;
+  background: transparent;
+  border: 0;
   outline: none;
   cursor: text;
-}
-
-.input:focus-visible,
-.input:focus {
-  border-color: var(--aq-accent);
 }
 
 .input[data-empty]::before {
@@ -1028,112 +1007,36 @@
   font-size: var(--aq-font-11);
 }
 
-/* The buttons that put things in the box, before the model. */
-.composeTools {
-  display: flex;
-  flex: none;
-  gap: 2px;
-  align-items: center;
-}
-
-.panel .composeTools button {
-  position: relative;
-  gap: 2px;
-}
-
-.panel .composeTools button[aria-disabled] {
-  cursor: default;
-  opacity: 0.4;
-}
-
-.toolCount {
-  min-width: 14px;
-  padding: 0 3px;
-  font-size: var(--aq-font-10);
-  line-height: calc(14px * var(--aq-font-scale));
-  text-align: center;
-  background: var(--aq-bg-hover);
-  border-radius: 7px;
-}
-
-/* "先出方案": lit while it is on. */
-.panel .planFirst {
-  flex: none;
-  gap: 3px;
-  font-size: var(--aq-font-11);
-  white-space: nowrap;
-}
-
-/*
- * At 400 wide or less: "先出方案", how hard the model reasons and send keep their icons alone, so
- * that the model keeps its name and nothing stands on end.
- */
+/* At 400 wide or less: how hard the model reasons keeps its icon alone, the model its name. */
 @container (max-width: 400px) {
-  .planFirstName,
-  .reasoningLabel,
-  .panel .send .buttonText {
+  .reasoningLabel {
     display: none;
   }
 
-  .panel .reasoningIcon,
-  .panel .send .narrowIcon {
+  .panel .reasoningIcon {
     display: inline-flex;
   }
 }
 
-.panel .planFirst[aria-pressed="true"] {
-  color: var(--aq-link);
-  background: color-mix(in srgb, var(--aq-accent) 16%, transparent);
-}
-
-.toolsSep {
-  width: 1px;
-  height: 14px;
-  margin: 0 3px;
-  background: var(--aq-border);
-}
-
-.menuUp {
-  top: auto;
-  right: auto;
-  bottom: 100%;
-  left: 0;
-  min-width: 200px;
-}
-
-.menuCheck {
-  flex: none;
-  color: var(--aq-link);
-}
-
-.menuKeys {
-  margin-left: auto;
-  padding-left: 12px;
-  color: var(--aq-text-muted);
-  font-size: var(--aq-font-11);
-}
-
-/* The pictures that go with the next message, over the box. */
+/* The pictures that go with the next message, at the top of the input box, 44 high. */
 .pictures {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  align-items: center;
 }
 
 .picture {
   position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  width: 84px;
   margin: 0;
 }
 
 .panel .pictureThumb {
   position: relative;
   justify-content: center;
-  width: 84px;
-  height: 47px;
+  width: 78px;
+  height: 44px;
   padding: 0;
   overflow: hidden;
   background: var(--aq-picture-backdrop);
@@ -1152,7 +1055,7 @@
 }
 
 .picture[data-state="failed"] .pictureThumb {
-  border-color: var(--aq-danger);
+  border: 2px solid var(--aq-danger);
 }
 
 .pictureTime {
@@ -1178,19 +1081,14 @@
   border-radius: 50%;
 }
 
-.picture figcaption {
-  display: -webkit-box;
+/* What a picture is, for those who listen; on its title for those who point. */
+.pictureInfo {
+  position: absolute;
+  width: 1px;
+  height: 1px;
   overflow: hidden;
-  color: var(--aq-text-muted);
-  font-size: var(--aq-font-10);
-  line-height: calc(13px * var(--aq-font-scale));
-  overflow-wrap: anywhere;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
-.picture[data-blind] figcaption {
-  color: var(--aq-trial);
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .spin {
@@ -1228,22 +1126,6 @@
   color: var(--aq-on-picture);
   background: transparent;
   border: none;
-}
-
-/* The model takes no pictures: it says so over the box, with the two ways on. */
-.blind {
-  padding: 6px 8px;
-  color: var(--aq-trial);
-  line-height: calc(18px * var(--aq-font-scale));
-  background: var(--aq-warning-soft);
-  border: 1px solid var(--aq-warning-line);
-  border-radius: 4px;
-}
-
-.unsure {
-  margin: 0;
-  color: var(--aq-text-muted);
-  font-size: var(--aq-font-11);
 }
 
 /* What went with people's words, and what AI got. */
@@ -1356,15 +1238,6 @@ span.sentPicture {
   background-color: var(--aq-star);
 }
 
-/* Under the box: the model, how hard it reasons, then send or stop. */
-.controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  align-items: center;
-  min-width: 0;
-}
-
 .grow {
   flex: 1;
 }
@@ -1414,17 +1287,6 @@ span.sentPicture {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-/* "先出方案" on, with the buttons in "+": a dot on it. */
-.plusDot {
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  width: 6px;
-  height: 6px;
-  background: var(--aq-accent);
-  border-radius: 50%;
 }
 
 .moreWrap > button {
@@ -1707,33 +1569,6 @@ span.sentPicture {
   border-top: 1px solid var(--aq-border);
 }
 
-/* Messages that go after the task that runs. */
-.queued {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.queuedItem {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  min-width: 0;
-  padding: 2px 4px 2px 8px;
-  background: var(--aq-bg-input);
-  border-left: 2px solid var(--aq-accent);
-  border-radius: 3px;
-}
-
-.queuedText {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--aq-text-muted);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
 /* The conversations, over the one open. */
 .sheet {
   position: absolute;
@@ -1950,20 +1785,6 @@ span.sentPicture {
   border: 1px dashed var(--aq-border);
 }
 
-.narrowIcon {
-  display: none;
-}
-
-.panel .send {
-  color: var(--aq-on-accent);
-  background: var(--aq-accent);
-}
-
-.panel .stop {
-  color: var(--aq-on-accent);
-  background: var(--aq-danger);
-}
-
 .spin {
   animation: spin 1.2s linear infinite;
 }
@@ -2151,16 +1972,8 @@ span.sentPicture {
   }
 }
 
-/* Narrower than 300: buttons keep their icons. */
+/* Narrower than 300: how hard the model reasons takes less room. */
 @container (max-width: 300px) {
-  .buttonText {
-    display: none;
-  }
-
-  .narrowIcon {
-    display: inline-flex;
-  }
-
   .panel .reasoning {
     max-width: 72px;
   }

@@ -1505,7 +1505,10 @@
     "snapping": "吸附",
     "follow": "跟随播放头",
     "followMode": "跟随方式",
-    "followModes": { "page": "翻页", "center": "居中" },
+    "followModes": {
+      "page": "翻页",
+      "center": "居中"
+    },
     "newTrack": {
       "video": "视频轨道",
       "audio": "音频轨道",
@@ -3827,16 +3830,18 @@
     },
     "relayDetail": "服务器的说明：{{message}}",
     "hold": {
-      "noProject": "先打开一个项目。",
-      "noService": "先在设置里添加一个 AI 服务。",
-      "noModel": "先在设置里启用一个模型。",
-      "badUrl": "服务的地址不对，请在设置里改一下。",
-      "relayMissing": "这里没有服务器转发（只有登录后的网页版才能用）。请在设置里把这家服务的连接方式改成直连。",
-      "relayUrl": "服务器转发只能转到 https 地址的默认端口，请在设置里改一下服务的地址，或者改成直连。",
-      "relaySignIn": "通过服务器转发要先登录。",
-      "modelGone": "这个对话用的模型所在的服务已经删了，在下面换一个模型。",
-      "modelOff": "这个对话用的模型已经在设置里停用了，在下面换一个模型，或者去设置里启用它。",
-      "noPictures": "这个模型看不了图。换个能看图的模型，或者去掉图片再发。"
+      "noProject": "先打开一个项目",
+      "noService": "还没有 AI 服务",
+      "noModel": "还没有启用的模型",
+      "badUrl": "服务的地址不对",
+      "relayMissing": "这里没有服务器转发，这家服务要改成直连",
+      "relayUrl": "服务器转发只能转到 https 地址的默认端口",
+      "relaySignIn": "通过服务器转发要先登录",
+      "modelGone": "这个对话的模型所在的服务删了",
+      "modelOff": "这个对话的模型停用了",
+      "noPictures": "这个模型看不了图",
+      "toSettings": "去设置",
+      "otherModel": "换一个模型"
     },
     "tool": {
       "aq_project_status": "读项目概况",
@@ -3994,26 +3999,35 @@
       "isDefault": "“{{level}}”是这个模型的默认推理强度，再点取消"
     },
     "compose": {
-      "queue": "排队",
-      "queued": "排着：{{text}}",
+      "placeholder": "说说要做什么",
+      "placeholderRunning": "补充或排队…",
+      "queued": "排队 · {{text}}",
       "edit": "撤回来改",
       "drop": "撤回",
       "sendNow": "现在发",
-      "whileRunning": "AI 在做事，Enter 排到这一轮之后",
+      "queuedMore": "还有 {{count}} 条",
+      "queuedLess": "收起",
+      "queue": "排队",
+      "queueBadge": "排",
       "quote": "引用",
-      "whileRunningWith": "AI 在做事，{{send}} 排到这一轮之后",
-      "insertTime": "插入播放头的时间",
-      "insertTimeHelp": "{{timeline}} {{time}}（第 {{frame}} 帧）。AI 收到的是时间轴 id 和精确时间。",
+      "plus": "插入和附件",
+      "shoot": "截取当前画面",
+      "addPicture": "添加图片…",
+      "insertTime": "插入播放头时间",
+      "insertTimeAt": "插入播放头时间 {{time}}",
       "noTimeline": "先打开一条时间轴",
       "insertSelection": "插入选中的对象",
-      "insertSelectionHelp": "把选中的 {{count}} 个插在光标处。AI 收到的是它们的 id，不会认错。",
+      "insertSelectionCount": "插入选中的 {{count}} 个",
       "insertSelectionNone": "先在时间轴、预览或资源里选中",
-      "shoot": "截取播放头的画面",
-      "shootHelp": "按导出的样子渲染这一帧（原片、不带选中框），作为图片附件",
-      "addPicture": "添加图片",
-      "addPictureHelp": "选本机的图片；也可以直接粘贴或拖进输入框",
-      "more": "插入和附件",
-      "planFirst": "先出方案"
+      "planFirst": "先出方案",
+      "planFirstOff": "关掉先出方案",
+      "carry": "带上：",
+      "carryClips": "选中 {{count}} 个片段",
+      "carryClipsShort": "{{count}} 个片段",
+      "carryPlayhead": "播放头 {{time}}",
+      "carryOff": "这一条不带选中和播放头",
+      "carryOffNow": "这一条不带选中和播放头",
+      "carryOn": "带上"
     },
     "user": {
       "copy": "复制",
@@ -4087,18 +4101,13 @@
       "notPicture": "只能加图片。",
       "info": "{{label}} · {{width}}×{{height}} · {{size}}",
       "noVision": "{{model}} 看不了图",
-      "blocked": "这个模型看不了图，图片不会发出去。",
       "pickVision": "换个能看图的模型",
-      "sendWithout": "去掉图片发送",
-      "unsure": "不确定这个模型能不能看图，发不出去的话在模型参数里取消“能看图”。",
       "notSent": "这些图片没有发给 {{model}}（它看不了图）",
       "view": "看大图",
       "close": "关闭",
       "missing": "图片不在这台设备上",
       "count": "{{count}} 张图",
       "lost": "有图片不在这台设备上了（浏览器的存储可能被清理过），去掉标红的图片再发。",
-      "removeFailed": "有图片没准备好，去掉标红的再发。",
-      "wait": "等画面渲染完再发。",
       "unreadable": "这种图片格式读不了，可以先转成 PNG 或 JPEG。",
       "dropHere": "把图片放到这里",
       "reading": "正在取图…",
@@ -4118,7 +4127,14 @@
         "many": "一个对话最多同步 100 张图",
         "unavailable": "服务器暂时存不了图片"
       },
-      "fetchFailed": "图片取不到"
+      "fetchFailed": "图片取不到",
+      "warn": "图片发不出去",
+      "warnBlind": "{{model}} 看不了图",
+      "warnUnsure": "不确定 {{model}} 能不能看图，发出去由服务决定",
+      "warnWorking": "等画面渲染完再发",
+      "warnFailed": "有图片没准备好，去掉标红的再发",
+      "removeAll": "去掉图片",
+      "removeFailedOnes": "去掉标红的图片"
     },
     "attached": {
       "title": "附带",
@@ -4141,7 +4157,8 @@
       "sendFrame": "AI 聊天：截取播放头的画面",
       "addPicture": "AI 聊天：添加图片",
       "sendFrameShort": "发送当前画面到聊天",
-      "sendFrameHelp": "按导出的样子渲染播放头这一帧，作为图片附件放进 AI 聊天的输入框"
+      "sendFrameHelp": "按导出的样子渲染播放头这一帧，作为图片附件放进 AI 聊天的输入框",
+      "openPlus": "AI 聊天：插入和附件"
     },
     "look": {
       "name": {
@@ -4249,7 +4266,6 @@
       "off": "关"
     },
     "plan": {
-      "short": "方案",
       "accept": "按这个做",
       "accepted": "已按这个做",
       "replaced": "已换新方案",
@@ -4260,7 +4276,8 @@
       "style": "风格",
       "message": "按这个做："
     },
-    "keysAway": "连上服务器后才能用（key 存在服务器上）。"
+    "keysAway": "连不上服务器，key 在服务器上",
+    "keysAwayRetry": "再试一次"
   },
   "account": {
     "signIn": "登录",

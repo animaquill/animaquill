@@ -16,7 +16,7 @@ import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SelectionFacts } from "@animaquill/tools";
 import { ModelPacks } from "./packs.ts";
-import { ChatSession, titlePrompt, type ChatSessionOptions } from "./session.ts";
+import { ChatSession, titlePrompt, WITHHELD, type ChatSessionOptions } from "./session.ts";
 import { AiSettingsStore } from "./settings.ts";
 
 /** An account that is in whatever state a test says. */
@@ -879,6 +879,46 @@ describe("a conversation of its own", () => {
           .entries.flatMap((entry) => (entry.role === "user" ? [entry.selection?.clips] : [])),
       ).toEqual([["clip_a"], ["clip_b"]]),
     );
+  });
+
+  it('a message people sent without "带上" keeps nothing of the editor, and AI is told they did not share it', async () => {
+    const { chat, fake, select } = setup();
+    select(["clip_a"], "3");
+    fake({
+      fake: [
+        { calls: [{ name: "aq_selection_read", args: { at: "sent" } }] },
+        { text: "一" },
+        { text: "二" },
+        { text: "三" },
+      ],
+      charactersPerSecond: 20,
+    });
+    expect(chat.shownNow()).toMatchObject({ clips: ["clip_a"], playhead: "3" });
+    const running = chat.send("这个别看", [], WITHHELD);
+    await vi.waitFor(() => expect(chat.running).toBe(true));
+    // Queued without it too; the one after keeps what shows again.
+    chat.queue("排着的也别看", [], WITHHELD);
+    await running;
+    const answers = () =>
+      (chat.getSnapshot().conversation?.getSnapshot().entries ?? []).filter(
+        (entry) => entry.role === "assistant" && entry.text !== "",
+      ).length;
+    await vi.waitFor(() => expect(answers()).toBe(2));
+    await vi.waitFor(() => expect(chat.running).toBe(false));
+    const entries = chat.getSnapshot().conversation?.getSnapshot().entries ?? [];
+    const users = entries.flatMap((entry) => (entry.role === "user" ? [entry.selection] : []));
+    expect(users).toEqual([WITHHELD, WITHHELD]);
+    const result = entries.find((entry) => entry.role === "tool");
+    expect(result?.role === "tool" && result.text).toContain(
+      "the user did not share the selection",
+    );
+    expect(result?.role === "tool" && result.text).not.toContain("clip_a");
+    await chat.send("现在看");
+    const last = chat
+      .getSnapshot()
+      .conversation?.getSnapshot()
+      .entries.findLast((entry) => entry.role === "user");
+    expect(last?.role === "user" && last.selection?.clips).toEqual(["clip_a"]);
   });
 
   it("an earlier message without a record, from before they were kept, reads as it did, and says so", async () => {

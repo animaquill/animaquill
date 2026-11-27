@@ -1,0 +1,427 @@
+/*
+ * The input of the chat (docs/design/chat-panel.md of AnimaQuill Cloud, 3): what is queued and why
+ * nothing can go over one rounded card, "带上" under it. Every rule starts from `.area`, so that it
+ * goes over the buttons of the chat as they are by default (`.panel button` of ChatPanel).
+ * Narrow (under 380 the chat is about 320 wide) and wide go by the width of the chat, its container.
+ */
+
+.area {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px 8px;
+}
+
+@container (min-width: 480px) {
+  .area {
+    width: 100%;
+    max-width: 736px;
+    margin: 0 auto;
+  }
+}
+
+.area button {
+  gap: 4px;
+  min-width: 0;
+  color: var(--aq-text-muted);
+  background: transparent;
+  border-radius: 4px;
+}
+
+.area button:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.area button:focus-visible {
+  outline: 1px solid var(--aq-accent);
+  outline-offset: 1px;
+}
+
+.grow {
+  flex: 1;
+}
+
+/* The card: pictures, the words, the row of buttons. */
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 8px 6px;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 10px;
+}
+
+.card:focus-within {
+  border-color: var(--aq-accent-line);
+}
+
+.row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+/* "+": as round as the send button, quieter. */
+.area .round {
+  flex: none;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--aq-border);
+  border-radius: 50%;
+}
+
+/* The model and how hard it reasons, before send: they give way before anything else does. */
+.model {
+  display: flex;
+  flex: 0 1 auto;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+}
+
+.area .model button {
+  border: 0;
+}
+
+/* Send, stop, queue: one round button. */
+.area .send {
+  position: relative;
+  flex: none;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+  border-radius: 50%;
+}
+
+.area .send:hover {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+  filter: brightness(1.1);
+}
+
+/* Nothing to send: faint, and still a button: it puts the caret in the box. */
+.area .send[data-state="empty"],
+.area .send[data-state="empty"]:hover {
+  color: var(--aq-text-muted);
+  background: var(--aq-bg-hover);
+  filter: none;
+}
+
+.area .send[data-state="stop"],
+.area .send[data-state="stop"]:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  filter: none;
+}
+
+.badge {
+  position: absolute;
+  top: -5px;
+  right: -7px;
+  padding: 0 3px;
+  color: var(--aq-text-strong);
+  font-size: var(--aq-font-10);
+  line-height: calc(13px * var(--aq-font-scale));
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-accent);
+  border-radius: 6px;
+}
+
+/* "先出方案" on: a pill, with × to switch it off. */
+.mode {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+  align-items: center;
+  height: 24px;
+  padding: 0 2px 0 8px;
+  color: var(--aq-link);
+  font-size: var(--aq-font-11);
+  white-space: nowrap;
+  background: var(--aq-accent-soft);
+  border-radius: 12px;
+}
+
+.area .modeOff {
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: inherit;
+  border-radius: 50%;
+}
+
+.area .modeOff:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-accent-soft-hover);
+}
+
+/* The menus of the card's buttons: up from them. */
+.menuWrap {
+  position: relative;
+  flex: none;
+}
+
+.menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  min-width: 220px;
+  max-width: calc(100cqw - 16px);
+  padding: 4px;
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+  box-shadow: var(--aq-shadow);
+}
+
+.menuEnd {
+  right: 0;
+  left: auto;
+}
+
+.menuGroup {
+  display: flex;
+  flex-direction: column;
+}
+
+.menuGroup + .menuGroup {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--aq-border);
+}
+
+.area .menu button {
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 4px 8px;
+  color: var(--aq-text);
+  text-align: left;
+}
+
+.area .menu button:disabled {
+  color: var(--aq-text-muted);
+  background: transparent;
+  opacity: 0.6;
+}
+
+.menuName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.menuKeys {
+  flex: none;
+  padding-left: 12px;
+  color: var(--aq-text-muted);
+  font: inherit;
+  font-size: var(--aq-font-11);
+}
+
+.menuCheck {
+  flex: none;
+  color: var(--aq-link);
+}
+
+.menuNote {
+  margin: 0;
+  padding: 4px 8px 6px;
+  color: var(--aq-warning-text);
+  font-size: var(--aq-font-11);
+}
+
+/* The triangle at the end of the pictures: why they cannot go. */
+.area .warn {
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--aq-warning);
+}
+
+.area .warn[data-why="unsure"] {
+  color: var(--aq-text-muted);
+}
+
+.area .warn[data-why="failed"] {
+  color: var(--aq-danger);
+}
+
+/* Why nothing can go: thin lines over the card. */
+.strips {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.strip {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  margin: 0;
+  padding: 3px 4px 3px 8px;
+  color: var(--aq-warning-text);
+  font-size: var(--aq-font-11);
+  background: var(--aq-warning-soft);
+  border: 1px solid var(--aq-warning-line);
+  border-radius: 6px;
+}
+
+.stripIcon {
+  flex: none;
+  color: var(--aq-warning);
+}
+
+.stripText {
+  flex: 1;
+  min-width: 0;
+}
+
+.area .textButton {
+  flex: none;
+  padding: 1px 6px;
+  color: var(--aq-link);
+  font-size: var(--aq-font-11);
+  white-space: nowrap;
+}
+
+.area .iconButton {
+  flex: none;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+}
+
+/* What is queued: a small card each, over the input card. */
+.queued {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 3px;
+}
+
+.queuedItem {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  padding: 2px 2px 2px 8px;
+  font-size: var(--aq-font-11);
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-left: 2px solid var(--aq-accent);
+  border-radius: 6px;
+}
+
+.queuedText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.queued > .textButton {
+  align-self: flex-start;
+}
+
+/* "带上": what the message keeps of the editor, faint, under the card. */
+.carry {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  padding: 0 2px 0 6px;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+}
+
+.carryIcon {
+  flex: none;
+}
+
+.carryText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.carryPart {
+  cursor: default;
+}
+
+.carryPart:hover {
+  color: var(--aq-text-strong);
+}
+
+.carry[data-off] .carryText {
+  font-style: italic;
+}
+
+.narrowOnly {
+  display: none;
+}
+
+/* About 320 wide: shorter words, the pill only its icon. */
+@container (max-width: 379px) {
+  .wideOnly,
+  .modeName {
+    display: none;
+  }
+
+  .narrowOnly {
+    display: inline;
+  }
+
+  .mode {
+    padding-left: 6px;
+  }
+}
+
+/* What holds the message back shakes when people press send meanwhile. */
+.area [data-shake] {
+  animation: shake 0.45s ease-in-out;
+}
+
+@keyframes shake {
+  20%,
+  60% {
+    transform: translateX(-3px);
+  }
+
+  40%,
+  80% {
+    transform: translateX(3px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .area [data-shake] {
+    animation: none;
+    outline: 2px solid var(--aq-warning);
+  }
+}

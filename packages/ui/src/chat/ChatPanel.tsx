@@ -25,8 +25,8 @@ import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import styles from "./ChatPanel.module.css";
 import { EmptyStart, Onboarding } from "./ChatStart.tsx";
-import { Composer } from "./Composer.tsx";
 import { ConversationList } from "./ConversationList.tsx";
+import { InputArea } from "./input/InputArea.tsx";
 import { firstWords } from "./conversations.ts";
 import { plainOf } from "./refs.ts";
 import type { ModelPacks, ModelPacksSnapshot } from "./packs.ts";
@@ -353,21 +353,7 @@ export function ChatPanel() {
         {conversation && talk.running && (
           <RunState conversation={conversation} running={talk.running} />
         )}
-        <KeysAway />
-        {snapshot.hold && (
-          <p className={styles.hold} role="alert" data-testid="chat-hold">
-            {t(`chat.hold.${snapshot.hold}`)}
-            {snapshot.hold === "relaySignIn" && workbench.account && (
-              <>
-                {" "}
-                <button type="button" onClick={() => void workbench.signIn()}>
-                  {t("account.signIn")}
-                </button>
-              </>
-            )}
-          </p>
-        )}
-        <Composer
+        <InputArea
           onSent={() => {
             following.current = true;
           }}
@@ -750,27 +736,3 @@ export function summariesByTurn(
   }
   return found;
 }
-
-/**
- * Online, where the page started without the backend: the keys are only there, and only ever in
- * the memory of a page that read them (docs/design/online-offline.md of AnimaQuill Cloud, 2.1).
- * Said over the box, until the backend can be read.
- */
-function KeysAway() {
-  const { accountAi } = useWorkbench();
-  const { t } = useTranslation();
-  const snapshot = useSyncExternalStore(
-    accountAi?.subscribe ?? noKeysSubscribe,
-    accountAi?.getSnapshot ?? noKeysSnapshot,
-  );
-  if (!accountAi || snapshot.keysRead || snapshot.status === "reading") return null;
-  return (
-    <p className={styles.hold} role="alert" data-testid="chat-keys-away">
-      {t("chat.keysAway")}
-    </p>
-  );
-}
-
-const noKeysSubscribe = () => () => {};
-const NO_KEYS = { status: "ready", keysRead: true, pending: 0 } as const;
-const noKeysSnapshot = () => NO_KEYS;

@@ -174,8 +174,9 @@ test("a real model: edits, reads, looks, plans first", async ({ page }) => {
     const changes = await chat(page).getByTestId("chat-change").count();
     const timeline = (await clips()).join();
     await showTab(page, "chat");
-    await chat(page).getByTestId("chat-plan-first").click();
-    await expect(chat(page).getByTestId("chat-plan-first")).toHaveAttribute("aria-pressed", "true");
+    await chat(page).getByTestId("chat-plus").click();
+    await chat(page).getByTestId("chat-plus-plan").click();
+    await expect(chat(page).getByTestId("chat-mode-plan")).toBeVisible();
     await turn(
       "做一个 10 秒的片头：先红块淡入，再出标题“你好”。先给我方案。",
       "4-plan",

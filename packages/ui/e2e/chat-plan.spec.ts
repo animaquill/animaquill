@@ -24,7 +24,8 @@ const card = (page: Page) => chat(page).locator('[data-testid="chat-plan"][data-
 const cardIn = (page: Page, state: string) =>
   chat(page).locator(`[data-testid="chat-plan"][data-state="${state}"]`);
 const steps = (page: Page) => card(page).getByTestId("chat-plan-step");
-const toggle = (page: Page) => chat(page).getByTestId("chat-plan-first");
+/** The pill that says "先出方案" is on, under the box. */
+const pill = (page: Page) => chat(page).getByTestId("chat-mode-plan");
 const timeShown = (page: Page) =>
   page.getByRole("contentinfo").getByRole("button", { name: "当前时间和总时长" });
 const shoot = (page: Page, name: string) =>
@@ -105,9 +106,11 @@ test("plan first: changes are held, the plan is changed and accepted, and then A
   await showTab(page, "chat");
 
   // The switch: off in a new conversation, lit once on.
-  await expect(toggle(page)).toHaveAttribute("aria-pressed", "false");
-  await toggle(page).click();
-  await expect(toggle(page)).toHaveAttribute("aria-pressed", "true");
+  await expect(pill(page)).toBeHidden();
+  await chat(page).getByTestId("chat-plus").click();
+  await expect(chat(page).getByTestId("chat-plus-plan")).toHaveAttribute("aria-checked", "false");
+  await chat(page).getByTestId("chat-plus-plan").click();
+  await expect(pill(page)).toBeVisible();
   await shoot(page, "1-switch");
 
   const box = chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
@@ -166,7 +169,7 @@ test("plan first: changes are held, the plan is changed and accepted, and then A
   await reload(page);
   await expect(steps(page)).toHaveCount(3);
   await expect(steps(page).nth(2)).toContainText("结尾留白 1 秒");
-  await expect(toggle(page)).toHaveAttribute("aria-pressed", "true");
+  await expect(pill(page)).toBeVisible();
   await shoot(page, "3-plan-edited");
 
   // The chat 330 (as it opens here), 390 and 420 wide: the model keeps its name, send its icon.
@@ -185,27 +188,26 @@ test("plan first: changes are held, the plan is changed and accepted, and then A
     await panel.screenshot({ path: test.info().outputPath(`sd3-chat-${width}.png`) });
   }
 
-  // A phone: the buttons go into "+", the switch with them as an item to tick, a dot on "+".
+  // A phone: the pill keeps its icon and ×; "+" says it is on, as an item ticked.
   await page.setViewportSize({ width: 390, height: 844 });
   await showTab(page, "chat");
   await card(page).scrollIntoViewIfNeeded();
-  await expect(chat(page).getByTestId("chat-plan-first-dot")).toBeVisible();
-  await expect(chat(page).getByTestId("chat-tools-more")).toBeVisible();
+  await expect(pill(page)).toBeVisible();
   await expect(chat(page).getByTestId("chat-model")).toBeVisible();
   await shoot(page, "390-plan");
-  await chat(page).getByTestId("chat-tools-more").click();
+  await chat(page).getByTestId("chat-plus").click();
   await expect(chat(page).getByRole("menuitemcheckbox", { name: "先出方案" })).toHaveAttribute(
     "aria-checked",
     "true",
   );
   await shoot(page, "390-menu");
-  await chat(page).getByTestId("chat-tools-more").click();
+  await chat(page).getByTestId("chat-plus").click();
   await page.setViewportSize({ width: 1440, height: 900 });
 
   // 按这个做: the plan as changed goes as people's message, the switch goes off, and AI does it.
   await card(page).getByTestId("chat-plan-accept").click();
   await expect(chat(page).getByText("做好了。")).toBeVisible({ timeout: 15_000 });
-  await expect(toggle(page)).toHaveAttribute("aria-pressed", "false");
+  await expect(pill(page)).toBeHidden();
   const accepted = chat(page).getByTestId("chat-user").last();
   await expect(accepted).toContainText("按这个做：片头 30 秒");
   await expect(accepted).toContainText("每张 2 秒");
