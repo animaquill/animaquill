@@ -114,7 +114,13 @@ export function useCompletion(
   const triggerKey = trigger && `${trigger.kind}/${trigger.start}`;
   // Closed with Esc: it stays closed for what that `/` or `@` started.
   const [dismissed, setDismissed] = useState<string>();
-  const [active, setActive] = useState(0);
+  // Which option is chosen: by its key, so that it stays chosen as what was found changes.
+  const [active, setActiveState] = useState<{
+    readonly index: number;
+    readonly key?: string | undefined;
+  }>({
+    index: 0,
+  });
   // Chosen with ↑ ↓: Enter picks it, also where nothing was typed yet.
   const [moved, setMoved] = useState(false);
   // The kinds of the project shown in full, after "还有 N 个".
@@ -125,9 +131,12 @@ export function useCompletion(
       setMore(NO_KINDS);
       if (next === undefined) setDismissed(undefined);
     }
-    if (next?.query !== trigger?.query || key !== triggerKey) {
-      setActive(0);
+    if (key !== triggerKey) {
+      setActiveState({ index: 0 });
       setMoved(false);
+    } else if (next?.query !== trigger?.query) {
+      // More typed: the first of what it finds, unless the one chosen with ↑ ↓ is still there.
+      setActiveState((was) => ({ index: 0, key: was.key }));
     }
     setTrigger(next);
   };
@@ -149,128 +158,149 @@ export function useCompletion(
   );
   const listId = useId();
 
-  const groups: CompletionGroup[] = [];
-  const picks: (() => void)[] = [];
-  const option = (each: CompletionOption, pick: () => void) => {
-    picks.push(each.why === undefined ? pick : () => {});
-    return each;
-  };
-  const putIn = (refs: readonly ChatRef[]) => () => box.current?.complete(refs);
-  if (open && trigger.kind === "slash") {
-    const options = commandsFor(trigger.query).map((command) =>
-      option(
-        {
-          key: command.id,
-          kind: command.id,
-          icon: SLASH_ICONS[command.id],
-          label: `/${command.name}`,
-          note:
-            command.id === "plan"
-              ? t(commands.planFirst ? "chat.complete.planOff" : "chat.complete.planOn")
-              : t(`chat.complete.${command.id}`),
-          why: commands.whyNot(command.id),
-        },
-        () => {
-          box.current?.complete([]);
-          commands.run(command.id, commands.text());
-        },
-      ),
-    );
-    if (options.length > 0) groups.push({ key: "slash", name: undefined, options });
-  } else if (open && trigger.kind === "at") {
-    if (trigger.query === "") {
-      const present: CompletionOption[] = [];
-      const selected = pointed.count > 0 ? pointing.selectedRefs() : [];
-      if (selected.length > 0) {
-        present.push(
-          option(
-            {
-              key: "selection",
-              kind: "selection",
-              icon: Boxes,
-              label:
-                pointed.from === "timeline"
-                  ? t("chat.complete.selectedClips", { count: pointed.count })
-                  : pointed.from === "keys"
-                    ? t("chat.complete.selectedKeys", { count: pointed.count })
-                    : t("chat.complete.selected", {
-                        what: selected[0]?.label ?? "",
-                        interpolation: { escapeValue: false },
-                      }),
-            },
-            putIn(selected),
-          ),
-        );
-      }
-      const time = timeline.model ? pointing.timeRef() : undefined;
-      if (time) {
-        present.push(
-          option(
-            {
-              key: "time",
-              kind: "time",
-              icon: Clock,
-              label: t("chat.complete.playhead", { time: time.label }),
-            },
-            putIn([time]),
-          ),
-        );
-      }
-      if (present.length > 0) {
-        groups.push({ key: "now", name: t("chat.complete.now"), options: present });
-      }
-    }
-    for (const group of found) {
-      const all = more.has(group.kind);
-      const refs = group.refs.slice(0, all ? FIND_MOST : FIND_SHOWN);
-      // Several of the same name: each says where it is, the others nothing.
-      const named = new Map<string, number>();
-      for (const ref of refs) named.set(ref.label, (named.get(ref.label) ?? 0) + 1);
-      const options = refs.map((ref, at) =>
+  /** The menu for what was found in the project, and what picking each of its options does. */
+  const build = (groupsFound: readonly FoundGroup[]) => {
+    const groups: CompletionGroup[] = [];
+    const picks: (() => void)[] = [];
+    const keys: string[] = [];
+    const option = (each: CompletionOption, pick: () => void) => {
+      picks.push(each.why === undefined ? pick : () => {});
+      // The same option, whatever else was found: by what it is; "还有 N 个" by its place.
+      keys.push(each.key === "more" ? `more/${groups.length}` : `${each.kind}/${each.key}`);
+      return each;
+    };
+    const putIn = (refs: readonly ChatRef[]) => () => box.current?.complete(refs);
+    if (open && trigger.kind === "slash") {
+      const options = commandsFor(trigger.query).map((command) =>
         option(
           {
-            key: ref.href,
-            kind: group.kind,
-            icon: FOUND_ICONS[group.kind],
-            label: ref.label,
-            note: (named.get(ref.label) ?? 0) > 1 ? placeText(group.places[at]) : undefined,
+            key: command.id,
+            kind: command.id,
+            icon: SLASH_ICONS[command.id],
+            label: `/${command.name}`,
+            note:
+              command.id === "plan"
+                ? t(commands.planFirst ? "chat.complete.planOff" : "chat.complete.planOn")
+                : t(`chat.complete.${command.id}`),
+            why: commands.whyNot(command.id),
           },
-          putIn([ref]),
+          () => {
+            box.current?.complete([]);
+            commands.run(command.id, commands.text());
+          },
         ),
       );
-      const left = group.total - refs.length;
-      if (left > 0) {
-        options.push(
+      if (options.length > 0) groups.push({ key: "slash", name: undefined, options });
+    } else if (open && trigger.kind === "at") {
+      if (trigger.query === "") {
+        const present: CompletionOption[] = [];
+        const selected = pointed.count > 0 ? pointing.selectedRefs() : [];
+        if (selected.length > 0) {
+          present.push(
+            option(
+              {
+                key: "selection",
+                kind: "selection",
+                icon: Boxes,
+                label:
+                  pointed.from === "timeline"
+                    ? t("chat.complete.selectedClips", { count: pointed.count })
+                    : pointed.from === "keys"
+                      ? t("chat.complete.selectedKeys", { count: pointed.count })
+                      : t("chat.complete.selected", {
+                          what: selected[0]?.label ?? "",
+                          interpolation: { escapeValue: false },
+                        }),
+              },
+              putIn(selected),
+            ),
+          );
+        }
+        const time = timeline.model ? pointing.timeRef() : undefined;
+        if (time) {
+          present.push(
+            option(
+              {
+                key: "time",
+                kind: "time",
+                icon: Clock,
+                label: t("chat.complete.playhead", { time: time.label }),
+              },
+              putIn([time]),
+            ),
+          );
+        }
+        if (present.length > 0) {
+          groups.push({ key: "now", name: t("chat.complete.now"), options: present });
+        }
+      }
+      for (const group of groupsFound) {
+        const all = more.has(group.kind);
+        const refs = group.refs.slice(0, all ? FIND_MOST : FIND_SHOWN);
+        // Several of the same name: each says where it is, the others nothing.
+        const named = new Map<string, number>();
+        for (const ref of refs) named.set(ref.label, (named.get(ref.label) ?? 0) + 1);
+        const options = refs.map((ref, at) =>
           option(
             {
-              key: "more",
-              kind: "more",
-              icon: undefined,
-              label: t("chat.refs.more", { count: left }),
-              note: all ? t("chat.complete.typeMore") : undefined,
+              key: ref.href,
+              kind: group.kind,
+              icon: FOUND_ICONS[group.kind],
+              label: ref.label,
+              note: (named.get(ref.label) ?? 0) > 1 ? placeText(group.places[at]) : undefined,
             },
-            () => {
-              if (!all) setMore(new Set([...more, group.kind]));
-            },
+            putIn([ref]),
           ),
         );
+        const left = group.total - refs.length;
+        if (left > 0) {
+          options.push(
+            option(
+              {
+                key: "more",
+                kind: "more",
+                icon: undefined,
+                label: t("chat.refs.more", { count: left }),
+                note: all ? t("chat.complete.typeMore") : undefined,
+              },
+              () => {
+                if (!all) setMore(new Set([...more, group.kind]));
+              },
+            ),
+          );
+        }
+        groups.push({ key: group.kind, name: t(`chat.complete.${group.kind}`), options });
       }
-      groups.push({ key: group.kind, name: t(`chat.complete.${group.kind}`), options });
     }
-  }
+    return { groups, picks, keys };
+  };
+  const { groups, picks, keys } = build(found);
   // `/` with nothing it could be is words, not a command: no menu.
   const showing = open && (trigger.kind === "at" || groups.length > 0);
-  const chosen = Math.min(active, picks.length - 1);
+  /** Which of these options is chosen: the one with the key chosen, where it is still there. */
+  const chosenIn = (these: readonly string[]) => {
+    const at = active.key === undefined ? -1 : these.indexOf(active.key);
+    return at >= 0 ? at : Math.min(active.index, these.length - 1);
+  };
+  const chosen = chosenIn(keys);
+  const setActive = (index: number) => setActiveState({ index, key: keys[index] });
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): boolean => {
     // An input method composes: its keys pick its words, never what the menu has.
     if (event.nativeEvent.isComposing || event.keyCode === 229) return false;
     if (!showing || event.altKey || event.ctrlKey || event.metaKey) return false;
-    const count = picks.length;
+    // Typed faster than the project was looked through: it is looked through now, and the key
+    // goes to what it has for what was typed, not to what it had a moment ago.
+    const pending = query !== undefined && looking !== query && query !== "";
+    const now = pending ? build(pointing.find(query, FIND_MOST, state)) : { picks, keys };
+    if (pending) setSettled(query);
+    const at = pending ? chosenIn(now.keys) : chosen;
+    const count = now.picks.length;
     if ((event.key === "ArrowDown" || event.key === "ArrowUp") && count > 0) {
       event.preventDefault();
       const step = event.key === "ArrowDown" ? 1 : -1;
-      setActive((chosen + step + count) % count);
+      const next = (at + step + count) % count;
+      setActiveState({ index: next, key: now.keys[next] });
       setMoved(true);
       return true;
     }
@@ -287,18 +317,10 @@ export function useCompletion(
       event.preventDefault();
       return true;
     }
-    // Typed faster than the project was looked through: the first of what it has for that now.
-    if (query !== undefined && looking !== query) {
-      const first = pointing.find(query, 1, state).find((group) => group.refs.length > 0)?.refs[0];
-      if (!first) return false;
-      event.preventDefault();
-      box.current?.complete([first]);
-      return true;
-    }
     if (count === 0) return false;
     // One that cannot be used now says why in its line; nothing goes to AI meanwhile.
     event.preventDefault();
-    picks[chosen]?.();
+    now.picks[at]?.();
     return true;
   };
 

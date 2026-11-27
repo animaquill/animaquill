@@ -384,6 +384,28 @@ test("@ anywhere after a space: what is selected and the playhead, then clips an
   );
 });
 
+test("@ typed fast: ↓ and Enter before the project is looked through go by what was typed", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await pretend(page);
+  await setUp(page);
+  await box(page).click();
+  // No wait between the keys: what the menu had a moment ago ("@" alone, or "@城") is not what ↓
+  // moves in, nor what Enter picks from.
+  await box(page).pressSequentially("看看 @城市", { delay: 0 });
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(box(page).getByTestId("chat-chip")).toHaveText(["字幕「欢迎来到这座城市」"]);
+  // Once found, the option chosen stays chosen as long as it is there.
+  await box(page).fill("");
+  await box(page).pressSequentially("看看 @城");
+  await expect(options(page)).toHaveText(["片段「城市夜景」", "字幕「欢迎来到这座城市」"]);
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(box(page).getByTestId("chat-chip")).toHaveText(["字幕「欢迎来到这座城市」"]);
+});
+
 test("the menus of / and @ in light and dark, about 320, 420 and 560 wide", async ({ page }) => {
   test.setTimeout(240_000);
   await pretend(page);
