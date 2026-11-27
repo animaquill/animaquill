@@ -583,6 +583,8 @@ export const edit: ToolDefinition<EditArgs> = {
           `${clip ?? `track ${track}`} ${path} at ${times.join(", ")} (operations[${index}])`,
       );
     });
+    // Tracks the batch left without clips, which went with it: see `Tidying` in the core.
+    const tidied = (result.tracksRemoved ?? []).map(({ track }) => track);
     const most = call.limits.changed;
     const shown = changes.slice(0, most).map((change) => `  ${changeLine(result.state, change)}`);
     const more =
@@ -599,6 +601,7 @@ export const edit: ToolDefinition<EditArgs> = {
         first,
         ...(created.length > 0 ? [`created: ${created.join(" | ")}`] : []),
         ...(removed.length > 0 ? [`keys that gave way: ${removed.join(" | ")}`] : []),
+        ...(tidied.length > 0 ? [`removed empty tracks: ${tidied.join(", ")}`] : []),
         ...(shown.length > 0 ? ["changed:", ...shown, ...more] : []),
         ...problems.lines,
       ],

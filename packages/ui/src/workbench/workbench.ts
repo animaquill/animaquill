@@ -519,6 +519,8 @@ export class Workbench {
   readonly projectEdits: ProjectEdits;
   /** Whether the preview offers to make a proxy of a video that plays too slowly. */
   readonly proxyOffer: SwitchSetting;
+  /** Whether a change that leaves a track without clips takes the track along, see `Tidying`. */
+  readonly emptyTracks: SwitchSetting;
   /** The theme and the size of words of the editor. */
   readonly appearance: Appearance;
   /** What an editor of before the modes left in this browser, see `LeftOver`. */
@@ -690,6 +692,7 @@ export class Workbench {
     this.settingsNav = new SettingsNav(host.windowMemory);
     this.projectNav = new ProjectNav(host.windowMemory);
     this.proxyOffer = new SwitchSetting(host.settings, "proxyOffer", true);
+    this.emptyTracks = new SwitchSetting(host.settings, "removeEmptyTracks", true);
     this.appearance = new Appearance(host.settings);
     this.agentsFile = new SwitchSetting(host.settings, "agentsFile", true);
     this.autoConnect = new SwitchSetting(host.settings, "localAi.autoConnect", false);
@@ -1085,6 +1088,12 @@ export class Workbench {
         : undefined;
     this.session.subscribe(() => this.projectFolders?.followSession());
     this.session.subscribe(() => this.tools.follow(this.session.getSnapshot().store));
+    // People, the assistant and local MCP all change the open project, the same as people set it.
+    const tidy = () =>
+      this.session.store?.setTidying({ emptyTracks: this.emptyTracks.getSnapshot() });
+    this.session.subscribe(tidy);
+    this.emptyTracks.subscribe(tidy);
+    tidy();
     this.cloud =
       cloud &&
       new CloudProjects({
@@ -2106,6 +2115,7 @@ export class Workbench {
       this.input.load(),
       this.previewQuality.load(),
       this.proxyOffer.load(),
+      this.emptyTracks.load(),
       this.agentsFile.load(),
       this.trials.load(),
       ...(this.accountAi ? [] : [ai]),

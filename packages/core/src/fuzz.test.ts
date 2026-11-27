@@ -6,7 +6,7 @@ import {
   readProject,
   type Rational,
 } from "@animaquill/schema";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { sample } from "./curve.ts";
 import {
   FUZZ,
@@ -231,6 +231,70 @@ describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
         expect(store.redo()).toMatchObject({ ok: true, kept: [] });
         expect(deepEqual(store.getState(), after)).toBe(true);
       }
+    });
+  },
+);
+
+let tidied = 0;
+let tidyingRan = false;
+afterAll(() => {
+  // Random work has to empty tracks now and then, or the test below tests nothing.
+  if (tidyingRan) expect(tidied).toBeGreaterThanOrEqual(20);
+});
+
+/** Random work, and more often than that, clips going off tracks or away. */
+function emptyingCommand(store: ProjectStore, random: ReturnType<typeof randomFrom>): CommandCall {
+  const main = store.getState().timelines["main"];
+  const clips = Object.values(main?.clips ?? {});
+  const clip = random.pick(clips);
+  if (!clip || random.chance(0.5)) return randomCommand(store, random);
+  const kind = main?.tracks[clip.track]?.kind;
+  const others = Object.values(main?.tracks ?? {}).filter((track) => track.kind === kind);
+  const track = random.pick(others)?.id ?? clip.track;
+  if (random.chance(0.4))
+    return { type: "clip.remove", params: { timeline: "main", clips: [clip.id] } };
+  if (random.chance(0.3))
+    return { type: "track.add", params: { timeline: "main", kind: kind ?? "video" } };
+  const start = String(random.int(60));
+  return {
+    type: "clip.move",
+    params: { timeline: "main", clips: [{ clip: clip.id, track, start }] },
+  };
+}
+
+describe.each([1, 2, 3, 4, 5, 6, 7, 8])(
+  "random work that empties tracks, undone to the start, seed %i",
+  FUZZ,
+  (seed) => {
+    it("comes back exactly to the start, and goes forward exactly to the end", () => {
+      tidyingRan = true;
+      seedIds(seed);
+      const random = randomFrom(seed);
+      const store = openUnlocked();
+      store.setTidying({ emptyTracks: true });
+      const start = store.getState();
+      for (let round = 0; round < 200; round++) {
+        const before = store.getState();
+        const isAi = random.chance(0.3);
+        const call = emptyingCommand(store, random);
+        const result = store.execute(call, isAi ? { origin: aiTask("t0") } : {});
+        if (!result.ok || store.getState() === before) continue;
+        if (result.tracksRemoved) tidied += result.tracksRemoved.length;
+        if (!isAi) continue;
+        // A step of an AI task goes back at once with what it cleaned up, and comes again.
+        const after = store.getState();
+        expect(store.undoTask("t0")).toMatchObject({ ok: true, kept: [] });
+        expect(deepEqual(store.getState(), before)).toBe(true);
+        expect(store.redoTask("t0")).toMatchObject({ ok: true, kept: [] });
+        expect(deepEqual(store.getState(), after)).toBe(true);
+        // Left out of what people take back below.
+        store.undoTask("t0");
+      }
+      const end = store.getState();
+      while (store.canUndo) expect(store.undo()).toMatchObject({ ok: true, kept: [] });
+      expect(deepEqual(store.getState(), start)).toBe(true);
+      while (store.canRedo) expect(store.redo()).toMatchObject({ ok: true, kept: [] });
+      expect(deepEqual(store.getState(), end)).toBe(true);
     });
   },
 );

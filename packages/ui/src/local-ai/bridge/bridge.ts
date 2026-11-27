@@ -200,7 +200,7 @@ function fitting(tool: string, result: BridgeResult): BridgeResult {
   };
 }
 
-/** Which side is older, by `TOOLSET_VERSION` ("2026.20"), where the lists are not the same. */
+/** Which side is older, by `TOOLSET_VERSION` ("2026.21"), where the lists are not the same. */
 function mismatchOf(
   own: { readonly toolset: string; readonly list: string },
   toolset: string,

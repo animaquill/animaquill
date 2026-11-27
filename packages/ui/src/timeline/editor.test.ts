@@ -861,7 +861,8 @@ describe("moving", () => {
       editor.toggleSnapping();
       addClip("a", 0, "1001/300");
       addClip("b", 7, 1);
-      drag(at(7.5), at(2));
+      // Right on a clip it would go on a new track: here only its start is over it.
+      drag(at(7.9), at(3.4));
       expect(clip("a").duration).toBe("1001/300");
       expect(clip("b").start).toBe("1001/300");
     });
@@ -871,7 +872,7 @@ describe("moving", () => {
       editor.toggleSnapping();
       addClip("a", 3, 2);
       addClip("b", 7, 1);
-      drag(at(7.5), at(3.2));
+      drag(at(7.1), at(2.8));
       expect(clip("b").start).toBe("2");
       expect(clip("a").start).toBe("3");
     });
@@ -881,7 +882,7 @@ describe("moving", () => {
       editor.toggleSnapping();
       addClip("a", 0, 5);
       addClip("b", 7, 3);
-      drag(at(8.5), at(1.7));
+      drag(at(9.9), at(5.1));
       expect(clip("b").start).toBe("5");
     });
 
@@ -917,12 +918,13 @@ describe("moving", () => {
       editor.toggleSnapping();
       addClip("a", 0, 5);
       addClip("b", 7, 1);
-      editor.press(at(7.5));
-      editor.drag(at(4.5));
+      editor.press(at(7.9));
+      editor.drag(at(5.1));
       expect(editor.preview?.clips?.get("b")?.start).toBe(5);
       expect(editor.preview?.covered).toEqual([]);
       expect(editor.preview?.snap).toBe(5);
-      editor.release(at(4.5));
+      expect(editor.preview?.besides).toBeUndefined();
+      editor.release(at(5.1));
     });
 
     it("works on another track too", async () => {
@@ -934,7 +936,7 @@ describe("moving", () => {
       });
       addClip("a", 0, 5, "upper");
       addClip("b", 7, 1);
-      drag(at(7.5), at(4.5, "upper"));
+      drag(at(7.9), at(5.1, "upper"));
       expect(clip("b").track).toBe("upper");
       expect(clip("b").start).toBe("5");
     });
@@ -1007,7 +1009,8 @@ describe("moving", () => {
     it("does not land on the clip it came from", async () => {
       const { addClip, at, drag, main } = await setup();
       addClip("a", 1, 2);
-      drag(at(2, undefined, ctrl), at(2.3, undefined, ctrl));
+      // Off the clip: right on it, the copy goes on a new track.
+      drag(at(2.9, undefined, ctrl), at(3.1, undefined, ctrl));
       const copy = Object.values(main().clips).find(({ id }) => id !== "a");
       expect(copy?.start).toBe("3");
     });
@@ -1131,6 +1134,327 @@ describe("moving", () => {
     });
     editor.release(at(6));
     expect(commandFailed).toHaveBeenCalledOnce();
+  });
+});
+
+describe("onto another clip, with neither overwriting nor inserting", () => {
+  /** A pointer in the upper or the lower half of a row. */
+  const half = (
+    editor: TimelineEditor,
+    pointer: Pointer,
+    track: string,
+    side: "above" | "below",
+  ): Pointer => {
+    const row = editor.model?.rows.find(({ id }) => id === track);
+    if (!row) throw new Error("no row");
+    const part = side === "above" ? 0.25 : 0.75;
+    return { ...pointer, y: RULER_HEIGHT - editor.scrollY + row.top + row.height * part };
+  };
+  const order = (main: () => { tracks: object }) =>
+    orderedTracks(main() as never).map(({ id }) => id);
+  const rowsOf = (editor: TimelineEditor) => editor.model?.rows.map(({ id }) => id) ?? [];
+  const dragTo = (
+    context: Awaited<ReturnType<typeof setup>>,
+    from: Pointer,
+    to: Pointer,
+    check: () => void = () => {},
+  ) => {
+    const { editor } = context;
+    editor.press(from);
+    editor.drag({ ...from, x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 });
+    editor.drag(to);
+    check();
+    editor.release(to);
+  };
+
+  it.each(["above", "below"] as const)(
+    "goes on a new video track %s the one it lands on, at the time it lands",
+    async (side) => {
+      const context = await setup();
+      const { editor, addClip, at, clip, video, audio, main } = context;
+      editor.toggleSnapping();
+      addClip("a", 0, 4);
+      addClip("b", 6, 1);
+      dragTo(context, at(6.5), half(editor, at(2), video, side), () => {
+        const { preview } = editor;
+        expect(preview?.besides).toEqual([{ key: video, row: video, side, kind: "video" }]);
+        expect(preview?.clips?.get("b")).toMatchObject({ start: 1.5, end: 2.5, beside: video });
+        expect(preview?.covered).toEqual([]);
+      });
+      const made = clip("b").track;
+      expect(made).not.toBe(video);
+      expect(clip("b").start).toBe("1.5");
+      expect(clip("a")).toMatchObject({ track: video, start: "0" });
+      // Pictures further back in the project show further up.
+      expect(order(main)).toEqual(side === "above" ? [video, made, audio] : [made, video, audio]);
+      const shown = rowsOf(editor);
+      expect(shown.indexOf(made) - shown.indexOf(video)).toBe(side === "above" ? -1 : 1);
+      expect(editor.preview).toBeUndefined();
+    },
+  );
+
+  it.each(["above", "below"] as const)(
+    "goes on a new sound track %s, as sound tracks show",
+    async (side) => {
+      const context = await setup();
+      const { editor, addClip, at, clip, audio, main } = context;
+      editor.toggleSnapping();
+      addClip("s", 0, 4, audio);
+      addClip("t", 6, 1, audio);
+      dragTo(context, at(6.5, audio), half(editor, at(2, audio), audio, side));
+      const made = clip("t").track;
+      expect(made).not.toBe(audio);
+      expect(main().tracks[made]?.kind).toBe("audio");
+      const shown = rowsOf(editor);
+      expect(shown.indexOf(made) - shown.indexOf(audio)).toBe(side === "above" ? -1 : 1);
+      expect(order(main).indexOf(made) - order(main).indexOf(audio)).toBe(
+        side === "above" ? -1 : 1,
+      );
+    },
+  );
+
+  it.each(["above", "below"] as const)("goes on a new caption track %s", async (side) => {
+    const context = await setup();
+    const { editor, at, clip, main, store } = context;
+    editor.toggleSnapping();
+    store.execute({
+      type: "track.add",
+      params: { timeline: "main", id: "words", kind: "caption" },
+    });
+    const caption = { kind: "caption", text: "字幕" };
+    for (const [id, start] of [
+      ["w", 0],
+      ["x", 6],
+    ] as const) {
+      store.execute({
+        type: "clip.add",
+        params: {
+          timeline: "main",
+          track: "words",
+          id,
+          start: String(start),
+          duration: id === "w" ? "4" : "1",
+          source: caption,
+        },
+      });
+    }
+    dragTo(context, at(6.5, "words"), half(editor, at(2, "words"), "words", side));
+    const made = clip("x").track;
+    expect(main().tracks[made]?.kind).toBe("caption");
+    const shown = rowsOf(editor);
+    expect(shown.indexOf(made) - shown.indexOf("words")).toBe(side === "above" ? -1 : 1);
+  });
+
+  it("goes to the nearest free place where only its ends are over others", async () => {
+    const context = await setup();
+    const { editor, addClip, at, clip, video, main } = context;
+    editor.toggleSnapping();
+    addClip("a", 0, 4);
+    addClip("b", 6, 1);
+    const tracks = order(main).length;
+    dragTo(context, at(6.9), half(editor, at(4.2), video, "above"), () => {
+      expect(editor.preview?.besides).toBeUndefined();
+    });
+    expect(clip("b")).toMatchObject({ track: video, start: "4" });
+    expect(order(main)).toHaveLength(tracks);
+  });
+
+  it("covers or goes in as before with overwriting, inserting or Shift", async () => {
+    for (const how of ["overwrite", "insert", "shift"] as const) {
+      const context = await setup();
+      const { editor, addClip, at, clip, video, main } = context;
+      editor.toggleSnapping();
+      if (how === "overwrite") editor.toggleOverwriting();
+      if (how === "insert") editor.toggleInserting();
+      addClip("a", 0, 4);
+      addClip("b", 6, 1);
+      const tracks = order(main).length;
+      const keys = how === "shift" ? { shift: true } : {};
+      dragTo(context, at(6.5, video, keys), half(editor, at(2, video, keys), video, "above"), () =>
+        expect(editor.preview?.besides, how).toBeUndefined(),
+      );
+      expect(clip("b"), how).toMatchObject({ track: video, start: "1.5" });
+      expect(order(main), how).toHaveLength(tracks);
+    }
+  });
+
+  it("puts a copy made with Ctrl right on its original on a new track", async () => {
+    const context = await setup();
+    const { editor, addClip, at, clip, video, main } = context;
+    editor.toggleSnapping();
+    addClip("a", 1, 2);
+    const ctrl = { mod: true };
+    dragTo(context, at(2, video, ctrl), half(editor, at(2.5, video, ctrl), video, "above"));
+    const copy = Object.values(main().clips).find(({ id }) => id !== "a");
+    expect(copy?.track).not.toBe(video);
+    expect(copy?.start).toBe("1.5");
+    expect(clip("a")).toMatchObject({ track: video, start: "1" });
+  });
+
+  it("makes one new track for each row whose clips land on others, on the same side", async () => {
+    const context = await setup();
+    const { editor, addClip, at, clip, video, store, main } = context;
+    editor.toggleSnapping();
+    store.execute({ type: "track.add", params: { timeline: "main", id: "up", kind: "video" } });
+    store.execute({ type: "track.add", params: { timeline: "main", id: "top", kind: "video" } });
+    addClip("a", 0, 4);
+    addClip("u", 0, 4, "up");
+    addClip("b", 6, 1);
+    addClip("c", 6, 1, "up");
+    editor.selectOnly("b");
+    editor.press(at(6.5, "up", { shift: true }));
+    editor.release(at(6.5, "up", { shift: true }));
+    // Both land on clips: each gets a new track right above its row.
+    dragTo(context, at(6.5), half(editor, at(2), video, "above"), () =>
+      expect(editor.preview?.besides?.map(({ row }) => row).toSorted()).toEqual(
+        [video, "up"].toSorted(),
+      ),
+    );
+    const shown = rowsOf(editor);
+    expect(shown.indexOf(clip("b").track)).toBe(shown.indexOf(video) - 1);
+    expect(shown.indexOf(clip("c").track)).toBe(shown.indexOf("up") - 1);
+    // Picture over picture as before: c is still in front of b.
+    expect(shown.indexOf(clip("c").track)).toBeLessThan(shown.indexOf(clip("b").track));
+    expect(order(main)).toHaveLength(6);
+  });
+
+  it("makes a new track only for the clips that land on others", async () => {
+    const context = await setup();
+    const { editor, addClip, at, clip, video, store } = context;
+    editor.toggleSnapping();
+    store.execute({ type: "track.add", params: { timeline: "main", id: "up", kind: "video" } });
+    addClip("a", 0, 4);
+    addClip("b", 6, 1);
+    addClip("c", 8, 1, "up");
+    editor.selectOnly("b");
+    editor.press(at(8.5, "up", { shift: true }));
+    editor.release(at(8.5, "up", { shift: true }));
+    dragTo(context, at(6.5), half(editor, at(2), video, "below"));
+    expect(clip("b").track).not.toBe(video);
+    expect(clip("c")).toMatchObject({ track: "up", start: "3.5" });
+  });
+
+  it("takes a sound that goes along to a new track only where it lands on another", async () => {
+    const context = await setup();
+    const { editor, addClip, at, clip, video, audio } = context;
+    editor.toggleSnapping();
+    addClip("a", 0, 4);
+    addClip("v", 6, 1, video, { link: "pair" });
+    addClip("s", 6, 1, audio, { link: "pair" });
+    dragTo(context, at(6.5), half(editor, at(2), video, "above"));
+    expect(clip("v").track).not.toBe(video);
+    expect(clip("s")).toMatchObject({ track: audio, start: "1.5" });
+  });
+
+  it("takes along the track it emptied, in the same step, which one undo brings back", async () => {
+    const context = await setup();
+    const { editor, addClip, at, clip, video, store, main } = context;
+    store.setTidying({ emptyTracks: true });
+    editor.toggleSnapping();
+    store.execute({ type: "track.add", params: { timeline: "main", id: "up", kind: "video" } });
+    addClip("a", 0, 4);
+    addClip("b", 6, 1, "up");
+    const before = store.getState();
+    dragTo(context, at(6.5, "up"), half(editor, at(2), video, "above"));
+    expect(main().tracks["up"]).toBeUndefined();
+    expect(main().tracks[clip("b").track]).toBeDefined();
+    expect(store.undo().ok).toBe(true);
+    expect(store.getState()).toEqual(before);
+  });
+
+  it("lets go of a drag when the track it would go to goes away", async () => {
+    const context = await setup();
+    const { editor, addClip, at, video, store, main } = context;
+    editor.toggleSnapping();
+    store.execute({ type: "track.add", params: { timeline: "main", id: "up", kind: "video" } });
+    addClip("a", 0, 4, "up");
+    addClip("b", 6, 1);
+    editor.press(at(6.5));
+    editor.drag(half(editor, at(2, "up"), "up", "above"));
+    expect(editor.preview?.besides).toHaveLength(1);
+    store.execute({ type: "track.remove", params: { timeline: "main", track: "up" } });
+    expect(editor.preview).toBeUndefined();
+    const before = store.getState();
+    editor.release(at(2, video));
+    expect(store.getState()).toBe(before);
+    expect(main().clips["b"]?.start).toBe("6");
+  });
+
+  describe("from elsewhere", () => {
+    const withFilm = async () => {
+      const context = await setup();
+      context.store.execute({
+        type: "asset.add",
+        params: {
+          id: "film",
+          asset: {
+            path: "assets/film",
+            storage: "local",
+            name: "影片",
+            kind: "video",
+            info: { duration: "2", hasAudio: true },
+          },
+        },
+      });
+      context.editor.toggleSnapping();
+      return context;
+    };
+
+    it("shows a new track where it is dropped on a clip, and puts the picture there", async () => {
+      const context = await withFilm();
+      const { editor, addClip, at, video, audio, main } = context;
+      addClip("a", 0, 4);
+      const pointer = half(editor, at(1), video, "above");
+      editor.showDrop(pointer, { kind: "asset", id: "film" });
+      const { preview } = editor;
+      expect(preview?.besides).toEqual([{ key: video, row: video, side: "above", kind: "video" }]);
+      expect(
+        preview?.adding?.map(({ kind, row, beside, start }) => [kind, row, beside, start]),
+      ).toEqual([
+        ["video", undefined, video, 1],
+        ["audio", audio, undefined, 1],
+      ]);
+      editor.showDrop(undefined);
+      const added = editor.addMedia({ kind: "asset", id: "film" }, editor.dropPlaceAt(pointer));
+      expect(added?.tracks).toEqual([
+        { kind: "video", number: 2 },
+        { kind: "audio", number: 1 },
+      ]);
+      const [picture, sound] = (added?.clips ?? []).map((id) => main().clips[id]);
+      expect(picture?.track).not.toBe(video);
+      expect(picture?.start).toBe("1");
+      expect(sound?.track).toBe(audio);
+      const shown = rowsOf(editor);
+      expect(shown.indexOf(picture?.track as string)).toBe(shown.indexOf(video) - 1);
+    });
+
+    it("goes below where dropped on the lower half, and numbers the track by where it is", async () => {
+      const context = await withFilm();
+      const { editor, addClip, at, video, main } = context;
+      addClip("a", 0, 4);
+      const added = editor.addMedia(
+        { kind: "asset", id: "film", only: "video" },
+        editor.dropPlaceAt(half(editor, at(1), video, "below")),
+      );
+      expect(added?.tracks).toEqual([{ kind: "video", number: 1 }]);
+      const picture = main().clips[added?.clips[0] as string];
+      expect(order(main)[0]).toBe(picture?.track);
+    });
+
+    it("goes after what is there where dropped between clips", async () => {
+      const context = await withFilm();
+      const { editor, addClip, at, video, main } = context;
+      addClip("a", 0, 4);
+      addClip("b", 5, 4);
+      const pointer = half(editor, at(4.5), video, "above");
+      editor.showDrop(pointer, { kind: "asset", id: "film", only: "video" });
+      expect(editor.preview?.besides).toBeUndefined();
+      const added = editor.addMedia(
+        { kind: "asset", id: "film", only: "video" },
+        editor.dropPlaceAt(pointer),
+      );
+      expect(main().clips[added?.clips[0] as string]).toMatchObject({ track: video, start: "9" });
+    });
   });
 });
 

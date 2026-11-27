@@ -83,7 +83,13 @@ describe("the list", () => {
       "storage.keys",
     ])
       expect(said, id).not.toContain(id);
-    for (const id of ["editing.trial", "playback.proxyOffer", "export.hardware", "account.server"])
+    for (const id of [
+      "editing.trial",
+      "editing.removeEmptyTracks",
+      "playback.proxyOffer",
+      "export.hardware",
+      "account.server",
+    ])
       expect(said, id).toContain(id);
   });
 
@@ -108,6 +114,8 @@ describe("searching", () => {
     expect(found("回车")).toEqual(["chat.sendWith"]);
     expect(found("代理")).toContain("playback.proxyOffer");
     expect(found("额度")).toContain("account.space");
+    expect(found("空轨道")).toEqual(["editing.removeEmptyTracks"]);
+    expect(found("删除 轨道")).toContain("editing.removeEmptyTracks");
   });
 
   it("finds by the name of a group, and by every word given", () => {

@@ -204,7 +204,7 @@ function Dialog({ request }: { request: QuestionRequest }) {
     >
       <div className={styles.content} onKeyDown={onKeyDown}>
         <h2>{request.title}</h2>
-        {!isPrompt && <p>{request.message}</p>}
+        {!isPrompt && request.message !== "" && <p>{request.message}</p>}
         {(request.kind === "confirm" || request.kind === "choice") && request.warning && (
           <p className={styles.warning} data-dialog-warning="">
             {request.warning}

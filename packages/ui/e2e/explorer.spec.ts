@@ -471,9 +471,10 @@ test("drags resources onto the timeline, as the tabs that find them do", async (
   await expect(clips(page)).toHaveCount(4);
   await item(page, "封面.png").dragTo(area, { targetPosition: { x: 700, y: 50 } });
   await expect(clips(page)).toHaveCount(5);
+  // Dropped right on a clip of the first video track, in the upper half: on a new track above it.
   await expect(clips(page).and(page.locator('[aria-selected="true"]'))).toHaveAttribute(
     "aria-label",
-    /^封面\.png，视频 1，/,
+    /^封面\.png，视频 2，/,
   );
 
   // An effect goes on the clip it is dropped on.

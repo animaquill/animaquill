@@ -11,6 +11,7 @@ import * as Y from "yjs";
 import { operationOf, type Operation } from "./commands.ts";
 import { beforeAfter, type BeforeAfter } from "./before-after.ts";
 import { Draft, factsTakenBack, type ClipFact, type Step } from "./draft.ts";
+import { NO_TIDYING, removeEmptiedTracks, type Tidying, type TrackOf } from "./tidy-tracks.ts";
 import {
   CommandError,
   failureOf,
@@ -145,6 +146,11 @@ export interface ImportOptions extends ExecuteOptions {
 interface CommitOptions extends ExecuteOptions {
   /** No document that was valid may become invalid, see `brokenDocument`. */
   readonly checksDocuments?: boolean;
+  /**
+   * What the change cleans up after itself, after all of it and in the same step, see `Tidying`.
+   * Whether somebody else changed the same thing meanwhile is only asked of what it says itself.
+   */
+  readonly tidy?: (draft: Draft) => readonly TrackOf[];
   /** For taking changes back, which is not something to undo in turn. */
   readonly takesBack?: {
     readonly entries: readonly UndoEntry[];
@@ -185,6 +191,11 @@ export type CommandResult =
       readonly patches: readonly Patch[];
       /** The project after the change; for a dry run, what it would be. */
       readonly state: ProjectState;
+      /**
+       * Tracks the change left without clips, which went in the same step, see `Tidying`. Their
+       * removal is in `patches` too: not everything there is what the commands said.
+       */
+      readonly tracksRemoved?: readonly TrackOf[];
     }
   | { readonly ok: false; readonly error: CommandFailure };
 
@@ -679,6 +690,7 @@ export class ProjectStore {
   /** When the last undo record this store knows was saved, see `UndoRecord.at`. */
   #savedAt = 0;
   /** See `undoOutlook`. */
+  #tidying: Tidying = NO_TIDYING;
   readonly #outlooks = new Map<Origin, { readonly at: string; readonly outlook: UndoOutlook }>();
   /** See `beforeAfterOf`. */
   readonly #beforeAfters = new Map<Origin, { readonly at: string; readonly value: BeforeAfter }>();
@@ -990,6 +1002,19 @@ export class ProjectStore {
   }
 
   /**
+   * What batches of commands clean up after themselves from here on, in the same step: see
+   * `Tidying`. Nothing by default. Only commands do: not files that come in, merges, undo or redo,
+   * which have to end up as they say.
+   */
+  setTidying(tidying: Tidying): void {
+    this.#tidying = tidying;
+  }
+
+  get tidying(): Tidying {
+    return this.#tidying;
+  }
+
+  /**
    * Has every change from here on asked first: a failure refuses it, with the names of what it runs
    * (commands, or "file.import", "file.merge", "undo"). For what a project may not do here, such as
    * a temporary copy that takes no new assets, see `ProjectCopy`. What other windows and the platform
@@ -1030,7 +1055,13 @@ export class ProjectStore {
    */
   executeBatch(calls: readonly CommandCall[], options: ExecuteOptions = {}): CommandResult {
     const origin = options.origin ?? USER;
-    const checked = { ...options, checksDocuments: true };
+    const before = this.#state;
+    const tidies = this.#tidying.emptyTracks && origin !== STORAGE;
+    const checked: CommitOptions = {
+      ...options,
+      checksDocuments: true,
+      ...(tidies && { tidy: (draft: Draft) => removeEmptiedTracks(before, draft) }),
+    };
     return this.#commit(
       calls.map((call) => call.type),
       origin,
@@ -1708,13 +1739,18 @@ export class ProjectStore {
     if (this.#isBehind) return { ok: false, error: MISSING_UPDATES };
     const draft = new Draft(this.#state, origin, this.#written);
     let results: readonly unknown[];
+    let own: number;
+    let tracksRemoved: readonly TrackOf[] = [];
     try {
       results = plan(draft);
+      own = draft.steps.length;
+      if (options.tidy) tracksRemoved = options.tidy(draft);
     } catch (error) {
       if (error instanceof BatchFailure) return { ok: false, error: error.failure };
       if (error instanceof CommandError) return { ok: false, error: failureOf(error) };
       throw error;
     }
+    const tidied = tracksRemoved.length > 0 ? { tracksRemoved } : {};
 
     const patches = draft.steps.map((step) => step.patch);
     if (options.checksDocuments) {
@@ -1722,13 +1758,22 @@ export class ProjectStore {
       if (broken) return { ok: false, error: broken };
     }
     if (options.baseRevision !== undefined) {
-      const conflict = this.#findConflicts(patches, origin, options.baseRevision, options.isOwn);
+      // What the change cleans up is decided on the project as it is now, see `CommitOptions.tidy`.
+      const said = patches.slice(0, own);
+      const conflict = this.#findConflicts(said, origin, options.baseRevision, options.isOwn);
       if (conflict) return { ok: false, error: conflict };
     }
     const unexpected = options.expect?.(patches);
     if (unexpected) return { ok: false, error: unexpected };
     if (options.dryRun || patches.length === 0) {
-      return { ok: true, revision: this.#revision, results, patches, state: draft.state };
+      return {
+        ok: true,
+        revision: this.#revision,
+        results,
+        patches,
+        state: draft.state,
+        ...tidied,
+      };
     }
 
     const entry = this.#entryOf(draft, options);
@@ -1772,7 +1817,7 @@ export class ProjectStore {
 
     this.#history.push({ revision: this.#revision, origin, commands, patches, time: Date.now() });
     if (this.#history.length > MAX_HISTORY) this.#history = this.#history.slice(-MAX_HISTORY);
-    return { ok: true, revision: this.#revision, results, patches, state: this.#state };
+    return { ok: true, revision: this.#revision, results, patches, state: this.#state, ...tidied };
   }
 
   /** What it takes to undo a change that is about to be written. */

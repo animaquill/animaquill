@@ -33,7 +33,8 @@ import {
 } from "./model.ts";
 import { effectBandOf } from "./effect-band.ts";
 import { RULER_LABEL_Y, paintRuler, rulerLabels } from "./ruler.ts";
-import type { Preview } from "./gestures.ts";
+import type { BesideTrack, Preview } from "./gestures.ts";
+import type { Side } from "./new-track.ts";
 import { StagePainter, type Theme } from "./stage-painter.ts";
 
 const CLIP_RADIUS = 3;
@@ -58,7 +59,12 @@ const EFFECT_BAND_MIN_CLIP = 34;
 const EFFECT_BAND_LABEL_MIN = 20;
 const TRANSITION_HANDLE = 8;
 /** How tall a track that a drop would make shows, before it is there: as rows of its kind are. */
-const NEW_TRACK_HEIGHT = { video: 52, audio: 44 } as const;
+const NEW_TRACK_HEIGHT = { video: 52, audio: 44, caption: 32 } as const;
+/**
+ * How tall a new track next to a row shows while clips are dragged onto another clip, as a part of
+ * a row of its kind: over the line between two rows, which stay where they are under the pointer.
+ */
+const BESIDE_SCALE = 0.6;
 /**
  * What goes on clips, whose colours are what they are in either theme, so these are too: words and
  * marks, and a transition that does not work, on the dark plate of its block.
@@ -141,6 +147,14 @@ export type BelowPainter = (
   sharp: (value: number) => number,
 ) => void;
 
+/** Where a new track next to a row shows, see `#paintBesides`, in pixels of the canvas. */
+interface Band {
+  readonly beside: BesideTrack;
+  readonly row: Row;
+  readonly top: number;
+  readonly height: number;
+}
+
 interface ClipLook {
   readonly row: Row;
   readonly start: number;
@@ -179,6 +193,8 @@ export class TimelinePainter extends StagePainter {
   readonly #hasFailed: (clip: ClipState) => boolean;
   /** What a track that a drop would make is called, as a new track of its kind. */
   readonly #newTrackName: (kind: "video" | "audio", number: number) => string;
+  /** What a new track next to a row is called, as "视频 1 上面的新轨道". */
+  readonly #besideName: (row: Row, side: Side) => string;
   /** Draws what is under the clips of a track, over the rest. */
   readonly #below: BelowPainter | undefined;
   /**
@@ -199,6 +215,7 @@ export class TimelinePainter extends StagePainter {
     newTrackName: (kind: "video" | "audio", number: number) => string,
     below?: BelowPainter,
     downloadOf?: (clip: ClipState) => number | "failed" | undefined,
+    besideName: (row: Row, side: Side) => string = () => "",
   ) {
     super(canvas);
     this.#editor = editor;
@@ -211,6 +228,7 @@ export class TimelinePainter extends StagePainter {
     this.#newTrackName = newTrackName;
     this.#below = below;
     this.#downloadOf = downloadOf;
+    this.#besideName = besideName;
   }
 
   protected paint(): void {
@@ -380,9 +398,16 @@ export class TimelinePainter extends StagePainter {
     const { context } = this;
     const first = editor.timeAt(0);
     const last = editor.timeAt(editor.width);
-    for (const [id, { row, start, end }] of preview.clips ?? []) {
+    const bands = this.#paintBesides(model, preview.besides);
+    for (const [id, { row, start, end, beside }] of preview.clips ?? []) {
       const box = model.boxes.get(id);
-      if (box && end > first && start < last) {
+      if (!box || end <= first || start >= last) continue;
+      const band = beside === undefined ? undefined : bands.get(beside);
+      if (band) {
+        const name = this.#besideName(band.row, band.beside.side);
+        const label = [name, this.#labelOf(box)].filter((part) => part !== "").join(" · ");
+        this.#paintGhost(start, end, band.top, band.height, band.beside.kind, label);
+      } else {
         this.#paintClip(box, { row, start, end, selected: true });
       }
     }
@@ -396,7 +421,7 @@ export class TimelinePainter extends StagePainter {
       context.fillRect(left, top, editor.xAt(to) - left, row.height - ROW_INSET * 2 - 1);
     }
     context.globalAlpha = 1;
-    this.#paintAdding(model, preview.adding);
+    this.#paintAdding(model, preview.adding, bands);
     this.#paintTransitionDrop(model, preview.transitionDrop);
     this.#paintDelta(preview.delta);
   }
@@ -432,21 +457,109 @@ export class TimelinePainter extends StagePainter {
   }
 
   /**
+   * New tracks next to rows, as a band over the line between two rows with a line along it, where
+   * what lands on them shows. By their keys, with where they are.
+   */
+  #paintBesides(
+    model: TimelineModel,
+    besides: readonly BesideTrack[] | undefined,
+  ): ReadonlyMap<string, Band> {
+    const bands = new Map<string, Band>();
+    if (!besides) return bands;
+    const editor = this.#editor;
+    const { context } = this;
+    for (const beside of besides) {
+      const row = model.rows.find(({ id }) => id === beside.row);
+      if (!row) continue;
+      const boundary = beside.side === "above" ? row.top : row.top + row.height + row.below;
+      const line = this.sharp(RULER_HEIGHT - editor.scrollY + boundary);
+      const height = Math.round(NEW_TRACK_HEIGHT[beside.kind] * model.rowScale * BESIDE_SCALE);
+      // Over the line, but not under the ruler, where the first row starts.
+      const top = Math.max(Math.round(line - height / 2), RULER_HEIGHT);
+      bands.set(beside.key, { beside, row, top, height });
+      context.save();
+      context.globalAlpha = 0.14;
+      context.fillStyle = this.theme.selected;
+      context.fillRect(0, top, editor.width, height);
+      context.globalAlpha = 0.8;
+      context.strokeStyle = this.theme.selected;
+      context.lineWidth = 1;
+      context.setLineDash([4, 3]);
+      context.strokeRect(0.5, top + 0.5, editor.width - 1, height - 1);
+      context.setLineDash([]);
+      context.globalAlpha = 1;
+      context.fillStyle = this.theme.selected;
+      context.fillRect(0, line - 1, editor.width, 2);
+      context.restore();
+    }
+    return bands;
+  }
+
+  /** A clip that is not there yet: in the colour of its kind, see through, with a dashed outline. */
+  #paintGhost(
+    start: number,
+    end: number,
+    top: number,
+    height: number,
+    kind: "video" | "audio" | "caption",
+    label: string,
+  ): void {
+    const editor = this.#editor;
+    const { context } = this;
+    const left = this.sharp(editor.xAt(start));
+    const width = Math.max(this.sharp(editor.xAt(end)) - left, 2);
+    context.save();
+    context.globalAlpha = 0.55;
+    context.fillStyle =
+      kind === "audio"
+        ? this.theme.sound
+        : kind === "caption"
+          ? this.theme.caption
+          : this.theme.picture;
+    context.beginPath();
+    context.roundRect(left, top, width, height, CLIP_RADIUS);
+    context.fill();
+    context.globalAlpha = 1;
+    context.strokeStyle = this.theme.selected;
+    context.lineWidth = 2;
+    context.setLineDash([5, 3]);
+    context.beginPath();
+    context.roundRect(left + 1, top + 1, width - 2, height - 2, CLIP_RADIUS);
+    context.stroke();
+    context.setLineDash([]);
+    if (width >= LABEL_MIN_WIDTH && label) {
+      context.beginPath();
+      context.rect(left, top, width, height);
+      context.clip();
+      context.fillStyle = "#ffffff";
+      context.fillText(label, left + LABEL_PADDING, top + Math.min(height / 2, 12));
+    }
+    context.restore();
+  }
+
+  /**
    * Where what is dragged here from elsewhere would land: each clip it makes, as long as it is, on
    * its track, outlined. On a new track it shows where that track would come in, with its name.
    */
-  #paintAdding(model: TimelineModel, adding: Preview["adding"]): void {
+  #paintAdding(
+    model: TimelineModel,
+    adding: Preview["adding"],
+    bands: ReadonlyMap<string, Band>,
+  ): void {
     if (!adding) return;
     const editor = this.#editor;
     const { context } = this;
     for (const part of adding) {
-      const left = this.sharp(editor.xAt(part.start));
-      const width = Math.max(this.sharp(editor.xAt(part.end)) - left, 2);
       const row = part.row === undefined ? undefined : model.rows.find(({ id }) => id === part.row);
+      const band = part.beside === undefined ? undefined : bands.get(part.beside);
       let top: number;
       let height: number;
       let label = part.label;
-      if (row) {
+      if (band) {
+        ({ top, height } = band);
+        const name = this.#besideName(band.row, band.beside.side);
+        label = label ? `${name} · ${label}` : name;
+      } else if (row) {
         top = this.#rowTop(row) + ROW_INSET;
         height = row.height - ROW_INSET * 2 - 1;
       } else {
@@ -462,28 +575,7 @@ export class TimelinePainter extends StagePainter {
         const name = this.#newTrackName(part.kind, number.length + 1);
         label = label ? `${name} · ${label}` : name;
       }
-      context.save();
-      context.globalAlpha = 0.55;
-      context.fillStyle = part.kind === "audio" ? this.theme.sound : this.theme.picture;
-      context.beginPath();
-      context.roundRect(left, top, width, height, CLIP_RADIUS);
-      context.fill();
-      context.globalAlpha = 1;
-      context.strokeStyle = this.theme.selected;
-      context.lineWidth = 2;
-      context.setLineDash([5, 3]);
-      context.beginPath();
-      context.roundRect(left + 1, top + 1, width - 2, height - 2, CLIP_RADIUS);
-      context.stroke();
-      context.setLineDash([]);
-      if (width >= LABEL_MIN_WIDTH && label) {
-        context.beginPath();
-        context.rect(left, top, width, height);
-        context.clip();
-        context.fillStyle = "#ffffff";
-        context.fillText(label, left + LABEL_PADDING, top + Math.min(height / 2, 12));
-      }
-      context.restore();
+      this.#paintGhost(part.start, part.end, top, height, part.kind, label);
     }
   }
 

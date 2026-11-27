@@ -63,7 +63,7 @@ import { TRANSITION_DRAG_TYPE, transitionDrag } from "./transition-drag.ts";
 import { transitionName } from "./transition-names.ts";
 import { pointerOf, useStage } from "./stage.ts";
 import { ToolButton } from "./ToolButton.tsx";
-import { useTrackName } from "../mixer/names.ts";
+import { nameOfTrack, useTrackName } from "../mixer/names.ts";
 import { RippleToolIcon, RollToolIcon, SlideToolIcon, SlipToolIcon } from "./ToolIcons.tsx";
 import {
   MarkerBubble,
@@ -333,7 +333,7 @@ function TrackHeader({
   const { t } = useTranslation();
   const nameOf = useTrackName();
   const reorder = useRef<Reorder | undefined>(undefined);
-  const { input } = useWorkbench();
+  const { input, dialogs } = useWorkbench();
   const [renaming, setRenaming] = useState(false);
   const name = nameOf(row);
   const { track } = row;
@@ -434,6 +434,21 @@ function TrackHeader({
     onReorder(undefined);
   };
 
+  /** What is on the track goes with it, which people say yes to first; an empty one just goes. */
+  const remove = async () => {
+    const count = row.clips.length;
+    if (count > 0) {
+      const sure = await dialogs.confirm({
+        title: t("timeline.removeTrackConfirm", { track: name, count }),
+        message: "",
+        confirm: t("timeline.removeTrackConfirmButton"),
+        danger: true,
+      });
+      if (!sure) return;
+    }
+    editor.removeTrack(row.id);
+  };
+
   const finishRenaming = (next: string | undefined) => {
     setRenaming(false);
     if (next !== undefined && next !== name) editor.updateTrack(row.id, { name: next });
@@ -486,7 +501,7 @@ function TrackHeader({
                 id: "remove",
                 label: t("timeline.removeTrack"),
                 disabled: track.locked === true,
-                run: () => editor.removeTrack(row.id),
+                run: () => void remove(),
               },
             ],
           ],
@@ -639,10 +654,39 @@ function TrackHeaders({
           ))}
           <LaneRows area={keyframes.inTimeline} />
           {dropLine !== undefined && <div className={styles.dropLine} style={{ top: dropLine }} />}
+          <BesideTags editor={editor} model={model} />
         </div>
       </div>
     </div>
   );
+}
+
+/**
+ * Where a drag onto other clips would make new tracks, on the line between the rows the canvas
+ * shows them on. The canvas says it all already, so this is not for screen readers.
+ */
+function BesideTags({ editor, model }: { editor: TimelineEditor; model: TimelineModel }) {
+  const { t } = useTranslation();
+  const besides = useEditorView(editor, () => editor.preview?.besides);
+  return besides?.map(({ key, row: id, side }) => {
+    const row = model.rows.find((each) => each.id === id);
+    if (!row) return null;
+    const top = side === "above" ? row.top : row.top + row.height + row.below;
+    return (
+      <Fragment key={key}>
+        <div className={styles.besideLine} style={{ top }} aria-hidden />
+        <div
+          className={styles.newTrackTag}
+          style={{ top }}
+          aria-hidden
+          data-beside={side}
+          data-first={top === 0 || undefined}
+        >
+          {t("timeline.newTrackTag")}
+        </div>
+      </Fragment>
+    );
+  });
 }
 
 /** What is on the canvas, for those who cannot see it. */
@@ -656,19 +700,35 @@ function DropStatus({ editor }: { editor: TimelineEditor }) {
   const preview = useEditorView(editor, () => editor.preview);
   const model = editor.model;
   const first = preview?.adding?.[0];
+  // Clips that people drag say where they go only when that is on a new track.
+  const moved = [...(preview?.clips?.values() ?? [])].find(({ beside }) => beside !== undefined);
+  const besideOf = (key: string | undefined) => {
+    const beside = preview?.besides?.find((each) => each.key === key);
+    const row = beside && model?.rows.find(({ id }) => id === beside.row);
+    if (!beside || !row) return undefined;
+    const side = t(`timeline.side.${beside.side}`);
+    return t("timeline.newTrackBeside", { track: trackNameOf(row), side });
+  };
   let text = "";
   if (model && first) {
     const row = model.rows.find(({ id }) => id === first.row);
     const others = model.rows.filter(({ track, gone }) => track.kind === first.kind && !gone);
     const newTrack = t(`timeline.track.${first.kind}`, { number: others.length + 1 });
-    const track = row ? trackNameOf(row) : t("timeline.dropNewTrack", { track: newTrack });
+    const track =
+      besideOf(first.beside) ??
+      (row ? trackNameOf(row) : t("timeline.dropNewTrack", { track: newTrack }));
     const start = formatTimecode(Math.round(first.start * model.rate.fps), model.rate);
     const covered = preview?.covered?.length ?? 0;
     text = t("timeline.dropAt", { track, start });
     if (covered > 0) text += t("timeline.dropOver", { count: covered });
+  } else if (model && moved) {
+    const track = besideOf(moved.beside) ?? "";
+    const start = formatTimecode(Math.round(moved.start * model.rate.fps), model.rate);
+    text = t("timeline.dropAt", { track, start });
   }
+  const shows = text !== "";
   return (
-    <p className={styles.dropStatus} role="status" data-drop={first ? "" : undefined}>
+    <p className={styles.dropStatus} role="status" data-drop={shows ? "" : undefined}>
       {text}
     </p>
   );
@@ -881,6 +941,11 @@ function Surface({
             paintSnapLine(context, lanes, theme, sharp);
           },
           (clip) => workbench.downloadOfClip(clip),
+          (row, side) =>
+            t("timeline.newTrackBeside", {
+              track: nameOfTrack(t, row),
+              side: t(`timeline.side.${side}`),
+            }),
         );
       },
       repaintOn: (listener) => {

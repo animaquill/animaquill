@@ -41,7 +41,6 @@ import {
   fitEffects,
   fitTransitions,
   followJoins,
-  joinPath,
   joinsAtEdgesOf,
   joinsTogether,
   removeClips,
@@ -171,6 +170,7 @@ import {
 } from "./scene-edits.ts";
 import { codeUsingAsset } from "./scene-plan.ts";
 import { takeTheirs } from "./merge-files.ts";
+import { removeTrackIn } from "./tidy-tracks.ts";
 
 /** A conflict of a merge, as `MergeConflict` says it, whose other side `conflict.take` takes. */
 const ConflictTake = z.strictObject({
@@ -1430,15 +1430,8 @@ export const OPERATIONS = [
     z.strictObject({ timeline: Id, track: Id }),
     (draft, params) => {
       const { timeline, track } = params;
-      const target = timelineOf(draft, timeline);
-      trackOf(target, track);
-      for (const clip of Object.values(target.clips)) {
-        if (clip.track === track) draft.delete(clipPath(timeline, clip.id));
-      }
-      for (const [id, join] of Object.entries(target.joins ?? {})) {
-        if (join.track === track) draft.delete(joinPath(timeline, id));
-      }
-      draft.delete(trackPath(timeline, track));
+      trackOf(timelineOf(draft, timeline), track);
+      removeTrackIn(draft, timeline, track);
     },
     { group: "track", result: Nothing, failures: ["not-found"] },
   ),

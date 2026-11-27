@@ -1,4 +1,5 @@
 import type { Locator, Page } from "@playwright/test";
+import { closeSettings, settingsOf } from "./ai-support.ts";
 import {
   chooseLayout,
   content,
@@ -221,8 +222,11 @@ test.describe("clips next to each other", () => {
 
   test("stay as they are by default, and the clip goes to a free place", async ({ page }) => {
     const second = clips(page).nth(1);
-    const [x, y] = await middleOf(second);
-    const { width } = await boxOf(second);
+    const [, y] = await middleOf(second);
+    const { x: left, width } = await boxOf(second);
+    // Grabbed near its end, so that the mouse stays off the first clip: right on it, the clip
+    // would go on a new track.
+    const x = left + width * 0.95;
     await drag(page, [x, y], [x - width * 0.8, y]);
     await settle(page);
     await expectLabel(clips(page).first(), /0:00\/00 到 0:05\/00/);
@@ -582,7 +586,170 @@ test.describe("tracks", () => {
     const [x, y] = await middleOf(clip);
     const target = await boxOf(trackHeader(page, "视频 2"));
     await drag(page, [x, y], [x, target.y + target.height / 2]);
+    // The track it left has nothing on it any more, and goes in the same step: the one it is on
+    // now is the only video track, and so the first.
+    await expect(trackHeader(page, "视频 2")).toHaveCount(0);
+    await expectLabel(clip, /视频 1/);
+    await page.keyboard.press("Control+z");
+    await expect(trackHeader(page, "视频 2")).toBeVisible();
+    await expectLabel(clip, /视频 1/);
+  });
+
+  test("ask before going with the clips on them, and come back with one undo", async ({ page }) => {
+    await addColor(page);
+    await openTrackMenu(page);
+    await page.getByRole("menuitem", { name: "视频轨道" }).click();
+    await expect(trackHeader(page, "视频 2")).toBeVisible();
+    const dialog = page.locator("dialog[open]");
+    await trackHeader(page, "视频 1").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "删除轨道" }).click();
+    await expect(dialog.getByRole("heading")).toHaveText("删除视频 1 和上面的 1 个片段？");
+    await dialog.getByRole("button", { name: "取消" }).click();
+    await expect(clips(page)).toHaveCount(1);
+    await expect(trackHeader(page, "视频 2")).toBeVisible();
+
+    await trackHeader(page, "视频 1").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "删除轨道" }).click();
+    await dialog.getByRole("button", { name: "删除", exact: true }).click();
+    await expect(clips(page)).toHaveCount(0);
+    await expect(trackHeader(page, "视频 2")).toHaveCount(0);
+    await stage(page).focus();
+    await page.keyboard.press("Control+z");
+    await expect(clips(page)).toHaveCount(1);
+    await expect(trackHeader(page, "视频 2")).toBeVisible();
+    await expectLabel(clips(page).first(), /视频 1/);
+  });
+
+  test("change places by dragging their headers, among their kind, and undo puts them back", async ({
+    page,
+  }) => {
+    await addColor(page);
+    await openTrackMenu(page);
+    await page.getByRole("menuitem", { name: "视频轨道" }).click();
+    const clip = clips(page).first();
+    await expectLabel(clip, /视频 1/);
+    const upper = await boxOf(trackHeader(page, "视频 2"));
+    const lower = await boxOf(trackHeader(page, "视频 1"));
+    // The empty track on top goes under the one with the clip.
+    const from: [number, number] = [upper.x + upper.width / 2, upper.y + upper.height / 2];
+    await page.mouse.move(...from);
+    await page.mouse.down();
+    await page.mouse.move(from[0], lower.y + lower.height * 0.9, { steps: 8 });
+    await expect(panel(page).locator("[class*=dropLine]")).toHaveCount(1);
+    await page.mouse.up();
+    await expect(panel(page).locator("[class*=dropLine]")).toHaveCount(0);
     await expectLabel(clip, /视频 2/);
+    await stage(page).focus();
+    await page.keyboard.press("Control+z");
+    await expectLabel(clip, /视频 1/);
+  });
+});
+
+test.describe("dropped right on another clip", () => {
+  const status = (page: Page) => panel(page).locator("[role=status][data-drop]");
+
+  test.beforeEach(async ({ page }) => {
+    await addColor(page, 2);
+    await page.keyboard.press("Home");
+    await settle(page);
+  });
+
+  for (const [half, side, place] of [
+    [0.25, "上面", "above"],
+    [0.75, "下面", "below"],
+  ] as const) {
+    test(`goes on a new track ${place} it, shown first, and one undo takes it back`, async ({
+      page,
+    }) => {
+      const first = clips(page).first();
+      const second = clips(page).nth(1);
+      const [x, y] = await middleOf(second);
+      const target = await boxOf(first);
+      await page.mouse.move(x, y);
+      await page.mouse.down();
+      await page.mouse.move(target.x + target.width / 2, target.y + target.height * half, {
+        steps: 8,
+      });
+      await expect(status(page)).toHaveText(new RegExp(`^松手放到视频 1${side}的新轨道，`));
+      await expect(panel(page).getByText("新轨道", { exact: true })).toBeVisible();
+      await page.mouse.up();
+      await expect(status(page)).toHaveCount(0);
+      await expect(trackHeader(page, "视频 2")).toBeVisible();
+      // Both clips are at the start now, the one dropped on the new track above or below.
+      const at = (track: string) =>
+        panel(page).locator(`[aria-label^="纯色，${track}，0:00/00 到"]`);
+      await expect(at("视频 1")).toHaveCount(1);
+      await expect(at("视频 2")).toHaveCount(1);
+      await stage(page).focus();
+      await page.keyboard.press("Control+z");
+      await expect(trackHeader(page, "视频 2")).toHaveCount(0);
+      await expect(
+        panel(page).locator('[aria-label^="纯色，视频 1，0:05/00 到 0:10/00"]'),
+      ).toHaveCount(1);
+    });
+  }
+});
+
+test.describe("empty tracks", () => {
+  test.beforeEach(async ({ page }) => {
+    await addColor(page);
+    await page.keyboard.press("Home");
+    await settle(page);
+    await panel(page).getByRole("button", { name: "添加轨道" }).click();
+    await page.getByRole("menuitem", { name: "视频轨道" }).click();
+    await expect(trackHeader(page, "视频 2")).toBeVisible();
+  });
+
+  const toUpper = async (page: Page) => {
+    const [x, y] = await middleOf(clips(page).first());
+    const target = await boxOf(trackHeader(page, "视频 2"));
+    await drag(page, [x, y], [x, target.y + target.height / 2]);
+  };
+
+  test("go when their last clip is deleted", async ({ page }) => {
+    await toUpper(page);
+    await expect(trackHeader(page, "视频 2")).toHaveCount(0);
+    // Only the last track of the timeline stays: here the sound track, which never had a clip.
+    await page.mouse.click(...(await middleOf(clips(page).first())));
+    await page.keyboard.press("Delete");
+    await expect(clips(page)).toHaveCount(0);
+    await expect(trackHeader(page, "视频 1")).toHaveCount(0);
+    await expect(trackHeader(page, "音频 1")).toBeVisible();
+    await page.keyboard.press("Control+z");
+    await expect(clips(page)).toHaveCount(1);
+    await expectLabel(clips(page).first(), /视频 1/);
+  });
+
+  test("stay when people named them", async ({ page }) => {
+    await trackHeader(page, "视频 1").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "重命名轨道" }).click();
+    await panel(page).getByRole("textbox", { name: "轨道名称" }).fill("主画面");
+    await page.keyboard.press("Enter");
+    await expect(trackHeader(page, "主画面")).toBeVisible();
+    await toUpper(page);
+    await expectLabel(clips(page).first(), /视频 2/);
+    await expect(trackHeader(page, "主画面")).toBeVisible();
+  });
+
+  test("stay with the switch in the settings off, which stays off", async ({ page }) => {
+    await page.keyboard.press("Control+Comma");
+    const settings = settingsOf(page);
+    await settings.getByRole("searchbox", { name: "搜索设置" }).fill("空轨道");
+    await settings.getByTestId("settings-result").first().click();
+    const toggle = settings.getByRole("switch", { name: "自动删除空轨道" });
+    await expect(toggle).toBeChecked();
+    await toggle.uncheck();
+    await closeSettings(page);
+    await toUpper(page);
+    await expectLabel(clips(page).first(), /视频 2/);
+    await expect(trackHeader(page, "视频 1")).toBeVisible();
+    await waitSaved(page);
+    await page.reload();
+    await showTab(page, "timeline");
+    await page.keyboard.press("Control+Comma");
+    await settings.getByRole("searchbox", { name: "搜索设置" }).fill("空轨道");
+    await settings.getByTestId("settings-result").first().click();
+    await expect(settings.getByRole("switch", { name: "自动删除空轨道" })).not.toBeChecked();
   });
 });
 

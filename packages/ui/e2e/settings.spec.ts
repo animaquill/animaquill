@@ -294,9 +294,15 @@ test("each group has only what is a setting, and words only where they are neede
   ]);
   const general = settingsOf(page).getByTestId("settings-general");
   await expect(general).toHaveText(/^常规语言简体中文颜色主题跟随系统浅色深色界面字号小标准大$/);
-  expect(await rows("编辑", "settings-editing")).toEqual(["editing.trial"]);
+  expect(await rows("编辑", "settings-editing")).toEqual([
+    "editing.trial",
+    "editing.removeEmptyTracks",
+  ]);
   await expect(settingsOf(page).getByTestId("settings-editing")).toContainText(
     "手动改属性和关键帧时先进入试改",
+  );
+  await expect(settingsOf(page).getByTestId("settings-editing")).toContainText(
+    "改过名字、锁定、静音独奏或调过混音的轨道不删。",
   );
   expect(await rows("预览和播放", "settings-playback")).toEqual(["playback.proxyOffer"]);
   await expect(settingsOf(page).getByTestId("settings-playback")).toContainText(

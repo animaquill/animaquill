@@ -502,6 +502,7 @@ export {
   type ManyUndoResult,
   type Origin,
 } from "./store.ts";
+export { emptiedTracks, keepsEmptyTrack, type Tidying, type TrackOf } from "./tidy-tracks.ts";
 export { UNDO_FORMAT, isUndoRecord, type UndoRecord } from "./undo-record.ts";
 export type { Path } from "./structure.ts";
 export {

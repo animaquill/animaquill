@@ -57,9 +57,10 @@ export function GeneralGroup() {
 // ---- 编辑
 
 export function EditingGroup() {
-  const { trials } = useWorkbench();
+  const { trials, emptyTracks } = useWorkbench();
   const { t } = useTranslation();
   const { enabled, count } = useSyncExternalStore(trials.subscribe, trials.getSnapshot);
+  const removesEmpty = useSyncExternalStore(emptyTracks.subscribe, emptyTracks.getSnapshot);
   return (
     <GroupPage title={t("settings.groups.editing")}>
       <SettingRow
@@ -75,6 +76,13 @@ export function EditingGroup() {
           label={t("settings.items.editing.trial.name")}
           checked={enabled}
           onChange={(on) => trials.setEnabled(on)}
+        />
+      </SettingRow>
+      <SettingRow id="editing.removeEmptyTracks">
+        <Toggle
+          label={t("settings.items.editing.removeEmptyTracks.name")}
+          checked={removesEmpty}
+          onChange={(on) => emptyTracks.set(on)}
         />
       </SettingRow>
     </GroupPage>

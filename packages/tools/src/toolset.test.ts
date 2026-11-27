@@ -44,9 +44,10 @@ import type { Tool } from "./types.ts";
  * (2026-11-17); 2026.18 added retimeKeys, and took 74 466 (2026-11-17); 2026.19 gave
  * property.edit owners that are tracks of sound (PropertyOwner), and took 74 573 (2026-11-18);
  * 2026.20 gave the operations of effects tracks and the master, and property.edit the master, and
- * took 75 475 (2026-11-18). It is a ceiling, so that the list does not grow unnoticed.
+ * took 75 475 (2026-11-18); 2026.21 says in aq_edit that a track the batch leaves without clips goes
+ * with it, and took 75 721 (2026-11-26). It is a ceiling, so that the list does not grow unnoticed.
  */
-const MOST_CHARACTERS = 75_500;
+const MOST_CHARACTERS = 75_750;
 
 const listOf = (tools: Iterable<Tool>) =>
   [...tools].map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));

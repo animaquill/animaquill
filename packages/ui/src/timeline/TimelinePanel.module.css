@@ -550,3 +550,33 @@
   width: 3px;
   background: var(--aq-accent);
 }
+
+/* Where a drag onto other clips makes a new track, on the line the canvas draws. */
+.newTrackTag {
+  position: absolute;
+  left: 8px;
+  padding: 0 6px;
+  font-size: calc(11px * var(--aq-size-scale));
+  line-height: 16px;
+  color: var(--aq-timeline-selected);
+  pointer-events: none;
+  background: var(--aq-bg-panel);
+  border: 1px dashed var(--aq-timeline-selected);
+  border-radius: 4px;
+  transform: translateY(-50%);
+}
+
+/* On top of the first row, it stays inside the list. */
+.newTrackTag[data-first] {
+  transform: none;
+}
+
+.besideLine {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 2px;
+  margin-top: -1px;
+  background: var(--aq-timeline-selected);
+  pointer-events: none;
+}

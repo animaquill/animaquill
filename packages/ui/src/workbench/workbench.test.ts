@@ -656,6 +656,21 @@ describe("exporting with something being tried", () => {
   });
 });
 
+describe("empty tracks", () => {
+  it("go with the change that empties them in every project people open, as they set it", async () => {
+    const { workbench } = setup();
+    await create(workbench, "一");
+    expect(workbench.session.store?.tidying).toEqual({ emptyTracks: true });
+    workbench.emptyTracks.set(false);
+    expect(workbench.session.store?.tidying).toEqual({ emptyTracks: false });
+    await workbench.closeProject();
+    await create(workbench, "二");
+    expect(workbench.session.store?.tidying).toEqual({ emptyTracks: false });
+    workbench.emptyTracks.set(true);
+    expect(workbench.session.store?.tidying).toEqual({ emptyTracks: true });
+  });
+});
+
 describe("changing project", () => {
   it("opens a project once, however quickly people click", async () => {
     const { workbench, library } = setup();

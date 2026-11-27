@@ -36,6 +36,15 @@ import {
   type Row,
   type TimelineModel,
 } from "./model.ts";
+import {
+  besideBefore,
+  hasOtherAt,
+  hasOtherBetween,
+  isInRow,
+  sideOf,
+  type Side,
+  type TrackKind,
+} from "./new-track.ts";
 import { snapPointsOf, type SnapPoint, type SnapPoints } from "./snap.ts";
 
 /** Where the pointer is, in pixels from the top left of the timeline area. */
@@ -52,6 +61,18 @@ export interface PreviewClip {
   readonly row: Row;
   readonly start: number;
   readonly end: number;
+  /** On the new track next to `row` with this key, see `Preview.besides`. */
+  readonly beside?: string;
+}
+
+/** A track that a drag would make next to a row, see `Preview.besides`. */
+export interface BesideTrack {
+  /** Which new track, for what lands on it. */
+  readonly key: string;
+  /** The row it comes next to. */
+  readonly row: string;
+  readonly side: Side;
+  readonly kind: TrackKind;
 }
 
 /** A stretch of a track that is about to be overwritten. */
@@ -107,7 +128,14 @@ export interface Preview {
     readonly start: number;
     readonly end: number;
     readonly label: string;
+    /** On the new track with this key, see `besides`. */
+    readonly beside?: string;
   }[];
+  /**
+   * New tracks that what is dropped on other clips would make, next to the row it was dropped on,
+   * as long as neither overwriting nor inserting is on.
+   */
+  readonly besides?: readonly BesideTrack[];
   /** Where a transition dragged from the transitions tab would go, in seconds on a track. */
   readonly transitionDrop?: { readonly row: string; readonly start: number; readonly end: number };
   /** What follows moves on or back, as inserting and ripple trims make it. */
@@ -329,9 +357,20 @@ function nearestRow(rows: readonly Row[], lane: number): Row | undefined {
 }
 
 /**
+ * Where clips of a drag go when they land on others with neither overwriting nor inserting: on a
+ * new track next to the row they land on, on one side for all of them. By the clips that do.
+ */
+interface Beside {
+  readonly side: Side;
+  readonly rows: ReadonlyMap<string, Row>;
+}
+
+/**
  * Moves the selected clips together, or copies them with Ctrl held. What is in the way stays: they
  * go to the nearest free place, unless people turned on overwriting, or insert: with the switch, or
- * for as long as Shift is held, what follows where they land moves on to make room.
+ * for as long as Shift is held, what follows where they land moves on to make room. Dropped right
+ * on another clip, they go on a new track above or below it instead, by the half of the row the
+ * pointer is in.
  */
 export class MoveGesture implements Gesture {
   readonly reachesRows = true;
@@ -352,6 +391,7 @@ export class MoveGesture implements Gesture {
   #inserting = false;
   #shift = 0;
   #landing: Landing | undefined;
+  #beside: Beside | undefined;
 
   constructor(host: GestureHost, grabbed: ClipBox, row: Row, press: Pointer, onClick: () => void) {
     this.#host = host;
@@ -378,8 +418,48 @@ export class MoveGesture implements Gesture {
     this.#copying = pointer.mod;
     this.#inserting = pointer.shift || this.#host.inserting;
     this.#shift = this.#allowedShift(pointer);
-    this.#landing = this.#avoidOthers(this.#land(pointer)) ?? this.#landing;
+    const landing = this.#land(pointer);
+    this.#beside = this.#besideAt(pointer, landing);
+    this.#landing = this.#beside ? landing : (this.#avoidOthers(landing) ?? this.#landing);
     this.#showPreview();
+  }
+
+  /**
+   * Whether the clips go on new tracks: only right on another clip, where the pointer is, not
+   * where they just touch one at their ends. Then every clip that would cover something does.
+   */
+  #besideAt(pointer: Pointer, landing: Landing): Beside | undefined {
+    if (this.#host.overwriting || this.#inserting) return undefined;
+    const target = this.#targetRow(this.#row);
+    const lane = this.#host.laneAt(pointer.y);
+    if (target.track.locked || !isInRow(target, lane)) return undefined;
+    // Copies leave the clips they are made of where they are, in the way.
+    const ignored = this.#copying ? new Set<string>() : this.#ids;
+    if (!hasOtherAt(target, this.#host.timeAt(pointer.x), ignored)) return undefined;
+    const delta = landing.seconds - this.#grabbed.start;
+    const rows = new Map<string, Row>();
+    for (const { box, row } of this.#moving) {
+      const to = this.#targetRow(row);
+      if (hasOtherBetween(to, box.start + delta, box.end + delta, ignored)) rows.set(box.id, to);
+    }
+    return rows.size > 0 ? { side: sideOf(target, lane), rows } : undefined;
+  }
+
+  /** The new tracks the clips go on, by the row each comes next to, and the commands for them. */
+  #newTracks(): { readonly ids: ReadonlyMap<string, string>; readonly calls: CommandCall[] } {
+    const beside = this.#beside;
+    const ids = new Map<string, string>();
+    const calls: CommandCall[] = [];
+    if (!beside) return { ids, calls };
+    const { model } = this.#host;
+    for (const row of new Set(beside.rows.values())) {
+      const id = newId("track");
+      ids.set(row.id, id);
+      const before = besideBefore(model, row, beside.side);
+      const params = { timeline: model.id, id, kind: row.track.kind, ...(before && { before }) };
+      calls.push({ type: "track.add", params });
+    }
+    return { ids, calls };
   }
 
   end(pointer: Pointer): void {
@@ -397,7 +477,7 @@ export class MoveGesture implements Gesture {
     const landing = this.#landing;
     if (!landing) return;
     const delta = subtract(landing.exact(), clipStart(this.#grabbed.clip));
-    const unchanged = compare(delta, ZERO) === 0 && this.#shift === 0;
+    const unchanged = compare(delta, ZERO) === 0 && this.#shift === 0 && !this.#beside;
     if (unchanged) return;
     if (this.#copying) this.#commitCopies(delta);
     else this.#commitMove(delta);
@@ -408,35 +488,45 @@ export class MoveGesture implements Gesture {
     return this.#host.overwriting ? { overlap: "overwrite" } : {};
   }
 
+  /** The track a clip goes on: next to its row, on a new one, or the row it lands on. */
+  #trackOf(box: ClipBox, row: Row, made: ReadonlyMap<string, string>): string {
+    const target = this.#targetRow(row);
+    const next = this.#beside?.rows.get(box.id);
+    return (next && made.get(next.id)) ?? target.id;
+  }
+
   #commitMove(delta: Rational): void {
+    const made = this.#newTracks();
     const clips = this.#moving.map(({ box, row }) => {
-      const target = this.#targetRow(row);
+      const track = this.#trackOf(box, row, made.ids);
       return {
         clip: box.id,
         start: formatTime(add(clipStart(box.clip), delta)),
-        ...(target === row ? {} : { track: target.id }),
+        ...(track === row.id ? {} : { track }),
       };
     });
     const { id: timeline } = this.#host.model;
-    this.#host.run([{ type: "clip.move", params: { timeline, clips, ...this.#overlap() } }]);
+    const move = { type: "clip.move", params: { timeline, clips, ...this.#overlap() } };
+    this.#host.run([...made.calls, move]);
   }
 
   #commitCopies(delta: Rational): void {
     const copies = copiesOf(this.#moving.map(({ box }) => box.clip));
     // Copies that go in make room once, for all of them, and then land where it is free.
     const overlap = this.#inserting ? {} : this.#overlap();
+    const made = this.#newTracks();
     const calls = this.#moving.map(({ box, row }, index) => {
       const copy = copies[index] as ClipCopy;
       const clip = { ...copy, start: formatTime(add(clipStart(box.clip), delta)) };
       const { id: timeline } = this.#host.model;
-      const track = this.#targetRow(row).id;
+      const track = this.#trackOf(box, row, made.ids);
       return { type: "clip.add", params: { timeline, track, ...clip, ...overlap } };
     });
     const originals = this.#moving.map(({ box }) => box.id);
     const { model } = this.#host;
     const joins = copiedJoins(model.id, joinsAmong(model, originals), originals, copies);
     const room = this.#inserting ? this.#roomFor(delta) : [];
-    if (this.#host.run([...room, ...calls, ...joins])) {
+    if (this.#host.run([...made.calls, ...room, ...calls, ...joins])) {
       this.#host.select(new Set(copies.map(({ id }) => id)));
     }
   }
@@ -454,8 +544,10 @@ export class MoveGesture implements Gesture {
     this.#host.setPreview(undefined);
   }
 
+  /** Also where a track it can go to went away, as somebody else or AI removed it. */
   isStale(model: TimelineModel): boolean {
-    return [...this.#ids].some((id) => !model.boxes.has(id));
+    const gone = (row: Row) => !row.gone && model.state.tracks[row.id] === undefined;
+    return [...this.#ids].some((id) => !model.boxes.has(id)) || this.#sameKind.some(gone);
   }
 
   /** Rows of other kinds stay: a picture cannot land on a sound track. */
@@ -546,11 +638,19 @@ export class MoveGesture implements Gesture {
     let first = Number.POSITIVE_INFINITY;
     let last = Number.NEGATIVE_INFINITY;
     const rows = new Set(rippleRows(this.#host));
+    const besides = new Map<string, BesideTrack>();
     for (const { box, row } of this.#moving) {
       const target = this.#targetRow(row);
       const start = box.start + delta;
       const end = box.end + delta;
-      clips.set(box.id, { row: target, start, end });
+      const next = this.#beside?.rows.get(box.id);
+      if (next && this.#beside) {
+        const { side } = this.#beside;
+        besides.set(next.id, { key: next.id, row: next.id, side, kind: next.track.kind });
+        clips.set(box.id, { row: target, start, end, beside: next.id });
+      } else {
+        clips.set(box.id, { row: target, start, end });
+      }
       first = Math.min(first, start);
       last = Math.max(last, end);
       rows.add(target.id);
@@ -565,7 +665,8 @@ export class MoveGesture implements Gesture {
     const copying = this.#copying ? { copying: true } : {};
     const aside = this.#copying ? new Set<string>() : this.#ids;
     const shift = this.#inserting ? { shift: { at: first, by: last - first, rows, aside } } : {};
-    this.#host.setPreview({ clips, covered, ...copying, ...shift, ...lineOf(landing) });
+    const beside = besides.size > 0 ? { besides: [...besides.values()] } : {};
+    this.#host.setPreview({ clips, covered, ...copying, ...shift, ...beside, ...lineOf(landing) });
   }
 }
 

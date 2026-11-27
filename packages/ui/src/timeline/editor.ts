@@ -109,7 +109,17 @@ import {
   type Placed,
   type Pointer,
   type Preview,
+  type BesideTrack,
 } from "./gestures.ts";
+import {
+  besideBefore,
+  hasOtherAt,
+  hasOtherBetween,
+  isInRow,
+  newTrackNumber,
+  sideOf,
+  type Side,
+} from "./new-track.ts";
 import { snapPointsOf } from "./snap.ts";
 import { RollGesture, SlideGesture, SlipGesture, partnersOf } from "./slip-drag.ts";
 import { TOOL_CURSORS } from "./tool-shapes.ts";
@@ -276,7 +286,14 @@ type MediaWhere =
 
 /** Where it would land, see `TimelineEditor.#planMedia`. */
 interface MediaPlan {
-  readonly parts: readonly (MediaPart & { readonly row: Row | undefined })[];
+  /**
+   * Each on a track, or on a new one: next to its row on a side where it was dropped on another
+   * clip, see `#dropSide`, or else on top of the pictures or under all sound.
+   */
+  readonly parts: readonly (MediaPart & {
+    readonly row: Row | undefined;
+    readonly beside?: Side;
+  })[];
   readonly at: Rational;
   readonly duration: Rational;
   readonly mode: DropMode;
@@ -2753,12 +2770,25 @@ export class TimelineEditor implements TouchTarget {
       }
     }
     const end = add(start, duration);
-    const parts = what.parts.map((part) => ({
+    const rows = what.parts.map((part) => ({
       ...part,
       row: free
         ? this.#freeRow(model, part.kind, start, end)
         : this.#rowForNew(model, part.kind, dropped?.lane),
     }));
+    const side = mode === "avoid" && dropped ? this.#dropSide(model, rows, dropped) : undefined;
+    const from = toSeconds(start);
+    const to = toSeconds(end);
+    const none = new Set<string>();
+    const parts: MediaPlan["parts"] = rows.map((part) =>
+      side && part.row && hasOtherBetween(part.row, from, to, none)
+        ? { ...part, beside: side }
+        : part,
+    );
+    // On a new track, nothing is in the way; and what does not go on one has nothing in its way.
+    if (parts.some(({ beside }) => beside !== undefined)) {
+      return { parts, at: start, duration, mode, ...(line === undefined ? {} : { line }) };
+    }
     const placed = parts.flatMap(({ row }): Placed[] =>
       row
         ? [
@@ -2778,6 +2808,24 @@ export class TimelineEditor implements TouchTarget {
     return { parts, at, duration, mode, ...(line === undefined ? {} : { line }) };
   }
 
+  /**
+   * Which side of the row it was dropped on a new track goes, where it was dropped right on a clip
+   * there: by the half of the row the pointer is in. Nothing elsewhere, as on the room between two
+   * clips, where it goes to the nearest free place instead.
+   */
+  #dropSide(
+    model: TimelineModel,
+    parts: readonly { readonly row: Row | undefined }[],
+    dropped: DropPlace,
+  ): Side | undefined {
+    if (dropped.lane === undefined) return undefined;
+    const pointed = rowAt(model, dropped.lane);
+    if (!pointed || !parts.some(({ row }) => row === pointed)) return undefined;
+    if (!isInRow(pointed, dropped.lane)) return undefined;
+    if (!hasOtherAt(pointed, Math.max(dropped.seconds, 0), new Set())) return undefined;
+    return sideOf(pointed, dropped.lane);
+  }
+
   /** Puts it where `#planMedia` says, in one step, selects what it made and says where it went. */
   #putMedia(model: TimelineModel, what: MediaWhat, where: MediaWhere): MediaAdded | undefined {
     const plan = this.#planMedia(model, what, where);
@@ -2785,13 +2833,21 @@ export class TimelineEditor implements TouchTarget {
     const trackCalls: CommandCall[] = [];
     const ids: string[] = [];
     const tracks: MediaAdded["tracks"][number][] = [];
-    const calls = plan.parts.map(({ kind, source, row }): CommandCall => {
-      let track = row?.id;
+    const calls = plan.parts.map(({ kind, source, row, beside }): CommandCall => {
+      let track = beside ? undefined : row?.id;
       if (!track) {
         track = newId("track");
-        trackCalls.push({ type: "track.add", params: { timeline: model.id, id: track, kind } });
+        const before = row && beside ? besideBefore(model, row, beside) : undefined;
+        const params = { timeline: model.id, id: track, kind, ...(before && { before }) };
+        trackCalls.push({ type: "track.add", params });
+        tracks.push(
+          row && beside
+            ? { kind, number: newTrackNumber(model, kind, before) }
+            : newTrackOf(model, kind),
+        );
+      } else if (row) {
+        tracks.push({ kind, number: row.number, ...nameOf(row) });
       }
-      tracks.push(row ? { kind, number: row.number, ...nameOf(row) } : newTrackOf(model, kind));
       const id = newId("clip");
       ids.push(id);
       return {
@@ -2838,7 +2894,13 @@ export class TimelineEditor implements TouchTarget {
       const to = toSeconds(add(plan.at, plan.duration));
       const covered: CoveredSpan[] = [];
       const rows = new Set(this.#rippleTracks(model));
-      const adding = plan.parts.map(({ kind, row }) => {
+      const besides: BesideTrack[] = [];
+      const adding = plan.parts.map(({ kind, row, beside }) => {
+        const label = what.name ?? "";
+        if (row && beside) {
+          besides.push({ key: row.id, row: row.id, side: beside, kind });
+          return { kind, row: undefined, start: from, end: to, label, beside: row.id };
+        }
         if (row && plan.mode === "overwrite") {
           forEachBetween(row, from, to, (other) => {
             const left = Math.max(from, other.start);
@@ -2846,7 +2908,7 @@ export class TimelineEditor implements TouchTarget {
             if (right > left) covered.push({ row, from: left, to: right });
           });
         }
-        return { kind, row: row?.id, start: from, end: to, label: what.name ?? "" };
+        return { kind, row: row?.id, start: from, end: to, label };
       });
       const aside = new Set<string>();
       const shift =
@@ -2854,6 +2916,7 @@ export class TimelineEditor implements TouchTarget {
       this.#preview = {
         adding,
         covered,
+        ...(besides.length > 0 && { besides }),
         ...shift,
         ...(plan.line === undefined ? {} : { snap: plan.line }),
       };
@@ -2982,7 +3045,9 @@ export class TimelineEditor implements TouchTarget {
   /** A locked track stays, with what is on it, until people take the lock off. */
   removeTrack(track: string): void {
     const { model } = this;
-    if (!model || model.state.tracks[track]?.locked === true) return;
+    // Somebody else can have removed it while people were asked.
+    const found = model?.state.tracks[track];
+    if (!model || !found || found.locked === true) return;
     this.#run([{ type: "track.remove", params: { timeline: model.id, track } }]);
   }
 

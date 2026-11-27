@@ -1,6 +1,7 @@
 import { createProject } from "@animaquill/schema";
 import { describe, expect, it } from "vitest";
 import { brokenDocument } from "./document-check.ts";
+import { emptiedTracks } from "./tidy-tracks.ts";
 import { ProjectStore, type CommandResult } from "./store.ts";
 
 function success(result: CommandResult) {
@@ -138,4 +139,54 @@ describe("the check of documents before a change is written", () => {
 const move = (clip: string, start: string) => ({
   type: "clip.move",
   params: { timeline: "main", clips: [{ clip, start }] },
+});
+
+describe("cleaning up empty tracks", () => {
+  it("adds no more than a millisecond to a change in a timeline of 10,000 clips", () => {
+    const project = createProject({ name: "大项目" });
+    const main = project.timelines.get("main")?.document;
+    if (!main) throw new Error("no timeline");
+    const tracks = Array.from({ length: 10 }, (_track, number) => ({
+      id: `t${number}`,
+      kind: "video",
+      clips: Array.from({ length: 1000 }, (_, index) => ({
+        id: `c${number}_${index}`,
+        start: String(index * 2),
+        duration: "1",
+        source: color,
+      })),
+    }));
+    const store = ProjectStore.create({
+      ...project,
+      timelines: new Map([
+        ["main", { document: { ...main, tracks } as never, overrides: new Map() }],
+      ]),
+    });
+    const calls = {
+      // A clip that leaves its track, which is then looked at.
+      moves: {
+        type: "clip.move",
+        params: { timeline: "main", clips: [{ clip: "c0_0", track: "t1", start: "2001" }] },
+      },
+      // Nothing that leaves a track.
+      edits: {
+        type: "clip.setProperty",
+        params: { timeline: "main", clip: "c0_0", path: "opacity", value: 0.5 },
+      },
+    } as const;
+    // Measured on its own: a whole change takes some 30 ms here, which is more than its noise. What
+    // each track has is counted once for the project before it, which dry runs have in common.
+    const before = store.getState();
+    for (const call of Object.values(calls)) {
+      const { state, patches } = success(store.execute(call, { dryRun: true }));
+      const steps = patches.map((patch) => ({ patch })) as never;
+      const times: number[] = [];
+      for (let round = 0; round < 41; round++) {
+        const started = performance.now();
+        emptiedTracks(before, state, steps);
+        times.push(performance.now() - started);
+      }
+      expect(times.toSorted((a, b) => a - b)[20], call.type).toBeLessThan(1);
+    }
+  });
 });

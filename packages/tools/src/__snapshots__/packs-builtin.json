@@ -2,7 +2,7 @@
  {
   "id": "animaquill/default",
   "name": "Default",
-  "version": "2026.20",
+  "version": "2026.21",
   "description": "The words AnimaQuill writes for every model.",
   "author": {
    "name": "AnimaQuill"
@@ -13,7 +13,7 @@
   "call": {},
   "variants": [],
   "edits": [],
-  "hash": "1gr1mzgbx0u"
+  "hash": "2y45l7abja"
  },
  {
   "id": "animaquill/claude-5",
