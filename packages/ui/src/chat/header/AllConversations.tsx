@@ -1,6 +1,6 @@
 import type { SavedChatSummary } from "@animaquill/host";
 import { ArrowLeft, CloudOff, LoaderCircle, Pencil, Search, Trash2 } from "lucide-react";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../app/context.ts";
 import { Tip } from "../../app/Tip.tsx";
@@ -34,6 +34,25 @@ export function AllConversations(props: {
   const [removing, setRemoving] = useState<string>();
   const now = useNow(true, 60_000);
   const busy = renaming !== undefined || removing !== undefined;
+  // Where the focus goes once a row is drawn again: after not deleting, or deleting.
+  const [focus, setFocus] = useState<
+    { readonly id: string; readonly on: "open" | "remove" } | { readonly on: "search" }
+  >();
+  const page = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!focus) return;
+    const root = page.current;
+    const target =
+      focus.on === "search"
+        ? root?.querySelector<HTMLElement>('[data-testid="chat-all-search"]')
+        : root?.querySelector<HTMLElement>(
+            `[data-id="${CSS.escape(focus.id)}"] [data-role="${focus.on}"]`,
+          );
+    if (!target) return;
+    target.focus();
+    const done = setTimeout(() => setFocus(undefined), 0);
+    return () => clearTimeout(done);
+  });
   const { onClose } = props;
   useEffect(() => {
     if (busy) return;
@@ -94,20 +113,47 @@ export function AllConversations(props: {
       );
     }
     if (removing === id) {
+      const cancel = () => {
+        setRemoving(undefined);
+        setFocus({ id, on: "remove" });
+      };
       return (
-        <div key={id} className={styles.confirm} data-testid="chat-conversation" data-removing="">
+        <div
+          key={id}
+          className={styles.confirm}
+          data-testid="chat-conversation"
+          data-removing=""
+          data-id={id}
+          role="group"
+          aria-label={t("chat.list.removeConfirm")}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            cancel();
+          }}
+        >
           <p className={styles.confirmText}>
             <strong>{t("chat.list.removeConfirm")}</strong>
             <span>{t("chat.list.removeNote")}</span>
           </p>
-          <button type="button" onClick={() => setRemoving(undefined)}>
+          {/* Not deleting is where the focus starts: Enter there takes nothing away. */}
+          {/* oxlint-disable-next-line jsx-a11y/no-autofocus -- the row it replaced had it */}
+          <button type="button" autoFocus onClick={cancel}>
             {t("chat.list.cancel")}
           </button>
           <button
             type="button"
             className={styles.danger}
             onClick={() => {
+              // The row after it has the focus once it is gone, else the one before, else the search.
+              const order = byDay(snapshot.saved, now).flatMap(({ chats }) =>
+                chats.map((each) => each.id),
+              );
+              const at = order.indexOf(id);
+              const next = order[at + 1] ?? order[at - 1];
               setRemoving(undefined);
+              setFocus(next === undefined ? { on: "search" } : { id: next, on: "open" });
               void chat.remove(id);
             }}
           >
@@ -133,10 +179,12 @@ export function AllConversations(props: {
         className={styles.row}
         data-testid="chat-conversation"
         data-current={current ? "" : undefined}
+        data-id={id}
       >
         <button
           type="button"
           className={styles.rowOpen}
+          data-role="open"
           aria-current={current}
           disabled={off}
           title={off ? t("chat.switcher.whenDone") : undefined}
@@ -176,7 +224,7 @@ export function AllConversations(props: {
               type="button"
               className={styles.iconButton}
               aria-label={t("chat.list.rename", { title })}
-              onClick={() => setRenaming({ id, title: chat_.title })}
+              onClick={() => setRenaming({ id, title })}
             >
               <Pencil size={12} aria-hidden />
             </button>
@@ -189,6 +237,7 @@ export function AllConversations(props: {
               type="button"
               className={styles.iconButton}
               aria-label={t("chat.list.removeLabel", { title })}
+              data-role="remove"
               disabled={current && running}
               onClick={() => setRemoving(id)}
             >
@@ -202,6 +251,7 @@ export function AllConversations(props: {
 
   return (
     <div
+      ref={page}
       className={styles.page}
       role="region"
       aria-label={t("chat.switcher.allTitle")}

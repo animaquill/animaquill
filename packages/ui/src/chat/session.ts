@@ -175,6 +175,11 @@ export interface ChatSnapshot {
    * first: the first of a task is the card under it. Never kept: after a reload the task stopped.
    */
   readonly approvals: readonly PendingApproval[];
+  /**
+   * A new conversation people asked for while a task ran, which waits for it to be done: when, so
+   * that the head of the chat says so where people asked, also from a key.
+   */
+  readonly refusedNew?: number;
 }
 
 /** A change that waits for people to allow it, see `ChatSnapshot.approvals`. */
@@ -721,7 +726,10 @@ export class ChatSession {
 
   /** A conversation from the start. The one before stays among the saved ones. */
   newConversation(): void {
-    if (this.running) return;
+    if (this.running) {
+      this.#set({ refusedNew: Date.now() });
+      return;
+    }
     void this.flush();
     this.#start([], undefined, undefined);
   }

@@ -4364,7 +4364,8 @@
       "current": "当前",
       "all": "全部对话…",
       "allTitle": "全部对话",
-      "back": "返回"
+      "back": "返回",
+      "removeWhenDone": "这一轮做完后可以删除"
     },
     "suggest": {
       "moveSelected": "把选中的 {{count}} 个片段往后挪 1 秒",

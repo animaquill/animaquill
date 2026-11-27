@@ -816,7 +816,15 @@ test("the head: the switcher, the page of all conversations, ⋯, an empty one, 
   await box(page).fill("慢慢来");
   await box(page).press("Enter");
   await expect(chat(page).getByTestId("chat-send")).toHaveAttribute("data-state", "stop");
-  await expect(chat(page).getByTestId("chat-new")).toBeDisabled();
+  // ✎ waits for it, and says so where people asked, also from the key.
+  await expect(chat(page).getByTestId("chat-new")).toHaveAttribute("aria-disabled", "true");
+  // Playwright takes `aria-disabled` for a button it waits on: people can click it all the same.
+  await chat(page).getByTestId("chat-new").click({ force: true });
+  await expect(chat(page).getByTestId("chat-new-why")).toHaveText("这一轮做完后可以开新对话");
+  await expect(chat(page).getByTestId("chat-new-why")).toBeHidden({ timeout: 5000 });
+  await box(page).press("Control+Alt+n");
+  await expect(chat(page).getByTestId("chat-new-why")).toBeVisible();
+  await expect(chat(page).getByTestId("chat-task")).toHaveCount(2);
   await sceneBothThemes(page, "8-switcher-running", "5", async () => {
     await title.click();
     await expect(chat(page).getByTestId("chat-switcher")).toContainText("这一轮做完后可以切换");

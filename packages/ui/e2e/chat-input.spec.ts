@@ -316,10 +316,21 @@ test("the list: rename, search, delete; a new conversation from a turn; quoting 
   await expect(switcher.locator('[data-testid="chat-switcher-row"][data-current]')).toHaveCount(1);
   await expect(switcher.getByTestId("chat-switcher-search")).toBeFocused();
   await shoot(page, "list");
-  // ↓ Enter opens the other one; Esc closes it, back on the title.
+  // Esc closes it, back on the title; ↓ Enter opens the other one, and the box has the focus.
   await page.keyboard.press("Escape");
   await expect(switcher).toBeHidden();
   await expect(chat(page).getByTestId("chat-title")).toBeFocused();
+  await chat(page).getByTestId("chat-title").click();
+  const before = await chat(page).getByTestId("chat-title").textContent();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(switcher).toBeHidden();
+  await expect(chat(page).getByTestId("chat-title")).not.toHaveText(before ?? "");
+  await expect(box(page)).toBeFocused();
+  // Back to the one copied from the other, which stays to the end.
+  await chat(page).getByTestId("chat-title").click();
+  await switcher.getByTestId("chat-switcher-row").filter({ hasText: "从《" }).click();
+  await expect(chat(page).getByTestId("chat-title")).toContainText("从《");
 
   // All of them, a page of its own over the conversation: renamed in its row.
   await chat(page).getByTestId("chat-title").click();
@@ -329,6 +340,14 @@ test("the list: rename, search, delete; a new conversation from a turn; quoting 
   await expect(list.getByTestId("chat-conversation").first()).toContainText(
     "从《把字幕往上挪一点》第 2 轮分出",
   );
+  // The name to change starts as the row says it, also for one copied from another.
+  const forked = list.getByTestId("chat-conversation").first();
+  await forked.hover();
+  await forked.getByRole("button", { name: /重命名/ }).click();
+  await expect(list.getByRole("textbox", { name: "重命名" })).toHaveValue(
+    "从《把字幕往上挪一点》第 2 轮分出",
+  );
+  await list.getByRole("textbox", { name: "重命名" }).press("Escape");
   // Each says when, how much AI changed, and the model it had.
   const first = list.getByTestId("chat-conversation").filter({ hasText: /^把字幕往上挪一点/ });
   await expect(first).toContainText("claude-test");
@@ -354,6 +373,12 @@ test("the list: rename, search, delete; a new conversation from a turn; quoting 
   await renamed.getByRole("button", { name: /删除/ }).click();
   await expect(list).toContainText("删除这个对话？");
   await expect(list).toContainText("对话里 AI 做的改动不会撤销。");
+  // From the keyboard: the focus on not deleting; Esc does not delete, back on the bin.
+  await expect(list.getByRole("button", { name: "取消" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(list).toContainText("字幕的位置");
+  await expect(renamed.getByRole("button", { name: /删除/ })).toBeFocused();
+  await renamed.getByRole("button", { name: /删除/ }).click();
   await list.getByRole("button", { name: "删除", exact: true }).click();
   await expect(list.getByTestId("chat-conversation")).toHaveCount(1);
   await page.keyboard.press("Escape");

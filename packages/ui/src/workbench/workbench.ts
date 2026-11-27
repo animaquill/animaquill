@@ -4909,13 +4909,15 @@ export class Workbench {
       title: (t) => t("chat.action.newConversation"),
       run: () => {
         this.layout.openPanel("chat");
+        // While a task runs the chat says why nothing happens, where ✎ is.
+        const running = this.chat.running;
         this.chat.newConversation();
-        requestAnimationFrame(() => this.#compose("focus")?.());
+        if (!running) requestAnimationFrame(() => this.#compose("focus")?.());
       },
       // Ctrl+Alt+N, ⌘⌥N: not what AltGr types (`comboOf`).
       keys: ["mod+alt+n"],
       scope: "chat",
-      enabled: () => this.session.store !== undefined && !this.chat.running,
+      enabled: () => this.session.store !== undefined,
     });
     this.actions.register({
       id: "chat.openPlus",

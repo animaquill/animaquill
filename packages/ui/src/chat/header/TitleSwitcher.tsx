@@ -1,5 +1,5 @@
 import type { SavedChatSummary } from "@animaquill/host";
-import { Check, ChevronDown, LoaderCircle, Search } from "lucide-react";
+import { Check, ChevronDown, CloudOff, LoaderCircle, Search } from "lucide-react";
 import {
   useEffect,
   useId,
@@ -13,6 +13,7 @@ import { useWorkbench } from "../../app/context.ts";
 import { agoText } from "../../app/start-view.ts";
 import { useNow } from "../clock.ts";
 import { byDay } from "../conversations.ts";
+import { useChatUi } from "../ui.ts";
 import styles from "./header.module.css";
 import { useFound } from "./search.ts";
 import { titleOf } from "./title.ts";
@@ -146,6 +147,7 @@ function Switcher(props: {
   readonly onAll: () => void;
 }) {
   const { chat } = useWorkbench();
+  const ui = useChatUi();
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
   const running = snapshot.conversation?.running === true;
@@ -185,6 +187,8 @@ function Switcher(props: {
     if (closed(choice.id)) return;
     if (choice.id !== snapshot.id) await chat.open(choice.id);
     props.onClose(false);
+    // Opened: where people go on, the box.
+    ui.focusInput();
     props.onFound(choice.task, searching ? query.trim() : undefined);
   };
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -237,6 +241,16 @@ function Switcher(props: {
           ) : null}
         </span>
         <span className={styles.optionTitle}>{titleOf(t, chat_)}</span>
+        {chat_.unsent && (
+          <span
+            className={styles.unsent}
+            role="img"
+            aria-label={t("chat.list.unsent")}
+            title={t("chat.list.unsent")}
+          >
+            <CloudOff size={12} aria-hidden />
+          </span>
+        )}
         <span className={styles.ago}>
           {current && running
             ? t("chat.switcher.running")
