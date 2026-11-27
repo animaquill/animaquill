@@ -1866,12 +1866,14 @@ describe("another device wrote a conversation meanwhile (ChatNewer)", () => {
     const kept = memoryChats();
     let armed: { readonly id: string; readonly theirs: string; readonly same?: true } | undefined;
     let copies = 0;
-    /** Reading waits for this, where a test holds it. */
+    /** Reading waits for this, where a test holds it; writing too. */
     let reading: Promise<void> = Promise.resolve();
+    let writing: Promise<void> = Promise.resolve();
     const store: ChatStore & {
       /** The next write of `id` finds `theirs`; or theirs says the same (`same`): no copy. */
       arm(id: string, theirs: string, same?: true): void;
       holdReading(): () => void;
+      holdWriting(): () => void;
     } = {
       ...kept,
       list: (project) => kept.list(project),
@@ -1881,6 +1883,7 @@ describe("another device wrote a conversation meanwhile (ChatNewer)", () => {
       },
       remove: (project, id) => kept.remove(project, id),
       save: async (chat) => {
+        await writing;
         if (armed?.id !== chat.id) return kept.save(chat);
         const { theirs, same } = armed;
         armed = undefined;
@@ -1905,6 +1908,14 @@ describe("another device wrote a conversation meanwhile (ChatNewer)", () => {
         reading = new Promise((resolve) => (go = resolve));
         return () => {
           reading = Promise.resolve();
+          go();
+        };
+      },
+      holdWriting: () => {
+        let go = () => {};
+        writing = new Promise((resolve) => (go = resolve));
+        return () => {
+          writing = Promise.resolve();
           go();
         };
       },
@@ -2159,5 +2170,78 @@ describe("another device wrote a conversation meanwhile (ChatNewer)", () => {
     await within(chat.flush());
     expect((await texts(chats, a)).at(-1)).toBe("做完了");
     expect(await chats.load("p1", "copy-1")).toBeUndefined();
+  });
+
+  it("let go of while a write finds theirs the same, no copy: what changed since is written under its id", async () => {
+    const chats = newerStore();
+    const { ai, chat, fake, open } = setup({ chats });
+    ai.setAskBeforeEdit(true);
+    fake({ fake: [{ calls: [addMarker("1")] }, { text: "不会到" }] });
+    const sent = chat.send("我这边");
+    const a = chat.getSnapshot().id as string;
+    await vi.waitFor(() => expect(chat.getSnapshot().allApprovals).toHaveLength(1));
+    await chat.flush();
+    // A write on its way, and a change after it that waits to be written.
+    const go = chats.holdWriting();
+    chat.chooseModel({ service: "s", model: "before" });
+    const writing = chat.flush();
+    chat.chooseModel({ service: "s", model: "after" });
+    chats.arm(a, "", true);
+    // Let go of, as another project opens, while it still runs: the write finds theirs the same.
+    open({ store: ProjectStore.create(createProject({ name: "第二个" })), key: "p2" });
+    go();
+    await within(writing);
+    expect((await within(sent))?.end).toBe("stopped");
+    await vi.waitFor(async () =>
+      expect((await chats.load("p1", a))?.model).toEqual({ service: "s", model: "after" }),
+    );
+    expect(await chats.load("p1", "copy-1")).toBeUndefined();
+  });
+
+  it("takes the plans people changed along to the copy, and 按这个做 lets go of its own there", async () => {
+    const chats = newerStore();
+    const { ai, chat, fake } = setup({ chats, memory: windowMemory() });
+    const plan = (title: string) => ({
+      calls: [
+        {
+          name: "aq_propose",
+          args: { kind: "plan", title, steps: [{ text: "第一步", from: "0", to: "4" }] },
+        },
+      ],
+    });
+    fake({ fake: [plan("一")] });
+    await chat.send("先出一个方案");
+    fake({ fake: [plan("二")] });
+    await chat.send("再出一个方案");
+    const a = chat.getSnapshot().id as string;
+    const [one, two] = (chat.getSnapshot().conversation?.getSnapshot().entries ?? []).flatMap(
+      (entry) => (entry.role === "tool" && entry.name === "aq_propose" ? [entry.call] : []),
+    );
+    const changed = [{ text: "改过的一步", from: "0", to: "4" }];
+    chat.planDrafts.write("p1", a, one ?? "", changed);
+    chat.planDrafts.write("p1", a, two ?? "", changed);
+    await chat.flush();
+    // 按这个做 for the second, which waits for people to allow its change; another device wrote
+    // the conversation meanwhile.
+    ai.setAskBeforeEdit(true);
+    fake({ fake: [{ calls: [addMarker("1")] }, { text: "做好了" }] });
+    const accepted = chat.acceptPlan(two ?? "", "按这个做：改过的一步");
+    let asked: { readonly id: string } | undefined;
+    await vi.waitFor(() => {
+      asked = chat.getSnapshot().allApprovals[0];
+      expect(asked).toBeDefined();
+    });
+    chats.arm(a, "那边写的");
+    chat.chooseModel({ service: "s", model: "m" });
+    await within(chat.flush());
+    expect(chat.getSnapshot().id).toBe("copy-1");
+    // The first plan as people changed it is on the copy now, and only there.
+    expect(chat.planDrafts.read("p1", "copy-1", one ?? "")).toEqual(changed);
+    expect(chat.planDrafts.read("p1", a, one ?? "")).toBeUndefined();
+    chat.answerApproval(asked?.id ?? "", "once");
+    expect((await within(accepted))?.end).toBe("done");
+    // The plan that went is let go of, on neither id.
+    expect(chat.planDrafts.read("p1", "copy-1", two ?? "")).toBeUndefined();
+    expect(chat.planDrafts.read("p1", a, two ?? "")).toBeUndefined();
   });
 });

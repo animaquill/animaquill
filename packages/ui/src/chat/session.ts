@@ -980,9 +980,9 @@ export class ChatSession {
           // being deleted. Nothing here waits for that, as it runs where the writes of this
           // conversation wait.
           const hosted = this.#runs.get(id) === run;
-          clearTimeout(run.saving);
-          run.pending = undefined;
           if (error.copy) {
+            clearTimeout(run.saving);
+            run.pending = undefined;
             this.#split(run, error.copy, hosted);
             if (!hosted) void this.#flushRun(run);
             else if (!this.#busy(run)) {
@@ -990,11 +990,12 @@ export class ChatSession {
               if (run === this.#shown) void this.#showTheirs(run, id);
               else this.#retire(run);
             }
-          } else if (hosted) {
-            // What this page had says what theirs says: it goes on as it is.
-            if (this.#busy(run)) this.#saveSoon(run);
-            else if (run === this.#shown) void this.open(id, true);
-            else this.#retire(run);
+          } else {
+            // What this page had says what theirs says: it goes on under its id, written again as
+            // it is now, with what changed since this write began; at once where the window let go
+            // of it, as nothing else writes it then.
+            this.#saveSoon(run);
+            if (!hosted) void this.#flushRun(run);
           }
           if (this.#project?.key === project) {
             const saved = await this.#chats.list(project).catch(() => undefined);
