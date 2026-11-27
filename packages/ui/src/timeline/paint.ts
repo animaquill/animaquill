@@ -473,11 +473,17 @@ export class TimelinePainter extends StagePainter {
       if (!row) continue;
       const boundary = beside.side === "above" ? row.top : row.top + row.height + row.below;
       const line = this.sharp(RULER_HEIGHT - editor.scrollY + boundary);
-      const height = Math.round(NEW_TRACK_HEIGHT[beside.kind] * model.rowScale * BESIDE_SCALE);
-      // Over the line, but not under the ruler, where the first row starts.
-      const top = Math.max(Math.round(line - height / 2), RULER_HEIGHT);
+      const full = Math.round(NEW_TRACK_HEIGHT[beside.kind] * model.rowScale * BESIDE_SCALE);
+      // Over the line; on top of the first row it starts right under the ruler instead, over the
+      // top of the row, so that nothing of it is hidden and the label of the clip there is covered.
+      const centered = Math.round(line - full / 2);
+      const top = centered < RULER_HEIGHT ? Math.max(line, RULER_HEIGHT) : centered;
+      const height = full;
       bands.set(beside.key, { beside, row, top, height });
       context.save();
+      // A track of its own between the rows: what is under it does not show through.
+      context.fillStyle = this.theme.background;
+      context.fillRect(0, top, editor.width, height);
       context.globalAlpha = 0.14;
       context.fillStyle = this.theme.selected;
       context.fillRect(0, top, editor.width, height);

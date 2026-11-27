@@ -126,8 +126,8 @@ function emptiedOf(
 /**
  * The tracks a change left without clips, which go with it; see `keepsEmptyTrack`. Only tracks that
  * had a clip the change took away or moved off: a track that was empty, or that the change added,
- * stays. Neither does a timeline lose its last track: of those it would, the first video track
- * stays, or the first track without one.
+ * stays. Neither does a timeline lose its last video track or its last audio track, the first of
+ * them staying, nor its last track of any kind.
  */
 export function emptiedTracks(
   before: ProjectState,
@@ -146,8 +146,16 @@ export function emptiedTracks(
     if (going.length === 0) continue;
     const ordered = orderedTracks(now);
     const leaving = new Set(going);
+    // A timeline always has a video track and an audio track, as in Premiere and Resolve: the
+    // first of a kind stays where all of that kind would go. Captions have no such floor.
+    for (const kind of ["video", "audio"]) {
+      const ofKind = ordered.filter((track) => track.kind === kind);
+      const first = ofKind[0];
+      if (first && ofKind.every((track) => leaving.has(track.id))) leaving.delete(first.id);
+    }
+    // Nor does a timeline lose its last track, of whatever kind.
     if (ordered.every((track) => leaving.has(track.id))) {
-      const stays = ordered.find((track) => track.kind === "video") ?? ordered[0];
+      const stays = ordered[0];
       if (stays) leaving.delete(stays.id);
     }
     // In the order of the timeline, so that what it says does not depend on the commands.

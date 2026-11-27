@@ -1350,7 +1350,7 @@
     "trackName": "轨道名称",
     "renameTrack": "重命名轨道",
     "removeTrack": "删除轨道",
-    "removeTrackConfirm": "删除{{track}} 和上面的 {{count}} 个片段？",
+    "removeTrackConfirm": "删除{{track}}和上面的 {{count}} 个片段？",
     "removeTrackConfirmButton": "删除",
     "newTrackBeside": "{{track}}{{side}}的新轨道",
     "side": {

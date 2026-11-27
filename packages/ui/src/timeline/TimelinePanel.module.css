@@ -568,7 +568,8 @@
 
 /* On top of the first row, it stays inside the list. */
 .newTrackTag[data-first] {
-  transform: none;
+  line-height: 12px;
+  transform: translateY(3px);
 }
 
 .besideLine {

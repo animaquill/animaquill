@@ -190,16 +190,21 @@ describe("empty tracks go with the change that emptied them", () => {
     expect(keepsEmptyTrack(track({ properties: {}, effects: [], sends: [] }))).toBe(false);
   });
 
-  it("leaves a timeline its first video track, or its first track without one", () => {
-    const store = project();
-    run(store, [clipAdd("s", "a1")]);
-    const result = run(store, [removeClips("c1", "c2", "s")]);
-    expect(result.tracksRemoved).toEqual([
-      { timeline: "main", track: "v2" },
-      { timeline: "main", track: "a1" },
-    ]);
-    expect(tracksOf(store)).toEqual(["v1"]);
+  it("leaves a timeline a video track and an audio track, the first of each", () => {
+    // The only video clip: its track stays.
+    const only = project();
+    run(only, [removeClips("c2")]);
+    expect(run(only, [removeClips("c1")])).not.toHaveProperty("tracksRemoved");
+    expect(tracksOf(only)).toEqual(["v1", "a1"]);
 
+    // Two video tracks emptied at once: one stays, the first.
+    const both = project();
+    run(both, [clipAdd("s", "a1")]);
+    const result = run(both, [removeClips("c1", "c2", "s")]);
+    expect(result.tracksRemoved).toEqual([{ timeline: "main", track: "v2" }]);
+    expect(tracksOf(both)).toEqual(["v1", "a1"]);
+
+    // Of two audio tracks, the first stays, also where the video tracks are gone.
     const sound = project();
     run(sound, [
       { type: "track.add", params: { timeline: "main", id: "a2", kind: "audio" } },
@@ -210,6 +215,51 @@ describe("empty tracks go with the change that emptied them", () => {
     ]);
     run(sound, [removeClips("s1", "s2")]);
     expect(tracksOf(sound)).toEqual(["a1"]);
+  });
+
+  it("has no floor for captions: an emptied caption track goes, also the last one", () => {
+    const store = project();
+    run(store, [
+      { type: "track.add", params: { timeline: "main", id: "t1", kind: "caption" } },
+      {
+        type: "clip.add",
+        params: {
+          timeline: "main",
+          track: "t1",
+          id: "w",
+          start: "0",
+          duration: "2",
+          source: { kind: "caption", text: "字幕" },
+        },
+      },
+    ]);
+    expect(run(store, [removeClips("w")]).tracksRemoved).toEqual([
+      { timeline: "main", track: "t1" },
+    ]);
+    expect(tracksOf(store)).toEqual(["v1", "v2", "a1"]);
+
+    // Where captions are all a timeline has, the last track stays all the same.
+    const alone = project();
+    run(alone, [
+      { type: "track.add", params: { timeline: "main", id: "t1", kind: "caption" } },
+      {
+        type: "clip.add",
+        params: {
+          timeline: "main",
+          track: "t1",
+          id: "w",
+          start: "0",
+          duration: "2",
+          source: { kind: "caption", text: "字幕" },
+        },
+      },
+      removeClips("c1", "c2"),
+      { type: "track.remove", params: { timeline: "main", track: "v1" } },
+      { type: "track.remove", params: { timeline: "main", track: "v2" } },
+      { type: "track.remove", params: { timeline: "main", track: "a1" } },
+    ]);
+    run(alone, [removeClips("w")]);
+    expect(tracksOf(alone)).toEqual(["t1"]);
   });
 
   it("looks at each timeline on its own", () => {
@@ -236,9 +286,9 @@ describe("empty tracks go with the change that emptied them", () => {
       { timeline: "main", track: "v2" },
     ]);
     expect(tracksOf(store, "other")).toEqual(["w1", "b1"]);
-    // The last track that stays need not be one that had clips.
+    // The last video track stays.
     run(store, [removeClips("c1")]);
-    expect(tracksOf(store)).toEqual(["a1"]);
+    expect(tracksOf(store)).toEqual(["v1", "a1"]);
   });
 
   it("takes the joins of a track along that has none of their clips", () => {

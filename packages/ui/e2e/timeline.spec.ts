@@ -603,7 +603,7 @@ test.describe("tracks", () => {
     const dialog = page.locator("dialog[open]");
     await trackHeader(page, "视频 1").click({ button: "right" });
     await page.getByRole("menuitem", { name: "删除轨道" }).click();
-    await expect(dialog.getByRole("heading")).toHaveText("删除视频 1 和上面的 1 个片段？");
+    await expect(dialog.getByRole("heading")).toHaveText("删除视频 1和上面的 1 个片段？");
     await dialog.getByRole("button", { name: "取消" }).click();
     await expect(clips(page)).toHaveCount(1);
     await expect(trackHeader(page, "视频 2")).toBeVisible();
@@ -706,14 +706,16 @@ test.describe("empty tracks", () => {
     await drag(page, [x, y], [x, target.y + target.height / 2]);
   };
 
-  test("go when their last clip is deleted", async ({ page }) => {
+  test("go when their last clip is deleted, apart from the last of their kind", async ({
+    page,
+  }) => {
     await toUpper(page);
     await expect(trackHeader(page, "视频 2")).toHaveCount(0);
-    // Only the last track of the timeline stays: here the sound track, which never had a clip.
+    // The only video track left keeps its place when its last clip goes, as in Premiere.
     await page.mouse.click(...(await middleOf(clips(page).first())));
     await page.keyboard.press("Delete");
     await expect(clips(page)).toHaveCount(0);
-    await expect(trackHeader(page, "视频 1")).toHaveCount(0);
+    await expect(trackHeader(page, "视频 1")).toBeVisible();
     await expect(trackHeader(page, "音频 1")).toBeVisible();
     await page.keyboard.press("Control+z");
     await expect(clips(page)).toHaveCount(1);
