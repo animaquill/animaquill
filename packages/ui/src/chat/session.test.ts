@@ -509,6 +509,33 @@ describe("asking before a change of the project (S-D4)", () => {
     ]);
   });
 
+  it("does not allow the change, with what people wrote for AI, which goes on with it", async () => {
+    const { ai, chat, fake, markers } = setup();
+    ai.setAskBeforeEdit(true);
+    fake({ fake: [{ calls: [addMarker("1")] }, { text: "好，改放到 3 秒" }] });
+    // Nothing waits yet: nothing to answer.
+    expect(chat.declineWith("放到 3 秒")).toBe(false);
+    const sent = chat.send("加个标记");
+    await waiting(chat, 1);
+    // Only words: a block of the editor as what it says; nothing of only spaces.
+    expect(chat.declineWith("   ")).toBe(false);
+    expect(chat.declineWith("放到 [0:03/00](aq://time?timeline=main&t=3) 那里")).toBe(true);
+    expect((await sent)?.end).toBe("done");
+    expect(markers()).toHaveLength(0);
+    const entries = chat.getSnapshot().conversation?.getSnapshot().entries ?? [];
+    const declined = entries.find((entry) => entry.role === "tool");
+    expect(declined?.role === "tool" && declined.data).toEqual({
+      declined: true,
+      said: "放到 0:03/00 那里",
+    });
+    expect(declined?.role === "tool" && declined.text).toContain(
+      'The user said: "放到 0:03/00 那里"',
+    );
+    // The same task went on: one message of people, the answer after the result.
+    expect(entries.filter((entry) => entry.role === "user")).toHaveLength(1);
+    expect(entries.at(-1)).toMatchObject({ role: "assistant", text: "好，改放到 3 秒" });
+  });
+
   it("writes nothing of what waits when the task stops", async () => {
     const { ai, chat, fake, markers } = setup();
     ai.setAskBeforeEdit(true);

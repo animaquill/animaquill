@@ -1,0 +1,325 @@
+/*
+ * What waits for people (docs/design/chat-panel.md of AnimaQuill Cloud, 6): a change to allow, a
+ * question of AI, a plan, all one card: a line of the accent at its left on a soft ground, its title,
+ * what it is about, and its buttons at its foot on the right, the main one in the accent. Rules
+ * start from a class of their own, so that they go over the buttons of the chat as they are by
+ * default (`.panel button`).
+ */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--aq-accent-soft);
+  border: 1px solid var(--aq-accent-line);
+  border-left: 3px solid var(--aq-accent);
+  border-radius: 8px;
+  outline: none;
+}
+
+.card:focus-visible {
+  box-shadow: 0 0 0 2px var(--aq-accent-line);
+}
+
+.inner {
+  display: contents;
+}
+
+.head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 7px 10px;
+  color: var(--aq-text-strong);
+  font-weight: 600;
+}
+
+.head svg {
+  flex: none;
+  color: var(--aq-link);
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.body {
+  min-width: 0;
+}
+
+/* The rows of a change, as on the card of changes, on the ground of this card. */
+.body [data-testid="chat-changes"] {
+  border-top-color: var(--aq-accent-line);
+}
+
+.body [data-testid="chat-change"] {
+  border-bottom-color: var(--aq-accent-line);
+}
+
+.foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 8px 10px;
+  border-top: 1px solid var(--aq-accent-line);
+}
+
+.footText {
+  flex: 1 1 10em;
+  min-width: 0;
+  margin: 0;
+  color: var(--aq-text-muted);
+}
+
+.grow {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.card .button {
+  height: 26px;
+  padding: 0 10px;
+  color: var(--aq-text-strong);
+  white-space: nowrap;
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 5px;
+}
+
+.card .button:hover:not(:disabled) {
+  background: var(--aq-bg-hover);
+}
+
+.card .button[data-primary] {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+  border-color: var(--aq-accent);
+}
+
+.card .button[data-primary]:hover:not(:disabled) {
+  background: var(--aq-accent);
+  filter: brightness(1.1);
+}
+
+/* The question: what AI asks, and its answers in a row. */
+.question {
+  margin: 0;
+  padding: 0 10px 8px;
+  color: var(--aq-text-strong);
+  font-size: var(--aq-font-13);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 10px 10px;
+}
+
+.card .option {
+  height: auto;
+  min-height: 26px;
+  padding: 3px 10px;
+  white-space: normal;
+  text-align: left;
+}
+
+/* The plan: a line each step, which shows it can be clicked, its pencil and × on hovering. */
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0 6px 4px;
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  min-width: 0;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+}
+
+.card .step:hover,
+.card .step:focus-within {
+  background: var(--aq-bg-raised);
+  border-color: var(--aq-accent-line);
+}
+
+.number {
+  flex: none;
+  min-width: 16px;
+  color: var(--aq-text-muted);
+  font-variant-numeric: tabular-nums;
+  line-height: 20px;
+  text-align: right;
+}
+
+/* The times and words of a step, which wrap; its buttons stay at its right. */
+.stepMain {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.times {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  align-items: baseline;
+  color: var(--aq-text-muted);
+  line-height: 20px;
+}
+
+.card .text {
+  flex: 1 1 8em;
+  min-width: 0;
+  padding: 0 2px;
+  color: var(--aq-text-strong);
+  line-height: 20px;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: none;
+  border-radius: 3px;
+  cursor: text;
+}
+
+.input {
+  flex: 1 1 8em;
+  min-width: 0;
+  font: inherit;
+}
+
+.card .stepButton {
+  flex: none;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  color: var(--aq-text-muted);
+  background: transparent;
+  border-radius: 4px;
+  opacity: 0;
+}
+
+.card .stepButton:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.step:hover .stepButton,
+.step:focus-within .stepButton {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .card .stepButton {
+    opacity: 1;
+  }
+}
+
+.card .add {
+  align-self: flex-start;
+  margin: 0 10px 6px 30px;
+  padding: 0;
+  color: var(--aq-link);
+  background: none;
+}
+
+.card .add:hover {
+  text-decoration: underline;
+  background: none;
+}
+
+/* A plan done with: one line, open to read. */
+.done {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.done > button.doneHead {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  align-self: flex-start;
+  max-width: 100%;
+  margin-left: -6px;
+  padding: 3px 6px;
+  color: var(--aq-text-muted);
+  text-align: left;
+  background: transparent;
+  border-radius: 5px;
+}
+
+.done > button.doneHead:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.doneTitle {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.doneChevron {
+  flex: none;
+  transition: transform 0.12s;
+}
+
+.done > button.doneHead[aria-expanded="true"] .doneChevron {
+  transform: rotate(90deg);
+}
+
+.done .steps {
+  padding: 0 0 0 10px;
+  border-left: 1px solid var(--aq-border);
+}
+
+.done .footText {
+  padding-left: 14px;
+}
+
+/* What people said while not allowing a change: their words, on the right, a size smaller. */
+.declined {
+  align-self: flex-end;
+  max-width: 85%;
+  margin: 0;
+  padding: 4px 10px;
+  color: var(--aq-text-strong);
+  font-size: var(--aq-font-11);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--aq-bg-input);
+  border-radius: 10px 10px 4px 10px;
+}
+
+.declinedLabel {
+  color: var(--aq-text-muted);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

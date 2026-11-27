@@ -146,21 +146,21 @@ test("plan first: changes are held, the plan is changed and accepted, and then A
 
   // On hovering a line, a pencil and ×; the pencil opens the line, Esc leaves it as it was.
   await steps(page).first().hover();
-  await steps(page).first().getByRole("button", { name: "改这一行" }).click();
-  await card(page).getByRole("textbox", { name: "改这一行" }).press("Escape");
+  await steps(page).first().getByRole("button", { name: "改这一步" }).click();
+  await card(page).getByRole("textbox", { name: "改这一步" }).press("Escape");
   await expect(steps(page).first()).toContainText("黑底淡入 logo，低音起");
 
   // A line changes with a click, one goes with ×, one comes with +.
   await steps(page).nth(1).getByRole("button", { name: "三张产品图依次推进，每张 2.5 秒" }).click();
-  const input = card(page).getByRole("textbox", { name: "改这一行" });
+  const input = card(page).getByRole("textbox", { name: "改这一步" });
   await input.fill("三张产品图依次推进，每张 2 秒");
   await input.press("Enter");
   await steps(page).nth(2).hover();
-  await steps(page).nth(2).getByRole("button", { name: "删掉这一行" }).click();
+  await steps(page).nth(2).getByRole("button", { name: "删掉这一步" }).click();
   await expect(steps(page)).toHaveCount(2);
   await card(page).getByTestId("chat-plan-add").click();
-  await card(page).getByRole("textbox", { name: "改这一行" }).fill("结尾留白 1 秒");
-  await card(page).getByRole("textbox", { name: "改这一行" }).press("Enter");
+  await card(page).getByRole("textbox", { name: "改这一步" }).fill("结尾留白 1 秒");
+  await card(page).getByRole("textbox", { name: "改这一步" }).press("Enter");
   await expect(steps(page)).toHaveCount(3);
   await expect(steps(page).nth(1)).toContainText("每张 2 秒");
   await expect(steps(page).nth(2)).toContainText("结尾留白 1 秒");

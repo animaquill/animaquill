@@ -121,7 +121,7 @@
   padding-right: 4px;
 }
 
-.card .open,
+.changes .open,
 .still {
   display: flex;
   flex: 1;
@@ -135,7 +135,7 @@
   border-radius: 0;
 }
 
-.card .open:hover {
+.changes .open:hover {
   background: var(--aq-bg-hover);
 }
 
@@ -204,7 +204,7 @@
   opacity: 0.7;
 }
 
-.card .go {
+.changes .go {
   display: grid;
   flex: none;
   place-items: center;
@@ -216,12 +216,12 @@
   border-radius: 4px;
 }
 
-.card .go:hover:not(:disabled) {
+.changes .go:hover:not(:disabled) {
   color: var(--aq-text-strong);
   background: var(--aq-bg-hover);
 }
 
-.card .more {
+.changes .more {
   align-self: stretch;
   padding: 5px 10px;
   color: var(--aq-link);

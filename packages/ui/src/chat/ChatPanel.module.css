@@ -152,12 +152,6 @@
   border-bottom: 1px solid var(--aq-border);
 }
 
-.text {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
 .muted {
   margin: 0;
   color: var(--aq-text-muted);
@@ -293,28 +287,6 @@
 .raw summary {
   color: var(--aq-text-muted);
   cursor: pointer;
-}
-
-/* The card of what a task changed. */
-.card {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
-  background: var(--aq-bg-panel);
-  border: 1px solid var(--aq-border);
-  border-radius: 4px;
-}
-
-.cardHead {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.cardTitle {
-  flex: 1;
-  color: var(--aq-text-strong);
 }
 
 .detail {
@@ -1039,142 +1011,6 @@
   }
 }
 
-.question {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
-  border-left: 2px solid var(--aq-accent);
-}
-
-.options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-}
-
-/* The plan people asked for first: lines to change, take out and add to, and "按这个做". */
-.plan {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 6px 8px;
-  border: 1px solid var(--aq-border);
-  border-left: 2px solid var(--aq-accent);
-  border-radius: 4px;
-}
-
-.plan[data-state="accepted"],
-.plan[data-state="replaced"] {
-  border-left-color: var(--aq-border);
-}
-
-.planHead,
-.panel .planHead {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  min-width: 0;
-  padding: 0;
-  color: var(--aq-text-strong);
-  text-align: left;
-  background: none;
-}
-
-.planTitle {
-  overflow: hidden;
-  font-weight: 600;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.planSteps {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.planStep {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 6px;
-  align-items: baseline;
-  min-width: 0;
-}
-
-.planNumber {
-  flex: none;
-  min-width: 14px;
-  color: var(--aq-text-muted);
-  font-variant-numeric: tabular-nums;
-  text-align: right;
-}
-
-.planTimes {
-  display: inline-flex;
-  flex: none;
-  gap: 2px;
-  align-items: baseline;
-  color: var(--aq-text-muted);
-}
-
-.planText,
-.panel .planText {
-  flex: 1 1 8em;
-  min-width: 0;
-  padding: 0 2px;
-  color: var(--aq-text);
-  text-align: left;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  background: none;
-  border-radius: 3px;
-}
-
-.panel .planText:hover {
-  background: var(--aq-bg-hover);
-}
-
-.planInput {
-  flex: 1 1 8em;
-  min-width: 0;
-  font: inherit;
-}
-
-.panel .planRemove {
-  flex: none;
-  align-self: center;
-  min-width: 18px;
-  padding: 1px;
-  visibility: hidden;
-}
-
-.planStep:hover .planRemove,
-.planRemove:focus-visible {
-  visibility: visible;
-}
-
-.panel .planAdd {
-  align-self: flex-start;
-  margin-left: 16px;
-}
-
-.planFoot {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  justify-content: flex-end;
-}
-
-.planFoot > p {
-  flex: 1 1 10em;
-  min-width: 0;
-}
-
 /* Pictures dragged over the chat: all of it takes them. */
 .dropHint {
   position: absolute;
@@ -1475,12 +1311,6 @@
   border-radius: 4px;
 }
 
-/* What cannot be taken back here says why when the pointer rests on it. */
-.cardHead button[aria-disabled="true"] {
-  cursor: default;
-  opacity: 0.5;
-}
-
 /* Back to before a turn: what goes, under the message, as the card of a task looks. */
 .goBack,
 .goBackDone {
@@ -1553,26 +1383,8 @@
   color: var(--aq-text-muted);
 }
 
-/* A change that waits for people (S-D4): the card of changes, with the answers under it. */
-.approve {
-  border-color: var(--aq-accent);
-}
-
-.approveActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  justify-content: flex-end;
-}
-
 .goBackActions {
   display: flex;
   gap: 6px;
   justify-content: flex-end;
-}
-
-@media (hover: none) {
-  .panel .planRemove {
-    visibility: visible;
-  }
 }

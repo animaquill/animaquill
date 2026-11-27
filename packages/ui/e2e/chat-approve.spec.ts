@@ -81,10 +81,13 @@ const moveAndAdd = {
 async function setUp(page: Page, answers: readonly Answer[], shot?: string) {
   await page.setViewportSize({ width: 1440, height: 900 });
   let requests = 0;
+  /** What went to the model, each request as JSON. */
+  const bodies: string[] = [];
   await page.route(ANTHROPIC, (route) => {
     const asked = route.request().postDataJSON() as { max_tokens?: number; tools?: unknown };
     if (asked.max_tokens === 16) return route.fallback();
     if (asked.tools === undefined) return fulfil(route, anthropicSays("标记"));
+    bodies.push(JSON.stringify(asked));
     const answer = answers[requests] ?? "好了。";
     requests += 1;
     return fulfil(
@@ -108,7 +111,7 @@ async function setUp(page: Page, answers: readonly Answer[], shot?: string) {
   const made = { timeline: "main", id: "m0", time: "1", name: "片头" };
   expect(await execute(page, { type: "marker.add", params: made })).toBe(true);
   await showTab(page, "chat");
-  return { requests: () => requests };
+  return { requests: () => requests, bodies };
 }
 
 async function send(page: Page, text: string) {
@@ -180,6 +183,60 @@ test("not allowed: nothing is written, nor the rest of the answer, and AI asks w
   await expect(chat(page).locator('[data-testid="chat-tool"][data-state="failed"]')).toHaveCount(0);
   await expect(chat(page).locator('[data-testid="chat-tool"][data-state="held"]')).toHaveCount(2);
   await shoot(page, "4-answered");
+});
+
+test("the card has the focus: Enter allows, Esc does not; the line of the work leads to it", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await setUp(page, [[add("m2", "6")], [add("m3", "8")], "好了。"]);
+  await send(page, "加两个标记");
+  const card = chat(page).getByTestId("chat-wait");
+  await expect(card).toHaveAttribute("data-kind", "approve");
+  // People were in the box, with nothing written: the card takes the focus.
+  await expect(card).toBeFocused();
+  await expect(asking(page)).toContainText("等你允许：要改 1 处");
+  await page.keyboard.press("Enter");
+  await expect.poll(() => markers(page)).toMatchObject({ m2: "m2@6" });
+  // The next change: from the line of the work, which says it waits, to the card.
+  const work = chat(page).locator('[data-testid="chat-work"][data-state="approve"]');
+  await expect(work).toContainText("等你允许改 1 处");
+  await box(page).click();
+  await work.getByTestId("chat-work-to-wait").click();
+  await expect(card).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(chat(page).getByText("好了。")).toBeVisible({ timeout: 15_000 });
+  expect(await markers(page)).toEqual({ m0: "片头@1", m2: "m2@6" });
+});
+
+test("not allowed with words: typed in the box while asked, they go to AI with the answer", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  const { bodies } = await setUp(page, [[add("m2", "6")], "好，那就放到 3 秒。"]);
+  await send(page, "加个标记");
+  // The box says what writing in it does now; the button says so too.
+  await expect(box(page)).toHaveAttribute("data-placeholder", "不允许，并告诉 AI 怎么改…");
+  await box(page).fill("放到 3 秒");
+  const button = chat(page).getByTestId("chat-send");
+  await expect(button).toHaveAttribute("data-state", "decline");
+  await expect(button).toHaveAttribute("aria-label", "不允许并发送");
+  await box(page).press("Enter");
+  await expect(chat(page).getByTestId("chat-answer")).toHaveText("好，那就放到 3 秒。", {
+    timeout: 15_000,
+  });
+  await expect(box(page)).toHaveText("");
+  expect(await markers(page)).toEqual({ m0: "片头@1" });
+  // Still one message of people: AI went on with the same task, the words in the result it read.
+  await expect(chat(page).getByTestId("chat-user")).toHaveCount(1);
+  expect(bodies).toHaveLength(2);
+  expect(bodies[1]).toContain(
+    "error declined: the user was shown this change and did not allow it.",
+  );
+  expect(bodies[1]).toContain('The user said: \\"放到 3 秒\\"');
+  // What people said shows in the turn, folded steps or not.
+  await expect(chat(page).getByTestId("chat-declined-said")).toHaveText("不允许：放到 3 秒");
+  await shoot(page, "6-declined-with-words");
 });
 
 test("allowed for the task, from the background: told, then not asked again; the next task asks", async ({

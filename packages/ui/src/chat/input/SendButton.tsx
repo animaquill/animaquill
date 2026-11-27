@@ -5,11 +5,13 @@ import styles from "./input.module.css";
 
 /**
  * What the round button of the box does now: nothing to send (it puts the caret in the box), send,
- * stop the task that runs, or queue what was typed while it runs.
+ * stop the task that runs, queue what was typed while it runs, or, while a change waits for people,
+ * not allow it and send what was typed to AI with that ("不允许，并告诉 AI 怎么改").
  */
-export type SendState = "empty" | "ready" | "stop" | "queue";
+export type SendState = "empty" | "ready" | "stop" | "queue" | "decline";
 
-export function sendStateOf(running: boolean, hasSomething: boolean): SendState {
+export function sendStateOf(running: boolean, hasSomething: boolean, declining = false): SendState {
+  if (declining && hasSomething) return "decline";
   if (running) return hasSomething ? "queue" : "stop";
   return hasSomething ? "ready" : "empty";
 }
@@ -34,7 +36,9 @@ export function SendButton(props: {
       ? t("chat.stop")
       : state === "queue"
         ? t("chat.compose.queue")
-        : t("chat.send");
+        : state === "decline"
+          ? t("chat.compose.decline")
+          : t("chat.send");
   // Nothing to send: still a button (it puts the caret in the box), and those who listen hear why.
   const said = state === "empty" ? t("chat.compose.sendEmpty") : label;
   return (

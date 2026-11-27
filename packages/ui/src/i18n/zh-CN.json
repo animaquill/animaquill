@@ -3647,7 +3647,8 @@
       "editNamedMore": "正在改「{{name}}」等（{{count}} 个操作）…",
       "quietSaid": "模型没有回应",
       "retrySaid": "{{reason}}，正在重试",
-      "retryIn": "{{seconds}} 秒后"
+      "retryIn": "{{seconds}} 秒后",
+      "toWait": "到要你允许的地方"
     },
     "retryReason": {
       "rate": "服务太忙",
@@ -3785,18 +3786,20 @@
     },
     "models": "{{from}} → {{to}}",
     "you": "你",
+    "youDeclined": "你（不允许）",
     "assistant": "AI",
     "running": "正在运行",
     "toolOk": "成功",
     "toolFailed": "出错",
     "toolHeld": "没有改",
     "approve": {
-      "title": "要改 {{count}} 处",
+      "title": "等你允许：要改 {{count}} 处",
       "once": "允许",
-      "task": "这次任务都允许",
+      "task": "这一轮都允许",
       "no": "不允许",
       "allowed": "允许了 {{count}} 处",
-      "declined": "没允许"
+      "declined": "没允许",
+      "declinedSaid": "不允许："
     },
     "result": "结果",
     "undoTask": "撤销这一轮",
@@ -3917,8 +3920,7 @@
       "locked": "锁定"
     },
     "question": {
-      "title": "AI 想问你",
-      "other": "也可以在下面直接回答。"
+      "title": "AI 想问你"
     },
     "packLine": "适配包：{{name}}",
     "packDropped": "这个包有 {{count}} 处在这一版的工具里不再适用，那几处按通用写法。",
@@ -4019,7 +4021,10 @@
       "carryOff": "这一条不带选中和播放头",
       "carryOffNow": "这一条不带选中和播放头",
       "carryOn": "带上",
-      "sendEmpty": "发送，先写要说的话"
+      "sendEmpty": "发送，先写要说的话",
+      "placeholderDecline": "不允许，并告诉 AI 怎么改…",
+      "placeholderAnswer": "或者直接回答…",
+      "decline": "不允许并发送"
     },
     "user": {
       "copy": "复制",
@@ -4275,12 +4280,13 @@
       "accept": "按这个做",
       "accepted": "已按这个做",
       "replaced": "已换新方案",
-      "edit": "改这一行",
-      "remove": "删掉这一行",
-      "add": "加一行",
+      "edit": "改这一步",
+      "remove": "删掉这一步",
+      "add": "加一步",
       "length": "时长",
       "style": "风格",
-      "message": "按这个做："
+      "message": "按这个做：",
+      "title": "方案：{{title}}"
     },
     "keysAway": "连不上服务器，key 在服务器上",
     "keysAwayRetry": "再试一次",

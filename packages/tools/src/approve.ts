@@ -22,10 +22,12 @@ import type { ObjectChange } from "./changes.ts";
  */
 
 /**
- * What people answered: this change only, every change of this run of the task, none; or the task
- * stopped while it waited, as when people stopped it or the page went away.
+ * What people answered: this change only, every change of this run of the task, none, or none
+ * with words for AI of what to do instead ("不允许，并告诉 AI 怎么改"), which it reads in the result
+ * of the call and goes on with; or the task stopped while it waited, as when people stopped it or
+ * the page went away.
  */
-export type Approval = "once" | "task" | "no" | "stopped";
+export type Approval = "once" | "task" | "no" | { readonly no: string } | "stopped";
 
 /** A change that waits for people to allow it, as the host shows it. */
 export interface ApproveRequest {

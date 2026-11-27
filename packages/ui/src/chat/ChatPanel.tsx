@@ -100,6 +100,15 @@ export function ChatPanel() {
     () => ({
       focusInput,
       openModels: (request) => inputRef.current?.openModels(request?.pictures),
+      scrollToWait: (task) => {
+        const turn = panelRef.current?.querySelector<HTMLElement>(
+          `[data-task="${CSS.escape(task)}"]`,
+        );
+        const wait = turn?.querySelector<HTMLElement>('[data-testid="chat-wait"]');
+        if (!wait) return;
+        wait.scrollIntoView({ block: "nearest" });
+        wait.focus({ preventScroll: true });
+      },
     }),
     [focusInput],
   );
@@ -570,6 +579,11 @@ export function markdownOf(t: TFunction, title: string, entries: readonly ChatEn
     parts.push(
       `**${t("chat.you")}**:\n\n${[plainOf(group.user.text), ...pictures].filter(Boolean).join("\n\n")}`,
     );
+    // What people said while not allowing a change, which AI read with it.
+    for (const entry of group.entries) {
+      if (entry.role === "tool" && typeof entry.data?.said === "string")
+        parts.push(`**${t("chat.youDeclined")}**:\n\n${entry.data.said}`);
+    }
     const turn = turnOf(group.user, group.entries);
     // Links of the editor mean nothing outside it: what they say stays.
     if (turn.answer) parts.push(`**${t("chat.assistant")}**:\n\n${plainOf(turn.answer)}`);

@@ -145,6 +145,11 @@ const OTHER_REQUEST = (request: string | undefined) =>
 /** What a change answers that the user saw and did not allow (S-D4). */
 export const DECLINED =
   "error declined: the user was shown this change and did not allow it. Nothing was written, and no later change of this answer runs.";
+/**
+ * What a change answers that the user did not allow, saying what to do instead: their words as a
+ * JSON string, so that no line or quote of theirs reads as more of the result.
+ */
+export const declinedWith = (said: string) => `${DECLINED}\nThe user said: ${JSON.stringify(said)}`;
 /** What a change answers that waited for the user while the task stopped. */
 export const STOPPED =
   "error stopped: the task stopped while this change waited for the user. Nothing was written.";
@@ -270,6 +275,14 @@ export function makeTool<P>(
     // Stopped as people answered, or right after: nothing is written.
     if (answer === "stopped" || host.stopped?.() === true) {
       return { result: failed(STOPPED), untried: true };
+    }
+    if (typeof answer === "object") {
+      caller.hold("declined");
+      const said = answer.no;
+      return {
+        result: withData(failed(declinedWith(said)), { declined: true, said }),
+        untried: true,
+      };
     }
     if (answer !== "once" && answer !== "task") {
       caller.hold("declined");

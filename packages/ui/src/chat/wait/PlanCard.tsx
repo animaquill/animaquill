@@ -1,17 +1,20 @@
-import { ChevronDown, ChevronRight, ListChecks, Pencil, Plus, X } from "lucide-react";
+import { ChevronRight, ListChecks, Pencil, Plus, X } from "lucide-react";
 import { useCallback, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { useTranslation } from "react-i18next";
-import { useWorkbench } from "../app/context.ts";
-import styles from "./ChatPanel.module.css";
-import { useOpened } from "./expanded.ts";
-import { planMessage, timeRefOf, type Plan, type PlanStep } from "./plan.ts";
-import { RefChip } from "./RefChip.tsx";
+import { useWorkbench } from "../../app/context.ts";
+import { useOpened } from "../expanded.ts";
+import { planMessage, timeRefOf, type Plan, type PlanStep } from "../plan.ts";
+import { RefChip } from "../RefChip.tsx";
+import { WaitCard } from "./WaitCard.tsx";
+import styles from "./wait.module.css";
 
 /**
- * The plan AI gave where people asked for one first: its title, a numbered line for each step with
- * its times as blocks of the editor, and its length and style. The plan that waits for people has
- * lines they change with a click, take out with × and add to with +, and "按这个做" sends it as
- * their message. One accepted, or one a newer plan replaced, is one line, open to read.
+ * The plan AI gave where people asked for one first (docs/design/chat-panel.md of AnimaQuill Cloud,
+ * 6.3): its title, a numbered line for each step with its times as blocks of the editor, and its
+ * length and style. The plan that waits for people is a card that waits: a step shows it can be
+ * clicked to change it, its pencil and × on hovering, "加一步" adds one, and "按这个做" (Enter on the
+ * card) sends it as their message. One accepted, or one a newer plan replaced, is one line, open to
+ * read.
  */
 export function PlanCard(props: {
   /** The call of `aq_propose` that gave it. */
@@ -27,28 +30,31 @@ export function PlanCard(props: {
   const [open, setOpen] = useOpened(`${props.call}/plan`, false);
   if (props.state === "open") return <OpenPlan {...props} />;
   return (
-    <div className={styles.plan} data-testid="chat-plan" data-state={props.state}>
+    <div className={styles.done} data-testid="chat-plan" data-state={props.state}>
       <button
         type="button"
-        className={styles.planHead}
+        className={styles.doneHead}
         aria-expanded={open}
         onClick={() => setOpen(!open)}
       >
-        {open ? <ChevronDown size={12} aria-hidden /> : <ChevronRight size={12} aria-hidden />}
         <ListChecks size={12} aria-hidden />
-        <span className={styles.planTitle}>{props.plan.title}</span>
-        <span className={styles.muted}>
+        <span className={styles.doneTitle}>
+          {t("chat.plan.title", { title: props.plan.title, interpolation: { escapeValue: false } })}
+          {" · "}
           {t(props.state === "accepted" ? "chat.plan.accepted" : "chat.plan.replaced")}
         </span>
+        <ChevronRight size={12} aria-hidden className={styles.doneChevron} />
       </button>
       {open && (
         <>
-          <ol className={styles.planSteps}>
+          <ol className={styles.steps}>
             {props.plan.steps.map((step, index) => (
-              <li key={index} className={styles.planStep}>
-                <span className={styles.planNumber}>{index + 1}</span>
-                <Times step={step} timeline={props.timeline} />
-                <span className={styles.planText}>{step.text}</span>
+              <li key={index} className={styles.step}>
+                <span className={styles.number}>{index + 1}</span>
+                <span className={styles.stepMain}>
+                  <Times step={step} timeline={props.timeline} />
+                  <span className={styles.text}>{step.text}</span>
+                </span>
               </li>
             ))}
           </ol>
@@ -68,7 +74,7 @@ function Times({
 }) {
   if (step.from === undefined && step.to === undefined) return null;
   return (
-    <span className={styles.planTimes}>
+    <span className={styles.times}>
       {step.from !== undefined && <RefChip chatRef={timeRefOf(step.from, timeline)} />}
       {step.from !== undefined && step.to !== undefined && "–"}
       {step.to !== undefined && <RefChip chatRef={timeRefOf(step.to, timeline)} />}
@@ -86,7 +92,7 @@ function PlanEnd({
   const { t } = useTranslation();
   if (plan.length === undefined && plan.style === undefined) return null;
   return (
-    <p className={styles.muted} data-testid="chat-plan-end">
+    <p className={styles.footText} data-testid="chat-plan-end">
       {plan.length !== undefined && (
         <>
           {t("chat.plan.length")} <RefChip chatRef={timeRefOf(plan.length, timeline)} />
@@ -164,45 +170,63 @@ function OpenPlan(props: {
       ),
     );
   return (
-    <div className={styles.plan} data-testid="chat-plan" data-state="open">
-      <div className={styles.planHead}>
-        <ListChecks size={12} aria-hidden />
-        <span className={styles.planTitle}>{props.plan.title}</span>
-      </div>
-      <ol className={styles.planSteps}>
+    <WaitCard
+      kind="plan"
+      icon={<ListChecks size={13} aria-hidden />}
+      title={t("chat.plan.title", {
+        title: props.plan.title,
+        interpolation: { escapeValue: false },
+      })}
+      testId="chat-plan"
+      state="open"
+      foot={<PlanEnd plan={props.plan} timeline={props.timeline} />}
+      actions={[
+        {
+          id: "chat-plan-accept",
+          label: t("chat.plan.accept"),
+          primary: true,
+          keys: "Enter",
+          disabled: props.busy || left.length === 0,
+          onAct: accept,
+        },
+      ]}
+    >
+      <ol className={styles.steps}>
         {steps.map((step, index) => (
-          <li key={index} className={styles.planStep} data-testid="chat-plan-step">
-            <span className={styles.planNumber}>{index + 1}</span>
-            <Times step={step} timeline={props.timeline} />
-            {editing?.index === index ? (
-              <input
-                className={styles.planInput}
-                aria-label={t("chat.plan.edit")}
-                // oxlint-disable-next-line jsx-a11y/no-autofocus -- people just clicked the line
-                autoFocus
-                maxLength={300}
-                value={editing.text}
-                onChange={(event) => setEditing({ index, text: event.target.value })}
-                onKeyDown={onKeyDown}
-                onBlur={commit}
-              />
-            ) : (
-              <button
-                type="button"
-                className={styles.planText}
-                title={t("chat.plan.edit")}
-                onClick={() => {
-                  commit();
-                  setEditing({ index, text: step.text });
-                }}
-              >
-                {step.text}
-              </button>
-            )}
+          <li key={index} className={styles.step} data-testid="chat-plan-step">
+            <span className={styles.number}>{index + 1}</span>
+            <span className={styles.stepMain}>
+              <Times step={step} timeline={props.timeline} />
+              {editing?.index === index ? (
+                <input
+                  className={styles.input}
+                  aria-label={t("chat.plan.edit")}
+                  // oxlint-disable-next-line jsx-a11y/no-autofocus -- people just clicked the line
+                  autoFocus
+                  maxLength={300}
+                  value={editing.text}
+                  onChange={(event) => setEditing({ index, text: event.target.value })}
+                  onKeyDown={onKeyDown}
+                  onBlur={commit}
+                />
+              ) : (
+                <button
+                  type="button"
+                  className={styles.text}
+                  title={t("chat.plan.edit")}
+                  onClick={() => {
+                    commit();
+                    setEditing({ index, text: step.text });
+                  }}
+                >
+                  {step.text}
+                </button>
+              )}
+            </span>
             {editing?.index !== index && (
               <button
                 type="button"
-                className={`${styles.icon} ${styles.planRemove}`}
+                className={styles.stepButton}
                 aria-label={t("chat.plan.edit")}
                 title={t("chat.plan.edit")}
                 onPointerDown={(event) => event.preventDefault()}
@@ -216,7 +240,7 @@ function OpenPlan(props: {
             )}
             <button
               type="button"
-              className={`${styles.icon} ${styles.planRemove}`}
+              className={styles.stepButton}
               aria-label={t("chat.plan.remove")}
               title={t("chat.plan.remove")}
               onPointerDown={(event) => event.preventDefault()}
@@ -232,9 +256,7 @@ function OpenPlan(props: {
       </ol>
       <button
         type="button"
-        className={`${styles.icon} ${styles.planAdd}`}
-        aria-label={t("chat.plan.add")}
-        title={t("chat.plan.add")}
+        className={styles.add}
         data-testid="chat-plan-add"
         onPointerDown={(event) => event.preventDefault()}
         onClick={() => {
@@ -245,19 +267,8 @@ function OpenPlan(props: {
         }}
       >
         <Plus size={12} aria-hidden />
+        {t("chat.plan.add")}
       </button>
-      <div className={styles.planFoot}>
-        <PlanEnd plan={props.plan} timeline={props.timeline} />
-        <button
-          type="button"
-          className={styles.primary}
-          data-testid="chat-plan-accept"
-          disabled={props.busy || left.length === 0}
-          onClick={accept}
-        >
-          {t("chat.plan.accept")}
-        </button>
-      </div>
-    </div>
+    </WaitCard>
   );
 }

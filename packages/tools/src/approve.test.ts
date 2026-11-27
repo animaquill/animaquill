@@ -9,7 +9,7 @@ import {
 } from "./approve.ts";
 import { CallerState } from "./caller.ts";
 import { testHost, toolsOn, type TestHost } from "./test-support.ts";
-import { DECLINED, PLAN_FIRST, STOPPED } from "./tool.ts";
+import { DECLINED, PLAN_FIRST, STOPPED, declinedWith } from "./tool.ts";
 import { WRITE_TOOLS } from "./toolset.ts";
 import type { ToolResult } from "./types.ts";
 
@@ -381,6 +381,34 @@ describe("asked before a change", () => {
     expect(caller.answer.failedWrite).toBe(false);
     caller.beginAnswer();
     const again = call("aq_file_write", { ...CHANGES.aq_file_write, request_id: "behind" });
+    await askedTimes(asked, 2);
+    asked[1]?.answer("once");
+    expect((await again).isError).toBe(false);
+  });
+
+  it("gives AI what people said instead, with a change not allowed, and holds back the rest", async () => {
+    const { call, caller, host, store } = await prepared();
+    const asked = asking(host);
+    const revision = store.revisionId;
+    const first = call("aq_edit", CHANGES.aq_edit);
+    const second = call("aq_file_write", CHANGES.aq_file_write);
+    await askedTimes(asked, 1);
+    // Words of any kind: quotes and lines of theirs stay inside the one string.
+    const said = '标记放到 3 秒\n名字叫 "片头"';
+    asked[0]?.answer({ no: said });
+    const result = await first;
+    expect(result.isError).toBe(true);
+    expect(result.text).toBe(declinedWith(said));
+    expect(result.text).toBe(`${DECLINED}\nThe user said: "标记放到 3 秒\\n名字叫 \\"片头\\""`);
+    expect(result.data).toMatchObject({ declined: true, said });
+    // As for "no": nothing written, the rest of the answer not run, people not asked again.
+    expect(codeOf(await second)).toBe("not-run");
+    expect(asked.length).toBe(1);
+    expect(store.revisionId).toBe(revision);
+    expect(caller.answer.failedWrite).toBe(false);
+    // The next answer, which read what they said, asks again.
+    caller.beginAnswer();
+    const again = call("aq_edit", CHANGES.aq_edit);
     await askedTimes(asked, 2);
     asked[1]?.answer("once");
     expect((await again).isError).toBe(false);

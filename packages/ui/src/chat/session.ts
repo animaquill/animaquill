@@ -82,6 +82,7 @@ import {
 import { ChatAttachments, type FrameShot } from "./attachments.ts";
 import { Drafts } from "./drafts.ts";
 import { PlanDrafts } from "./plan.ts";
+import { plainOf } from "./refs.ts";
 import { DEFAULT_IMAGE_BYTES, DEFAULT_SHOT_SIZE, type ShotSize } from "./shots.ts";
 import type { ModelPacks } from "./packs.ts";
 import type { AiSettingsStore } from "./settings.ts";
@@ -611,6 +612,20 @@ export class ChatSession {
   /** People's answer to a change that waits for them, see `ChatSnapshot.approvals`. */
   answerApproval(id: string, answer: ApprovalAnswer): void {
     this.#answers.get(id)?.(answer);
+  }
+
+  /**
+   * "不允许，并告诉 AI 怎么改": what people wrote while a change waits for them does not allow the
+   * one they see (the first that waits) and goes to AI with it, which reads it in the result of that
+   * call and goes on with the task. Only the words: a block of the editor as what it says, pictures
+   * stay where they are. Whether there was a change to answer.
+   */
+  declineWith(text: string): boolean {
+    const words = plainOf(text).trim();
+    const [first] = this.#snapshot.approvals;
+    if (!first || words === "") return false;
+    this.answerApproval(first.id, { no: words });
+    return true;
   }
 
   #saveSoon(id: string, entries: readonly ChatEntry[]): void {

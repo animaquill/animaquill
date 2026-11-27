@@ -7,6 +7,7 @@ import {
   anthropicCalls,
   anthropicSays,
   closeSettings,
+  goToSettingsGroup,
   isConnectionTest,
   openSettingsPage,
   settingsOf,
@@ -614,4 +615,121 @@ test("the card of changes, a message and its menu, editing it, a failure of each
       (line) => !/Failed to load resource|net::ERR_FAILED|Failed to fetch/u.test(line),
     ),
   );
+});
+
+test("what waits for people: a change to allow, words instead, a question, a plan", async ({
+  page,
+}) => {
+  test.setTimeout(480_000);
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  /** The answers of the model, in order: calls of tools, or words. */
+  const answers: (readonly { name: string; input: Record<string, unknown> }[] | string)[] = [];
+  let round = 0;
+  await page.route(ANTHROPIC, (route) => {
+    const fulfil = (body: string) =>
+      route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream", "access-control-allow-origin": "*" },
+        body,
+      });
+    if (isConnectionTest(route)) return fulfil(anthropicSays("OK"));
+    const next = answers.shift() ?? "好的。";
+    round += 1;
+    return fulfil(
+      typeof next === "string"
+        ? anthropicSays(next)
+        : anthropicCalls(next).replaceAll("toolu_", `toolu_${round}_`),
+    );
+  });
+  await addAnthropic(page, KEY, "claude-test");
+  await goToSettingsGroup(page, "AI 聊天");
+  await settingsOf(page).getByRole("switch", { name: "AI 改项目前先问我" }).check();
+  await closeSettings(page);
+  await showTab(page, "chat");
+  const say = async (text: string) => {
+    await box(page).fill(text);
+    await box(page).press("Enter");
+  };
+  const wait = chat(page).getByTestId("chat-wait");
+
+  // A change to allow: the card under the turn, the line of the work says it waits.
+  answers.push(
+    [
+      {
+        name: "aq_edit",
+        input: {
+          summary: "加片头和片尾两个标记",
+          operations: [
+            { op: "marker.add", timeline: "main", id: "m1", time: "1", name: "片头" },
+            { op: "marker.add", timeline: "main", id: "m2", time: "8", name: "片尾" },
+          ],
+        },
+      },
+    ],
+    "好，片头标记放到 3 秒。",
+  );
+  await say("加两个标记");
+  await expect(wait).toHaveAttribute("data-kind", "approve", { timeout: 15_000 });
+  await sceneBothThemes(page, "1-approve", "4");
+  // Words written meanwhile: they do not allow it and go to AI with that.
+  await box(page).fill("片头的放到 3 秒，片尾的不要");
+  await expect(chat(page).getByTestId("chat-send")).toHaveAttribute("data-state", "decline");
+  await sceneBothThemes(page, "2-approve-typing", "4");
+  await box(page).press("Enter");
+  await expect(chat(page).getByTestId("chat-declined-said")).toBeVisible({ timeout: 15_000 });
+  await expect(chat(page).getByText("好，片头标记放到 3 秒。")).toBeVisible();
+  await sceneBothThemes(page, "3-declined", "4");
+
+  // A question of AI: its answers in a row; the box says people can answer there too.
+  answers.push([
+    {
+      name: "aq_propose",
+      input: {
+        kind: "question",
+        question: "片头要保留原来的配乐吗？",
+        options: [
+          { label: "保留", detail: "音量压低到 −12 dB" },
+          { label: "换成新的" },
+          { label: "去掉" },
+        ],
+      },
+    },
+  ]);
+  await say("配乐怎么处理？");
+  await expect(wait).toHaveAttribute("data-kind", "question", { timeout: 15_000 });
+  await expect(box(page)).toHaveAttribute("data-placeholder", "或者直接回答…");
+  await sceneBothThemes(page, "4-question", "4");
+
+  // A plan asked for first: steps to change, "按这个做" on its own at the foot.
+  await chat(page).getByTestId("chat-plus").click();
+  await chat(page).getByTestId("chat-plus-plan").click();
+  answers.push([
+    {
+      name: "aq_propose",
+      input: {
+        kind: "plan",
+        title: "30 秒开场",
+        steps: [
+          { text: "黑场淡入，片名出现", from: "0", to: "3" },
+          { text: "三个镜头快切，配鼓点", from: "3", to: "12" },
+          { text: "主镜头慢推，字幕逐行", from: "12", to: "30" },
+        ],
+        length: "30",
+        style: "快节奏",
+      },
+    },
+  ]);
+  await say("做一个 30 秒的开场");
+  await expect(wait).toHaveAttribute("data-kind", "plan", { timeout: 15_000 });
+  await sceneBothThemes(page, "5-plan", "4", async () => {
+    await chat(page).getByTestId("chat-plan-step").nth(1).hover();
+  });
+  // Done with it: one line.
+  answers.push("开场做好了。");
+  await chat(page).getByTestId("chat-plan-accept").click();
+  await expect(chat(page).getByText("开场做好了。")).toBeVisible({ timeout: 15_000 });
+  await expect(
+    chat(page).locator('[data-testid="chat-plan"][data-state="accepted"]'),
+  ).toContainText("方案：30 秒开场 · 已按这个做");
+  await sceneBothThemes(page, "6-plan-done", "4");
 });

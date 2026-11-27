@@ -4,12 +4,10 @@ import { ChevronRight, PenLine } from "lucide-react";
 import { useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
-import { TaskApproval } from "./ApprovalCard.tsx";
 import { ChangeCard } from "./ChangeCard.tsx";
 import styles from "./ChatPanel.module.css";
 import { useOpened } from "./expanded.ts";
 import { planOf, plansIn } from "./plan.ts";
-import { PlanCard } from "./PlanCard.tsx";
 import { plainOf } from "./refs.ts";
 import { placesOf, summaryOf } from "./summary.ts";
 import type { Names } from "./toolSummary.ts";
@@ -19,6 +17,11 @@ import { FailureCard } from "./turn/FailureCard.tsx";
 import turnStyles from "./turn/turn.module.css";
 import { UserBubble } from "./turn/UserBubble.tsx";
 import { WorkLine } from "./turn/WorkLine.tsx";
+import { TaskApproval } from "./wait/ApprovalCard.tsx";
+import { PlanCard } from "./wait/PlanCard.tsx";
+import { QuestionCard } from "./wait/QuestionCard.tsx";
+import { questionOf } from "./wait/question.ts";
+import waitStyles from "./wait/wait.module.css";
 
 /**
  * One turn of the chat (docs/design/chat-panel.md of AnimaQuill Cloud, 5): what people said; the
@@ -110,7 +113,7 @@ function TurnBody({
   inner = false,
 }: Parameters<typeof TurnView>[0] & { readonly inner?: boolean }) {
   const shown = outcome ?? (running ? undefined : keptOutcome(turn));
-  const question = latest && !running ? questionOf(turn) : undefined;
+  const question = latest && !running ? questionOf(turn.entries) : undefined;
   const body = (
     <>
       <UserBubble turn={turn} latest={latest} busy={busy} onForked={onForked} />
@@ -125,8 +128,8 @@ function TurnBody({
           modelName={modelName}
         />
       )}
+      <DeclinedSaid turn={turn} />
       {running && <LiveAnswer conversation={conversation} />}
-      {running && <TaskApproval task={turn.task} />}
       {turn.answer !== undefined && (
         <AnswerView text={turn.answer} task={turn.task} busy={busy} onForked={onForked} />
       )}
@@ -142,9 +145,11 @@ function TurnBody({
       {shown && (shown.end === "limit" || shown.end === "length") && (
         <OutcomeLine end={shown.end} latest={latest} maxToolCalls={maxToolCalls} />
       )}
-      {question && <QuestionView question={question} />}
-      <TurnPlan turn={turn} conversation={conversation} busy={busy} running={running} />
       <ChangeCard task={turn.task} entries={turn.entries} running={running !== undefined} />
+      {/* What waits for people is the last thing of the turn, nearest the box of the chat. */}
+      {question && <QuestionCard question={question} />}
+      <TurnPlan turn={turn} conversation={conversation} busy={busy} running={running} />
+      {running && <TaskApproval task={turn.task} />}
     </>
   );
   if (inner) return <div className={turnStyles.rewrittenBody}>{body}</div>;
@@ -232,51 +237,22 @@ function TurnPlan(props: {
   );
 }
 
-/** A question AI asked with aq_propose, which the newest task can still have answered. */
-interface Question {
-  readonly question: string;
-  readonly options: readonly { readonly label: string; readonly detail?: string }[];
-  readonly other: boolean;
-}
-
-function questionOf(turn: Turn): Question | undefined {
-  const asked = turn.entries.findLast(
-    (entry) => entry.role === "tool" && entry.name === "aq_propose" && entry.ok,
-  );
-  const data = asked?.role === "tool" ? asked.data?.question : undefined;
-  if (typeof data !== "object" || data === null) return undefined;
-  const { question, options, allow_other: other } = data as Record<string, unknown>;
-  if (typeof question !== "string" || !Array.isArray(options)) return undefined;
-  const choices = options.flatMap((option: Record<string, unknown>) =>
-    typeof option?.label === "string"
-      ? [
-          {
-            label: option.label,
-            ...(typeof option.detail === "string" && { detail: option.detail }),
-          },
-        ]
+/**
+ * What people said while not allowing a change ("不允许，并告诉 AI 怎么改"): their words, which AI
+ * read in the result of that call, on the right as their message is, a size smaller, also with the
+ * steps folded: what people said is never folded away.
+ */
+function DeclinedSaid({ turn }: { readonly turn: Turn }) {
+  const { t } = useTranslation();
+  const said = turn.entries.flatMap((entry) =>
+    entry.role === "tool" && typeof entry.data?.said === "string"
+      ? [{ id: entry.call, said: entry.data.said }]
       : [],
   );
-  return { question, options: choices, other: other !== false };
-}
-
-/** The question of AI, with its answers to pick: the pick goes as the next message. */
-function QuestionView({ question }: { readonly question: Question }) {
-  const { chat } = useWorkbench();
-  const { t } = useTranslation();
-  return (
-    <div className={styles.question} data-testid="chat-question" role="group">
-      <div className={styles.muted}>{t("chat.question.title")}</div>
-      <p className={styles.text}>{question.question}</p>
-      <div className={styles.options}>
-        {question.options.map(({ label, detail }) => (
-          <button key={label} type="button" title={detail} onClick={() => void chat.send(label)}>
-            {label}
-            {detail && <span className={styles.muted}> · {detail}</span>}
-          </button>
-        ))}
-      </div>
-      {question.other && <p className={styles.muted}>{t("chat.question.other")}</p>}
-    </div>
-  );
+  return said.map(({ id, said: words }) => (
+    <p key={id} className={waitStyles.declined} data-testid="chat-declined-said">
+      <span className={waitStyles.declinedLabel}>{t("chat.approve.declinedSaid")}</span>
+      {words}
+    </p>
+  ));
 }

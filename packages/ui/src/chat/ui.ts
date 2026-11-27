@@ -11,9 +11,11 @@ export interface ChatUi {
   focusInput(): void;
   /** Opens the bubble of the model, on the models that see pictures where asked. */
   openModels(request?: { readonly pictures?: boolean }): void;
+  /** Shows a turn, at what waits for people in it ("等你允许改 3 处 ↓"), which gets the focus. */
+  scrollToWait(task: string): void;
 }
 
-const NOTHING: ChatUi = { focusInput: () => {}, openModels: () => {} };
+const NOTHING: ChatUi = { focusInput: () => {}, openModels: () => {}, scrollToWait: () => {} };
 
 export const ChatUiContext = createContext<ChatUi>(NOTHING);
 

@@ -1,5 +1,6 @@
 import type { Conversation, RunningTask, ToolEntry } from "@animaquill/agent";
 import {
+  ArrowDown,
   ChevronDown,
   ChevronRight,
   Lightbulb,
@@ -19,6 +20,7 @@ import { LookRow, LookThumbs } from "../LookRow.tsx";
 import { Markdown } from "../markdown/Markdown.tsx";
 import { RefChip } from "../RefChip.tsx";
 import { placesOf, summaryOf } from "../summary.ts";
+import { useChatUi } from "../ui.ts";
 import { ToolRow } from "../ToolRow.tsx";
 import type { Names, Say } from "../toolSummary.ts";
 import { durationText, type Step, type Turn } from "../turns.ts";
@@ -118,6 +120,7 @@ function RunningHead(props: {
   const { t } = useTranslation();
   const say = t as unknown as Say;
   const { looks, chat } = useWorkbench();
+  const ui = useChatUi();
   const look = useSyncExternalStore(looks.subscribe, looks.getSnapshot);
   const { approvals } = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
   const live = useLive(props.conversation.live, livePhase);
@@ -193,6 +196,20 @@ function RunningHead(props: {
           {props.open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </span>
       </button>
+      {phase.kind === "approve" && (
+        <span className={styles.actions}>
+          <button
+            type="button"
+            className={styles.action}
+            aria-label={t("chat.phase.toWait")}
+            title={t("chat.phase.toWait")}
+            data-testid="chat-work-to-wait"
+            onClick={() => ui.scrollToWait(running.task)}
+          >
+            <ArrowDown size={12} aria-hidden />
+          </button>
+        </span>
+      )}
       {phase.kind === "quiet" && (
         <span className={styles.actions}>
           <button type="button" className={styles.action} onClick={() => setWaitedOn(Date.now())}>

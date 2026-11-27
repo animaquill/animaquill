@@ -147,9 +147,11 @@ export function ConversationList(props: {
         </div>
       );
     }
+    // Waiting for people: a question, a plan, or a change to allow in the one open.
+    const asking = chat_.asking || (current && snapshot.approvals.length > 0);
     const meta = [
       agoText(chat_.updatedAt, now, t),
-      ...(chat_.asking
+      ...(asking
         ? [t("chat.list.asking")]
         : chat_.changes
           ? [t("chat.list.changes", { count: chat_.changes })]
@@ -173,10 +175,10 @@ export function ConversationList(props: {
             <span className={styles.convTitle}>{titleOf(t, chat_)}</span>
             <span className={styles.convMeta}>{meta}</span>
           </span>
-          {current && running ? (
+          {current && running && !asking ? (
             <Loader2 size={12} className={styles.spin} aria-label={t("chat.running")} role="img" />
           ) : (
-            chat_.asking && (
+            asking && (
               <span
                 className={styles.askDot}
                 role="img"

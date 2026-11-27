@@ -18,6 +18,8 @@ import { Attachments } from "../AttachmentsView.tsx";
 import { ChatInput, type ChatInputHandle } from "../ChatInput.tsx";
 import { ModelTag, type ModelTagHandle } from "../model/ModelTag.tsx";
 import { WITHHELD } from "../session.ts";
+import { groupsOf } from "../turns.ts";
+import { questionOf } from "../wait/question.ts";
 import { useShownChat } from "../shown.ts";
 import { CarryLine } from "./CarryLine.tsx";
 import { HoldStrip } from "./HoldStrip.tsx";
@@ -178,7 +180,18 @@ export const InputArea = forwardRef<
   );
 
   const hasSomething = text.trim() !== "" || ready.length > 0;
+  // A change waits for people: what they write does not allow it and goes to AI with it. Only
+  // words go; pictures stay in the card for later.
+  const { approvals } = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
+  const declining = approvals.length > 0;
   const send = async () => {
+    if (declining) {
+      if (text.trim() === "" || !chat.declineWith(text)) return;
+      write("");
+      history.current = undefined;
+      props.onSent();
+      return;
+    }
     if (project === undefined || id === undefined || !hasSomething) return;
     if (holdsBack(why)) {
       setNudge((count) => count + 1);
@@ -201,6 +214,9 @@ export const InputArea = forwardRef<
     else void chat.send(text, images, selection);
   };
   const said = shown.talk.entries.flatMap((entry) => (entry.role === "user" ? [entry] : []));
+  // AI asked something at the end of the last turn: the box is where people can answer too.
+  const asked =
+    !running && questionOf(groupsOf(shown.talk.entries).at(-1)?.entries ?? []) !== undefined;
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const at = history.current?.chat === id ? history.current?.back : undefined;
     if (event.key === "ArrowUp" && !event.shiftKey) {
@@ -355,7 +371,13 @@ export const InputArea = forwardRef<
               : t("chat.placeholder")
           }
           placeholder={
-            running ? t("chat.compose.placeholderRunning") : t("chat.compose.placeholder")
+            declining
+              ? t("chat.compose.placeholderDecline")
+              : running
+                ? t("chat.compose.placeholderRunning")
+                : asked
+                  ? t("chat.compose.placeholderAnswer")
+                  : t("chat.compose.placeholder")
           }
           gone={(href) => pointing.stateOf(href) === "gone"}
           onPoint={(href) => workbench.pointAt(href)}
@@ -400,7 +422,7 @@ export const InputArea = forwardRef<
             onDone={() => box.current?.focus()}
           />
           <SendButton
-            state={sendStateOf(running, hasSomething)}
+            state={sendStateOf(running, declining ? text.trim() !== "" : hasSomething, declining)}
             keys={sendKeys}
             onSend={() => void send()}
             onStop={() => chat.stop()}
