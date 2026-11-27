@@ -2,6 +2,7 @@ import {
   forwardRef,
   useCallback,
   useEffect,
+  useId,
   useImperativeHandle,
   useMemo,
   useRef,
@@ -9,25 +10,51 @@ import {
   useSyncExternalStore,
   type KeyboardEvent,
 } from "react";
-import { ImageOff, ListChecks, X } from "lucide-react";
+import {
+  AudioLines,
+  Boxes,
+  Camera,
+  Clock,
+  Flag,
+  Film,
+  Image as ImageIcon,
+  ImageOff,
+  ListChecks,
+  type LucideIcon,
+  Minimize2,
+  PencilLine,
+  Shapes,
+  SquarePen,
+  X,
+} from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { useWorkbench } from "../../app/context.ts";
+import { useProject, useSession, useWorkbench } from "../../app/context.ts";
 import { formatCombo } from "../../workbench/keys.ts";
 import type { AttachRefusal } from "../attachments.ts";
 import { Attachments } from "../AttachmentsView.tsx";
-import { ChatInput, type ChatInputHandle } from "../ChatInput.tsx";
+import { ChatInput, type BoxTrigger, type ChatInputHandle } from "../ChatInput.tsx";
+import type { FoundKind } from "../find.ts";
+import type { ChatRef } from "../refs.ts";
+import { useChatUi } from "../ui.ts";
 import { ModelTag, type ModelTagHandle } from "../model/ModelTag.tsx";
 import { WITHHELD } from "../session.ts";
 import { groupsOf } from "../turns.ts";
 import { questionOf } from "../wait/question.ts";
 import { useShownChat } from "../shown.ts";
 import { CarryLine } from "./CarryLine.tsx";
+import {
+  Completion,
+  optionId,
+  type CompletionGroup,
+  type CompletionOption,
+} from "./Completion.tsx";
 import { HoldStrip } from "./HoldStrip.tsx";
 import styles from "./input.module.css";
 import { holdsBack, picturesWhy, PicturesWarn } from "./PicturesWarn.tsx";
 import { PlusMenu, type PlusItem, type PlusMenuHandle } from "./PlusMenu.tsx";
 import { QueueList } from "./QueueList.tsx";
 import { SendButton, sendStateOf } from "./SendButton.tsx";
+import { commandOf, commandsFor, type SlashId } from "./slash.ts";
 
 /** The commands of the box, whose keys people can change (`Workbench`). */
 const COMMANDS = {
@@ -67,6 +94,7 @@ export const InputArea = forwardRef<
   const { chat, ai, keybindings, pointing } = workbench;
   const { t } = useTranslation();
   const shown = useShownChat();
+  const ui = useChatUi();
   const settings = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
   // Enter, or Ctrl+Enter (⌘ Enter) where people chose that in the settings: the other is a new line.
   const withMod = settings.sendWith === "modEnter";
@@ -96,6 +124,7 @@ export const InputArea = forwardRef<
   const box = useRef<ChatInputHandle>(null);
   const plus = useRef<PlusMenuHandle>(null);
   const tag = useRef<ModelTagHandle>(null);
+  const card = useRef<HTMLDivElement>(null);
   // "带上" taken off: for the next message of this conversation only.
   const [carry, setCarry] = useState<{ readonly chat: string | undefined; readonly on: boolean }>({
     chat: id,
@@ -184,9 +213,22 @@ export const InputArea = forwardRef<
   const hasSomething = text.trim() !== "" || ready.length > 0;
   // A change waits for people: what they write does not allow it and goes to AI with it. Only
   // words go; pictures stay in the card for later.
-  const { approvals } = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
+  const { approvals, saved } = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
   const declining = approvals.length > 0;
   const send = async () => {
+    // A command written out in full ("/新对话 做个片头") does what it says; it does not go to AI.
+    const typed = commandOf(text);
+    if (typed) {
+      const refused = cannot(typed.command.id) ?? hidden(typed.command.id);
+      if (refused !== undefined) {
+        workbench.notifications.push(refused);
+        return;
+      }
+      history.current = undefined;
+      if (typed.command.id !== "new") write(typed.rest);
+      run(typed.command.id, typed.rest);
+      return;
+    }
     if (declining) {
       if (text.trim() === "" || !chat.declineWith(text)) return;
       write("");
@@ -223,6 +265,36 @@ export const InputArea = forwardRef<
   const asked =
     !running && questionOf(groupsOf(shown.talk.entries).at(-1)?.entries ?? []) !== undefined;
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (completing && !event.altKey && !event.ctrlKey && !event.metaKey) {
+      const count = picks.length;
+      if ((event.key === "ArrowDown" || event.key === "ArrowUp") && count > 0) {
+        event.preventDefault();
+        const step = event.key === "ArrowDown" ? 1 : -1;
+        setActive((active + step + count) % count);
+        return;
+      }
+      const picking = (event.key === "Enter" || event.key === "Tab") && !event.shiftKey;
+      // Typed faster than the project was looked through: the first of what it has for that now.
+      if (picking && query !== undefined && looking !== query) {
+        const first = pointing.find(query, 1).find((group) => group.refs.length > 0)?.refs[0];
+        if (first) {
+          event.preventDefault();
+          box.current?.complete([first]);
+          return;
+        }
+      } else if (picking && count > 0) {
+        event.preventDefault();
+        pick(active);
+        return;
+      }
+      if (event.key === "Escape") {
+        // Closed, and what was typed stays as it is; the task, if one runs, goes on.
+        event.preventDefault();
+        event.stopPropagation();
+        setDismissed(triggerKey);
+        return;
+      }
+    }
     const at = history.current?.chat === id ? history.current?.back : undefined;
     if (event.key === "ArrowUp" && !event.shiftKey) {
       // What people said before, newest first, while the box has nothing else in it.
@@ -315,14 +387,193 @@ export const InputArea = forwardRef<
       why: pointed.count > 0 ? undefined : t("chat.compose.insertSelectionNone"),
       keys: keysOf(COMMANDS.selection),
     },
+    { id: "mention", name: t("chat.compose.mention"), why: undefined, keys: "@" },
   ];
   const runItem = (which: PlusItem["id"]) => {
     if (which === "time") insertTime();
     else if (which === "selection") insertSelection();
     else if (which === "shoot") shoot();
+    else if (which === "mention") box.current?.type("@");
     else choose();
   };
   const sendKeys = combo(withMod ? "mod+enter" : "enter") ?? "";
+
+  // `/` and `@` (docs/design/chat-panel.md of AnimaQuill Cloud, 3.3): a menu where the caret is.
+  const [trigger, setTrigger] = useState<BoxTrigger>();
+  const triggerKey = trigger && `${trigger.kind}/${trigger.start}`;
+  // Closed with Esc: it stays closed for what that `/` or `@` started.
+  const [dismissed, setDismissed] = useState<string>();
+  const [active, setActive] = useState(0);
+  // The kinds of the project shown in full, after "还有 N 个".
+  const [more, setMore] = useState<ReadonlySet<FoundKind>>(NO_KINDS);
+  const onTrigger = (next: BoxTrigger | undefined) => {
+    const key = next && `${next.kind}/${next.start}`;
+    if (key !== triggerKey) {
+      setMore(NO_KINDS);
+      if (next === undefined) setDismissed(undefined);
+    }
+    if (next?.query !== trigger?.query || key !== triggerKey) setActive(0);
+    setTrigger(next);
+  };
+  const query = trigger?.kind === "at" ? trigger.query : undefined;
+  // Each key does not look through the project again: what was typed settles first.
+  const [settled, setSettled] = useState(query);
+  useEffect(() => {
+    const timer = setTimeout(() => setSettled(query), FIND_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [query]);
+  const looking = query === "" ? "" : settled;
+  const shownOpen = trigger !== undefined && triggerKey !== dismissed;
+  // The project, while the menu is open: its blocks follow a name changed, a clip deleted.
+  const { store } = useSession();
+  const projectState = useProject(shownOpen ? store : undefined);
+  const found = useMemo(
+    () =>
+      shownOpen && looking !== undefined ? pointing.find(looking, FIND_MOST, projectState) : [],
+    // What the project has changes the blocks: a name changed, something deleted.
+    [shownOpen, looking, pointing, projectState],
+  );
+  const savedHere = saved.some((each) => each.id === id);
+  const compactable = shown.conversation?.compactable === true;
+  /** Why a command cannot be used now, which the menu says at it. */
+  function cannot(which: SlashId): string | undefined {
+    if (which === "frame" && !timelineView.model) return noTimeline;
+    if (which === "new" && running) return t("chat.switcher.newWhenDone");
+    return undefined;
+  }
+  /** Why a command is not in the menu now: nothing to do it to. */
+  function hidden(which: SlashId): string | undefined {
+    if (which === "compact" && !compactable) return t("chat.complete.cannotCompact");
+    if (which === "rename" && !savedHere) return t("chat.complete.cannotRename");
+    return undefined;
+  }
+  /** What a command does, from the box. */
+  function run(which: SlashId, rest: string) {
+    if (which === "plan") chat.setPlanFirst(!shown.planFirst);
+    else if (which === "compact") void chat.compact();
+    else if (which === "frame") shoot();
+    else if (which === "rename") ui.rename();
+    else if (which === "new") {
+      // What comes after the command goes into the new conversation, to go on writing there.
+      write("");
+      chat.newConversation();
+      const next = chat.getSnapshot().id;
+      if (project !== undefined && next !== undefined && next !== id && rest.trim() !== "") {
+        chat.drafts.write(project, next, rest.trimStart());
+      }
+      box.current?.focus();
+    }
+  }
+  const groups: CompletionGroup[] = [];
+  const picks: (() => void)[] = [];
+  const option = (each: CompletionOption, pick: () => void) => {
+    picks.push(pick);
+    return each;
+  };
+  const putIn = (refs: readonly ChatRef[]) => () => box.current?.complete(refs);
+  if (shownOpen && trigger.kind === "slash") {
+    const options = commandsFor(trigger.query)
+      .filter((command) => hidden(command.id) === undefined)
+      .map((command) => {
+        const notNow = cannot(command.id);
+        return option(
+          {
+            key: command.id,
+            kind: command.id,
+            icon: SLASH_ICONS[command.id],
+            label: `/${command.name}`,
+            note:
+              command.id === "plan"
+                ? t(shown.planFirst ? "chat.complete.planOff" : "chat.complete.planOn")
+                : t(`chat.complete.${command.id}`),
+            why: notNow,
+          },
+          () => {
+            if (notNow !== undefined) return;
+            box.current?.complete([]);
+            const rest =
+              project === undefined || id === undefined ? "" : chat.drafts.read(project, id);
+            run(command.id, rest);
+          },
+        );
+      });
+    if (options.length > 0) groups.push({ key: "slash", name: undefined, options });
+  } else if (shownOpen && trigger.kind === "at") {
+    if (trigger.query === "") {
+      const present: CompletionOption[] = [];
+      const selected = pointed.count > 0 ? pointing.selectedRefs() : [];
+      if (selected.length > 0) {
+        present.push(
+          option(
+            {
+              key: "selection",
+              kind: "selection",
+              icon: Boxes,
+              label:
+                pointed.from === "timeline"
+                  ? t("chat.complete.selectedClips", { count: pointed.count })
+                  : pointed.from === "keys"
+                    ? t("chat.complete.selectedKeys", { count: pointed.count })
+                    : t("chat.complete.selected", {
+                        what: selected[0]?.label ?? "",
+                        interpolation: { escapeValue: false },
+                      }),
+            },
+            putIn(selected),
+          ),
+        );
+      }
+      if (timeRef) {
+        present.push(
+          option(
+            {
+              key: "time",
+              kind: "time",
+              icon: Clock,
+              label: t("chat.complete.playhead", { time: timeRef.label }),
+            },
+            putIn([timeRef]),
+          ),
+        );
+      }
+      if (present.length > 0) {
+        groups.push({ key: "now", name: t("chat.complete.now"), options: present });
+      }
+    }
+    for (const group of found) {
+      const all = more.has(group.kind);
+      const refs = group.refs.slice(0, all ? FIND_MOST : FIND_SHOWN);
+      const options = refs.map((ref) =>
+        option(
+          { key: ref.href, kind: group.kind, icon: FOUND_ICONS[group.kind], label: ref.label },
+          putIn([ref]),
+        ),
+      );
+      const left = group.total - refs.length;
+      if (left > 0) {
+        options.push(
+          option(
+            {
+              key: "more",
+              kind: "more",
+              icon: undefined,
+              label: t("chat.refs.more", { count: left }),
+              note: all ? t("chat.complete.typeMore") : undefined,
+            },
+            () => {
+              if (all) return;
+              setMore(new Set([...more, group.kind]));
+            },
+          ),
+        );
+      }
+      groups.push({ key: group.kind, name: t(`chat.complete.${group.kind}`), options });
+    }
+  }
+  // `/` with nothing it could be is words, not a command: no menu.
+  const completing = shownOpen && (trigger.kind === "at" || groups.length > 0);
+  const pick = (index: number) => picks[index]?.();
+  const listId = useId();
 
   return (
     <div className={styles.area}>
@@ -346,7 +597,7 @@ export const InputArea = forwardRef<
         onEdit={takeBack}
         onDrop={(index) => chat.unqueue(index)}
       />
-      <div className={styles.card} data-testid="chat-compose">
+      <div className={styles.card} data-testid="chat-compose" ref={card}>
         {project !== undefined && id !== undefined && pictures.length > 0 && (
           <Attachments
             project={project}
@@ -395,7 +646,30 @@ export const InputArea = forwardRef<
           onOpen={(href) => workbench.goToRef(href)}
           // Back in this box, the commands come here again, not to where a message was edited.
           onFocus={() => workbench.composeWith(compose)}
+          onTrigger={onTrigger}
+          completes={
+            completing && picks.length > 0
+              ? { list: listId, active: optionId(listId, Math.min(active, picks.length - 1)) }
+              : undefined
+          }
         />
+        {completing && (
+          <Completion
+            id={listId}
+            label={t(trigger.kind === "slash" ? "chat.complete.commands" : "chat.complete.refs")}
+            groups={groups}
+            empty={
+              trigger.query === ""
+                ? t("chat.complete.nothing")
+                : t("chat.complete.none", { query: trigger.query })
+            }
+            active={Math.min(active, picks.length - 1)}
+            at={trigger.rect}
+            within={card.current}
+            onActive={setActive}
+            onPick={pick}
+          />
+        )}
         <div className={styles.row}>
           <PlusMenu
             ref={plus}
@@ -449,3 +723,26 @@ export const InputArea = forwardRef<
 });
 
 const NONE: readonly never[] = [];
+const NO_KINDS: ReadonlySet<FoundKind> = new Set();
+
+/** How long typing after `@` settles before the project is looked through. */
+const FIND_WAIT_MS = 50;
+/** So many of each kind show, and so many after "还有 N 个". */
+const FIND_SHOWN = 5;
+const FIND_MOST = 50;
+
+const SLASH_ICONS: Record<SlashId, LucideIcon> = {
+  plan: ListChecks,
+  new: SquarePen,
+  compact: Minimize2,
+  frame: Camera,
+  rename: PencilLine,
+};
+
+const FOUND_ICONS: Record<FoundKind, LucideIcon> = {
+  clip: Film,
+  asset: ImageIcon,
+  scene: Shapes,
+  sound: AudioLines,
+  marker: Flag,
+};

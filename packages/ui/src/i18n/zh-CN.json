@@ -4028,7 +4028,8 @@
       "placeholderAnswer": "或者直接回答…",
       "decline": "不允许并发送",
       "declineShort": "不允许",
-      "picturesKept": "图片留着，没带上"
+      "picturesKept": "图片留着，没带上",
+      "mention": "引用片段、素材、场景…"
     },
     "user": {
       "copy": "复制",
@@ -4094,6 +4095,8 @@
       "asset": "素材「{{name}}」",
       "scene": "场景「{{name}}」",
       "sound": "声音「{{name}}」",
+      "marker": "标记「{{name}}」",
+      "markerAt": "标记 {{time}}",
       "line": "{{file}} 第 {{line}} 行",
       "lines": "{{file}} {{from}}–{{to}} 行",
       "more": "还有 {{count}} 个",
@@ -4374,6 +4377,31 @@
       "cutAssets": "用这些素材剪一版 30 秒的开场",
       "titleScene": "做一个 5 秒的片名场景",
       "marker": "在播放头 {{time}} 加一个标记"
+    },
+    "complete": {
+      "commands": "命令",
+      "refs": "引用",
+      "planOn": "打开先出方案",
+      "planOff": "关掉先出方案",
+      "new": "开一个新对话，后面的字带过去",
+      "compact": "压缩较早的对话",
+      "frame": "截取当前画面",
+      "rename": "改这个对话的名字",
+      "cannotCompact": "还没有可以压缩的对话",
+      "cannotRename": "先发一条消息，这个对话才有名字可改",
+      "now": "现在",
+      "selectedClips": "选中的 {{count}} 个片段",
+      "selectedKeys": "选中的 {{count}} 个关键帧",
+      "selected": "选中的{{what}}",
+      "playhead": "播放头 {{time}}",
+      "clip": "片段",
+      "asset": "素材",
+      "scene": "场景",
+      "sound": "声音",
+      "marker": "标记",
+      "typeMore": "再打几个字找",
+      "none": "没有叫“{{query}}”的",
+      "nothing": "项目里还没有能引用的东西"
     }
   },
   "account": {

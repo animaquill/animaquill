@@ -25,7 +25,7 @@ import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import styles from "./ChatPanel.module.css";
 import { EmptyStart, Onboarding } from "./ChatStart.tsx";
 import { AllConversations } from "./header/AllConversations.tsx";
-import { PanelHeader } from "./header/PanelHeader.tsx";
+import { PanelHeader, type Renaming } from "./header/PanelHeader.tsx";
 import { InputArea, type InputAreaHandle } from "./input/InputArea.tsx";
 import { firstWords } from "./conversations.ts";
 import { setOpened } from "./expanded.ts";
@@ -95,6 +95,7 @@ export function ChatPanel() {
   const inputRef = useRef<InputAreaHandle>(null);
   /** Puts the cursor in the input box, after something went there. */
   const focusInput = useCallback(() => inputRef.current?.focus(), []);
+  const [renaming, setRenaming] = useState<Renaming>();
   const ui = useMemo<ChatUi>(
     () => ({
       focusInput,
@@ -108,8 +109,12 @@ export function ChatPanel() {
         wait.scrollIntoView({ block: "nearest" });
         wait.focus({ preventScroll: true });
       },
+      rename: () => {
+        const { id } = chat.getSnapshot();
+        if (id !== undefined) setRenaming({ id, back: "input" });
+      },
     }),
-    [focusInput],
+    [focusInput, chat],
   );
   // The page of all conversations, over this one and its box.
   const [allOpen, setAllOpen] = useState(false);
@@ -259,6 +264,8 @@ export function ChatPanel() {
             entries={talk.entries}
             onFound={showTurn}
             onAll={() => setAllOpen(true)}
+            renaming={renaming}
+            onRenaming={setRenaming}
             onNew={() => {
               chat.newConversation();
               setAllOpen(false);

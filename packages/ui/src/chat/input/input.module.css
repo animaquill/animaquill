@@ -444,3 +444,86 @@
     outline: 2px solid var(--aq-warning);
   }
 }
+
+/* The menu of `/` and `@`: close to where they were typed, the caret staying in the box. */
+.complete {
+  position: absolute;
+  z-index: 7;
+  width: min(300px, calc(100cqw - 16px));
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+  box-shadow: var(--aq-shadow);
+}
+
+.completeGroup + .completeGroup {
+  margin-top: 2px;
+}
+
+.completeHead {
+  padding: 6px 8px 2px;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+}
+
+.completeOption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  align-items: center;
+  padding: 4px 8px;
+  color: var(--aq-text);
+  font-size: var(--aq-font-12);
+  border-radius: 4px;
+  cursor: default;
+}
+
+.completeOption[aria-selected="true"] {
+  color: var(--aq-text-strong);
+  background: var(--aq-accent-soft);
+}
+
+.completeOption[aria-disabled="true"] {
+  color: var(--aq-text-muted);
+}
+
+.completeOption[data-kind="more"] {
+  color: var(--aq-link);
+}
+
+.completeIcon {
+  flex: none;
+  width: 13px;
+  color: var(--aq-text-muted);
+}
+
+.completeLabel {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* What it does, or why not now: on the same line where it fits, under the name where not. */
+.completeNote {
+  margin-left: auto;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+  text-align: right;
+}
+
+.completeOption[aria-disabled="true"] .completeNote {
+  color: var(--aq-warning-text);
+}
+
+.completeEmpty {
+  margin: 0;
+  padding: 4px 8px;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-12);
+}

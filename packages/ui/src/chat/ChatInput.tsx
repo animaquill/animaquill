@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
@@ -8,6 +9,7 @@ import {
   type KeyboardEvent,
 } from "react";
 import styles from "./ChatPanel.module.css";
+import { triggerAt, type Trigger } from "./input/slash.ts";
 import { iconPathOf } from "./RefChip.tsx";
 import { kindOfRef, linkOf, piecesOf, type ChatRef, type Piece } from "./refs.ts";
 
@@ -23,7 +25,22 @@ export interface ChatInputHandle {
   /** Puts blocks where the caret is (else at the end), with a space after them, and focuses. */
   insert(refs: readonly ChatRef[]): void;
   focus(): void;
+  /** Puts text where the caret is, as typed: "@" from "+", which opens its menu. */
+  type(text: string): void;
+  /**
+   * What `/` or `@` started where the caret is, replaced by blocks (with a space after them), or
+   * taken away where nothing comes instead: one step to take back, as typing is.
+   */
+  complete(refs: readonly ChatRef[]): void;
   readonly element: HTMLDivElement | null;
+}
+
+/** What `/` or `@` started where the caret is, and where on the screen, for its menu. */
+export interface BoxTrigger extends Trigger {
+  /** Where its `/` or `@` is in the box: the same while people type on after it. */
+  readonly start: number;
+  /** Where its `/` or `@` is on the screen. */
+  readonly rect: DOMRect;
 }
 
 export interface ChatInputProps {
@@ -38,6 +55,10 @@ export interface ChatInputProps {
   readonly onPoint: (href: string | undefined) => void;
   readonly onOpen: (href: string) => void;
   readonly onFocus?: () => void;
+  /** The caret went into or out of what `/` or `@` started, or it changed. */
+  readonly onTrigger?: (trigger: BoxTrigger | undefined) => void;
+  /** Ids for the menu of `/` and `@`, which is the box's: its list, and the option chosen in it. */
+  readonly completes?: { readonly list: string; readonly active: string } | undefined;
   /** Where there is more than one box: the one people write new messages in is "chat-input". */
   readonly testId?: string;
 }
@@ -162,6 +183,38 @@ function chipBeside(root: HTMLElement, before: boolean): HTMLElement | undefined
   return isChip(sibling) ? sibling : undefined;
 }
 
+/** The run of text the caret is in, how far into it, and all of the box up to it. */
+function caretIn(
+  root: HTMLElement,
+): { readonly node: Text; readonly offset: number; readonly whole: string } | undefined {
+  const selection = document.getSelection();
+  if (!selection?.isCollapsed || selection.rangeCount === 0) return undefined;
+  const { startContainer: node, startOffset: offset } = selection.getRangeAt(0);
+  if (!(node instanceof Text) || !root.contains(node)) return undefined;
+  const range = document.createRange();
+  range.setStart(root, 0);
+  range.setEnd(node, offset);
+  const holder = document.createElement("div");
+  holder.append(range.cloneContents());
+  return { node, offset, whole: serialize(holder) };
+}
+
+/** What `/` or `@` started where the caret is, see `triggerAt`. */
+function triggerIn(
+  root: HTMLElement,
+): (BoxTrigger & { readonly node: Text; readonly offset: number }) | undefined {
+  const caret = caretIn(root);
+  if (!caret) return undefined;
+  const { node, offset, whole } = caret;
+  const found = triggerAt(whole, (node.textContent ?? "").slice(0, offset));
+  if (!found) return undefined;
+  const range = document.createRange();
+  range.setStart(node, offset - found.length);
+  range.setEnd(node, offset - found.length + 1);
+  const rect = range.getBoundingClientRect();
+  return { ...found, node, offset, start: whole.length - found.length, rect };
+}
+
 export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
   function ChatInput(props, ref) {
     const box = useRef<HTMLDivElement>(null);
@@ -171,7 +224,34 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     // wait for it, so that they land after the words and not among the letters it shows.
     const composing = useRef(false);
     const waiting = useRef<Piece[][]>([]);
-    const { value, onChange, gone } = props;
+    const { value, onChange, gone, onTrigger } = props;
+    const told = useRef<string | undefined>(undefined);
+    /** Says what `/` or `@` started where the caret is now, once it changed. */
+    const lookRef = useRef(() => {});
+    lookRef.current = () => {
+      const root = box.current;
+      // What an input method composes is not written yet: the menu waits for it as it is.
+      if (!onTrigger || !root || composing.current) return;
+      const found = document.activeElement === root ? triggerIn(root) : undefined;
+      const key = found && `${found.kind}/${found.start}/${found.query}`;
+      if (key === told.current) return;
+      told.current = key;
+      onTrigger(
+        found && {
+          kind: found.kind,
+          query: found.query,
+          length: found.length,
+          start: found.start,
+          rect: found.rect,
+        },
+      );
+    };
+    // The caret moves by typing, keys, the mouse: the menu follows it, and goes as the box loses it.
+    useEffect(() => {
+      const look = () => lookRef.current();
+      document.addEventListener("selectionchange", look);
+      return () => document.removeEventListener("selectionchange", look);
+    }, []);
 
     useLayoutEffect(() => {
       const root = box.current;
@@ -215,32 +295,62 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       changed();
     };
 
+    /** Blocks where the caret is, or over what is selected in the box, see `insert`. */
+    const insertRefs = (refs: readonly ChatRef[]) => {
+      const root = box.current;
+      if (!root || refs.length === 0) return;
+      root.focus();
+      const selection = document.getSelection();
+      const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : undefined;
+      // A space before a block that would touch a word, and one after to type on.
+      const before =
+        range &&
+        root.contains(range.startContainer) &&
+        range.startContainer.nodeType === Node.TEXT_NODE
+          ? (range.startContainer.textContent ?? "").charAt(range.startOffset - 1)
+          : "";
+      const pieces: Piece[] = [];
+      if (before !== "" && !/\s/.test(before)) pieces.push({ text: " " });
+      refs.forEach((each, index) => {
+        if (index > 0) pieces.push({ text: " " });
+        pieces.push({ ref: each });
+      });
+      pieces.push({ text: " " });
+      put(pieces);
+    };
+
     useImperativeHandle(ref, () => ({
       get element() {
         return box.current;
       },
       focus: () => box.current?.focus(),
-      insert: (refs) => {
+      insert: insertRefs,
+      type: (text) => {
         const root = box.current;
-        if (!root || refs.length === 0) return;
+        if (!root) return;
         root.focus();
+        const caret = caretIn(root);
+        // After a word, a space first: "@" starts a block only after one.
+        const before = caret ? caret.whole.slice(-1) : serialize(root).slice(-1);
+        put([{ text: before !== "" && !/\s/.test(before) ? ` ${text}` : text }]);
+      },
+      complete: (refs) => {
+        const root = box.current;
+        const found = root && triggerIn(root);
+        if (!found) return;
+        // What `/` or `@` started, selected: what comes instead of it replaces it, as typing does.
+        const range = document.createRange();
+        range.setStart(found.node, found.offset - found.length);
+        range.setEnd(found.node, found.offset);
         const selection = document.getSelection();
-        const range = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : undefined;
-        // A space before a block that would touch a word, and one after to type on.
-        const before =
-          range &&
-          root.contains(range.startContainer) &&
-          range.startContainer.nodeType === Node.TEXT_NODE
-            ? (range.startContainer.textContent ?? "").charAt(range.startOffset - 1)
-            : "";
-        const pieces: Piece[] = [];
-        if (before !== "" && !/\s/.test(before)) pieces.push({ text: " " });
-        refs.forEach((each, index) => {
-          if (index > 0) pieces.push({ text: " " });
-          pieces.push({ ref: each });
-        });
-        pieces.push({ text: " " });
-        put(pieces);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        if (refs.length > 0) {
+          insertRefs(refs);
+          return;
+        }
+        document.execCommand("delete");
+        changed();
       },
     }));
 
@@ -336,6 +446,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         role="textbox"
         aria-multiline="true"
         aria-label={props.label}
+        aria-autocomplete={props.completes ? "list" : undefined}
+        aria-controls={props.completes?.list}
+        aria-activedescendant={props.completes?.active}
         data-placeholder={props.placeholder}
         data-empty={value === "" ? "" : undefined}
         data-testid={props.testId ?? "chat-input"}
@@ -352,7 +465,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
           const pieces = waiting.current.flat();
           waiting.current = [];
           if (pieces.length > 0) put(pieces);
+          lookRef.current();
         }}
+        onBlur={() => lookRef.current()}
         onKeyDown={onKeyDown}
         onFocus={props.onFocus}
         onPaste={onPaste}

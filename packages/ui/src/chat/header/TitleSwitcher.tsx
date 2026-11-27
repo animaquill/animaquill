@@ -33,6 +33,8 @@ export function TitleSwitcher(props: {
   readonly title: string;
   /** Changing the name, from "⋯" or a double click. */
   readonly renaming: boolean;
+  /** Asked for from the input box (`/重命名`): the focus goes back there after. */
+  readonly backToInput?: boolean;
   readonly onRenaming: (renaming: boolean) => void;
   /** A conversation was opened from a search: the turn the words are in. */
   readonly onFound: (task: string | undefined, query?: string) => void;
@@ -40,6 +42,7 @@ export function TitleSwitcher(props: {
 }) {
   const { chat } = useWorkbench();
   const snapshot = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
+  const ui = useChatUi();
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
   const saved = snapshot.saved.some((each) => each.id === snapshot.id);
@@ -54,7 +57,8 @@ export function TitleSwitcher(props: {
         title={props.title}
         onDone={() => {
           props.onRenaming(false);
-          requestAnimationFrame(() => button.current?.focus());
+          if (props.backToInput) ui.focusInput();
+          else requestAnimationFrame(() => button.current?.focus());
         }}
       />
     );

@@ -814,6 +814,7 @@ test('"+" is one menu at every width, from the mouse and from the keyboard', asy
     /添加图片…/,
     /插入播放头时间 0:00\/00\s*Alt\+T/,
     /插入选中的对象\s*Alt\+O/,
+    /引用片段、素材、场景…\s*@/,
   ]);
   await chat(page).screenshot({ path: test.info().outputPath(`${SHOTS}-C1-menu-300.png`) });
   await menu.getByRole("menuitem", { name: /插入播放头时间/ }).click();
@@ -829,8 +830,11 @@ test('"+" is one menu at every width, from the mouse and from the keyboard', asy
   await expect(items.nth(1)).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(items.nth(2)).toBeFocused();
-  // Last comes "先出方案", an item to tick.
   await page.keyboard.press("ArrowDown");
+  await expect(items.nth(4)).toBeFocused();
+  // Last comes "先出方案", an item to tick, with its command.
+  await page.keyboard.press("ArrowDown");
+  await expect(menu.getByRole("menuitemcheckbox")).toHaveText(/先出方案\s*\/方案/);
   await expect(menu.getByRole("menuitemcheckbox", { name: "先出方案" })).toBeFocused();
   await page.keyboard.press("ArrowDown");
   await expect(items.nth(0)).toBeFocused();

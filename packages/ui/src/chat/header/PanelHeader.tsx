@@ -11,6 +11,12 @@ import { ContextPie, ConversationInfo } from "../model/ConversationInfo.tsx";
 import styles from "./header.module.css";
 import { TitleSwitcher } from "./TitleSwitcher.tsx";
 
+/** A conversation whose name is being changed, in the title: from it, or from `/重命名` in the box. */
+export interface Renaming {
+  readonly id: string;
+  readonly back: "title" | "input";
+}
+
 /**
  * The head of the chat (docs/design/chat-panel.md of AnimaQuill Cloud, 2.1): the title, which opens
  * the conversations and changes its name on a double click; the pie of the context, which opens
@@ -23,6 +29,9 @@ export function PanelHeader(props: {
   readonly onFound: (task: string | undefined, query?: string) => void;
   readonly onAll: () => void;
   readonly onNew: () => void;
+  /** The name of which conversation is being changed, and where the focus goes after. */
+  readonly renaming: Renaming | undefined;
+  readonly onRenaming: (renaming: Renaming | undefined) => void;
 }) {
   const workbench = useWorkbench();
   const { chat, keybindings } = workbench;
@@ -31,9 +40,11 @@ export function PanelHeader(props: {
   useSyncExternalStore(keybindings.subscribe, keybindings.getSnapshot);
   const running = snapshot.conversation?.running === true;
   // The conversation whose name is being changed: another one opened meanwhile has none.
-  const [renamingId, setRenamingId] = useState<string>();
-  const renaming = renamingId !== undefined && renamingId === snapshot.id;
-  const setRenaming = (on: boolean) => setRenamingId(on ? snapshot.id : undefined);
+  const renaming = props.renaming !== undefined && props.renaming.id === snapshot.id;
+  const setRenaming = (on: boolean) =>
+    props.onRenaming(
+      on && snapshot.id !== undefined ? { id: snapshot.id, back: "title" } : undefined,
+    );
   // A new conversation asked for while a task runs: why nothing happens, at ✎, for a moment.
   const refused = useRefused(snapshot.refusedNew);
   const [infoOpen, setInfoOpen] = useState(false);
@@ -57,6 +68,7 @@ export function PanelHeader(props: {
       <TitleSwitcher
         title={props.title}
         renaming={renaming}
+        backToInput={props.renaming?.back === "input"}
         onRenaming={setRenaming}
         onFound={props.onFound}
         onAll={props.onAll}

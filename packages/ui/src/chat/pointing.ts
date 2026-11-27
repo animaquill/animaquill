@@ -1,4 +1,4 @@
-import { entryOf, nameKeyOf, sourceResourceOf, type ProjectState } from "@animaquill/core";
+import { entryOf, nameKeyOf, type ProjectState } from "@animaquill/core";
 import { formatTime, parseTime, toSeconds } from "@animaquill/schema";
 import { formatAddress, parseAddress, type Address } from "@animaquill/tools";
 import type { TFunction } from "i18next";
@@ -11,7 +11,7 @@ import type { TimelineEditor } from "../timeline/editor.ts";
 import { formatTimecode, frameAt, frameTime } from "../timeline/frames.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import type { ProjectSession } from "../workbench/session.ts";
-import { changeName } from "./objectName.ts";
+import { clipLabelOf, findIn, type FoundGroup } from "./find.ts";
 import { shortName, type ChatRef } from "./refs.ts";
 
 /**
@@ -251,24 +251,22 @@ export class ChatPointing {
     return textOf(t, `property.group.${head}`, textOf(t, `property.name.${nameKeyOf(path)}`, path));
   }
 
-  /** A clip as a block says it: a caption by its words, any other by its name. */
   #clipLabel(state: ProjectState, timeline: string, id: string): string {
-    const { t } = this.#options;
-    const clip = entryOf(entryOf(state.timelines, timeline)?.clips, id);
-    if (clip?.source.kind === "caption" && !clip.name) {
-      return t("chat.refs.caption", {
-        name: shortName(String(clip.source.text)),
-        interpolation: { escapeValue: false },
-      });
-    }
-    // Its name, else the name of what it shows, else what kind it is: never a number of its own.
-    const kind = clip?.source.kind ?? "";
-    const shows =
-      clip && sourceResourceOf(clip.source)
-        ? changeName(t, { kind: "clip", id, timeline }, state)
-        : undefined;
-    const name = clip?.name || shows || textOf(t, `timeline.kind.${kind}`, kind || id);
-    return t("chat.refs.clip", { name: shortName(name), interpolation: { escapeValue: false } });
+    return clipLabelOf(this.#options.t, state, timeline, id);
+  }
+
+  /**
+   * What of the project is called `query`, for `@` in the input box: clips and markers of the
+   * timeline shown first, then of the others, and the assets, scenes and sounds, at most `limit`
+   * of each kind as blocks (`find.ts`).
+   */
+  find(query: string, limit: number, state = this.#state): readonly FoundGroup[] {
+    if (!state) return [];
+    return findIn(state, query, {
+      t: this.#options.t,
+      shown: this.#options.timeline.model?.id,
+      limit,
+    });
   }
 
   /** Whether what a block points to is still in the project, and on the timeline shown. */

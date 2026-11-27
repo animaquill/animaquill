@@ -1,4 +1,4 @@
-import { Boxes, Camera, Clock, ImagePlus, Plus, Square, SquareCheck } from "lucide-react";
+import { AtSign, Boxes, Camera, Clock, ImagePlus, Plus, Square, SquareCheck } from "lucide-react";
 import { forwardRef, useImperativeHandle } from "react";
 import { useTranslation } from "react-i18next";
 import { Tip } from "../../app/Tip.tsx";
@@ -7,7 +7,7 @@ import { useBoxMenu } from "./menu.ts";
 
 /** One thing "+" puts in the box, as it is right now. */
 export interface PlusItem {
-  readonly id: "shoot" | "picture" | "time" | "selection";
+  readonly id: "shoot" | "picture" | "time" | "selection" | "mention";
   readonly name: string;
   /** Why it cannot be chosen now, where it cannot. */
   readonly why: string | undefined;
@@ -19,10 +19,16 @@ export interface PlusMenuHandle {
   openFromBox(box: HTMLElement | null): void;
 }
 
-const ICONS = { shoot: Camera, picture: ImagePlus, time: Clock, selection: Boxes } as const;
+const ICONS = {
+  shoot: Camera,
+  picture: ImagePlus,
+  time: Clock,
+  selection: Boxes,
+  mention: AtSign,
+} as const;
 const GROUPS: readonly (readonly PlusItem["id"][])[] = [
   ["shoot", "picture"],
-  ["time", "selection"],
+  ["time", "selection", "mention"],
 ];
 
 /**
@@ -118,6 +124,7 @@ export const PlusMenu = forwardRef<
                 <Square size={13} aria-hidden />
               )}
               <span className={styles.menuName}>{t("chat.compose.planFirst")}</span>
+              <kbd className={styles.menuKeys}>/方案</kbd>
             </button>
           </div>
         </div>

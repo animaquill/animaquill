@@ -13,9 +13,16 @@ export interface ChatUi {
   openModels(request?: { readonly pictures?: boolean }): void;
   /** Shows a turn, at what waits for people in it ("等你允许改 3 处 ↓"), which gets the focus. */
   scrollToWait(task: string): void;
+  /** Changes the name of the conversation shown, in its title; the focus comes back to the box. */
+  rename(): void;
 }
 
-const NOTHING: ChatUi = { focusInput: () => {}, openModels: () => {}, scrollToWait: () => {} };
+const NOTHING: ChatUi = {
+  focusInput: () => {},
+  openModels: () => {},
+  scrollToWait: () => {},
+  rename: () => {},
+};
 
 export const ChatUiContext = createContext<ChatUi>(NOTHING);
 
