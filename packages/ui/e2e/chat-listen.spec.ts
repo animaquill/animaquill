@@ -222,7 +222,7 @@ async function setUp(page: Page, width = 1440) {
   await addAnthropic(page, KEY, "claude-test");
   await closeSettings(page);
   await showTab(page, "chat");
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-test");
 }
 
 async function ask(page: Page, text: string) {
@@ -369,14 +369,15 @@ test("a request too long for the model sums up the earlier conversation: the lin
   await expect(dialog).toBeHidden();
   await expect(divider.getByTestId("chat-summed-open")).toBeFocused();
 
-  // One more turn, and there is something to sum up again: the button of the usage does it now.
+  // One more turn, and there is something to sum up again: the information of the conversation
+  // does it now, from the pie of the context.
   await ask(page, "再看一遍");
   await expect(chat(page).getByTestId("chat-answer").nth(4)).toHaveText("好的。", {
     timeout: 60_000,
   });
-  await chat(page).getByTestId("chat-usage-total").click();
+  await chat(page).getByTestId("chat-context").click();
   const compact = chat(page).getByTestId("chat-compact");
-  await expect(compact).toHaveText("压缩上下文");
+  await expect(compact).toHaveText("压缩");
   await shoot(page, "L2-usage-compact", chat(page).getByTestId("chat"));
   await compact.click();
   await expect(divider).toHaveCount(2, { timeout: 60_000 });

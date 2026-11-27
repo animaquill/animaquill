@@ -77,19 +77,6 @@
   border-radius: 50%;
 }
 
-/* The model and how hard it reasons, before send: they give way before anything else does. */
-.model {
-  display: flex;
-  flex: 0 1 auto;
-  gap: 4px;
-  align-items: center;
-  min-width: 0;
-}
-
-.area .model button {
-  border: 0;
-}
-
 /* Send, stop, queue: one round button. */
 .area .send {
   position: relative;
@@ -386,7 +373,6 @@
   display: none;
 }
 
-/* About 320 wide: shorter words, the pill only its icon. */
 @container (max-width: 379px) {
   .wideOnly,
   .modeName {

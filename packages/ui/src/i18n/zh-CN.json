@@ -873,7 +873,7 @@
         },
         "reasoning": {
           "name": "推理强度",
-          "help": "每个模型默认用多大的推理强度，在模型的详细参数里改；聊天的推理强度菜单里点星也能设。",
+          "help": "每个模型默认用多大的推理强度，在模型的详细参数里改；聊天里选推理强度时点“设为默认”也能设。",
           "keywords": "reasoning thinking 推理 思考 强度 effort"
         },
         "headers": {
@@ -3763,20 +3763,11 @@
       "in": "↑{{n}}",
       "out": "↓{{n}}",
       "detail": "输入 {{input}} · 输出 {{output}} · 缓存读 {{cacheRead}} · 缓存写 {{cacheWrite}}",
-      "button": "用量",
-      "title": "这个对话的用量",
-      "input": "输入",
-      "output": "输出",
-      "cacheRead": "缓存读",
-      "cacheWrite": "缓存写",
       "cost": "花费",
-      "cacheHit": "缓存命中",
       "context": "上下文",
       "contextOf": "{{used}} / {{window}}",
       "contextUnknown": "{{used}}（不知道模型的上下文有多大）",
-      "noPrice": "不知道这个模型的价格",
-      "estimate": "按公开价格估算，以服务商账单为准。",
-      "compact": "压缩上下文"
+      "noPrice": "不知道这个模型的价格"
     },
     "models": "{{from}} → {{to}}",
     "you": "你",
@@ -3915,7 +3906,7 @@
     },
     "packLine": "适配包：{{name}}",
     "packDropped": "这个包有 {{count}} 处在这一版的工具里不再适用，那几处按通用写法。",
-    "packNone": "{{model}} 用 {{label}}。可以在选模型的气泡里换。",
+    "packNone": "{{model}} 用 {{label}}。",
     "packSwitched": "换成 {{model}}，改用适配包 {{name}}",
     "packSwitchedNone": "换成 {{model}}，用 {{label}}",
     "packChanged": "原来的适配包不在了，改用 {{name}}",
@@ -3925,7 +3916,6 @@
     "packNextVersion": "{{name}} 已更新到 {{version}}，从下一次新对话起用；这个对话继续用开始时的那一版。",
     "packNextAnswer": "下一条回答起改用 {{name}}。",
     "modelNone": "选模型…",
-    "modelTitle": "新对话用的模型：{{service}} · {{model}}。点了去设置里换。",
     "modelNoneTitle": "还没有启用的模型，点了去设置。",
     "forked": "从《{{title}}》第 {{turn}} 轮分出来；那之后的改动还在项目里。",
     "list": {
@@ -3956,47 +3946,33 @@
       "copy": "复制成 Markdown",
       "copied": "已复制",
       "copyFailed": "复制不了，浏览器不让写剪贴板。",
-      "sent": "看模型实际收到的",
       "download": "下载成 Markdown"
     },
     "picker": {
       "label": "选模型",
-      "title": "这个对话用 {{service}} · {{model}}，点了换",
       "search": "搜模型、服务",
       "none": "没有找到模型。",
       "noKey": "缺 key，去设置",
       "failed": "连不上，去设置",
-      "setDefault": "把 {{model}} 设为默认模型（新对话用）",
-      "isDefault": "默认模型（新对话用）",
-      "manage": "管理模型和服务…",
+      "manage": "管理模型…",
       "price": "每百万 token：输入 ${{input}} · 输出 ${{output}}",
       "gone": "（已删除的服务）{{model}}",
       "off": "（已停用）{{model}}",
-      "packChosen": "你选的",
       "packDetails": "详情",
-      "packDetailsTitle": "看这个适配包的详情",
       "packWhen": "从这个对话的下一轮起用",
       "packNext": "这个对话下一轮起改用 {{name}}",
-      "withPack": " · {{name}}",
-      "packs": "适配包…",
       "packOf": "适配包：",
-      "packsOf": "{{model}} 的适配包",
       "packFor": "{{model}} 用哪个适配包",
       "others": "其他已装的（{{count}} 个，不是为这个模型写的）",
-      "othersTitle": "不是为这个模型写的",
-      "backModels": "返回模型",
-      "backPacks": "返回",
-      "titlePack": "这个对话用 {{service}} · {{model}} · {{pack}}，点了换",
-      "pictures": "亮着的是能看图的模型"
-    },
-    "reasoning": {
-      "label": "推理强度",
-      "title": "这个对话的推理强度；默认值在设置里改",
-      "auto": "思考 自动（{{level}}）",
-      "autoNone": "思考 自动",
-      "level": "思考 {{level}}",
-      "setDefault": "设“{{level}}”为这个模型的默认推理强度",
-      "isDefault": "“{{level}}”是这个模型的默认推理强度，再点取消"
+      "pictures": "亮着的是能看图的模型",
+      "favorites": "收藏",
+      "favorite": "收藏 {{model}}",
+      "unfavorite": "取消收藏 {{model}}",
+      "newUses": "新对话用",
+      "moved": "{{model}} 移到第 {{place}} 个",
+      "movedFirst": "{{model}} 移到第一个，新对话用它",
+      "generic": "这个模型用通用写法",
+      "getPack": "装适配包…"
     },
     "compose": {
       "placeholder": "说说要做什么",
@@ -4159,7 +4135,9 @@
       "addPicture": "AI 聊天：添加图片",
       "sendFrameShort": "发送当前画面到聊天",
       "sendFrameHelp": "按导出的样子渲染播放头这一帧，作为图片附件放进 AI 聊天的输入框",
-      "openPlus": "AI 聊天：插入和附件"
+      "openPlus": "AI 聊天：插入和附件",
+      "openModels": "AI 聊天：选模型和推理强度",
+      "cycleReasoning": "AI 聊天：换推理强度"
     },
     "look": {
       "name": {
@@ -4278,7 +4256,35 @@
       "message": "按这个做："
     },
     "keysAway": "连不上服务器，key 在服务器上",
-    "keysAwayRetry": "再试一次"
+    "keysAwayRetry": "再试一次",
+    "effort": {
+      "label": "推理强度",
+      "auto": "自动",
+      "autoIs": "自动·{{level}}",
+      "setDefault": "设为默认",
+      "clearDefault": "清除默认",
+      "clearDefaultTitle": "这个模型现在默认“{{level}}”，清除后照适配包",
+      "isDefault": "这个模型的默认",
+      "tipLevel": "推理强度 {{level}}",
+      "tipAuto": "推理强度 {{level}}（自动）"
+    },
+    "info": {
+      "title": "对话信息",
+      "pieShare": "上下文 {{share}}（{{used}} / {{window}}）",
+      "pieUsed": "上下文 {{used}}",
+      "pieCost": "这个对话花了 {{cost}}",
+      "compact": "压缩",
+      "cost": "{{cost}}（按公开价格估算）",
+      "tokens": "输入 / 输出",
+      "inOut": "{{input}} / {{output}}",
+      "cacheHit": "缓存命中 {{share}}",
+      "model": "模型",
+      "modelOf": "{{model}}（{{service}}）",
+      "pack": "适配包",
+      "packChoose": "换",
+      "packTake": "这个对话也换",
+      "sent": "看模型收到的"
+    }
   },
   "account": {
     "signIn": "登录",

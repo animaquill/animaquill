@@ -103,7 +103,7 @@ test("a real model: edits, reads, looks, plans first", async ({ page }) => {
   await noAutoTitle(page);
   await closeSettings(page);
   await showTab(page, "chat");
-  await expect(chat(page).getByTestId("chat-model")).toHaveText(/gpt-?6\.1/i);
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText(/gpt-?6\.1/i);
 
   const usage: string[] = [];
   const clips = async () => {
@@ -192,8 +192,8 @@ test("a real model: edits, reads, looks, plans first", async ({ page }) => {
     expect((await clips()).join()).toBe(timeline);
   } finally {
     note(`usage per turn:\n${usage.join("\n")}`);
-    const total = chat(page).getByTestId("chat-usage-total");
-    if (await total.count()) note(`total meter: ${(await total.textContent())?.trim()}`);
+    const total = chat(page).getByTestId("chat-context");
+    if (await total.count()) note(`context: ${await total.getAttribute("aria-label")}`);
     note(`requests to the service:\n${seen.join("\n")}`);
   }
 });

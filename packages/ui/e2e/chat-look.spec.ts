@@ -183,7 +183,7 @@ async function setUp(page: Page, folder = colorProject(), width = 1440, problems
   await addAnthropic(page, KEY, "claude-test");
   await closeSettings(page);
   await showTab(page, "chat");
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-test");
 }
 
 async function ask(page: Page, text: string) {

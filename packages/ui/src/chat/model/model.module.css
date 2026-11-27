@@ -1,0 +1,516 @@
+/*
+ * The model tag and its bubble, the pie of the context and the information of a conversation
+ * (docs/design/chat-panel.md of AnimaQuill Cloud, 2.1, 2.3, 4). Rules start from a class of their
+ * own block, so that they go over the buttons of the chat as they are by default (`.panel button`).
+ */
+
+.grow {
+  flex: 1;
+}
+
+/* The tag: "GPT-6.1 Sol · 高 ⌄", at the end of the input card. */
+.tagWrap {
+  display: flex;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.tagWrap .tag {
+  gap: 2px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 4px 3px 8px;
+  color: var(--aq-text-muted);
+  white-space: nowrap;
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+}
+
+.tagWrap .tag:hover,
+.tagWrap .tag[aria-expanded="true"] {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.tagWrap .tag[data-state="off"],
+.tagWrap .tag[data-state="gone"] {
+  color: var(--aq-warning-text);
+}
+
+.tagName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tagLevel {
+  flex: none;
+}
+
+.tagChevron {
+  flex: none;
+}
+
+.narrowOnly {
+  display: none;
+}
+
+@container (max-width: 379px) {
+  .wideOnly {
+    display: none;
+  }
+
+  .narrowOnly {
+    display: inline;
+  }
+}
+
+/* The bubble: up from the top of the input card, at its right, as wide as there is room for. */
+.bubble {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  width: min(320px, calc(100cqw - 16px));
+  max-height: min(460px, 70vh);
+  overflow: hidden;
+  font-size: var(--aq-font-12);
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 8px;
+  box-shadow: var(--aq-shadow);
+}
+
+.bubble button[type="button"] {
+  gap: 4px;
+  color: var(--aq-text);
+  background: transparent;
+  border-radius: 4px;
+}
+
+.bubble button[type="button"]:hover,
+.info button[type="button"]:hover,
+.pie.pie:hover {
+  background: var(--aq-bg-hover);
+}
+
+.bubble button:focus-visible,
+.info button:focus-visible {
+  outline: 1px solid var(--aq-accent);
+  outline-offset: 1px;
+}
+
+.bubble button.textButton,
+.info button.textButton {
+  flex: none;
+  padding: 1px 6px;
+  color: var(--aq-link);
+  font-size: var(--aq-font-11);
+  white-space: nowrap;
+  background: transparent;
+}
+
+.bubble button.textButton:hover,
+.info button.textButton:hover {
+  background: var(--aq-bg-hover);
+}
+
+/* How hard it reasons: one row of segments, two where they do not fit. */
+.effort {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 8px 6px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.effortHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 18px;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+}
+
+.segments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 2px;
+  background: var(--aq-bg-input);
+  border-radius: 6px;
+}
+
+.bubble button.segment {
+  flex: 1 0 auto;
+  justify-content: center;
+  min-width: 30px;
+  padding: 3px 5px;
+  color: var(--aq-text-muted);
+  white-space: nowrap;
+}
+
+.bubble button.segment:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.bubble button.segment[aria-checked="true"] {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}
+
+/* The default of the model: a dot under its step. */
+.bubble button.segment[data-default] {
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.search {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin: 6px 8px 2px;
+  padding: 3px 8px;
+  color: var(--aq-text-muted);
+  background: var(--aq-bg-input);
+  border-radius: 6px;
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+  color: var(--aq-text);
+  font: inherit;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 4px 4px;
+}
+
+.note {
+  margin: 4px 6px;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+}
+
+.groupName {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 6px 6px 2px;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+}
+
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 4px;
+}
+
+.row[data-active] {
+  background: var(--aq-bg-hover);
+}
+
+.row[data-dim] {
+  opacity: 0.5;
+}
+
+.row[data-dragging] {
+  opacity: 0.4;
+}
+
+.row[draggable="true"] {
+  cursor: grab;
+}
+
+.grip {
+  position: absolute;
+  left: -1px;
+  color: var(--aq-text-muted);
+  opacity: 0;
+}
+
+.row:hover .grip {
+  opacity: 1;
+}
+
+.bubble button.choose {
+  flex: 1;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 4px 4px 8px;
+  text-align: left;
+}
+
+.bubble button.choose:hover {
+  background: transparent;
+}
+
+.tick {
+  display: inline-flex;
+  flex: none;
+  width: 12px;
+  color: var(--aq-link);
+}
+
+.rowText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rowName {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.firstTag {
+  margin-left: 6px;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-10);
+}
+
+.rowPack {
+  display: flex;
+  min-width: 0;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+}
+
+.meta {
+  display: inline-flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+  font-variant-numeric: tabular-nums;
+}
+
+.capability {
+  display: inline-flex;
+  width: 14px;
+}
+
+/* ☆ shows on the row the cursor is on; ★ always. */
+.bubble button.star {
+  flex: none;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--aq-text-muted);
+  opacity: 0;
+}
+
+.row[data-active] button.star,
+.row:hover button.star,
+.bubble button.star:focus-visible,
+.bubble button.star[data-on] {
+  opacity: 1;
+}
+
+.bubble button.star[data-on] {
+  color: var(--aq-star);
+}
+
+.said {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+
+.generic {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin: 0;
+  padding: 6px 10px;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+  border-top: 1px solid var(--aq-border);
+}
+
+.foot {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 4px 6px 6px;
+  border-top: 1px solid var(--aq-border);
+}
+
+/* The pie of the context, in the bar on top. */
+.pie.pie {
+  flex: none;
+  justify-content: center;
+  background: transparent;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+}
+
+.pieBack {
+  fill: none;
+  stroke: var(--aq-text-muted);
+  stroke-width: 1.2;
+  opacity: 0.6;
+}
+
+.pieFill {
+  fill: var(--aq-text-muted);
+}
+
+.pie[data-level="warn"] .pieFill {
+  fill: var(--aq-warning);
+}
+
+.pie[data-level="full"] .pieFill {
+  fill: var(--aq-danger);
+}
+
+/* The information of a conversation: a small card under the bar, at its right. */
+.info {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 8px;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: min(340px, calc(100cqw - 16px));
+  max-height: min(520px, 70vh);
+  overflow-y: auto;
+  padding: 10px 12px;
+  color: var(--aq-text);
+  font-size: var(--aq-font-12);
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 8px;
+  outline: none;
+  box-shadow: var(--aq-shadow);
+}
+
+.info button[type="button"] {
+  gap: 2px;
+  color: var(--aq-text);
+  background: transparent;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px 12px;
+  margin: 0;
+}
+
+.facts dt {
+  color: var(--aq-text-muted);
+}
+
+.facts dd {
+  min-width: 0;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.factLine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.factNote {
+  display: block;
+  margin: 2px 0 0;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+}
+
+.bar {
+  display: inline-block;
+  width: 64px;
+  height: 4px;
+  overflow: hidden;
+  background: var(--aq-bg-input);
+  border-radius: 2px;
+}
+
+.bar > span {
+  display: block;
+  height: 100%;
+  background: var(--aq-text-muted);
+}
+
+.bar[data-level="warn"] > span {
+  background: var(--aq-warning);
+}
+
+.bar[data-level="full"] > span {
+  background: var(--aq-danger);
+}
+
+.packFact {
+  display: flex;
+  flex-direction: column;
+}
+
+.packs {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: 4px;
+  padding: 4px;
+  background: var(--aq-bg-input);
+  border-radius: 6px;
+}
+
+.packItem {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+}
+
+.info button.packChoose {
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px 4px;
+  text-align: left;
+}
+
+.info button.packChoose:hover {
+  background: var(--aq-bg-hover);
+}
+
+/* Long names of packs wrap in the narrow card rather than push it wider. */
+.info {
+  overflow-x: hidden;
+}
+
+.packs button.textButton {
+  white-space: normal;
+  text-align: left;
+}

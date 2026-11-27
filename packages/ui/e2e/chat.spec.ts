@@ -29,7 +29,7 @@ async function setUpService(page: Page) {
   await expect(keys).toHaveAttribute("data-where", "animaquill-keys");
   await closeSettings(page);
   await showTab(page, "chat");
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-test");
   await expect(chat(page).getByRole("textbox", { name: /给 AI 发消息/ })).toBeVisible();
 }
 
@@ -434,24 +434,29 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
     return answer(route, [{ text: "好的。" }]);
   });
   await setUpService(page);
-  const option = chat(page).locator('[data-testid="chat-model-option"][data-model="claude-test"]');
-  const menu = page.getByTestId("chat-pack-menu");
-  const others = page.getByTestId("chat-pack-others");
+  const info = chat(page).getByTestId("chat-info");
+  const menu = info.getByTestId("chat-pack-menu");
+  const others = info.getByTestId("chat-pack-others");
   const hiddenItem = others
     .getByTestId("chat-pack-item")
     .filter({ hasText: "对照用的 2026.1 旧写法" });
-  /** The packs of claude-test, from the bubble: those for it, then the others. */
+  /** The packs of claude-test, in the information of the conversation: for it, then the others. */
+  const openPacks = async () => {
+    await chat(page).getByTestId("chat-more").click();
+    await chat(page).getByRole("menuitem", { name: "对话信息" }).click();
+    await info.getByTestId("chat-info-pack-choose").click();
+    await expect(menu).toBeVisible();
+  };
   const openOthers = async () => {
-    await chat(page).getByTestId("chat-model").click();
-    await option.getByTestId("chat-model-more").click();
+    await openPacks();
     await menu.getByTestId("chat-pack-others-open").click();
     await expect(others).toBeVisible();
   };
-  // Hidden until people ask to see it: not in the bubble, and no model gets it on its own.
+  // Hidden until people ask to see it: not among the packs, and no model gets it on its own.
   await openOthers();
   await expect(hiddenItem).toHaveCount(0);
   await page.keyboard.press("Escape");
-  await page.keyboard.press("Escape");
+  await expect(info).toBeHidden();
   await openSettingsPage(page, "模型适配包");
   const settings = settingsOf(page);
   await expect(settings.getByText("开发者选项")).toHaveCount(0);
@@ -465,7 +470,7 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
   await closeSettings(page);
   await showTab(page, "chat");
   await openOthers();
-  await hiddenItem.getByRole("menuitemradio").click();
+  await hiddenItem.getByRole("radio").click();
   await page.keyboard.press("Escape");
   // Hidden again, the choice stays and is still shown.
   await openSettingsPage(page, "模型适配包");
@@ -476,9 +481,9 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
   await expect(packs.getByTestId("pack-viewer-facts")).toContainText("claude-test");
   await closeSettings(page);
   await showTab(page, "chat");
-  await expect(chat(page).getByTestId("chat-pack")).toHaveText(
-    "适配包：对照用的 2026.1 旧写法(内置)",
-  );
+  await openPacks();
+  await expect(info.getByTestId("chat-info-pack")).toContainText("对照用的 2026.1 旧写法(内置)");
+  await page.keyboard.press("Escape");
   await send(page, "你好");
   await expect(chat(page).getByText("好的。")).toBeVisible();
   const sent = requests[0]?.postDataJSON() as Omit<Sent, "tools"> & {
@@ -490,15 +495,13 @@ test("the words to compare with are a hidden pack: shown on asking, used once ch
   );
   // Back to the one recommended: the conversation keeps the words it began with, also after a
   // reload.
-  await chat(page).getByTestId("chat-model").click();
-  await option.getByTestId("chat-model-more").click();
-  await menu.getByRole("menuitemradio").first().click();
+  await openPacks();
+  await menu.getByRole("radio").first().click();
   await page.keyboard.press("Escape");
   await page.reload();
   await showTab(page, "chat");
-  await expect(chat(page).getByTestId("chat-pack")).toHaveText(
-    "适配包：对照用的 2026.1 旧写法(内置)",
-  );
+  await chat(page).getByTestId("chat-context").click();
+  await expect(info.getByTestId("chat-info-pack")).toContainText("对照用的 2026.1 旧写法(内置)");
 });
 
 test("keeps the last answer when the page goes right after it came", async ({ page }) => {
@@ -717,7 +720,7 @@ test("a busy service is tried again by itself, and the chat says so meanwhile", 
   expectedInConsole(problems);
 });
 
-test("what a conversation took: in the bar on top, and a line under each turn", async ({
+test("what a conversation took: a pie on top opening to it all, and a line under each turn", async ({
   page,
 }) => {
   await page.route(ANTHROPIC, (route) =>
@@ -728,19 +731,25 @@ test("what a conversation took: in the bar on top, and a line under each turn", 
   await showTab(page, "chat");
   await send(page, "你好");
   await expect(chat(page).getByText("好的。")).toBeVisible();
-  // 380k of the 1M Claude Opus 5 takes in, at its listed prices.
-  const total = chat(page).getByTestId("chat-usage-total");
-  await expect(total).toHaveText("38% · $0.24");
+  // 380k of the 1M Claude Opus 5 takes in, at its listed prices: a pie on top, said on pointing.
+  const pie = chat(page).getByTestId("chat-context");
+  await expect(pie).toHaveAttribute("aria-label", "上下文 38%（380k / 1M） · 这个对话花了 $0.24");
+  await expect(pie).toHaveText("");
   const line = chat(page).getByTestId("chat-usage");
   await expect(line).toContainText("Claude Opus 5");
   await expect(line).toContainText("↑380k ↓1.1k");
   await expect(line).toContainText("$0.24");
   // The parts do not run into each other: the cost has its separator before it.
   await expect(line).toContainText(/↓1\.1k · \$0\.24/);
-  await total.click();
-  const panel = chat(page).getByTestId("chat-usage-panel");
+  await pie.click();
+  const panel = chat(page).getByTestId("chat-info");
   await expect(panel).toContainText("380k / 1M");
-  await expect(panel).toContainText("按公开价格估算");
+  await expect(panel.getByTestId("chat-info-cost")).toHaveText("$0.24（按公开价格估算）");
+  await expect(panel).toContainText("380k / 1.1k");
+  await expect(panel).toContainText("缓存命中 98%");
+  await expect(panel).toContainText("Claude Opus 5（Anthropic）");
+  await page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
 });
 
 /** The widths of the chat the states are looked at in: a group at the side, and a narrow one. */

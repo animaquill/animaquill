@@ -99,6 +99,7 @@ export {
   readAiSettings,
   recoverOldWrite,
   settledDefault,
+  favoritesOf,
   writeAiSettings,
   type AiSettings,
   type AiSettingsReading,

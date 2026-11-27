@@ -203,6 +203,12 @@ export interface AiSettings {
   readonly services: readonly ServiceConfig[];
   /** What a new conversation uses. Always a model that is on, while any is. */
   readonly default: ModelRef | undefined;
+  /**
+   * The models people keep at hand, first in the chat's list, in their order: the first of them is
+   * what a new conversation uses (`default`), see `favoritesOf`. Pages of before keep it as a field
+   * they do not know, and change only `default`, which `favoritesOf` takes as the first again.
+   */
+  readonly favorites?: readonly ModelRef[];
   /** How hard a model reasons unless a conversation says otherwise; else its pack says. */
   readonly reasoningFor?: Readonly<Record<string, ReasoningLevel>>;
   /**
@@ -329,6 +335,7 @@ const TOP_FIELDS = new Set([
   "version",
   "services",
   "default",
+  "favorites",
   "current",
   "reasoningFor",
   "packFor",
@@ -706,12 +713,49 @@ export function isEnabled(services: readonly ServiceConfig[], ref: ModelRef | un
   return services.some(({ id, enabled }) => id === ref.service && enabled.includes(ref.model));
 }
 
-/** The default model as it has to be: one that is on, while any is. */
+/**
+ * The default model as it has to be: one that is on, while any is. Where the one wanted is not,
+ * the first favorite that is, else the first model on.
+ */
 export function settledDefault(
   services: readonly ServiceConfig[],
   wanted: ModelRef | undefined,
+  favorites: readonly ModelRef[] = [],
 ): ModelRef | undefined {
-  return isEnabled(services, wanted) ? wanted : firstEnabled(services);
+  if (isEnabled(services, wanted)) return wanted;
+  return favorites.find((ref) => isEnabled(services, ref)) ?? firstEnabled(services);
+}
+
+const sameRef = (a: ModelRef | undefined, b: ModelRef | undefined): boolean =>
+  a !== undefined && b !== undefined && a.service === b.service && a.model === b.model;
+
+/**
+ * The favorite models as the chat lists them: in people's order, each once, the default first —
+ * where a page of before (which knows only `default`) made another model the default, that one
+ * becomes the first favorite. Without favorites, none: the default alone is not one.
+ */
+export function favoritesOf(
+  settings: Pick<AiSettings, "services" | "default" | "favorites">,
+): readonly ModelRef[] {
+  const listed: ModelRef[] = [];
+  for (const ref of settings.favorites ?? []) {
+    if (!listed.some((each) => sameRef(each, ref))) listed.push(ref);
+  }
+  if (listed.length === 0) return listed;
+  const chosen = settings.default;
+  const first = listed.find((ref) => isEnabled(settings.services, ref));
+  if (!chosen || sameRef(first, chosen)) return listed;
+  return [chosen, ...listed.filter((ref) => !sameRef(ref, chosen))];
+}
+
+function readFavorites(value: unknown): readonly ModelRef[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const refs = value.flatMap((ref) =>
+    isRecord(ref) && typeof ref.service === "string" && isModelName(ref.model)
+      ? [{ service: ref.service, model: ref.model }]
+      : [],
+  );
+  return refs.length > 0 ? refs : undefined;
 }
 
 /**
@@ -796,6 +840,7 @@ export function readAiSettings(value: unknown): AiSettingsReading {
   }
 
   const reasoningFor = from >= 2 ? readReasoningFor(value.reasoningFor) : undefined;
+  const favorites = from >= 2 ? readFavorites(value.favorites) : undefined;
   const fields = unknownFields(value, TOP_FIELDS);
   const kept: KeptSettings = {
     ...(fields && { fields }),
@@ -805,7 +850,8 @@ export function readAiSettings(value: unknown): AiSettingsReading {
   };
   const settings: AiSettings = {
     services,
-    default: settledDefault(services, wanted),
+    default: settledDefault(services, wanted, favorites),
+    ...(favorites && { favorites }),
     ...(reasoningFor && { reasoningFor }),
     ...(packFor && { packFor }),
     ...(showHiddenPacks && { showHiddenPacks: true }),
@@ -925,7 +971,7 @@ export function withSecrets(
  */
 export function writeAiSettings(settings: AiSettings): Record<string, unknown> {
   const { kept } = settings;
-  const fallback = settledDefault(settings.services, settings.default);
+  const fallback = settledDefault(settings.services, settings.default, settings.favorites);
   const services = settings.services.map((service) => ({
     ...kept?.serviceFields?.[service.id],
     id: service.id,
@@ -949,6 +995,7 @@ export function writeAiSettings(settings: AiSettings): Record<string, unknown> {
     version: AI_SETTINGS_VERSION,
     services: [...services, ...(kept?.services ?? [])],
     ...(fallback && { default: fallback }),
+    ...(settings.favorites && settings.favorites.length > 0 && { favorites: settings.favorites }),
     ...((fallback?.service ?? settings.services[0]?.id) !== undefined && {
       current: fallback?.service ?? settings.services[0]?.id,
     }),

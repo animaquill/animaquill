@@ -13,7 +13,7 @@ import { formatCombo } from "../../workbench/keys.ts";
 import type { AttachRefusal } from "../attachments.ts";
 import { Attachments } from "../AttachmentsView.tsx";
 import { ChatInput, type ChatInputHandle } from "../ChatInput.tsx";
-import { ModelPicker, ReasoningPicker, type PickerRequest } from "../ModelPicker.tsx";
+import { ModelTag, type ModelTagHandle } from "../model/ModelTag.tsx";
 import { WITHHELD } from "../session.ts";
 import { useShownChat } from "../shown.ts";
 import { CarryLine } from "./CarryLine.tsx";
@@ -30,6 +30,7 @@ const COMMANDS = {
   selection: "chat.insertSelection",
   shoot: "chat.sendFrame",
   plus: "chat.openPlus",
+  models: "chat.openModels",
 } as const;
 
 /**
@@ -80,7 +81,7 @@ export function InputArea(props: {
   };
   const box = useRef<ChatInputHandle>(null);
   const plus = useRef<PlusMenuHandle>(null);
-  const [picking, setPicking] = useState<PickerRequest | undefined>();
+  const tag = useRef<ModelTagHandle>(null);
   // "带上" taken off: for the next message of this conversation only.
   const [carry, setCarry] = useState<{ readonly chat: string | undefined; readonly on: boolean }>({
     chat: id,
@@ -146,6 +147,8 @@ export function InputArea(props: {
       selection: insertSelection,
       picture: choose,
       plus: () => plus.current?.openFromBox(box.current?.element ?? null),
+      models: () => tag.current?.open(),
+      effort: () => tag.current?.cycleEffort(),
       focus: () => box.current?.focus(),
     }),
   );
@@ -278,11 +281,7 @@ export function InputArea(props: {
 
   return (
     <div className={styles.area}>
-      <HoldStrip
-        hold={shown.hold}
-        nudge={nudge}
-        onModel={() => setPicking({ at: Date.now(), pictures: false })}
-      />
+      <HoldStrip hold={shown.hold} nudge={nudge} onModel={() => tag.current?.open()} />
       <QueueList
         queued={shown.queued}
         running={running}
@@ -309,7 +308,7 @@ export function InputArea(props: {
                   why={why}
                   model={modelName}
                   nudge={nudge}
-                  onPickVision={() => setPicking({ at: Date.now(), pictures: true })}
+                  onPickVision={() => tag.current?.open(true)}
                   onRemoveAll={removePictures}
                 />
               )
@@ -369,10 +368,11 @@ export function InputArea(props: {
             </span>
           )}
           <span className={styles.grow} />
-          <div className={styles.model}>
-            <ModelPicker request={picking} />
-            <ReasoningPicker />
-          </div>
+          <ModelTag
+            ref={tag}
+            shortcut={keysOf(COMMANDS.models)}
+            onDone={() => box.current?.focus()}
+          />
           <SendButton
             state={sendStateOf(running, hasSomething)}
             keys={sendKeys}

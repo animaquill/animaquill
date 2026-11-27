@@ -56,6 +56,7 @@
 
 /* The bar on top: the model, a new conversation, earlier ones, what this one took. */
 .bar {
+  position: relative;
   display: flex;
   flex: none;
   gap: 4px;
@@ -119,73 +120,6 @@
 
 .panel .menu button:hover:not(:disabled) {
   background: var(--aq-bg-hover);
-}
-
-.meterWrap {
-  position: relative;
-  flex: none;
-  margin-left: auto;
-}
-
-.panel .meter {
-  color: var(--aq-text-muted);
-  background: none;
-  white-space: nowrap;
-}
-
-.meter[data-level="warn"] {
-  color: var(--aq-warning);
-}
-
-.meter[data-level="full"] {
-  color: var(--aq-danger-text);
-}
-
-.pie {
-  width: 10px;
-  height: 10px;
-  background: conic-gradient(currentcolor var(--share), var(--aq-border) 0);
-  border-radius: 50%;
-}
-
-.meterPanel {
-  position: absolute;
-  top: calc(100% + 4px);
-  right: 0;
-  z-index: 10;
-  width: 220px;
-  padding: 8px 10px;
-  background: var(--aq-bg-menu);
-  border: 1px solid var(--aq-border);
-  border-radius: 4px;
-  box-shadow: var(--aq-shadow);
-}
-
-.meterTitle {
-  margin-bottom: 4px;
-  color: var(--aq-text-strong);
-}
-
-.meterPanel dl {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 2px 10px;
-  margin: 0 0 4px;
-}
-
-.meterPanel dt {
-  color: var(--aq-text-muted);
-}
-
-.meterPanel dd {
-  margin: 0;
-  text-align: right;
-}
-
-.panel .meterCompact {
-  width: 100%;
-  margin-top: 6px;
-  justify-content: center;
 }
 
 /* The conversation, which keeps to the newest unless people scroll up. */
@@ -1007,17 +941,6 @@
   font-size: var(--aq-font-11);
 }
 
-/* At 400 wide or less: how hard the model reasons keeps its icon alone, the model its name. */
-@container (max-width: 400px) {
-  .reasoningLabel {
-    display: none;
-  }
-
-  .panel .reasoningIcon {
-    display: inline-flex;
-  }
-}
-
 /* The pictures that go with the next message, at the top of the input box, 44 high. */
 .pictures {
   display: flex;
@@ -1242,145 +1165,10 @@ span.sentPicture {
   flex: 1;
 }
 
-.panel .pick {
-  max-width: 100%;
-  min-width: 0;
-  color: var(--aq-text-muted);
-  background: transparent;
-  border: 1px solid var(--aq-border);
-}
-
-.panel .pick[data-state="off"],
-.panel .pick[data-state="gone"] {
-  color: var(--aq-warning);
-}
-
-.pickName {
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-/* The pack people chose for the model, after its name; the name alone where the chat is narrow. */
-.pickPack {
-  min-width: 0;
-  max-width: 16ch;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-/* Its bubble grows up from the top of the input box, not from the button. */
-.pickerWrap {
-  flex: 0 1 auto;
-  /* The model keeps a few letters of its name: how hard it reasons gives way first. */
-  min-width: 6em;
-}
-
-.reasoningIcon {
-  display: none;
-  flex: none;
-}
-
-.reasoningLabel {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .moreWrap > button {
   position: relative;
 }
 
-.panel .reasoning {
-  display: inline-flex;
-  flex: none;
-  gap: 4px;
-  align-items: center;
-  max-width: 130px;
-  overflow: hidden;
-  color: var(--aq-text-muted);
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  background: transparent;
-  border: 1px solid var(--aq-border);
-}
-
-/* The steps of reasoning, up from the button, each with a star for the default of the model. */
-.reasoningBox {
-  position: relative;
-  flex: none;
-}
-
-.reasoningMenu {
-  position: absolute;
-  bottom: calc(100% + 4px);
-  left: 0;
-  z-index: 6;
-  min-width: 150px;
-  padding: 4px 0;
-  background: var(--aq-bg-menu);
-  border: 1px solid var(--aq-border);
-  border-radius: 6px;
-  box-shadow: var(--aq-shadow);
-}
-
-.reasoningItem {
-  display: flex;
-  align-items: center;
-}
-
-.panel .reasoningChoice {
-  display: inline-flex;
-  flex: 1;
-  gap: 6px;
-  align-items: center;
-  padding: 4px 10px;
-  color: var(--aq-text);
-  font: inherit;
-  text-align: left;
-  white-space: nowrap;
-  background: none;
-  border: 0;
-  cursor: pointer;
-}
-
-.panel .reasoningChoice:hover,
-.panel .reasoningStar:hover {
-  background: var(--aq-bg-hover);
-}
-
-.panel .reasoningStar {
-  display: inline-flex;
-  padding: 4px 8px;
-  color: var(--aq-text-muted);
-  background: none;
-  border: 0;
-  cursor: pointer;
-}
-
-.panel .reasoningStar[aria-pressed="true"] {
-  color: var(--aq-star);
-}
-
-/* The bubble of models: up from the input box, the width of the chat when it is narrow. */
-.bubble {
-  position: absolute;
-  bottom: calc(100% + 4px);
-  left: 8px;
-  z-index: 6;
-  display: flex;
-  flex-direction: column;
-  width: min(360px, calc(100cqw - 16px));
-  max-height: min(420px, 70vh);
-  background: var(--aq-bg-raised);
-  border: 1px solid var(--aq-border);
-  border-radius: 6px;
-  box-shadow: var(--aq-shadow);
-}
-
-.bubbleSearch,
 .sheetSearch {
   display: flex;
   flex: 1;
@@ -1391,31 +1179,17 @@ span.sentPicture {
   color: var(--aq-text-muted);
 }
 
-.bubbleSearch {
-  border-bottom: 1px solid var(--aq-border);
-}
-
-.panel .bubbleSearch input,
 .panel .sheetSearch input {
   flex: 1;
   min-width: 0;
 }
 
-.bubbleList {
-  flex: 1;
-  min-height: 0;
-  padding: 4px 0;
-  overflow: auto;
-}
-
-.bubbleNone,
 .sheetNone {
   margin: 0;
   padding: 8px 12px;
   color: var(--aq-text-muted);
 }
 
-.bubbleGroup,
 .sheetGroup {
   display: flex;
   gap: 4px;
@@ -1426,74 +1200,6 @@ span.sentPicture {
   text-transform: uppercase;
 }
 
-[data-dim] > .bubbleGroup ~ .modelRow,
-.modelRow[data-dim] {
-  opacity: 0.55;
-}
-
-.modelRow {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.modelRow[data-active] {
-  background: var(--aq-bg-hover);
-}
-
-.panel .modelChoose {
-  flex: 1;
-  gap: 8px;
-  min-width: 0;
-  padding: 5px 4px 5px 12px;
-  background: transparent;
-  border-radius: 0;
-}
-
-.panel .modelChoose:hover {
-  background: transparent;
-}
-
-.panel .modelChoose[aria-selected="true"] {
-  font-weight: 600;
-}
-
-.tick {
-  display: inline-flex;
-  flex: none;
-  width: 12px;
-  color: var(--aq-link);
-}
-
-.modelRowText {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.modelRowName {
-  min-width: 0;
-  overflow: hidden;
-  text-align: left;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-/* Under the model of this conversation: the pack it uses. */
-.modelRowPack {
-  display: flex;
-  min-width: 0;
-  color: var(--aq-text-muted);
-  font-size: var(--aq-font-11);
-  font-weight: normal;
-}
-
-.capability {
-  display: inline-flex;
-  width: 14px;
-}
-
 .panel .more {
   display: inline-flex;
   flex: none;
@@ -1502,49 +1208,6 @@ span.sentPicture {
   padding: 3px;
   color: var(--aq-text-muted);
   background: transparent;
-}
-
-.modelRow[data-menu] {
-  background: var(--aq-bg-hover);
-}
-
-.modelRow[data-menu] .more {
-  color: var(--aq-text-strong);
-}
-
-.modelMeta {
-  display: inline-flex;
-  flex: none;
-  gap: 4px;
-  align-items: center;
-  color: var(--aq-text-muted);
-  font-size: var(--aq-font-11);
-}
-
-.panel .star {
-  flex: none;
-  margin-right: 6px;
-  padding: 3px;
-  color: var(--aq-text-muted);
-  background: transparent;
-  opacity: 0;
-}
-
-.panel .star[data-on],
-.panel .star[data-active],
-.modelRow:hover .star,
-.panel .star:focus-visible {
-  opacity: 1;
-}
-
-.panel .star[data-on] {
-  color: var(--aq-warning);
-}
-
-@media (hover: none) {
-  .panel .star {
-    opacity: 1;
-  }
 }
 
 .tag {
@@ -1559,14 +1222,6 @@ span.sentPicture {
 .tag[data-kind="mine"] {
   color: var(--aq-link);
   border-color: var(--aq-accent);
-}
-
-.bubbleFoot {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  padding: 4px 8px 6px;
-  border-top: 1px solid var(--aq-border);
 }
 
 /* The conversations, over the one open. */
@@ -1944,24 +1599,7 @@ span.sentPicture {
   min-width: 0;
 }
 
-/* 300–400 wide: the bar keeps the share of the context, a turn its tokens and time. */
 @container (max-width: 400px) {
-  .bubble {
-    right: 8px;
-    left: 8px;
-    width: auto;
-  }
-
-  .pickName {
-    max-width: 14ch;
-  }
-
-  .pickPack,
-  .capability {
-    display: none;
-  }
-
-  .meterCost,
   .usageCost,
   .usageModel {
     display: none;
@@ -1969,13 +1607,6 @@ span.sentPicture {
 
   .user {
     max-width: 90%;
-  }
-}
-
-/* Narrower than 300: how hard the model reasons takes less room. */
-@container (max-width: 300px) {
-  .panel .reasoning {
-    max-width: 72px;
   }
 }
 
@@ -2375,7 +2006,6 @@ span.sentPicture {
   justify-content: flex-end;
 }
 
-/* Without a pointer that hovers, the × of each line of a plan shows. */
 @media (hover: none) {
   .panel .planRemove {
     visibility: visible;

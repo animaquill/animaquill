@@ -4877,6 +4877,22 @@ export class Workbench {
       enabled: () => this.session.store !== undefined,
     });
     this.actions.register({
+      id: "chat.openModels",
+      title: (t) => t("chat.action.openModels"),
+      run: viaBox("models"),
+      keys: keys("m"),
+      scope: "chat",
+      enabled: () => this.session.store !== undefined,
+    });
+    this.actions.register({
+      id: "chat.cycleReasoning",
+      title: (t) => t("chat.action.cycleReasoning"),
+      run: viaBox("effort"),
+      keys: keys("r"),
+      scope: "chat",
+      enabled: () => this.session.store !== undefined,
+    });
+    this.actions.register({
       id: "chat.openPlus",
       title: (t) => t("chat.action.openPlus"),
       run: viaBox("plus"),
@@ -5287,6 +5303,10 @@ export interface ComposeHandlers {
   readonly picture: () => void;
   /** Opens the "+" menu of the box, from the keyboard. */
   readonly plus: () => void;
+  /** Opens the bubble of the model and how hard it reasons. */
+  readonly models: () => void;
+  /** How hard the model reasons, one step up. */
+  readonly effort: () => void;
   readonly focus: () => void;
 }
 

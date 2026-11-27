@@ -96,14 +96,14 @@ test("adds a service from the picker: its recommended models on, the first the d
   await noAutoTitle(page);
   await leaveSettings(page);
   await showTab(page, "chat");
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("Claude Opus 5.5");
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText("Claude Opus 5.5");
   const box = chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
   await box.fill("你好");
   await box.press("Enter");
   await expect(chat(page).getByText("OK", { exact: true })).toBeVisible();
   expect(sent.at(-1)).toMatchObject({ model: "claude-opus-5-5" });
   await chat(page).getByTestId("chat-model").click();
-  await chat(page).getByRole("button", { name: "管理模型和服务…" }).click();
+  await chat(page).getByTestId("chat-picker-manage").click();
   await expect(settings.getByTestId("ai-service")).toBeVisible();
   // The groups on the left, beside the service.
   await expect(settings.getByRole("navigation", { name: "设置分组" })).toHaveCSS(
@@ -186,7 +186,7 @@ test("models: on and off, the default, at least one stays on, one got from the s
   await noAutoTitle(page);
   await leaveSettings(page);
   await showTab(page, "chat");
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("Claude Opus 5.5");
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText("Claude Opus 5.5");
   const box = chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
   await box.fill("你好");
   await box.press("Enter");
@@ -346,8 +346,15 @@ test("settings of before come up with their services, models, choices and keys",
   await expect(settings.getByRole("textbox", { name: "一次任务最多调用工具" })).toHaveValue("77");
   await leaveSettings(page);
   await showTab(page, "chat");
-  // The pack chosen for the model before is said beside it.
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test · Claude 5");
+  // The pack chosen for the model before is said under it in the bubble.
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-test");
+  await chat(page).getByTestId("chat-model").click();
+  await expect(
+    chat(page)
+      .locator('[data-testid="chat-model-option"][data-model="claude-test"]')
+      .getByTestId("chat-model-row-pack"),
+  ).toHaveText("适配包：Claude 5(内置)");
+  await page.keyboard.press("Escape");
 
   // Written as version 4 once something changes, with what a page of before reads, and the service
   // this editor cannot read kept.

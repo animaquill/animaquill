@@ -1,4 +1,4 @@
-import { readAiSettings } from "@animaquill/agent";
+import { favoritesOf, readAiSettings } from "@animaquill/agent";
 import { memoryKeys, type KeyStore, type SettingsStore } from "@animaquill/host";
 import { COMPARISON_PACK_ID } from "@animaquill/tools";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -248,6 +248,51 @@ describe("models of services", () => {
     await ai.remove(a);
     expect(ai.getSnapshot().default).toEqual({ service: d, model: "deepseek-flash" });
     expect(ai.setAllEnabled(d, ["deepseek-flash"], false)).toBe("last");
+  });
+
+  it("keep favorites in people's order, the first the default; the default follows them", async () => {
+    const { open } = browser();
+    const ai = await open();
+    const a = ai.add("anthropic", "Anthropic", {
+      enabled: ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+    }) as string;
+    const ref = (model: string) => ({ service: a, model });
+    const favorites = () => favoritesOf(ai.getSnapshot());
+    expect(favorites()).toEqual([]);
+    expect(ai.getSnapshot().default).toEqual(ref("claude-opus-5-5"));
+    // The first favorite is the default at once.
+    ai.toggleFavorite(ref("claude-sonnet-5-5"));
+    expect(favorites()).toEqual([ref("claude-sonnet-5-5")]);
+    expect(ai.getSnapshot().default).toEqual(ref("claude-sonnet-5-5"));
+    // More go at the end, and leave the default as it is.
+    ai.toggleFavorite(ref("claude-haiku-5-5"));
+    ai.toggleFavorite(ref("claude-opus-5-5"));
+    expect(favorites()).toEqual([
+      ref("claude-sonnet-5-5"),
+      ref("claude-haiku-5-5"),
+      ref("claude-opus-5-5"),
+    ]);
+    expect(ai.getSnapshot().default).toEqual(ref("claude-sonnet-5-5"));
+    // Moved first: the default.
+    ai.moveFavorite(ref("claude-opus-5-5"), 0);
+    expect(favorites()[0]).toEqual(ref("claude-opus-5-5"));
+    expect(ai.getSnapshot().default).toEqual(ref("claude-opus-5-5"));
+    // The default chosen elsewhere (the model page) is the first favorite.
+    ai.setDefault(ref("claude-haiku-5-5"));
+    expect(favorites()).toEqual([
+      ref("claude-haiku-5-5"),
+      ref("claude-opus-5-5"),
+      ref("claude-sonnet-5-5"),
+    ]);
+    // The first taken out: the next one is the default.
+    ai.toggleFavorite(ref("claude-haiku-5-5"));
+    expect(ai.getSnapshot().default).toEqual(ref("claude-opus-5-5"));
+    // None left: the default stays.
+    ai.toggleFavorite(ref("claude-opus-5-5"));
+    ai.toggleFavorite(ref("claude-sonnet-5-5"));
+    expect(favorites()).toEqual([]);
+    expect(ai.getSnapshot().favorites).toBeUndefined();
+    expect(ai.getSnapshot().default).toEqual(ref("claude-sonnet-5-5"));
   });
 
   it("list what pi knows, what people added, and what is on: those on first, in their order", async () => {
@@ -595,18 +640,20 @@ describe("the details of models", () => {
     expect(nowhere.ai.getSnapshot().catalog).toEqual({ state: "failed" });
   });
 
-  it("follow a model under another id: the default, the models on, packs and reasoning", async () => {
+  it("follow a model under another id: the default, the favorites, the models on, packs and reasoning", async () => {
     const { open } = browser();
     const ai = await open();
     const id = ai.add("openai-compatible", "网关", { baseUrl: "https://gw.example/v1" }) as string;
     ai.addModels(id, [{ id: "old-name", added: "hand" }]);
     ai.setDefault({ service: id, model: "old-name" });
+    ai.toggleFavorite({ service: id, model: "old-name" });
     ai.choosePack(["old-name"], "lin/steady");
     ai.setReasoning("old-name", "high");
     ai.editModel(id, "old-name", "maxTokens", 1000);
     expect(ai.renameModel(id, "old-name", "new-name")).toBeUndefined();
     const now = ai.getSnapshot();
     expect(now.default).toEqual({ service: id, model: "new-name" });
+    expect(now.favorites).toEqual([{ service: id, model: "new-name" }]);
     expect(ai.serviceOf(id)?.enabled).toEqual(["new-name"]);
     expect(now.packFor).toEqual({ "new-name": "lin/steady" });
     expect(now.reasoningFor).toEqual({ "new-name": "high" });

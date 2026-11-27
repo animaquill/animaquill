@@ -13,6 +13,7 @@ import {
   recoverOldWrite,
   secretsOf,
   settledDefault,
+  favoritesOf,
   withSecrets,
   writeAiSettings,
   type AiSettings,
@@ -923,5 +924,74 @@ describe("asking before a change of the project", () => {
     expect(readAiSettings(on).settings.askBeforeEdit).toBe(true);
     expect(readAiSettings({ ...on, askBeforeEdit: "yes" }).settings.askBeforeEdit).toBeUndefined();
     expect(readAiSettings({ ...on, askBeforeEdit: false }).settings.askBeforeEdit).toBeUndefined();
+  });
+});
+
+describe("favorite models", () => {
+  const service = (enabled: string[]) => ({
+    id: "a",
+    kind: "anthropic",
+    name: "Anthropic",
+    route: "direct",
+    enabled,
+  });
+  const ref = (model: string) => ({ service: "a", model });
+  const saved = (more: object) => ({
+    version: 4,
+    services: [service(["opus", "sonnet", "haiku"])],
+    ...more,
+  });
+
+  it("are kept in people's order, each once, and read back as written", () => {
+    const settings = settingsOf(
+      saved({
+        default: ref("sonnet"),
+        favorites: [ref("sonnet"), ref("opus"), ref("sonnet"), { service: "a" }, "x"],
+      }),
+    );
+    expect(settings.favorites).toEqual([ref("sonnet"), ref("opus"), ref("sonnet")]);
+    expect(favoritesOf(settings)).toEqual([ref("sonnet"), ref("opus")]);
+    expect(roundTrip(settings)).toEqual(settings);
+    expect(writeAiSettings(settings).favorites).toEqual(settings.favorites);
+  });
+
+  it("put the default first where a page of before, which knows only it, chose another one", () => {
+    // Such a page keeps the favorites as a field it does not know, and changes the default.
+    const settings = settingsOf(
+      saved({ default: ref("haiku"), favorites: [ref("sonnet"), ref("opus")] }),
+    );
+    expect(favoritesOf(settings)).toEqual([ref("haiku"), ref("sonnet"), ref("opus")]);
+  });
+
+  it("are none without any: the default alone is not one", () => {
+    const settings = settingsOf(saved({ default: ref("opus") }));
+    expect(settings.favorites).toBeUndefined();
+    expect(favoritesOf(settings)).toEqual([]);
+    expect(writeAiSettings(settings)).not.toHaveProperty("favorites");
+  });
+
+  it("give the default where the one wanted is off: the first favorite that is on", () => {
+    expect(
+      settledDefault([service(["haiku", "opus"])], ref("sonnet"), [ref("sonnet"), ref("opus")]),
+    ).toEqual(ref("opus"));
+    expect(settledDefault([service(["haiku"])], ref("sonnet"), [ref("sonnet")])).toEqual(
+      ref("haiku"),
+    );
+    // The first favorite turned off: the next one is the default, and stays first that is on.
+    const settings = settingsOf({
+      version: 4,
+      services: [service(["opus", "haiku"])],
+      default: ref("sonnet"),
+      favorites: [ref("sonnet"), ref("opus")],
+    });
+    expect(settings.default).toEqual(ref("opus"));
+    expect(favoritesOf(settings)).toEqual([ref("sonnet"), ref("opus")]);
+  });
+
+  it("go with the account as one field", () => {
+    const entries = entriesOfSettings(
+      writeAiSettings(settingsOf(saved({ default: ref("opus"), favorites: [ref("opus")] }))),
+    );
+    expect(entries?.get("field:favorites")).toEqual([ref("opus")]);
   });
 });

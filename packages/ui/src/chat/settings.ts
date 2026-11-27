@@ -19,6 +19,7 @@ import {
   revertField,
   saysRed,
   secretsOf,
+  favoritesOf,
   settledDefault,
   supportedLevels,
   testModel,
@@ -601,6 +602,7 @@ export class AiSettingsStore {
     // What the settings leave out is off: a field that went away takes its value with it.
     const {
       showHiddenPacks: _shown,
+      favorites: _favorites,
       packFor: _chosen,
       reasoningFor: _reasoning,
       kept: _kept,
@@ -632,6 +634,7 @@ export class AiSettingsStore {
     const {
       services,
       default: chosen,
+      favorites,
       reasoningFor,
       packFor,
       showHiddenPacks,
@@ -649,6 +652,7 @@ export class AiSettingsStore {
     return {
       services,
       default: chosen,
+      ...(favorites && favorites.length > 0 && { favorites }),
       ...(reasoningFor && { reasoningFor }),
       ...(packFor && { packFor }),
       ...(showHiddenPacks && { showHiddenPacks }),
@@ -684,7 +688,7 @@ export class AiSettingsStore {
     const settings = {
       ...changed,
       services,
-      default: settledDefault(services, changed.default),
+      default: settledDefault(services, changed.default, changed.favorites),
     };
     this.#adopt(settings, undefined);
     const written = writeAiSettings(settings);
@@ -958,11 +962,15 @@ export class AiSettingsStore {
     return undefined;
   }
 
-  /** The model new conversations use. It is turned on if it was not. */
+  /**
+   * The model new conversations use. It is turned on if it was not, and where there are favorites
+   * it is the first of them (`favoritesOf`).
+   */
   setDefault(ref: ModelRef): void {
     const service = this.serviceOf(ref.service);
     if (!service) return;
     const now = this.#settingsNow();
+    const favorites = favoritesOf(now);
     this.#save({
       ...now,
       services: now.services.map((each) =>
@@ -971,7 +979,42 @@ export class AiSettingsStore {
           : each,
       ),
       default: ref,
+      ...(favorites.length > 0 && {
+        favorites: [ref, ...favorites.filter((each) => !sameModel(each, ref))],
+      }),
     });
+  }
+
+  /**
+   * A model in the favorites, at their end, or out of them. The first favorite is the default: a
+   * first one makes it so; without the first, the next one is; without any, the default stays.
+   */
+  toggleFavorite(ref: ModelRef): void {
+    const now = this.#settingsNow();
+    const listed = favoritesOf(now);
+    const kept = listed.some((each) => sameModel(each, ref));
+    const favorites = kept ? listed.filter((each) => !sameModel(each, ref)) : [...listed, ref];
+    const { favorites: _was, ...rest } = now;
+    this.#save({
+      ...rest,
+      ...(favorites.length > 0 && { favorites }),
+      default:
+        favorites.length > 0 && (listed.length === 0 || sameModel(listed[0], now.default))
+          ? (favorites[0] as ModelRef)
+          : now.default,
+    });
+  }
+
+  /** A favorite to another place among them: the first one is the default. */
+  moveFavorite(ref: ModelRef, to: number): void {
+    const now = this.#settingsNow();
+    const listed = favoritesOf(now);
+    const from = listed.findIndex((each) => sameModel(each, ref));
+    if (from < 0) return;
+    const rest = listed.filter((_, index) => index !== from);
+    const at = Math.max(0, Math.min(to, rest.length));
+    const favorites = [...rest.slice(0, at), ref, ...rest.slice(at)];
+    this.#save({ ...now, favorites, default: favorites[0] as ModelRef });
   }
 
   /**
@@ -1103,9 +1146,13 @@ export class AiSettingsStore {
     };
     const packFor = rekey(now.packFor);
     const reasoningFor = rekey(now.reasoningFor);
+    const favorites = now.favorites?.map((each) =>
+      each.service === id && each.model === from ? { service: id, model: name } : each,
+    );
     this.#save({
       ...now,
       services,
+      ...(favorites && { favorites }),
       ...(packFor && { packFor }),
       ...(reasoningFor && { reasoningFor }),
       default:
@@ -1713,3 +1760,7 @@ export class AiSettingsStore {
     this.#knownSet = new Set([...this.#knownSet, key]);
   }
 }
+
+/** Whether two references name the same model of the same service. */
+const sameModel = (a: ModelRef | undefined, b: ModelRef | undefined): boolean =>
+  a !== undefined && b !== undefined && a.service === b.service && a.model === b.model;

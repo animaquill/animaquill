@@ -83,7 +83,7 @@ const option = (page: Page, model: string) =>
     .getByTestId("chat-model-bubble")
     .locator(`[data-testid="chat-model-option"][data-model="${model}"]`);
 
-test("each conversation keeps its own model; the star changes the default, for new ones", async ({
+test("each conversation keeps its own model; the first favorite is the default, for new ones", async ({
   page,
 }) => {
   test.setTimeout(90_000);
@@ -99,10 +99,10 @@ test("each conversation keeps its own model; the star changes the default, for n
   await addModel(page, "claude-other");
   await closeSettings(page);
   await showTab(page, "chat");
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-test");
 
-  // The bubble: the models that are on, by service, the tick on this conversation's with the pack
-  // it uses under it, and the star on the default.
+  // The bubble: the models that are on, by service, the tick on this conversation's. No pack
+  // under a model whose pack the rules choose; no favorites yet.
   await chat(page).getByTestId("chat-model").click();
   const bubble = chat(page).getByTestId("chat-model-bubble");
   await expect(bubble.getByTestId("chat-model-option")).toHaveCount(2);
@@ -110,38 +110,29 @@ test("each conversation keeps its own model; the star changes the default, for n
     "aria-selected",
     "true",
   );
-  await expect(
-    option(page, "claude-test").getByRole("button", { name: "默认模型（新对话用）" }),
-  ).toBeVisible();
-  await expect(option(page, "claude-test").getByTestId("chat-model-row-pack")).toHaveText(
-    "适配包：自动：通用(内置)",
-  );
-  await expect(bubble.getByTestId("chat-model-row-pack")).toHaveCount(1);
+  await expect(bubble.getByTestId("chat-model-row-pack")).toHaveCount(0);
+  await expect(bubble.locator('[data-group="favorites"]')).toHaveCount(0);
+  // The model uses the general words: said at the bottom, with where to get a pack.
+  await expect(bubble.getByTestId("chat-picker-generic")).toHaveText("这个模型用通用写法装适配包…");
   await shoot(page, "bubble", chat(page).getByTestId("chat"));
-  // Clicked, a model is chosen and the bubble stays, to see what is chosen or choose again.
+  // Clicked, a model is chosen and the bubble closes, the caret back in the box.
   await option(page, "claude-other").getByRole("option").click();
-  await expect(bubble).toBeVisible();
-  await expect(option(page, "claude-other").getByRole("option")).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-other");
-  await page.screenshot({ path: test.info().outputPath("bubble-chosen-stays.png") });
-  // Clicking outside it closes it.
-  await chat(page)
-    .getByRole("textbox", { name: /给 AI 发消息/ })
-    .click();
   await expect(bubble).toBeHidden();
-  // Found by a part of its name; Enter takes it, and the bubble stays; Esc closes it.
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-other");
+  await expect(box(page)).toBeFocused();
+  // Found by a part of its name; Enter takes it and closes; Esc closes without choosing.
   await chat(page).getByTestId("chat-model").click();
-  await bubble.getByRole("textbox", { name: "搜模型、服务" }).fill("TEST");
+  await bubble.getByRole("combobox", { name: "搜模型、服务" }).fill("TEST");
   await expect(bubble.getByTestId("chat-model-option")).toHaveCount(1);
-  await bubble.getByRole("textbox", { name: "搜模型、服务" }).press("Enter");
-  await expect(bubble).toBeVisible();
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
-  await bubble.getByRole("textbox", { name: "搜模型、服务" }).fill("OTHER");
-  await bubble.getByRole("textbox", { name: "搜模型、服务" }).press("Enter");
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-other");
+  await bubble.getByRole("combobox", { name: "搜模型、服务" }).press("Enter");
+  await expect(bubble).toBeHidden();
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-test");
+  await page.keyboard.press("Alt+m");
+  await bubble.getByRole("combobox", { name: "搜模型、服务" }).fill("OTHER");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-other");
+  await chat(page).getByTestId("chat-model").click();
   await page.keyboard.press("Escape");
   await expect(bubble).toBeHidden();
   await send(page, "第一个对话");
@@ -151,32 +142,55 @@ test("each conversation keeps its own model; the star changes the default, for n
   // Another conversation has the default, which the settings still say.
   await chat(page).getByTestId("chat-more").click();
   await chat(page).getByRole("menuitem", { name: "新对话" }).click();
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-test");
   await send(page, "第二个对话");
   await expect(chat(page).getByText("claude-test 回答")).toBeVisible({ timeout: 15_000 });
   expect(asked.at(-1)?.model).toBe("claude-test");
 
-  // The star makes another the default: this conversation keeps its model, a new one has it.
+  // A favorite, the first one: the default, for new conversations; this one keeps its model.
   await chat(page).getByTestId("chat-model").click();
-  await option(page, "claude-other").hover();
+  await option(page, "claude-other").first().hover();
   await option(page, "claude-other")
-    .getByRole("button", { name: /设为默认模型/ })
+    .first()
+    .getByRole("button", { name: "收藏 claude-other" })
     .click();
-  await expect(
-    option(page, "claude-other").getByRole("button", { name: "默认模型（新对话用）" }),
-  ).toBeVisible();
-  await expect(option(page, "claude-test").getByRole("option")).toHaveAttribute(
+  const favorites = bubble.locator('[data-group="favorites"]');
+  await expect(favorites.getByTestId("chat-model-option")).toHaveCount(1);
+  await expect(favorites.getByTestId("chat-model-first")).toHaveText("新对话用");
+  await expect(option(page, "claude-test").first().getByRole("option")).toHaveAttribute(
     "aria-selected",
     "true",
   );
+  // A second one goes after it; dragged first, it is what new conversations use.
+  await option(page, "claude-test").last().hover();
+  await option(page, "claude-test")
+    .last()
+    .getByRole("button", { name: "收藏 claude-test" })
+    .click();
+  await expect(favorites.getByTestId("chat-model-option")).toHaveCount(2);
+  await favorites
+    .locator('[data-model="claude-test"]')
+    .dragTo(favorites.locator('[data-model="claude-other"]'));
+  await expect(favorites.getByTestId("chat-model-option").first()).toHaveAttribute(
+    "data-model",
+    "claude-test",
+  );
+  // From the keyboard too: Alt+↓ on the first one moves it after the next.
+  await favorites.locator('[data-model="claude-test"]').hover();
+  await bubble.getByRole("combobox", { name: "搜模型、服务" }).focus();
+  await page.keyboard.press("Alt+ArrowDown");
+  await expect(favorites.getByTestId("chat-model-option").first()).toHaveAttribute(
+    "data-model",
+    "claude-other",
+  );
   await page.keyboard.press("Escape");
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-test");
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-test");
   await send(page, "还是第二个");
   await expect(chat(page).getByText("claude-test 回答")).toHaveCount(2, { timeout: 15_000 });
   expect(asked.at(-1)?.model).toBe("claude-test");
   await chat(page).getByTestId("chat-more").click();
   await chat(page).getByRole("menuitem", { name: "新对话" }).click();
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-other");
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-other");
 
   // The first conversation, opened again from the list, still has its own.
   await chat(page).getByTestId("chat-title").click();
@@ -184,7 +198,7 @@ test("each conversation keeps its own model; the star changes the default, for n
     .getByTestId("chat-list")
     .getByRole("button", { name: /^第一个对话/ })
     .click();
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("claude-other");
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-other");
   await expect(chat(page).getByText("claude-other 回答")).toBeVisible();
 });
 

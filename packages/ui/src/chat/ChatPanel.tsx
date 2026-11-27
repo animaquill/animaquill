@@ -10,7 +10,6 @@ import { ArrowDown, ChevronDown, ChevronUp, Menu, MoreHorizontal, Quote } from "
 import {
   Fragment,
   useCallback,
-  useContext,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -29,18 +28,17 @@ import { ConversationList } from "./ConversationList.tsx";
 import { InputArea } from "./input/InputArea.tsx";
 import { firstWords } from "./conversations.ts";
 import { plainOf } from "./refs.ts";
-import type { ModelPacks, ModelPacksSnapshot } from "./packs.ts";
+import type { ModelPacksSnapshot } from "./packs.ts";
 import packStyles from "./ModelPacks.module.css";
 import { OpenPackView, PackViewer, type PackViewRequest } from "./PackViews.tsx";
 import { noteLabel, packLabel } from "./packText.ts";
 import { RunState } from "./RunState.tsx";
 import { followsAfterScroll, showsToLatest } from "./scroll.ts";
-import type { ChatSession } from "./session.ts";
 import type { Names } from "./toolSummary.ts";
 import { groupsOf, turnOf } from "./turns.ts";
 import { TurnView } from "./TurnView.tsx";
 import { SummaryDivider } from "./SummaryDivider.tsx";
-import { UsageMeter } from "./UsageMeter.tsx";
+import { ContextPie, ConversationInfo } from "./model/ConversationInfo.tsx";
 
 const NO_CONVERSATION: ConversationSnapshot = { entries: [], running: undefined, last: undefined };
 const noop = () => () => {};
@@ -130,7 +128,9 @@ export function ChatPanel() {
   };
   // A view of model packs over the whole chat: details, all a model gets, or a comparison.
   const [packView, setPackView] = useState<PackViewRequest | undefined>();
-  const model = chat.modelNow()?.ref.model;
+  // What the conversation took and goes with, under the bar.
+  const [infoOpen, setInfoOpen] = useState(false);
+  const closeInfo = useCallback(() => setInfoOpen(false), []);
   const modelName = useCallback(
     (id: string) => {
       for (const service of settings.services) {
@@ -212,7 +212,6 @@ export function ChatPanel() {
   }
 
   const switches = packSwitches(t, talk.entries, packs.getSnapshot());
-  const packLines = packLinesOf(t, talk.entries, model, chat, packs);
   const title =
     snapshot.titleBy === undefined && snapshot.forkedFrom
       ? t("chat.list.forked", { ...snapshot.forkedFrom })
@@ -244,16 +243,25 @@ export function ChatPanel() {
             <span className={styles.titleText}>{title}</span>
             {listOpen ? <ChevronUp size={12} aria-hidden /> : <ChevronDown size={12} aria-hidden />}
           </button>
-          <UsageMeter
+          <ContextPie
             entries={talk.entries}
-            {...(conversation?.compactable && { onCompact: () => void chat.compact() })}
+            open={infoOpen}
+            onOpen={() => setInfoOpen(!infoOpen)}
           />
           <MoreMenu
             title={title}
             entries={talk.entries}
             running={talk.running !== undefined}
             onRename={() => setListOpen("rename")}
+            onInfo={() => setInfoOpen(true)}
           />
+          {infoOpen && (
+            <ConversationInfo
+              entries={talk.entries}
+              onCompact={conversation?.compactable ? () => void chat.compact() : undefined}
+              onClose={closeInfo}
+            />
+          )}
         </div>
 
         <div className={styles.listWrap}>
@@ -279,11 +287,6 @@ export function ChatPanel() {
                   {t("chat.forked", { ...snapshot.forkedFrom })}
                 </p>
               )}
-              {packLines.map(({ text: line, testId }) => (
-                <p key={testId} className={styles.muted} data-testid={testId}>
-                  {line}
-                </p>
-              ))}
               {summed.get("")?.map((entry) => (
                 <SummaryDivider key={`${entry.at}/${entry.through}`} entry={entry} />
               ))}
@@ -439,12 +442,12 @@ function MoreMenu(props: {
   readonly entries: readonly ChatEntry[];
   readonly running: boolean;
   readonly onRename: () => void;
+  readonly onInfo: () => void;
 }) {
   const { chat, dialogs, notifications } = useWorkbench();
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
   const [open, setOpen] = useState(false);
-  const openView = useContext(OpenPackView);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -496,16 +499,7 @@ function MoreMenu(props: {
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   };
-  const sent = () => {
-    const model = chat.modelNow()?.ref.model;
-    if (!model) return;
-    const last = props.entries.findLast((entry) => entry.role === "assistant");
-    const pack =
-      last?.role === "assistant" && last.model === model && last.texts
-        ? last.texts.id
-        : chat.choiceFor(model).pack.id;
-    openView?.({ view: "full", pack, model });
-  };
+
   return (
     <div className={styles.moreWrap} ref={ref}>
       <button
@@ -527,7 +521,7 @@ function MoreMenu(props: {
           {item(t("chat.more.remove"), () => void remove(), !saved || props.running)}
           {item(t("chat.more.copy"), copy, props.entries.length === 0)}
           {item(t("chat.more.download"), download, props.entries.length === 0)}
-          {item(t("chat.more.sent"), sent, chat.modelNow() === undefined)}
+          {item(t("chat.info.title"), props.onInfo)}
         </div>
       )}
     </div>
@@ -599,82 +593,6 @@ function packSwitches(
       );
     }
     before = entry;
-  }
-  return lines;
-}
-
-/**
- * What the top of a conversation says of its model pack: the pack of its first answer, or of a
- * new conversation the pack it would get; that a model has no pack of its own; and that the pack
- * chosen in the settings now comes with the next conversation.
- */
-function packLinesOf(
-  t: TFunction,
-  entries: readonly ChatEntry[],
-  model: string | undefined,
-  chat: ChatSession,
-  packs: ModelPacks,
-): readonly { readonly text: string; readonly testId: string }[] {
-  const answers = entries.filter((entry): entry is AssistantEntry => entry.role === "assistant");
-  const lines: { text: string; testId: string }[] = [];
-  /** What of a pack this version of the tools goes without, said once at the top. */
-  const dropped = (id: string | undefined) => {
-    const count = id === undefined ? 0 : (packs.installedOf(id)?.dropped.length ?? 0);
-    if (count > 0)
-      lines.push({ text: t("chat.packDropped", { count }), testId: "chat-pack-dropped" });
-  };
-  const first = answers.find((entry) => entry.pack && entry.texts);
-  if (first?.pack) {
-    lines.push({
-      text:
-        first.pack.by === "fallback"
-          ? t("chat.packNone", {
-              model: first.model,
-              label: packLabel(t, DEFAULT_PACK, packs.getSnapshot(), true),
-            })
-          : t("chat.packLine", {
-              name: noteLabel(t, first.pack, first.texts?.id, packs.getSnapshot()),
-            }),
-      testId: "chat-pack",
-    });
-    dropped(first.texts?.id);
-  } else if (answers.length === 0 && model) {
-    const { pack, note } = chat.choiceFor(model);
-    lines.push({
-      text:
-        note.by === "fallback"
-          ? t("chat.packNone", {
-              model,
-              label: packLabel(t, DEFAULT_PACK, packs.getSnapshot(), true),
-            })
-          : t("chat.packLine", { name: noteLabel(t, note, pack.id, packs.getSnapshot()) }),
-      testId: "chat-pack",
-    });
-    dropped(pack.id);
-  }
-  const last = answers.at(-1);
-  if (model && last?.pack && last.texts && last.model === model && last.pack.by !== "comparison") {
-    const { pack, note } = chat.choiceFor(model);
-    if (chat.repicking(model) && (pack.id !== last.texts.id || pack.hash !== last.texts.hash)) {
-      // Chosen where the model is picked: it comes with the next answer of this conversation.
-      lines.push({
-        text: t("chat.packNextAnswer", { name: noteLabel(t, note, pack.id, packs.getSnapshot()) }),
-        testId: "chat-pack-next",
-      });
-    } else if (pack.id !== last.texts.id) {
-      lines.push({
-        text: t("chat.packNext", { model, name: noteLabel(t, note, pack.id, packs.getSnapshot()) }),
-        testId: "chat-pack-next",
-      });
-    } else if (pack.hash !== last.texts.hash) {
-      lines.push({
-        text: t("chat.packNextVersion", {
-          name: noteLabel(t, note, pack.id, packs.getSnapshot()),
-          version: pack.version,
-        }),
-        testId: "chat-pack-next",
-      });
-    }
   }
   return lines;
 }

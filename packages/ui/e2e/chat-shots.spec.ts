@@ -20,8 +20,8 @@ import { content, expect, test, showTab } from "./support.ts";
  */
 
 const WIDTHS = [320, 420, 560] as const;
-const STEP = "1";
-const DIR = `test-results/chat-shots/${STEP}`;
+/** Where the pictures of a step go. */
+const dirOf = (step: string) => `test-results/chat-shots/${step}`;
 const KEY = "sk-ant-test-0123456789abcdef";
 
 const chat = (page: Page) => content(page, "chat");
@@ -71,13 +71,19 @@ async function widen(page: Page, width: number) {
  * One scene at each width: nothing sticks out, and a picture of the chat. What only shows until a
  * click elsewhere, such as a menu, is opened by `open` once the chat has its width.
  */
-async function scene(page: Page, theme: string, name: string, open?: () => Promise<void>) {
+async function scene(
+  page: Page,
+  theme: string,
+  name: string,
+  open?: () => Promise<void>,
+  step = "1",
+) {
   const panel = chat(page).getByTestId("chat");
   for (const width of WIDTHS) {
     await widen(page, width);
     await open?.();
     expect(await overflowing(panel), `${name} at ${width}`).toEqual([]);
-    await panel.screenshot({ path: `${DIR}/${theme}-${width}-${name}.png` });
+    await panel.screenshot({ path: `${dirOf(step)}/${theme}-${width}-${name}.png` });
     if (open) await page.keyboard.press("Escape");
   }
 }
@@ -88,7 +94,7 @@ for (const theme of ["light", "dark"] as const) {
 
     test("the input card: empty, written, with pictures and queued, held", async ({ page }) => {
       test.setTimeout(180_000);
-      mkdirSync(DIR, { recursive: true });
+      mkdirSync(dirOf("1"), { recursive: true });
       await page.setViewportSize({ width: 1600, height: 1000 });
       const waiting: Route[] = [];
       await page.route(ANTHROPIC, (route) => {
@@ -176,7 +182,6 @@ for (const theme of ["light", "dark"] as const) {
       await chat(page).getByTestId("chat-model").click();
       const bubble = chat(page).getByTestId("chat-model-bubble");
       await bubble.locator('[data-model="claude-test"]').getByRole("option").click();
-      await page.keyboard.press("Escape");
       await openSettingsPage(page, "AI 模型");
       await settingsOf(page)
         .getByTestId("ai-service")
@@ -191,6 +196,86 @@ for (const theme of ["light", "dark"] as const) {
       await expect(hold).toHaveAttribute("data-why", "modelOff");
       await expect(hold.getByRole("button", { name: "换一个模型" })).toBeVisible();
       await scene(page, theme, "6-held");
+    });
+
+    test("the model tag, its bubble, and the information of the conversation", async ({ page }) => {
+      test.setTimeout(180_000);
+      mkdirSync(dirOf("2"), { recursive: true });
+      await page.setViewportSize({ width: 1600, height: 1000 });
+      await page.route(ANTHROPIC, (route) =>
+        route.fulfill({
+          status: 200,
+          headers: { "content-type": "text/event-stream", "access-control-allow-origin": "*" },
+          body: anthropicSays(isConnectionTest(route) ? "OK" : "好的，我把标题往上挪了 40 像素。"),
+        }),
+      );
+      await addAnthropic(page, KEY, "claude-test");
+      await addModel(page, "claude-eyes");
+      await closeSettings(page);
+      await showTab(page, "chat");
+      const tag = chat(page).getByTestId("chat-model");
+      const bubble = chat(page).getByTestId("chat-model-bubble");
+      await expect(tag).toContainText("claude-test");
+      await scene(page, theme, "1-tag", undefined, "2");
+      // The bubble: how hard it reasons on top, the models, the line of the general words.
+      await scene(
+        page,
+        theme,
+        "2-bubble",
+        async () => {
+          await tag.click();
+          await expect(bubble).toBeVisible();
+        },
+        "2",
+      );
+      // Favorites first, the first of them what a new conversation uses; a step chosen.
+      await tag.click();
+      for (const model of ["claude-eyes", "claude-test"]) {
+        const row = bubble
+          .locator(`[data-testid="chat-model-option"][data-model="${model}"]`)
+          .last();
+        await row.hover();
+        await row.getByTestId("chat-model-fav").click();
+      }
+      await chat(page).locator('[data-testid="chat-effort-option"][data-level="high"]').click();
+      await expect(chat(page).getByTestId("chat-effort-default")).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(tag).toContainText("· 高");
+      await scene(
+        page,
+        theme,
+        "3-bubble-favorites",
+        async () => {
+          await tag.click();
+          await expect(bubble.locator('[data-group="favorites"]')).toBeVisible();
+        },
+        "2",
+      );
+      // An answer: the pie of the context, and the information it opens.
+      await box(page).fill("把标题往上挪一点");
+      await box(page).press("Enter");
+      await expect(chat(page).getByTestId("chat-answer")).toBeVisible({ timeout: 15_000 });
+      await scene(
+        page,
+        theme,
+        "4-info",
+        async () => {
+          await chat(page).getByTestId("chat-context").click();
+          await expect(chat(page).getByTestId("chat-info")).toBeVisible();
+        },
+        "2",
+      );
+      await scene(
+        page,
+        theme,
+        "5-info-packs",
+        async () => {
+          await chat(page).getByTestId("chat-context").click();
+          await chat(page).getByTestId("chat-info-pack-choose").click();
+          await expect(chat(page).getByTestId("chat-pack-menu")).toBeVisible();
+        },
+        "2",
+      );
     });
   });
 }

@@ -408,15 +408,18 @@ test("a server of one's own: the picker, its settings one under another, models 
   await noAutoTitle(page);
   await leaveSettings(page);
   await showTab(page, "chat");
-  await expect(chat(page).getByTestId("chat-model")).toHaveText("Qwen3 Max");
-  await chat(page).getByTestId("chat-reasoning").click();
-  const menu = chat(page).getByTestId("chat-reasoning-menu");
-  await expect(menu.locator("[data-level]")).toHaveCount(3);
-  await expect(menu.locator('[data-level="low"]')).toHaveCount(0);
-  await menu
-    .locator('[data-level="high"]')
-    .getByRole("button", { name: /设“高”为/ })
-    .click();
+  await expect(chat(page).getByTestId("chat-model-name")).toHaveText("Qwen3 Max");
+  await chat(page).getByTestId("chat-model").click();
+  const steps = chat(page).getByTestId("chat-effort").getByRole("radio");
+  // "自动", then only the steps this model takes.
+  await expect(steps).toHaveCount(4);
+  await expect(steps.first()).toHaveAttribute("data-level", "auto");
+  await expect(
+    chat(page).locator('[data-testid="chat-effort-option"][data-level="low"]'),
+  ).toHaveCount(0);
+  await chat(page).locator('[data-testid="chat-effort-option"][data-level="high"]').click();
+  await chat(page).getByTestId("chat-effort-default").click();
+  await expect(chat(page).getByTestId("chat-effort-default")).toHaveCount(0);
   await page.keyboard.press("Escape");
   const box = chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
   await box.fill("你好");
