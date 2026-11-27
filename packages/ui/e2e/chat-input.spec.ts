@@ -140,8 +140,7 @@ test("each conversation keeps its own model; the first favorite is the default, 
   expect(asked.at(-1)?.model).toBe("claude-other");
 
   // Another conversation has the default, which the settings still say.
-  await chat(page).getByTestId("chat-more").click();
-  await chat(page).getByRole("menuitem", { name: "新对话" }).click();
+  await chat(page).getByTestId("chat-new").click();
   await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-test");
   await send(page, "第二个对话");
   await expect(chat(page).getByText("claude-test 回答")).toBeVisible({ timeout: 15_000 });
@@ -198,15 +197,14 @@ test("each conversation keeps its own model; the first favorite is the default, 
   await send(page, "还是第二个");
   await expect(chat(page).getByText("claude-test 回答")).toHaveCount(2, { timeout: 15_000 });
   expect(asked.at(-1)?.model).toBe("claude-test");
-  await chat(page).getByTestId("chat-more").click();
-  await chat(page).getByRole("menuitem", { name: "新对话" }).click();
+  await chat(page).getByTestId("chat-new").click();
   await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-other");
 
   // The first conversation, opened again from the list, still has its own.
   await chat(page).getByTestId("chat-title").click();
   await chat(page)
-    .getByTestId("chat-list")
-    .getByRole("button", { name: /^第一个对话/ })
+    .getByTestId("chat-switcher-row")
+    .filter({ hasText: /^第一个对话/ })
     .click();
   await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-other");
   await expect(chat(page).getByText("claude-other 回答")).toBeVisible();
@@ -310,18 +308,30 @@ test("the list: rename, search, delete; a new conversation from a turn; quoting 
   await send(page, "接着来");
   await expect(chat(page).getByTestId("chat-task")).toHaveCount(2, { timeout: 15_000 });
 
-  // The list, over the conversation: today's, the one open marked.
+  // The switcher, under the title: today's, the one open ticked, the other one to go to.
   await chat(page).getByTestId("chat-title").click();
-  const list = chat(page).getByTestId("chat-list");
-  await expect(list.getByTestId("chat-conversation")).toHaveCount(2);
-  await expect(list).toContainText("今天");
+  const switcher = chat(page).getByTestId("chat-switcher");
+  await expect(switcher.getByTestId("chat-switcher-row")).toHaveCount(2);
+  await expect(switcher).toContainText("今天");
+  await expect(switcher.locator('[data-testid="chat-switcher-row"][data-current]')).toHaveCount(1);
+  await expect(switcher.getByTestId("chat-switcher-search")).toBeFocused();
   await shoot(page, "list");
+  // ↓ Enter opens the other one; Esc closes it, back on the title.
+  await page.keyboard.press("Escape");
+  await expect(switcher).toBeHidden();
+  await expect(chat(page).getByTestId("chat-title")).toBeFocused();
 
-  // Renamed in its row.
+  // All of them, a page of its own over the conversation: renamed in its row.
+  await chat(page).getByTestId("chat-title").click();
+  await switcher.getByTestId("chat-switcher-all").click();
+  const list = chat(page).getByTestId("chat-all");
+  await expect(list.getByTestId("chat-conversation")).toHaveCount(2);
   await expect(list.getByTestId("chat-conversation").first()).toContainText(
     "从《把字幕往上挪一点》第 2 轮分出",
   );
+  // Each says when, how much AI changed, and the model it had.
   const first = list.getByTestId("chat-conversation").filter({ hasText: /^把字幕往上挪一点/ });
+  await expect(first).toContainText("claude-test");
   await first.hover();
   await first.getByRole("button", { name: /重命名/ }).click();
   await list.getByRole("textbox", { name: "重命名" }).fill("字幕的位置");
@@ -331,12 +341,12 @@ test("the list: rename, search, delete; a new conversation from a turn; quoting 
   );
 
   // Found by what was said in it.
-  await list.getByRole("textbox", { name: "搜这个项目的对话" }).fill("12 像素");
+  await list.getByTestId("chat-all-search").fill("12 像素");
   const hit = list.getByTestId("chat-search-hit");
   await expect(hit).toHaveCount(2);
   await expect(hit.filter({ hasText: "字幕的位置" })).toHaveCount(1);
   await expect(hit.first()).toContainText("12 像素");
-  await list.getByRole("textbox", { name: "搜这个项目的对话" }).fill("");
+  await list.getByTestId("chat-all-search").fill("");
 
   // Deleted, after asking in the row.
   const renamed = list.getByTestId("chat-conversation").filter({ hasText: "字幕的位置" });
@@ -348,6 +358,13 @@ test("the list: rename, search, delete; a new conversation from a turn; quoting 
   await expect(list.getByTestId("chat-conversation")).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(list).toBeHidden();
+
+  // The name of the one open, changed in place with a double click.
+  await chat(page).getByTestId("chat-title").dblclick();
+  const rename = chat(page).getByTestId("chat-title-rename");
+  await rename.fill("开场的节奏");
+  await rename.press("Enter");
+  await expect(chat(page).getByTestId("chat-title")).toHaveText("开场的节奏");
 });
 
 test("before any service: where the key goes, and one click to adding Anthropic, then back", async ({
@@ -371,10 +388,11 @@ test("before any service: where the key goes, and one click to adding Anthropic,
   // Back in the chat, ready: the settings closed, the model, and things to try saying.
   await expect(settingsOf(page)).toBeHidden({ timeout: 15_000 });
   await expect(chat(page).getByTestId("chat-model")).toBeVisible({ timeout: 15_000 });
-  const examples = chat(page).getByTestId("chat-examples");
-  await expect(examples).toBeVisible();
-  await examples.getByRole("button", { name: "开场放慢一点" }).click();
-  await expect.poll(() => draft(page)).toBe("开场放慢一点");
+  // What to say, by how the project is: an empty timeline, nothing to cut, a playhead.
+  const suggestions = chat(page).getByTestId("chat-suggestions");
+  await expect(suggestions).toBeVisible();
+  await suggestions.locator('[data-key="titleScene"]').click();
+  await expect.poll(() => draft(page)).toBe("做一个 5 秒的片名场景");
   await shoot(page, "empty");
 });
 

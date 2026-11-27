@@ -24,7 +24,16 @@ export const SUMMARY_FIELD_BYTES = 4096;
 
 export const CHAT_ID = /^[A-Za-z0-9_-]{1,100}$/;
 /** What a summary of a conversation has, see `SavedChatSummary` of the editor's host. */
-const SUMMARY_FIELDS = ["id", "title", "updatedAt", "titleBy", "changes", "asking", "forkedFrom"];
+const SUMMARY_FIELDS = [
+  "id",
+  "title",
+  "updatedAt",
+  "titleBy",
+  "changes",
+  "asking",
+  "forkedFrom",
+  "modelName",
+];
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);

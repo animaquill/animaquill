@@ -196,6 +196,30 @@ describe.skipIf(!TEST_DATABASE)("conversations that go with an account, on a dat
     );
   });
 
+  test("the list says what the editor keeps for it: the model by its name, how much AI changed", async () => {
+    const project = await newProject(w);
+    const kept = {
+      ...chat("c1", "开场放慢"),
+      changes: 3,
+      asking: true,
+      modelName: "Claude Fable 5",
+    };
+    expect((await put(project.id, { base: null, chat: kept })).status).toBe(200);
+    const list = await p.send("GET", `/api/me/chats?project=${project.id}`);
+    expect(list.json.chats[0].summary).toEqual({
+      id: "c1",
+      title: "开场放慢",
+      updatedAt: time,
+      changes: 3,
+      asking: true,
+      modelName: "Claude Fable 5",
+    });
+    // The model it uses goes with the rest of the conversation, as before.
+    const read = (await p.send("GET", `/api/me/chats/${project.id}/c1`)).json.chat;
+    expect(read.model).toEqual({ service: "s1", model: "m" });
+    expect(read.modelName).toBe("Claude Fable 5");
+  });
+
   test("all of a person's together, so much at most", async () => {
     const project = await newProject(w);
     await t.db.insert(userChats).values({

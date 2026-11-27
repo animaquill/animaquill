@@ -35,10 +35,9 @@ async function setUpService(page: Page) {
   await expect(chat(page).getByRole("textbox", { name: /给 AI 发消息/ })).toBeVisible();
 }
 
-/** A new conversation, from the menu of the one open. */
+/** A new conversation, from ✎ in the head of the chat. */
 async function newConversation(page: Page) {
-  await chat(page).getByTestId("chat-more").click();
-  await chat(page).getByRole("menuitem", { name: "新对话" }).click();
+  await chat(page).getByTestId("chat-new").click();
 }
 
 async function send(page: Page, text: string) {
@@ -529,7 +528,9 @@ test("keeps the last answer when the page goes right after it came", async ({ pa
   // the write itself needs to read first comes back later on a busy machine, and a page that
   // went before it did has nothing to keep (the window is milliseconds on a free one).
   await chat(page).getByTestId("chat-title").click();
-  await expect(chat(page).getByTestId("chat-list").getByTestId("chat-conversation")).toHaveCount(1);
+  await expect(
+    chat(page).getByTestId("chat-switcher").getByTestId("chat-switcher-row"),
+  ).toHaveCount(1);
   await page.reload();
   await showTab(page, "chat");
   // What came back from what this browser kept, once the page is up again.

@@ -34,6 +34,21 @@ describe("comboOf", () => {
     expect(comboOf(press("KeyS", { ctrlKey: true }), "mac")).toBe("ctrl+s");
   });
 
+  it("has no combination for a character typed with AltGr, which Windows says as Ctrl and Alt", () => {
+    const altGr = (state: boolean) => ({
+      getModifierState: (key: string) => state && key === "AltGraph",
+    });
+    const typed = press("KeyN", { ctrlKey: true, altKey: true, ...altGr(true) });
+    expect(comboOf(typed, "other")).toBeUndefined();
+    // Ctrl and Alt held as such are a shortcut, as on a Mac Command and Option.
+    expect(comboOf(press("KeyN", { ctrlKey: true, altKey: true, ...altGr(false) }), "other")).toBe(
+      "mod+alt+n",
+    );
+    expect(comboOf(press("KeyN", { metaKey: true, altKey: true, ...altGr(true) }), "mac")).toBe(
+      "mod+alt+n",
+    );
+  });
+
   it("has no combination while only modifiers are held", () => {
     for (const code of ["ControlLeft", "ShiftRight", "AltLeft", "MetaLeft", "OSLeft", ""]) {
       expect(comboOf(press(code), "other")).toBeUndefined();

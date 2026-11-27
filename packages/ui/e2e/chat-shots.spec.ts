@@ -749,3 +749,78 @@ test("what waits for people: a change to allow, words instead, a question, a pla
   ).toContainText("方案：30 秒开场 · 已按这个做");
   await sceneBothThemes(page, "6-plan-done", "4");
 });
+
+test("the head: the switcher, the page of all conversations, ⋯, an empty one, before any service", async ({
+  page,
+}) => {
+  test.setTimeout(480_000);
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await showTab(page, "chat");
+  // Before any service: where the key goes, the services to start with.
+  await expect(chat(page).getByTestId("chat-onboarding")).toBeVisible();
+  await sceneBothThemes(page, "1-onboarding", "5");
+
+  const waiting: Route[] = [];
+  await page.route(ANTHROPIC, (route) => {
+    const fulfil = (text: string) =>
+      route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream", "access-control-allow-origin": "*" },
+        body: anthropicSays(text),
+      });
+    if (isConnectionTest(route)) return fulfil("OK");
+    if (JSON.stringify(route.request().postDataJSON()).includes("慢慢来"))
+      return void waiting.push(route);
+    return fulfil("好的。");
+  });
+  await addAnthropic(page, KEY, "claude-test");
+  await closeSettings(page);
+  await showTab(page, "chat");
+  // An empty conversation: things to say, by how the project is, next to the box.
+  await expect(chat(page).getByTestId("chat-suggestion").first()).toBeVisible();
+  await sceneBothThemes(page, "2-empty", "5");
+
+  const say = async (text: string) => {
+    await box(page).fill(text);
+    await box(page).press("Enter");
+    await expect(chat(page).getByText("好的。").last()).toBeVisible({ timeout: 15_000 });
+  };
+  await say("把片头的字幕往上挪一点");
+  await chat(page).getByTestId("chat-new").click();
+  await say("开场放慢一点，配乐也跟着慢下来");
+  await chat(page).getByTestId("chat-new").click();
+  await say("看看项目里有什么问题");
+  await sceneBothThemes(page, "3-head", "5");
+  const title = chat(page).getByTestId("chat-title");
+  await sceneBothThemes(page, "4-switcher", "5", async () => {
+    await title.click();
+    await expect(chat(page).getByTestId("chat-switcher-row")).toHaveCount(3);
+  });
+  await sceneBothThemes(page, "5-switcher-search", "5", async () => {
+    await title.click();
+    await chat(page).getByTestId("chat-switcher-search").fill("字幕");
+    await expect(chat(page).getByTestId("chat-search-hit").first()).toBeVisible();
+  });
+  await sceneBothThemes(page, "6-more", "5", async () => {
+    await chat(page).getByTestId("chat-more").click();
+    await expect(chat(page).getByTestId("chat-more-remove")).toBeVisible();
+  });
+  // All of them: a page of its own, each with how much AI changed and the model it had.
+  await title.click();
+  await chat(page).getByTestId("chat-switcher-all").click();
+  await expect(chat(page).getByTestId("chat-all")).toBeVisible();
+  await expect(chat(page).getByTestId("chat-conversation").first()).toContainText("claude-test");
+  await sceneBothThemes(page, "7-all", "5");
+  await chat(page).getByTestId("chat-all-back").click();
+
+  // While a task runs: the others wait for it, which the switcher says.
+  await box(page).fill("慢慢来");
+  await box(page).press("Enter");
+  await expect(chat(page).getByTestId("chat-send")).toHaveAttribute("data-state", "stop");
+  await expect(chat(page).getByTestId("chat-new")).toBeDisabled();
+  await sceneBothThemes(page, "8-switcher-running", "5", async () => {
+    await title.click();
+    await expect(chat(page).getByTestId("chat-switcher")).toContainText("这一轮做完后可以切换");
+  });
+  for (const route of waiting) await route.abort().catch(() => {});
+});

@@ -10,7 +10,8 @@ export type Platform = "mac" | "other";
 export type KeyEventFacts = Pick<
   KeyboardEvent,
   "code" | "ctrlKey" | "metaKey" | "altKey" | "shiftKey"
->;
+> &
+  Partial<Pick<KeyboardEvent, "getModifierState">>;
 
 const SYMBOLS: Readonly<Record<string, string>> = {
   ArrowLeft: "left",
@@ -53,6 +54,10 @@ export function comboOf(event: KeyEventFacts, platform: Platform): KeyCombo | un
   const key = keyName(event.code);
   if (!key) return undefined;
   const mac = platform === "mac";
+  // AltGr types a character, such as "ń" on a Polish keyboard; Windows says it as Ctrl and Alt
+  // held: no shortcut of Ctrl and Alt for it.
+  if (!mac && event.ctrlKey && event.altKey && event.getModifierState?.("AltGraph") === true)
+    return undefined;
   const parts: string[] = [];
   if (mac ? event.metaKey : event.ctrlKey) parts.push("mod");
   if (mac && event.ctrlKey) parts.push("ctrl");

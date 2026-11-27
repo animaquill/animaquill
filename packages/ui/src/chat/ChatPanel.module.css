@@ -965,15 +965,11 @@
   align-self: flex-start;
 }
 
-.missing,
-.examples {
+.missing {
   display: flex;
   flex-direction: column;
   gap: 6px;
   align-items: flex-start;
-}
-
-.missing {
   padding: 8px;
   border: 1px solid var(--aq-warning);
   border-radius: 4px;
@@ -983,10 +979,42 @@
   margin: 0;
 }
 
-.panel .example {
+/* An empty conversation: a few things to say, at its foot, next to the box. */
+.column[data-empty] {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 100%;
+}
+
+.suggestions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  padding-bottom: 4px;
+}
+
+.panel .suggestion {
+  gap: 8px;
+  max-width: 100%;
+  padding: 7px 10px;
+  color: var(--aq-text);
   text-align: left;
-  background: transparent;
-  border: 1px dashed var(--aq-border);
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 8px;
+}
+
+.panel .suggestion:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-accent-soft);
+  border-color: var(--aq-accent-line);
+}
+
+.panel .suggestion > svg {
+  flex: none;
+  color: var(--aq-text-muted);
 }
 
 .spin {
@@ -1387,4 +1415,13 @@
   display: flex;
   gap: 6px;
   justify-content: flex-end;
+}
+
+/* The conversation and its box, which the page of all conversations covers without unmounting. */
+.main {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
 }

@@ -23,10 +23,11 @@ const answer = (text: string): ChatEntry => ({
 });
 
 describe("the list of conversations", () => {
-  it("groups them by day: today, yesterday, earlier, newest first", () => {
+  it("groups them by day: today, yesterday, this week, earlier, newest first", () => {
     const now = at("2026-11-12T10:00:00");
     const chats = [
-      { id: "old", updatedAt: at("2026-11-08T12:00:00") },
+      { id: "old", updatedAt: at("2026-10-30T12:00:00") },
+      { id: "week", updatedAt: at("2026-11-06T09:00:00") },
       { id: "morning", updatedAt: at("2026-11-12T08:00:00") },
       { id: "late", updatedAt: at("2026-11-11T23:59:00") },
       { id: "midnight", updatedAt: at("2026-11-12T00:00:00") },
@@ -35,7 +36,14 @@ describe("the list of conversations", () => {
     expect(byDay(chats, now).map((group) => [group.day, group.chats.map(({ id }) => id)])).toEqual([
       ["today", ["morning", "midnight"]],
       ["yesterday", ["late", "dawn"]],
+      ["week", ["week"]],
       ["earlier", ["old"]],
+    ]);
+    // In the switcher of the head: today and earlier only.
+    const short = byDay(chats, now, "short");
+    expect(short.map((group) => [group.day, group.chats.map(({ id }) => id)])).toEqual([
+      ["today", ["morning", "midnight"]],
+      ["earlier", ["late", "dawn", "week", "old"]],
     ]);
     expect(byDay([], now)).toEqual([]);
   });

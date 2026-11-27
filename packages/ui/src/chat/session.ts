@@ -642,6 +642,10 @@ export class ChatSession {
     } = this.#snapshot;
     const title = titleBy !== undefined && named ? named : firstWords(entries, TITLE_LENGTH);
     const changes = changesIn(entries);
+    // What the list of all conversations says it had: the model as people call it.
+    const now = this.modelNow();
+    const modelName =
+      now && (this.#options.ai.modelOf(now.ref.service, now.ref.model)?.name ?? now.ref.model);
     const caller = this.#caller;
     this.#pending = async () => {
       const chat: SavedChat = {
@@ -657,6 +661,7 @@ export class ChatSession {
         ...(model && { model }),
         ...(reasoning !== undefined && { reasoning }),
         ...(forkedFrom && { forkedFrom }),
+        ...(modelName && { modelName }),
         ...(repick.length > 0 && { repick }),
         ...(planFirst && { planFirst: true as const }),
       };

@@ -6,7 +6,7 @@ import type {
 } from "@animaquill/agent";
 import { entryOf, type ProjectState } from "@animaquill/core";
 import { DEFAULT_PACK } from "@animaquill/tools";
-import { ArrowDown, ChevronDown, ChevronUp, Menu, MoreHorizontal, Quote } from "lucide-react";
+import { ArrowDown, Quote } from "lucide-react";
 import {
   Fragment,
   useCallback,
@@ -24,11 +24,11 @@ import { useTranslation } from "react-i18next";
 import { useProject, useSession, useWorkbench } from "../app/context.ts";
 import styles from "./ChatPanel.module.css";
 import { EmptyStart, Onboarding } from "./ChatStart.tsx";
-import { ConversationList } from "./ConversationList.tsx";
+import { AllConversations } from "./header/AllConversations.tsx";
+import { PanelHeader } from "./header/PanelHeader.tsx";
 import { InputArea, type InputAreaHandle } from "./input/InputArea.tsx";
 import { firstWords } from "./conversations.ts";
 import { setOpened } from "./expanded.ts";
-import { plainOf } from "./refs.ts";
 import type { ModelPacksSnapshot } from "./packs.ts";
 import packStyles from "./ModelPacks.module.css";
 import { OpenPackView, PackViewer, type PackViewRequest } from "./PackViews.tsx";
@@ -38,7 +38,6 @@ import type { Names } from "./toolSummary.ts";
 import { groupsOf, turnOf } from "./turns.ts";
 import { TurnView } from "./TurnView.tsx";
 import { SummaryDivider } from "./SummaryDivider.tsx";
-import { ContextPie, ConversationInfo } from "./model/ConversationInfo.tsx";
 import { ChatUiContext, type ChatUi } from "./ui.ts";
 
 const NO_CONVERSATION: ConversationSnapshot = { entries: [], running: undefined, last: undefined };
@@ -112,18 +111,19 @@ export function ChatPanel() {
     }),
     [focusInput],
   );
-  // The list of conversations over this one, or with this one's name to change.
-  const [listOpen, setListOpen] = useState<false | "list" | "rename">(false);
+  // The page of all conversations, over this one and its box.
+  const [allOpen, setAllOpen] = useState(false);
   // Pictures dragged over the chat: all of it takes them, and says so meanwhile.
   const [dropping, setDropping] = useState(false);
   const hasFiles = (event: DragEvent) =>
     [...event.dataTransfer.items].some((item) => item.kind === "file");
   const drop = {
+    // Not while the page of all conversations hides the box the pictures would go to.
     onDragEnter: (event: DragEvent) => {
-      if (hasFiles(event)) setDropping(true);
+      if (hasFiles(event) && !allOpen) setDropping(true);
     },
     onDragOver: (event: DragEvent) => {
-      if (!hasFiles(event)) return;
+      if (!hasFiles(event) || allOpen) return;
       event.preventDefault();
       event.dataTransfer.dropEffect = "copy";
       setDropping(true);
@@ -134,7 +134,7 @@ export function ChatPanel() {
     onDrop: (event: DragEvent) => {
       setDropping(false);
       const files = [...event.dataTransfer.files];
-      if (files.length === 0) return;
+      if (files.length === 0 || allOpen) return;
       event.preventDefault();
       const id = snapshot.id;
       if (chat.projectKey === undefined || id === undefined) return;
@@ -145,18 +145,6 @@ export function ChatPanel() {
   };
   // A view of model packs over the whole chat: details, all a model gets, or a comparison.
   const [packView, setPackView] = useState<PackViewRequest | undefined>();
-  // What the conversation took and goes with, under the bar.
-  const [infoOpen, setInfoOpen] = useState(false);
-  const closeInfo = useCallback((back: boolean) => {
-    setInfoOpen(false);
-    // With Esc, back to what opened it: the pie, else "⋯".
-    if (!back) return;
-    const bar = panelRef.current;
-    (
-      bar?.querySelector<HTMLElement>('[data-testid="chat-context"]') ??
-      bar?.querySelector<HTMLElement>('[data-testid="chat-more"]')
-    )?.focus();
-  }, []);
   const modelName = useCallback(
     (id: string) => {
       for (const service of settings.services) {
@@ -266,140 +254,123 @@ export function ChatPanel() {
               {t("chat.pictures.dropHere")}
             </div>
           )}
-          <div className={styles.bar}>
-            <button
-              type="button"
-              className={styles.title}
-              data-testid="chat-title"
-              aria-expanded={listOpen !== false}
-              title={t("chat.list.title")}
-              onClick={() => setListOpen(listOpen ? false : "list")}
-            >
-              <Menu size={12} aria-hidden />
-              <span className={styles.titleText}>{title}</span>
-              {listOpen ? (
-                <ChevronUp size={12} aria-hidden />
-              ) : (
-                <ChevronDown size={12} aria-hidden />
-              )}
-            </button>
-            <ContextPie
-              entries={talk.entries}
-              open={infoOpen}
-              onOpen={() => setInfoOpen(!infoOpen)}
-            />
-            <MoreMenu
-              title={title}
-              entries={talk.entries}
-              running={talk.running !== undefined}
-              onRename={() => setListOpen("rename")}
-              onInfo={() => setInfoOpen(true)}
-            />
-            {infoOpen && (
-              <ConversationInfo
-                entries={talk.entries}
-                onCompact={conversation?.compactable ? () => void chat.compact() : undefined}
-                onClose={closeInfo}
-              />
-            )}
-          </div>
-
-          <div className={styles.listWrap}>
-            <div
-              className={styles.list}
-              ref={listRef}
-              onScroll={(event) => {
-                const list = event.currentTarget;
-                following.current = followsAfterScroll(
-                  following.current,
-                  lastTop.current,
-                  list.scrollTop,
-                  list.clientHeight,
-                  list.scrollHeight,
-                );
-                lastTop.current = list.scrollTop;
-                setToLatest(showsToLatest(list.scrollTop, list.clientHeight, list.scrollHeight));
-              }}
-            >
-              <div className={styles.column} ref={columnRef}>
-                {snapshot.forkedFrom && (
-                  <p className={styles.muted} data-testid="chat-forked">
-                    {t("chat.forked", { ...snapshot.forkedFrom })}
-                  </p>
-                )}
-                {summed.get("")?.map((entry) => (
-                  <SummaryDivider key={`${entry.at}/${entry.through}`} entry={entry} />
-                ))}
-                {turns.length === 0 && <EmptyStart onExample={putInBox} />}
-                {conversation &&
-                  turns.map((turn, index) => {
-                    const running = talk.running?.task === turn.task ? talk.running : undefined;
-                    const latest = index === turns.length - 1;
-                    return (
-                      <Fragment key={turn.task}>
-                        {summed.get(turn.task)?.map((entry) => (
-                          <SummaryDivider key={`${entry.at}/${entry.through}`} entry={entry} />
-                        ))}
-                        <TurnView
-                          turn={turn}
-                          running={running}
-                          busy={talk.running !== undefined}
-                          conversation={conversation}
-                          outcome={latest && talk.last?.task === turn.task ? talk.last : undefined}
-                          latest={latest}
-                          maxToolCalls={settings.maxToolCalls}
-                          switches={turn.entries.flatMap((entry) => {
-                            const line = switches.get(entry);
-                            return line ? [line] : [];
-                          })}
-                          names={names}
-                          modelName={modelName}
-                          rewritten={rewritten.has(turn.task)}
-                          onForked={focusInput}
-                        />
-                      </Fragment>
-                    );
-                  })}
-              </div>
-            </div>
-            <QuoteButton
-              list={listRef}
-              onQuote={(text) => {
-                if (project !== undefined && snapshot.id !== undefined) {
-                  chat.drafts.quote(project, snapshot.id, text);
-                }
-                focusInput();
-              }}
-            />
-            {toLatest && (
-              <button
-                type="button"
-                className={styles.toLatest}
-                data-testid="chat-to-latest"
-                onClick={() => {
-                  following.current = true;
-                  toBottom();
-                  setToLatest(false);
+          <PanelHeader
+            title={title}
+            entries={talk.entries}
+            onFound={showTurn}
+            onAll={() => setAllOpen(true)}
+            onNew={() => {
+              chat.newConversation();
+              setAllOpen(false);
+              focusInput();
+            }}
+          />
+          <div className={styles.main}>
+            <div className={styles.listWrap}>
+              <div
+                className={styles.list}
+                ref={listRef}
+                onScroll={(event) => {
+                  const list = event.currentTarget;
+                  following.current = followsAfterScroll(
+                    following.current,
+                    lastTop.current,
+                    list.scrollTop,
+                    list.clientHeight,
+                    list.scrollHeight,
+                  );
+                  lastTop.current = list.scrollTop;
+                  setToLatest(showsToLatest(list.scrollTop, list.clientHeight, list.scrollHeight));
                 }}
               >
-                <ArrowDown size={12} /> {t("chat.latest")}
-              </button>
-            )}
-            {listOpen && (
-              <ConversationList
-                rename={listOpen === "rename"}
-                onClose={() => setListOpen(false)}
+                <div
+                  className={styles.column}
+                  ref={columnRef}
+                  data-empty={turns.length === 0 || undefined}
+                >
+                  {snapshot.forkedFrom && (
+                    <p className={styles.muted} data-testid="chat-forked">
+                      {t("chat.forked", { ...snapshot.forkedFrom })}
+                    </p>
+                  )}
+                  {summed.get("")?.map((entry) => (
+                    <SummaryDivider key={`${entry.at}/${entry.through}`} entry={entry} />
+                  ))}
+                  {turns.length === 0 && <EmptyStart onExample={putInBox} />}
+                  {conversation &&
+                    turns.map((turn, index) => {
+                      const running = talk.running?.task === turn.task ? talk.running : undefined;
+                      const latest = index === turns.length - 1;
+                      return (
+                        <Fragment key={turn.task}>
+                          {summed.get(turn.task)?.map((entry) => (
+                            <SummaryDivider key={`${entry.at}/${entry.through}`} entry={entry} />
+                          ))}
+                          <TurnView
+                            turn={turn}
+                            running={running}
+                            busy={talk.running !== undefined}
+                            conversation={conversation}
+                            outcome={
+                              latest && talk.last?.task === turn.task ? talk.last : undefined
+                            }
+                            latest={latest}
+                            maxToolCalls={settings.maxToolCalls}
+                            switches={turn.entries.flatMap((entry) => {
+                              const line = switches.get(entry);
+                              return line ? [line] : [];
+                            })}
+                            names={names}
+                            modelName={modelName}
+                            rewritten={rewritten.has(turn.task)}
+                            onForked={focusInput}
+                          />
+                        </Fragment>
+                      );
+                    })}
+                </div>
+              </div>
+              <QuoteButton
+                list={listRef}
+                onQuote={(text) => {
+                  if (project !== undefined && snapshot.id !== undefined) {
+                    chat.drafts.quote(project, snapshot.id, text);
+                  }
+                  focusInput();
+                }}
+              />
+              {toLatest && (
+                <button
+                  type="button"
+                  className={styles.toLatest}
+                  data-testid="chat-to-latest"
+                  onClick={() => {
+                    following.current = true;
+                    toBottom();
+                    setToLatest(false);
+                  }}
+                >
+                  <ArrowDown size={12} /> {t("chat.latest")}
+                </button>
+              )}
+            </div>
+
+            <InputArea
+              ref={inputRef}
+              onSent={() => {
+                following.current = true;
+              }}
+            />
+            {allOpen && (
+              <AllConversations
+                onClose={() => {
+                  setAllOpen(false);
+                  focusInput();
+                }}
                 onFound={showTurn}
               />
             )}
           </div>
-
-          <InputArea
-            ref={inputRef}
-            onSent={() => {
-              following.current = true;
-            }}
-          />
           {packView && (
             <div className={packStyles.overChat}>
               <PackViewer
@@ -471,128 +442,6 @@ function QuoteButton(props: {
       <Quote size={12} aria-hidden /> {t("chat.compose.quote")}
     </button>
   );
-}
-
-/**
- * More of the conversation open: a new one, renaming or deleting it, copying it as Markdown, and
- * all its model gets with the pack it has (its system prompt and tools).
- */
-function MoreMenu(props: {
-  readonly title: string;
-  readonly entries: readonly ChatEntry[];
-  readonly running: boolean;
-  readonly onRename: () => void;
-  readonly onInfo: () => void;
-}) {
-  const { chat, dialogs, notifications } = useWorkbench();
-  const { t } = useTranslation();
-  const snapshot = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: PointerEvent) => {
-      if (!ref.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
-  }, [open]);
-  const id = snapshot.id;
-  const saved = snapshot.saved.some((each) => each.id === id);
-  const item = (label: string, action: () => void, disabled = false) => (
-    <button
-      type="button"
-      role="menuitem"
-      disabled={disabled}
-      onClick={() => {
-        setOpen(false);
-        action();
-      }}
-    >
-      {label}
-    </button>
-  );
-  const remove = async () => {
-    if (id === undefined) return;
-    const sure = await dialogs.confirm({
-      title: t("chat.list.removeConfirm"),
-      message: t("chat.list.removeNote"),
-      confirm: t("chat.list.remove"),
-      danger: true,
-    });
-    if (sure) await chat.remove(id);
-  };
-  const copy = () => {
-    const text = markdownOf(t, props.title, props.entries);
-    void navigator.clipboard?.writeText(text).then(
-      () => notifications.push(t("chat.more.copied")),
-      () => notifications.push(t("chat.more.copyFailed")),
-    );
-  };
-  const download = () => {
-    const text = markdownOf(t, props.title, props.entries);
-    const name = `${props.title.replace(/[\\/:*?"<>|\n]+/g, " ").trim() || "chat"}.md`;
-    const url = URL.createObjectURL(new Blob([text], { type: "text/markdown;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = name;
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  };
-
-  return (
-    <div className={styles.moreWrap} ref={ref}>
-      <button
-        type="button"
-        className={styles.icon}
-        aria-label={t("chat.more.title")}
-        title={t("chat.more.title")}
-        aria-expanded={open}
-        aria-haspopup="menu"
-        data-testid="chat-more"
-        onClick={() => setOpen(!open)}
-      >
-        <MoreHorizontal size={14} aria-hidden />
-      </button>
-      {open && (
-        <div className={styles.menu} role="menu">
-          {item(t("chat.newConversation"), () => chat.newConversation(), props.running)}
-          {item(t("chat.more.rename"), props.onRename, !saved)}
-          {item(t("chat.more.remove"), () => void remove(), !saved || props.running)}
-          {item(t("chat.more.copy"), copy, props.entries.length === 0)}
-          {item(t("chat.more.download"), download, props.entries.length === 0)}
-          {item(t("chat.info.title"), props.onInfo)}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/** A conversation as Markdown: what people said and what AI answered, turn by turn. */
-export function markdownOf(t: TFunction, title: string, entries: readonly ChatEntry[]): string {
-  const parts = [`# ${title}`];
-  for (const group of groupsOf(entries)) {
-    const pictures = (group.user.images ?? []).map(
-      (image, index) =>
-        `[${t("chat.attached.picture", { number: index + 1 })}${image.label ? `: ${image.label}` : ""}]`,
-    );
-    parts.push(
-      `**${t("chat.you")}**:\n\n${[plainOf(group.user.text), ...pictures].filter(Boolean).join("\n\n")}`,
-    );
-    // What people said while not allowing a change, which AI read with it.
-    for (const entry of group.entries) {
-      if (
-        entry.role === "tool" &&
-        entry.data?.declined === true &&
-        typeof entry.data.said === "string"
-      )
-        parts.push(`**${t("chat.youDeclined")}**:\n\n${entry.data.said}`);
-    }
-    const turn = turnOf(group.user, group.entries);
-    // Links of the editor mean nothing outside it: what they say stays.
-    if (turn.answer) parts.push(`**${t("chat.assistant")}**:\n\n${plainOf(turn.answer)}`);
-  }
-  return `${parts.join("\n\n")}\n`;
 }
 
 /**

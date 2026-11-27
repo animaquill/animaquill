@@ -2502,6 +2502,13 @@ export interface SavedChatSummary {
   readonly asking?: true;
   /** The conversation it was copied from, up to which turn (from 1). */
   readonly forkedFrom?: { readonly title: string; readonly turn: number };
+  /** What people call the model it had as it was kept last ("GPT-6.1 Sol"). Older ones do not say. */
+  readonly modelName?: string;
+  /**
+   * It waits in this browser for the backend of the account: only how the list stands as it is
+   * read, never kept.
+   */
+  readonly unsent?: true;
 }
 
 /** A conversation as it was kept. What was said is the editor's to read, see `readEntry`. */

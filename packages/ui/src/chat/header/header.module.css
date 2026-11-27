@@ -1,0 +1,491 @@
+/*
+ * The head of the chat (docs/design/chat-panel.md of AnimaQuill Cloud, 2): the title, which opens
+ * the conversations under it, the pie of the context, a new conversation and "⋯"; and the page of
+ * all conversations. Rules start from a class of their own, so that they go over the buttons of the
+ * chat as they are by default (`.panel button`).
+ */
+
+.head {
+  position: relative;
+  display: flex;
+  flex: none;
+  gap: 2px;
+  align-items: center;
+  min-width: 0;
+  padding: 5px 6px 5px 8px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.head .title {
+  display: flex;
+  flex: 0 1 auto;
+  gap: 4px;
+  align-items: center;
+  min-width: 48px;
+  max-width: 100%;
+  padding: 3px 6px;
+  color: var(--aq-text-strong);
+  font-weight: 600;
+  background: transparent;
+  border-radius: 5px;
+}
+
+.head .title:hover,
+.head .title[aria-expanded="true"] {
+  background: var(--aq-bg-hover);
+}
+
+.titleText {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.titleChevron {
+  flex: none;
+  color: var(--aq-text-muted);
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.head .rename {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 6px;
+  color: var(--aq-text-strong);
+  font: inherit;
+  font-weight: 600;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-accent-line);
+  border-radius: 5px;
+  outline: none;
+}
+
+.head .iconButton {
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--aq-text-muted);
+  background: transparent;
+  border-radius: 5px;
+}
+
+.head .iconButton:hover:not(:disabled),
+.head .iconButton[aria-expanded="true"] {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+/* The menus of the head: under it, at its right, as wide as there is room. */
+.popover {
+  position: absolute;
+  top: calc(100% + 2px);
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 8px;
+  box-shadow: var(--aq-shadow);
+}
+
+.switcher {
+  left: 8px;
+  width: calc(100% - 16px);
+  max-height: min(420px, 70vh);
+}
+
+.menu {
+  right: 6px;
+  min-width: 180px;
+  max-width: calc(100% - 16px);
+  padding: 4px;
+}
+
+.head .menu button {
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 4px 8px;
+  color: var(--aq-text);
+  text-align: left;
+  white-space: nowrap;
+  background: transparent;
+  border-radius: 4px;
+}
+
+.head .menu button:hover:not(:disabled),
+.head .menu button:focus-visible {
+  background: var(--aq-bg-hover);
+}
+
+.head .menu button[data-danger] {
+  color: var(--aq-danger-text);
+}
+
+.menuLabel {
+  padding: 4px 8px 0;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+}
+
+.head .menu .menuSub {
+  padding-left: 20px;
+}
+
+.menuGroup {
+  display: flex;
+  flex-direction: column;
+}
+
+.menuLine {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--aq-border);
+}
+
+.search {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 10px;
+  color: var(--aq-text-muted);
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.search input {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+  color: var(--aq-text-strong);
+  font: inherit;
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+
+.scroll {
+  flex: 1;
+  min-height: 0;
+  padding: 2px 4px 4px;
+  overflow-y: auto;
+}
+
+.group {
+  padding: 6px 8px 2px;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+}
+
+.why {
+  margin: 0;
+  padding: 6px 10px 2px;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+}
+
+.none {
+  margin: 0;
+  padding: 10px;
+  color: var(--aq-text-muted);
+}
+
+.option {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 5px 8px;
+  color: var(--aq-text);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.option[data-active] {
+  background: var(--aq-accent-soft);
+}
+
+.option[aria-disabled="true"] {
+  color: var(--aq-text-muted);
+  cursor: default;
+}
+
+.lead {
+  display: inline-flex;
+  flex: none;
+  justify-content: center;
+  width: 14px;
+  color: var(--aq-link);
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  background: var(--aq-link);
+  border-radius: 50%;
+}
+
+.spin {
+  animation: spin 1.2s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+
+.optionTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--aq-text-strong);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.option[aria-disabled="true"] .optionTitle {
+  color: var(--aq-text-muted);
+}
+
+.ago {
+  flex: none;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+  white-space: nowrap;
+}
+
+.hit {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding-left: 28px;
+}
+
+.hitText {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.hitText mark {
+  color: inherit;
+  background: color-mix(in srgb, var(--aq-star) 45%, transparent);
+  border-radius: 2px;
+}
+
+.foot {
+  display: flex;
+  padding: 6px 10px;
+  border-top: 1px solid var(--aq-border);
+}
+
+.popover .footButton {
+  padding: 0;
+  color: var(--aq-link);
+  background: transparent;
+}
+
+.popover .footButton:hover {
+  text-decoration: underline;
+  background: transparent;
+}
+
+/* The page of all conversations, over the conversation and its box, which stay as they are. */
+.page {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--aq-bg-panel);
+}
+
+.pageHead {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.page .back {
+  flex: none;
+  gap: 4px;
+  padding: 3px 6px;
+  color: var(--aq-text);
+  background: transparent;
+  border-radius: 5px;
+}
+
+.page .back:hover {
+  background: var(--aq-bg-hover);
+}
+
+.page .search {
+  flex: 1;
+  padding: 4px 6px;
+  border-bottom: 0;
+}
+
+.pageBody {
+  flex: 1;
+  min-height: 0;
+  padding: 4px 4px 12px;
+  overflow-y: auto;
+}
+
+.row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  border-radius: 6px;
+}
+
+.row:hover,
+.row:focus-within {
+  background: var(--aq-bg-hover);
+}
+
+.page .rowOpen {
+  display: flex;
+  flex: 1;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 6px 8px;
+  color: var(--aq-text);
+  text-align: left;
+  background: transparent;
+}
+
+.page .rowOpen:hover {
+  background: transparent;
+}
+
+.rowText {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.rowTitle,
+.rowMeta {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.rowTitle {
+  color: var(--aq-text-strong);
+}
+
+.rowMeta {
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+}
+
+.rowMeta mark {
+  color: inherit;
+  background: color-mix(in srgb, var(--aq-star) 45%, transparent);
+  border-radius: 2px;
+}
+
+.rowActions {
+  display: flex;
+  flex: none;
+  padding-right: 4px;
+  opacity: 0;
+}
+
+.row:hover .rowActions,
+.row:focus-within .rowActions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .rowActions {
+    opacity: 1;
+  }
+}
+
+.page .iconButton {
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--aq-text-muted);
+  background: transparent;
+  border-radius: 4px;
+}
+
+.page .iconButton:hover:not(:disabled) {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-raised);
+}
+
+.unsent {
+  display: inline-flex;
+  flex: none;
+  color: var(--aq-text-muted);
+}
+
+.confirm,
+.renameRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 6px;
+}
+
+.confirmText {
+  flex: 1 1 12em;
+  min-width: 0;
+}
+
+.confirmText strong {
+  display: block;
+  color: var(--aq-text-strong);
+  font-weight: 600;
+}
+
+.confirmText span {
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+}
+
+.page .renameInput {
+  flex: 1 1 10em;
+  min-width: 0;
+}
+
+.page .danger {
+  color: var(--aq-on-accent);
+  background: var(--aq-danger);
+}
+
+.page .primary {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+}

@@ -137,9 +137,11 @@ export class AccountChats implements ChatStore {
 
   async list(project: string): Promise<readonly SavedChatSummary[]> {
     const { remote, outbox, projectOf } = this.#options;
-    const waiting = await outbox.list(project).catch(() => [] as const);
+    const kept = await outbox.list(project).catch(() => [] as const);
     const cloud = await projectOf(project);
-    if (cloud === undefined) return waiting;
+    if (cloud === undefined) return kept;
+    // What waits here for the backend says so in the list (never kept so).
+    const waiting = kept.map((summary) => ({ ...summary, unsent: true as const }));
     let there: readonly SavedChatSummary[];
     try {
       const listed = await remote.list(cloud);

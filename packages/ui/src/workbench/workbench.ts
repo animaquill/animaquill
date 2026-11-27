@@ -4905,6 +4905,19 @@ export class Workbench {
       enabled: () => this.session.store !== undefined,
     });
     this.actions.register({
+      id: "chat.newConversation",
+      title: (t) => t("chat.action.newConversation"),
+      run: () => {
+        this.layout.openPanel("chat");
+        this.chat.newConversation();
+        requestAnimationFrame(() => this.#compose("focus")?.());
+      },
+      // Ctrl+Alt+N, ⌘⌥N: not what AltGr types (`comboOf`).
+      keys: ["mod+alt+n"],
+      scope: "chat",
+      enabled: () => this.session.store !== undefined && !this.chat.running,
+    });
+    this.actions.register({
       id: "chat.openPlus",
       title: (t) => t("chat.action.openPlus"),
       run: viaBox("plus"),

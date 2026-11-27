@@ -277,13 +277,12 @@ test("after a reload, once the task was taken back, and in a conversation opened
   await checkLogo(page);
 
   // Another conversation, then this one again from the list.
-  await chat(page).getByTestId("chat-more").click();
-  await chat(page).getByRole("menuitem", { name: "新对话" }).click();
+  await chat(page).getByTestId("chat-new").click();
   await expect(chat(page).getByTestId("chat-card")).toHaveCount(0);
   await chat(page).getByTestId("chat-title").click();
   await chat(page)
-    .getByTestId("chat-list")
-    .getByRole("button", { name: /^把标题挪进来/ })
+    .getByTestId("chat-switcher-row")
+    .filter({ hasText: /^把标题挪进来/ })
     .click();
   await checkLogo(page);
 });

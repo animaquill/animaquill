@@ -140,6 +140,7 @@ const summaryOf = ({
   changes,
   asking,
   forkedFrom,
+  modelName,
 }: SavedChat): SavedChatSummary => ({
   id,
   project,
@@ -149,6 +150,7 @@ const summaryOf = ({
   ...(changes !== undefined && { changes }),
   ...(asking === true && { asking }),
   ...(forkedFrom !== undefined && { forkedFrom }),
+  ...(typeof modelName === "string" && { modelName }),
 });
 
 /** Conversations in this browser, by project. */

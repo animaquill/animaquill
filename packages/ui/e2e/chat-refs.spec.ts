@@ -676,7 +676,7 @@ test("↑ brings back what was said, a search lights up what it found, and a con
   await expect(box(page)).toHaveText("");
 
   await chat(page).getByTestId("chat-title").click();
-  await chat(page).getByRole("textbox", { name: "搜这个项目的对话" }).fill("第一句");
+  await chat(page).getByTestId("chat-switcher-search").fill("第一句");
   await chat(page).getByTestId("chat-search-hit").first().click();
   await expect(chat(page).locator("[data-found-turn]")).toHaveCount(1);
   await expect(chat(page).locator("[data-found-turn] [data-testid='chat-user']")).toHaveText(

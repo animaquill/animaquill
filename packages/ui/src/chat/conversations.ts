@@ -17,22 +17,37 @@ const startOfDay = (at: number): number => {
   return day.getTime();
 };
 
-export type DayGroup = "today" | "yesterday" | "earlier";
+export type DayGroup = "today" | "yesterday" | "week" | "earlier";
 
-/** Conversations by when they last changed: today, yesterday, earlier; newest first in each. */
+/**
+ * Conversations by when they last changed, newest first in each: in the switcher of the head only
+ * today and earlier, which is quick to read; in the page of all of them today, yesterday, this
+ * week and earlier.
+ */
 export function byDay<T extends Pick<SavedChatSummary, "updatedAt">>(
   chats: readonly T[],
   now: number,
+  how: "short" | "long" = "long",
 ): readonly { readonly day: DayGroup; readonly chats: readonly T[] }[] {
   const today = startOfDay(now);
   const yesterday = startOfDay(today - DAY / 2);
-  const groups: Record<DayGroup, T[]> = { today: [], yesterday: [], earlier: [] };
+  const week = startOfDay(today - 6 * DAY + DAY / 2);
+  const groups: Record<DayGroup, T[]> = { today: [], yesterday: [], week: [], earlier: [] };
   for (const chat of chats.toSorted((a, b) => b.updatedAt - a.updatedAt)) {
-    const day =
-      chat.updatedAt >= today ? "today" : chat.updatedAt >= yesterday ? "yesterday" : "earlier";
+    const at = chat.updatedAt;
+    const day: DayGroup =
+      at >= today
+        ? "today"
+        : how === "short"
+          ? "earlier"
+          : at >= yesterday
+            ? "yesterday"
+            : at >= week
+              ? "week"
+              : "earlier";
     groups[day].push(chat);
   }
-  return (["today", "yesterday", "earlier"] as const)
+  return (["today", "yesterday", "week", "earlier"] as const)
     .filter((day) => groups[day].length > 0)
     .map((day) => ({ day, chats: groups[day] }));
 }

@@ -98,9 +98,11 @@ describe("conversations of the online mode", () => {
     expect(device.chats.getSnapshot().status).toBe("waiting");
     expect(await device.chats.waiting()).toBe(1);
     // What this page read last, with what waits.
-    expect((await device.chats.list("k1")).map(({ id, updatedAt }) => [id, updatedAt])).toEqual([
-      ["c1", 2],
-    ]);
+    expect(
+      (await device.chats.list("k1")).map(({ id, updatedAt, unsent }) => [id, updatedAt, unsent]),
+    ).toEqual([["c1", 2, true]]);
+    // Only how the list stands: what waits keeps no such mark.
+    expect((await device.outbox.list("k1"))[0]).not.toHaveProperty("unsent");
     expect((await device.chats.load("k1", "c1"))?.entries).toEqual(
       chatOf("c1", "断网时说的").entries,
     );
@@ -115,6 +117,7 @@ describe("conversations of the online mode", () => {
     expect(backend.chats.get("p1/c1")?.chat.entries).toEqual(chatOf("c1", "断网时说的").entries);
     expect(await device.outbox.list("k1")).toEqual([]);
     expect(later.getSnapshot().status).toBe("synced");
+    expect((await later.list("k1"))[0]).not.toHaveProperty("unsent");
   });
 
   test("another device wrote it since: theirs is the conversation, and this one's a copy", async () => {

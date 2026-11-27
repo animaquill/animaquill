@@ -3618,7 +3618,6 @@
     "history": "以前的对话",
     "untitled": "（空对话）",
     "removeConversation": "删除这个对话",
-    "empty": "说说要对项目做什么，比如“在 3 秒处加一个标记”。AI 的改动可以整批撤销。",
     "placeholder": "给 AI 发消息，Enter 发送，Shift+Enter 换行",
     "send": "发送",
     "stop": "停止",
@@ -3938,12 +3937,12 @@
     "modelNoneTitle": "还没有启用的模型，点了去设置。",
     "forked": "从《{{title}}》第 {{turn}} 轮分出来；那之后的改动还在项目里。",
     "list": {
-      "title": "对话列表",
       "newTitle": "新对话",
       "forked": "从《{{title}}》第 {{turn}} 轮分出",
       "search": "搜这个项目的对话",
       "today": "今天",
       "yesterday": "昨天",
+      "week": "本周",
       "earlier": "更早",
       "changes": "改了 {{count}} 处",
       "asking": "等你回答",
@@ -3956,12 +3955,14 @@
       "removeNote": "对话里 AI 做的改动不会撤销。",
       "cancel": "取消",
       "none": "还没有对话。",
-      "noHits": "没有找到“{{query}}”。"
+      "noHits": "没有找到“{{query}}”。",
+      "unsent": "还没存到服务器，连上后自动存"
     },
     "more": {
       "title": "更多",
       "rename": "重命名",
       "remove": "删除这个对话",
+      "export": "导出",
       "copy": "复制成 Markdown",
       "copied": "已复制",
       "copyFailed": "复制不了，浏览器不让写剪贴板。",
@@ -4067,7 +4068,7 @@
     },
     "onboard": {
       "title": "用你自己的 AI 服务",
-      "text": "AI 用你自己的 key，从这个浏览器直接发给服务商，key 不经过我们。准备好一把 API key 就能开始。",
+      "text": "key 不经过我们：从这个浏览器直接发给服务商。",
       "about": {
         "anthropic": "Claude",
         "openai": "GPT",
@@ -4080,17 +4081,10 @@
     "missing": {
       "noModel": "还没有启用的模型。",
       "enable": "去启用",
-      "choose": "去设置",
       "off": "这个对话用的 {{model}} 已经停用了。",
       "noKey": "{{service}} 还没有填 key。",
-      "fillKey": "去填 key"
-    },
-    "examples": {
-      "title": "试试这样说：",
-      "subtitles": "把所有字幕往上挪一点",
-      "slower": "开场放慢一点",
-      "marker": "在 3 秒处加一个标记",
-      "problems": "看看项目里有什么问题"
+      "fillKey": "去填 key",
+      "otherModel": "换个模型"
     },
     "placeholderWith": "给 AI 发消息，{{send}} 发送，Enter 换行",
     "refs": {
@@ -4173,7 +4167,8 @@
       "sendFrameHelp": "按导出的样子渲染播放头这一帧，作为图片附件放进 AI 聊天的输入框",
       "openPlus": "AI 聊天：插入和附件",
       "openModels": "AI 聊天：选模型和推理强度",
-      "cycleReasoning": "AI 聊天：换推理强度"
+      "cycleReasoning": "AI 聊天：换推理强度",
+      "newConversation": "AI 聊天：新对话"
     },
     "look": {
       "name": {
@@ -4359,7 +4354,26 @@
       "afterDeclined": "没改项目 · 前面的没允许",
       "stopped": "停了，没改"
     },
-    "failedStep": "{{name}}没成"
+    "failedStep": "{{name}}没成",
+    "switcher": {
+      "title": "对话",
+      "search": "搜对话",
+      "whenDone": "这一轮做完后可以切换",
+      "newWhenDone": "这一轮做完后可以开新对话",
+      "running": "在跑",
+      "current": "当前",
+      "all": "全部对话…",
+      "allTitle": "全部对话",
+      "back": "返回"
+    },
+    "suggest": {
+      "moveSelected": "把选中的 {{count}} 个片段往后挪 1 秒",
+      "fadeSelected": "给选中的片段加淡入淡出",
+      "problems": "看看项目里的 {{count}} 个问题",
+      "cutAssets": "用这些素材剪一版 30 秒的开场",
+      "titleScene": "做一个 5 秒的片名场景",
+      "marker": "在播放头 {{time}} 加一个标记"
+    }
   },
   "account": {
     "signIn": "登录",
