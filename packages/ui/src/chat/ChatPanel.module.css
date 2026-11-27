@@ -1425,3 +1425,17 @@
   flex-direction: column;
   min-height: 0;
 }
+
+/* A way on, in a line of words: "打开那边的版本". */
+.inlineLink {
+  padding: 0;
+  color: var(--aq-link);
+  font: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.inlineLink:hover {
+  text-decoration: underline;
+}

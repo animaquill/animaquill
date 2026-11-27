@@ -1,6 +1,7 @@
 import type { FakeEndpoint } from "@animaquill/agent";
 import { ProblemSet, ProjectStore, withId, type UndoResult } from "@animaquill/core";
 import {
+  ChatNewer,
   memoryChatImages,
   memoryChats,
   memoryKeys,
@@ -69,6 +70,7 @@ function setup(
     chats?: ChatStore;
     ask?: ChatSessionOptions["ask"];
     images?: ChatImageStore;
+    chatReplaced?: () => void;
   } = {},
 ) {
   const values = new Map<string, unknown>();
@@ -111,6 +113,7 @@ function setup(
     fake: () => fake,
     ...(where.memory && { memory: where.memory }),
     ...(where.images && { images: where.images }),
+    ...(where.chatReplaced && { chatReplaced: where.chatReplaced }),
     // No title from a model unless a test asks for one: it would be one more request.
     ask: where.ask ?? (async () => ({ ok: false })),
   });
@@ -1851,4 +1854,149 @@ describe("several conversations at once (docs/design/ai-teamwork.md of AnimaQuil
     await chat.open(ids[0] as string);
     expect(users(chat, ids[0] as string)).toEqual(["第 0 个"]);
   });
+});
+
+describe("another device wrote a conversation meanwhile (ChatNewer)", () => {
+  /**
+   * Where conversations are kept, as `AccountChats` keeps them with the account: once armed for a
+   * conversation, the next write of it finds that another device wrote `theirs`; what this page
+   * wrote goes into a copy, and the write is refused with where that copy is.
+   */
+  function newerStore() {
+    const kept = memoryChats();
+    let armed: { readonly id: string; readonly theirs: string } | undefined;
+    let copies = 0;
+    const store: ChatStore & {
+      arm(id: string, theirs: string): void;
+    } = {
+      ...kept,
+      list: (project) => kept.list(project),
+      load: (project, id) => kept.load(project, id),
+      remove: (project, id) => kept.remove(project, id),
+      save: async (chat) => {
+        if (armed?.id !== chat.id) return kept.save(chat);
+        const { theirs } = armed;
+        armed = undefined;
+        copies += 1;
+        const copy = { id: `copy-${copies}`, title: `《${chat.title}》在这台设备上的副本` };
+        await kept.save({ ...chat, ...copy, titleBy: "user" });
+        await kept.save({
+          ...chat,
+          entries: [{ role: "user", text: theirs, at: 1, task: "theirs" }],
+        });
+        throw new ChatNewer(2, copy);
+      },
+      arm: (id, theirs) => {
+        armed = { id, theirs };
+      },
+    };
+    return store;
+  }
+  const texts = async (store: ChatStore, id: string) =>
+    ((await store.load("p1", id))?.entries ?? []).map((entry) =>
+      typeof entry === "object" && entry !== null && "text" in entry ? entry.text : "",
+    );
+  /** Resolves, or fails the test where it hangs. */
+  const within = <T>(promise: Promise<T>) =>
+    Promise.race([
+      promise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("it hangs")), 2000)),
+    ]);
+
+  it("shown and idle: theirs comes, nothing waits for itself, and it goes on to be written and deleted", async () => {
+    const chats = newerStore();
+    let replaced = 0;
+    const { chat, fake } = setup({ chats, chatReplaced: () => (replaced += 1) });
+    fake({ fake: [{ text: "好" }] });
+    await chat.send("我这边");
+    await chat.flush();
+    const a = chat.getSnapshot().id as string;
+    chats.arm(a, "那边写的");
+    chat.chooseModel({ service: "s", model: "m" });
+    await within(chat.flush());
+    await vi.waitFor(() => expect(replaced).toBe(1));
+    await vi.waitFor(() =>
+      expect(
+        chat
+          .getSnapshot()
+          .conversation?.getSnapshot()
+          .entries.map((entry) => (entry.role === "user" ? entry.text : entry.role)),
+      ).toEqual(["那边写的"]),
+    );
+    // What this page had is in the copy.
+    expect(await texts(chats, "copy-1")).toEqual(["我这边", "好"]);
+    // Written again as any other, and deleted.
+    fake({ fake: [{ text: "接着" }] });
+    await within(chat.send("再说一句"));
+    await within(chat.flush());
+    expect(await texts(chats, a)).toEqual(["那边写的", "再说一句", "接着"]);
+    await within(chat.remove(a));
+    expect(await chats.load("p1", a)).toBeUndefined();
+  });
+
+  for (const where of ["shown", "in the background"] as const) {
+    it(`running ${where}: it goes on in the copy, and theirs stays theirs`, async () => {
+      const chats = newerStore();
+      const { ai, chat, fake } = setup({ chats });
+      ai.setAskBeforeEdit(true);
+      fake({
+        fake:
+          where === "shown"
+            ? [{ calls: [addMarker("1")] }, { text: "做完了" }]
+            : [{ calls: [addMarker("1")] }, { calls: [addMarker("2")] }, { text: "做完了" }],
+      });
+      const sent = chat.send("我这边");
+      const a = chat.getSnapshot().id as string;
+      let asked: { readonly id: string } | undefined;
+      await vi.waitFor(() => {
+        asked = chat.getSnapshot().allApprovals[0];
+        expect(asked).toBeDefined();
+      });
+      await chat.flush();
+      chats.arm(a, "那边写的");
+      if (where === "shown") {
+        chat.chooseModel({ service: "s", model: "m" });
+        await within(chat.flush());
+        // Shown: it says so in it, by the name it had, and is the copy from now on.
+        expect(chat.getSnapshot()).toMatchObject({
+          id: "copy-1",
+          title: "《我这边》在这台设备上的副本",
+          splitFrom: { id: a, title: "我这边" },
+        });
+        expect(chat.getSnapshot().approvals.map((each) => each.chat)).toEqual(["copy-1"]);
+      } else {
+        chat.newConversation();
+        // It goes on in the background, and is written while it still runs.
+        chat.answerApproval(asked?.id ?? "", "once");
+        await vi.waitFor(() => {
+          const next = chat.getSnapshot().allApprovals[0];
+          expect(next).toBeDefined();
+          expect(next?.id).not.toBe(asked?.id);
+          asked = next;
+        });
+        await within(chat.flush());
+        expect(chat.conversationOf("copy-1")?.running).toBe(true);
+        expect(chat.getSnapshot().allApprovals.map((each) => each.chat)).toEqual(["copy-1"]);
+        expect(chat.getSnapshot().runs.find((run) => run.id === "copy-1")?.title).toBe(
+          "《我这边》在这台设备上的副本",
+        );
+      }
+      chat.answerApproval(asked?.id ?? "", "once");
+      expect((await within(sent))?.end).toBe("done");
+      await within(chat.flush());
+      expect(await texts(chats, a)).toEqual(["那边写的"]);
+      // All of the turn is in the copy, its end too.
+      const copy = await texts(chats, "copy-1");
+      expect(copy[0]).toBe("我这边");
+      expect(copy.at(-1)).toBe("做完了");
+      expect(chat.conversationOf(a)).toBeUndefined();
+      expect(chat.conversationOf("copy-1")).toBeDefined();
+      // Later writes go to the copy only.
+      if (where === "in the background") await chat.open("copy-1");
+      chat.chooseModel({ service: "s", model: "later" });
+      await within(chat.flush());
+      expect(await texts(chats, a)).toEqual(["那边写的"]);
+      expect((await chats.load("p1", "copy-1"))?.model).toEqual({ service: "s", model: "later" });
+    });
+  }
 });

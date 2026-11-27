@@ -1133,12 +1133,19 @@ export class ChatOutdated extends Error {
   }
 }
 
+/**
+ * Another device wrote a conversation since this page read it: the conversation is theirs now.
+ * Where what this page had said something else, `copy` is the conversation it went into, with the
+ * name it got: what this page writes of it from now on goes there, see `AccountChats`.
+ */
 export class ChatNewer extends Error {
   override readonly name = "ChatNewer";
   readonly revision: number;
-  constructor(revision: number) {
+  readonly copy: { readonly id: string; readonly title: string } | undefined;
+  constructor(revision: number, copy?: { readonly id: string; readonly title: string }) {
     super("Another device wrote the conversation");
     this.revision = revision;
+    this.copy = copy;
   }
 }
 

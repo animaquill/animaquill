@@ -128,7 +128,8 @@ describe("conversations of the online mode", () => {
     await other.chats.load("k1", "c1");
     await one.chats.load("k1", "c1");
     await other.chats.save(chatOf("c1", "那边说的", 2));
-    await expect(one.chats.save(chatOf("c1", "这边说的", 3))).rejects.toBeInstanceOf(ChatNewer);
+    const refused = await one.chats.save(chatOf("c1", "这边说的", 3)).catch((error) => error);
+    expect(refused).toBeInstanceOf(ChatNewer);
     expect(backend.chats.get("p1/c1")?.chat.entries).toEqual(chatOf("c1", "那边说的").entries);
     expect(one.copied).toEqual(["《c1》在这台设备上的副本"]);
     // The copy goes too, and nothing waits here.
@@ -137,6 +138,11 @@ describe("conversations of the online mode", () => {
     expect(copies.map(({ chat }) => [chat.title, chat.entries])).toEqual([
       ["《c1》在这台设备上的副本", chatOf("c1", "这边说的").entries],
     ]);
+    // Where it went, for whoever goes on writing it there.
+    expect((refused as ChatNewer).copy).toEqual({
+      id: copies[0]?.chat.id,
+      title: "《c1》在这台设备上的副本",
+    });
     expect(await one.outbox.list("k1")).toEqual([]);
   });
 

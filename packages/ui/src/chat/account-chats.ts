@@ -237,8 +237,8 @@ export class AccountChats implements ChatStore {
             console.warn("A conversation could not go to the backend yet", error);
             return;
           }
-          await this.#replaced(chat, cloud);
-          throw error;
+          const copy = await this.#replaced(chat, cloud);
+          throw new ChatNewer(error.revision, copy);
         } finally {
           await this.#settle();
         }
@@ -251,7 +251,10 @@ export class AccountChats implements ChatStore {
    * Another device wrote a conversation since this page read it: the backend's is the
    * conversation, and what this page had, where it says something else, a new one.
    */
-  async #replaced(chat: SavedChat, cloud: string): Promise<void> {
+  async #replaced(
+    chat: SavedChat,
+    cloud: string,
+  ): Promise<{ readonly id: string; readonly title: string } | undefined> {
     const { remote, outbox } = this.#options;
     const key = `${chat.project}\n${chat.id}`;
     const theirs = await remote.load(cloud, chat.id).catch(() => undefined);
@@ -272,8 +275,11 @@ export class AccountChats implements ChatStore {
       await outbox.save(copy);
       this.#options.copied?.(mine.title, title);
       void this.#give(copy).catch(() => {});
+      await outbox.remove(chat.project, chat.id);
+      return { id: copy.id, title };
     }
     await outbox.remove(chat.project, chat.id);
+    return undefined;
   }
 
   /** How it stands: waiting while anything is left here. */

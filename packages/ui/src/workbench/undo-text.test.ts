@@ -45,6 +45,9 @@ describe("who changed what stayed when a task went back", () => {
     const two = [...records, record(3, USER, [NAME])];
     expect(keptByOf(two, "ai:a", [clip, NAME], chatOf)).toEqual({ kind: "others" });
     expect(keptByOf([], "ai:a", [clip], chatOf)).toBeUndefined();
+    // One of them without a record: not said to be the person's, nor B's alone.
+    const marker = ["timelines", "main", "markers", "x"];
+    expect(keptByOf(records, "ai:a", [clip, marker], chatOf)).toEqual({ kind: "others" });
     expect(keptByOf(records, "ai:a", [], chatOf)).toBeUndefined();
   });
 });

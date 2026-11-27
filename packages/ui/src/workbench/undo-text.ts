@@ -51,8 +51,9 @@ const meets = (a: readonly string[], b: readonly string[]) =>
  * place the last change of somebody else that wrote it, or above or below it. Several conversations
  * of the chat can change the project at once, so "you changed it" is said only where the person
  * did (docs/design/ai-teamwork.md of AnimaQuill Cloud, 4). `chatOf` names the conversation of an
- * origin of AI, where it is one of the chat; nothing where no record says (too long ago, or from
- * before the page was opened), which people hear as before: that they changed it.
+ * origin of AI, where it is one of the chat. A place no record says anything of (too long ago, or
+ * from before the page was opened) counts as others; nothing where no record says anything of any
+ * of them, which people hear as before: that they changed it.
  */
 export function keptByOf(
   records: readonly ChangeRecord[],
@@ -66,17 +67,25 @@ export function keptByOf(
   );
   const after = from < 0 ? [] : records.slice(from + 1);
   const who = new Set<string>();
+  let unknown = 0;
   for (const path of kept) {
     const last = after.findLast(
       (record) => record.origin !== origin && record.paths.some((written) => meets(written, path)),
     );
-    if (!last) return undefined;
+    // No record of it: nobody can be named, and it is not said to be the person's either.
+    if (!last) {
+      unknown += 1;
+      who.add("others");
+      continue;
+    }
     if (last.takesBack !== undefined || last.origin === USER) who.add("you");
     else {
       const title = chatOf(last.origin);
       who.add(title === undefined ? "others" : `chat:${title}`);
     }
   }
+  // No record of any of it: as people heard it before records were kept.
+  if (unknown === kept.length) return undefined;
   if (who.size !== 1) return { kind: "others" };
   const [only] = who;
   if (only === "you") return { kind: "you" };

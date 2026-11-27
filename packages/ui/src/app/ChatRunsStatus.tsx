@@ -31,14 +31,23 @@ export function ChatRunsStatus() {
   const running = runs.filter((run) => run.state !== "idle" && run.startedAt !== undefined);
   const [anchor, setAnchor] = useState<DOMRect>();
   if (running.length === 0) return null;
-  const [only] = running;
+  // A task that waits for people to allow a change is still a task: it says so, without a spinner.
+  const going = running.filter((run) => run.state === "running");
+  const waiting = running.filter((run) => run.state === "waiting");
+  const name = (run: RunSummary | undefined) => run?.title || t("chat.untitled");
+  const plain = { interpolation: { escapeValue: false } };
+  const goingText =
+    going.length === 1
+      ? t("chat.runs.one", { title: name(going[0]), ...plain })
+      : t("chat.runs.many", { count: going.length });
   const text =
-    running.length === 1 && only
-      ? t("chat.runs.one", {
-          title: only.title || t("chat.untitled"),
-          interpolation: { escapeValue: false },
-        })
-      : t("chat.runs.many", { count: running.length });
+    going.length === 0
+      ? waiting.length === 1
+        ? t("chat.runs.waitsOne", { title: name(waiting[0]), ...plain })
+        : t("chat.runs.waitsMany", { count: waiting.length })
+      : waiting.length === 0
+        ? goingText
+        : `${goingText} · ${t("chat.runs.andWaiting", { count: waiting.length })}`;
   return (
     <>
       <Tip name={t("chat.runs.title")} usage={t("chat.runs.usage")}>
@@ -49,7 +58,11 @@ export function ChatRunsStatus() {
           data-testid="status-runs"
           onClick={(event) => setAnchor(event.currentTarget.getBoundingClientRect())}
         >
-          <LoaderCircle size={12} className={styles.spin} aria-hidden />
+          {going.length > 0 ? (
+            <LoaderCircle size={12} className={styles.spin} aria-hidden />
+          ) : (
+            <span className={styles.dot} aria-hidden />
+          )}
           <span className={styles.text}>{text}</span>
         </button>
       </Tip>

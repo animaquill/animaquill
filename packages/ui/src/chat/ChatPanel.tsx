@@ -269,6 +269,21 @@ export function ChatPanel() {
                       {t("chat.forked", { ...snapshot.forkedFrom })}
                     </p>
                   )}
+                  {snapshot.splitFrom && (
+                    <p className={styles.muted} data-testid="chat-split">
+                      {t("chat.split", {
+                        title: snapshot.splitFrom.title,
+                        interpolation: { escapeValue: false },
+                      })}{" "}
+                      <button
+                        type="button"
+                        className={styles.inlineLink}
+                        onClick={() => void chat.open(snapshot.splitFrom?.id ?? "")}
+                      >
+                        {t("chat.splitOpen")}
+                      </button>
+                    </p>
+                  )}
                   {summed.get("")?.map((entry) => (
                     <SummaryDivider key={`${entry.at}/${entry.through}`} entry={entry} />
                   ))}

@@ -25,8 +25,18 @@
 
 .spin {
   flex: none;
-  color: var(--aq-accent);
+  color: var(--aq-link);
   animation: spin 1s linear infinite;
+}
+
+/* Waiting for people, as the dot of a conversation that waits in the chat. */
+.dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: 0 2px;
+  background: var(--aq-link);
+  border-radius: 50%;
 }
 
 @keyframes spin {

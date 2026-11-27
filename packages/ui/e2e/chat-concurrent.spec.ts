@@ -213,6 +213,8 @@ test("a conversation not shown that waits for people: a word in the corner, a do
   await send(page, "B：随便聊聊");
   await expect(chat(page).getByText("B 好了。")).toBeVisible({ timeout: 15_000 });
   expect(await markers(page)).toEqual({ m0: "片头" });
+  // The status bar says it waits for people, not that it runs.
+  await expect(page.getByTestId("status-runs")).toHaveText("「A：加一个标记」等你允许");
   await shot(page, "4-waiting-elsewhere");
   // Back to it: the card where it was, and the change goes once allowed.
   await title(page).click();

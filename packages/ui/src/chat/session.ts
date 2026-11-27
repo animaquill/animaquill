@@ -188,8 +188,19 @@ export interface ChatSnapshot {
   readonly approvals: readonly PendingApproval[];
   /** Those of every conversation of the window, oldest first. */
   readonly allApprovals: readonly PendingApproval[];
+  /**
+   * The conversation shown went on here, in a copy, as another device wrote the one it was while
+   * it ran: that one is theirs now. Only for as long as the window has it.
+   */
+  readonly splitFrom: SplitFrom | undefined;
   /** The conversations the window has, as the list of conversations and the status bar show them. */
   readonly runs: readonly RunSummary[];
+}
+
+/** The conversation another device wrote while this one ran, see `ChatSnapshot.splitFrom`. */
+export interface SplitFrom {
+  readonly id: string;
+  readonly title: string;
 }
 
 /** How a conversation the window has stands, see `ChatSnapshot.runs`. */
@@ -353,6 +364,7 @@ interface RunFields {
   readonly planFirst: boolean;
   readonly hold: ChatHold | undefined;
   readonly marked: ReadonlySet<string>;
+  readonly splitFrom: SplitFrom | undefined;
 }
 
 /**
@@ -360,7 +372,8 @@ interface RunFields {
  * said, what its tools read, what it waits to write, what is queued in it.
  */
 interface Run {
-  readonly id: string;
+  /** Its id; another one once it went on in a copy of its own, see `#split`. */
+  id: string;
   /** The project it is of, as this browser keeps it: what it is written under, whatever opens later. */
   readonly project: string | undefined;
   readonly conversation: Conversation;
@@ -380,6 +393,8 @@ interface Run {
   gone: boolean;
   /** A task of it is about to start: where it goes is being worked out. */
   starting: number;
+  /** The last write of it failed: what it has here is newer than what is kept. */
+  unsaved: boolean;
   /** When it was last shown, or last ran: the one longest ago goes first, see `KEPT_IDLE`. */
   used: number;
   readonly unwatch: () => void;
@@ -396,6 +411,7 @@ const NO_FIELDS: RunFields = {
   planFirst: false,
   hold: undefined,
   marked: new Set(),
+  splitFrom: undefined,
 };
 
 /**
@@ -706,6 +722,7 @@ export class ChatSession {
       unseen: false,
       gone: false,
       starting: 0,
+      unsaved: false,
       used: ++this.#clock,
       unwatch,
     };
@@ -942,6 +959,7 @@ export class ChatSession {
       };
       try {
         await this.#chats.save(chat);
+        run.unsaved = false;
         if (this.#project?.key !== project) return;
         const others = this.#snapshot.saved.filter((saved) => saved.id !== id);
         const {
@@ -957,15 +975,18 @@ export class ChatSession {
       } catch (error) {
         if (error instanceof ChatNewer) {
           // Another device wrote it meanwhile: theirs is the conversation now, and what this one
-          // had is a conversation of its own (see `AccountChats`), which the list shows. A task
-          // that runs goes on with what it has, as before this.
+          // had is a conversation of its own (see `AccountChats`), which the list shows. Nothing
+          // here waits for that, as it runs where the writes of this conversation wait: opening
+          // it again waits for them.
           if (this.#project?.key === project && this.#runs.get(id) === run) {
             clearTimeout(run.saving);
             run.pending = undefined;
-            if (!run.conversation.running) {
-              if (run === this.#shown) await this.open(id, true);
-              else if (!this.#busy(run)) this.#retire(run);
-            }
+            if (this.#busy(run)) {
+              // A task that runs, or what waits to go, goes on in the copy, and writes there from
+              // now on: what the other device wrote stays theirs.
+              if (error.copy) this.#split(run, error.copy);
+            } else if (run === this.#shown) void this.open(id, true);
+            else this.#retire(run);
           }
           if (this.#project?.key === project) {
             const saved = await this.#chats.list(project).catch(() => undefined);
@@ -974,11 +995,48 @@ export class ChatSession {
           this.#options.chatReplaced?.();
           return;
         }
+        run.unsaved = true;
         console.warn("The conversation could not be kept", error);
       }
     };
     clearTimeout(run.saving);
     run.saving = setTimeout(() => void this.#flushRun(run), SAVE_DELAY_MS);
+  }
+
+  /**
+   * A conversation another device wrote while something went on here goes on as the copy that
+   * what this page had of it went into: its id, its name, the change that waits for people, its
+   * draft; and it is written there from now on, all of it. The id it had is the other device's
+   * conversation now, which opens as they left it.
+   */
+  #split(run: Run, copy: { readonly id: string; readonly title: string }): void {
+    const from = run.id;
+    const title =
+      run.fields.titleBy !== undefined && run.fields.title
+        ? run.fields.title
+        : firstWords(run.conversation.getSnapshot().entries, TITLE_LENGTH);
+    this.#runs.delete(from);
+    run.id = copy.id;
+    this.#runs.set(copy.id, run);
+    this.#approvals = this.#approvals.map((each) =>
+      each.chat === from ? { ...each, chat: copy.id } : each,
+    );
+    const { project } = run;
+    if (project !== undefined) {
+      const draft = this.drafts.read(project, from);
+      if (draft) this.drafts.write(project, copy.id, draft);
+      this.drafts.clear(project, from);
+    }
+    if (run === this.#shown) {
+      this.#snapshot = { ...this.#snapshot, id: copy.id };
+      if (project !== undefined) this.#options.memory?.write(openKey(project), copy.id);
+    }
+    this.#update(run, {
+      title: copy.title,
+      titleBy: "user",
+      splitFrom: { id: from, title },
+    });
+    this.#saveSoon(run);
   }
 
   /** Writes what a conversation waits to write, after what is on its way. */
@@ -1051,14 +1109,31 @@ export class ChatSession {
       return;
     }
     if (had) await this.#flushRun(had);
+    // What is kept of it is older than what the window has, as it could not be written: the
+    // window's, rather than reading it again.
+    if (had && had.unsaved && !again && this.#runs.get(id) === had) {
+      if (had !== this.#shown) this.#show(had);
+      return;
+    }
+    const fields = had?.fields;
+    const said = had?.conversation.getSnapshot().entries;
     const saved = await this.#chats.load(project, id).catch((error: unknown) => {
       console.warn("A conversation could not be read", error);
       return undefined;
     });
     if (this.#project?.key !== project) return;
-    // Something started in it meanwhile: as it is now.
+    // Something started in it meanwhile, or people changed it (its model, its name, "先出方案"),
+    // or it waits to be written: as it is now, what was read is no newer.
     const now = this.#runs.get(id);
-    if (now && this.#busy(now)) {
+    const changed =
+      !again &&
+      now !== undefined &&
+      now === had &&
+      (now.fields !== fields ||
+        now.conversation.getSnapshot().entries !== said ||
+        now.pending !== undefined ||
+        now.unsaved);
+    if (now && (this.#busy(now) || changed)) {
       if (now !== this.#shown) this.#show(now);
       return;
     }
