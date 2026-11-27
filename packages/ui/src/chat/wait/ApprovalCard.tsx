@@ -1,14 +1,14 @@
 import type { ToolEntry } from "@animaquill/agent";
 import { aiTask } from "@animaquill/core";
 import { ShieldQuestion } from "lucide-react";
-import { useMemo, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../app/context.ts";
 import { ChangesView } from "../ChangeCard.tsx";
 import type { PendingApproval } from "../session.ts";
 import { placesOf, summaryOf } from "../summary.ts";
-import { useChatUi } from "../ui.ts";
 import { WaitCard } from "./WaitCard.tsx";
+import styles from "./wait.module.css";
 
 /**
  * The change a task waits to make while people want to be asked first ("AI 改项目前先问我", S-D4;
@@ -27,7 +27,6 @@ export function TaskApproval({ task }: { readonly task: string }) {
 
 function ApprovalCard({ pending }: { readonly pending: PendingApproval }) {
   const { chat } = useWorkbench();
-  const ui = useChatUi();
   const { t } = useTranslation();
   const { request, task, id } = pending;
   // As the card of the task will say it once written: from what the tool tells of the change.
@@ -44,17 +43,28 @@ function ApprovalCard({ pending }: { readonly pending: PendingApproval }) {
     return summaryOf([told]);
   }, [id, request]);
   const seen = useMemo(() => ({ before: request.before, after: request.after }), [request]);
+  // Words written in the box meanwhile go as "not allowed": the card says so, and "允许" is no
+  // longer the one button that stands out.
+  const project = chat.projectKey;
+  const chatId = chat.getSnapshot().id;
+  const readDraft = useCallback(
+    () => (project === undefined || chatId === undefined ? "" : chat.drafts.read(project, chatId)),
+    [chat, project, chatId],
+  );
+  const typing = useSyncExternalStore(chat.drafts.subscribe, readDraft).trim() !== "";
   return (
     <WaitCard
       kind="approve"
       icon={<ShieldQuestion size={13} aria-hidden />}
       title={t("chat.approve.title", { count: placesOf(summary) })}
       testId="chat-approve"
-      onKeyDown={(event) => {
-        // Words typed at the card go to the box, where they do not allow it and go to AI.
-        const typed = event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey;
-        if (typed && event.target === event.currentTarget) ui.focusInput();
-      }}
+      foot={
+        typing ? (
+          <p className={styles.footText} data-testid="chat-approve-typing">
+            {t("chat.approve.typing")}
+          </p>
+        ) : undefined
+      }
       actions={[
         {
           id: "chat-approve-no",
@@ -70,7 +80,7 @@ function ApprovalCard({ pending }: { readonly pending: PendingApproval }) {
         {
           id: "chat-approve-once",
           label: t("chat.approve.once"),
-          primary: true,
+          primary: !typing,
           keys: "Enter",
           onAct: () => chat.answerApproval(id, "once"),
         },

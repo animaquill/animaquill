@@ -245,7 +245,7 @@ function TurnPlan(props: {
 function DeclinedSaid({ turn }: { readonly turn: Turn }) {
   const { t } = useTranslation();
   const said = turn.entries.flatMap((entry) =>
-    entry.role === "tool" && typeof entry.data?.said === "string"
+    entry.role === "tool" && entry.data?.declined === true && typeof entry.data.said === "string"
       ? [{ id: entry.call, said: entry.data.said }]
       : [],
   );

@@ -671,14 +671,30 @@ test("what waits for people: a change to allow, words instead, a question, a pla
   await say("加两个标记");
   await expect(wait).toHaveAttribute("data-kind", "approve", { timeout: 15_000 });
   await sceneBothThemes(page, "1-approve", "4");
-  // Words written meanwhile: they do not allow it and go to AI with that.
+  // Words written meanwhile, a picture with them: they do not allow it and go to AI with that.
   await box(page).fill("片头的放到 3 秒，片尾的不要");
+  await box(page).evaluate((element) => {
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mP4z8BAEmIY1TCqYfhqAACQ+f8B8u7oVwAAAABJRU5ErkJggg==";
+    const bytes = Uint8Array.from(atob(png), (c) => c.charCodeAt(0));
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([bytes], "参考.png", { type: "image/png" }));
+    element.dispatchEvent(
+      new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }),
+    );
+  });
+  await expect(chat(page).getByTestId("chat-picture")).toHaveAttribute("data-state", "ready");
+  await expect(chat(page).getByTestId("chat-approve-typing")).toBeVisible();
   await expect(chat(page).getByTestId("chat-send")).toHaveAttribute("data-state", "decline");
   await sceneBothThemes(page, "2-approve-typing", "4");
   await box(page).press("Enter");
   await expect(chat(page).getByTestId("chat-declined-said")).toBeVisible({ timeout: 15_000 });
   await expect(chat(page).getByText("好，片头标记放到 3 秒。")).toBeVisible();
+  // Only the words went: the picture stays, and the box says so.
+  await expect(chat(page).getByTestId("chat-pictures-kept")).toHaveText("图片留着，没带上");
+  await expect(chat(page).getByTestId("chat-picture")).toHaveCount(1);
   await sceneBothThemes(page, "3-declined", "4");
+  await chat(page).getByTestId("chat-picture-remove").click();
 
   // A question of AI: its answers in a row; the box says people can answer there too.
   answers.push([

@@ -1,4 +1,4 @@
-import { ArrowUp, Square } from "lucide-react";
+import { ArrowUp, Ban, Square } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Tip } from "../../app/Tip.tsx";
 import styles from "./input.module.css";
@@ -59,8 +59,20 @@ export function SendButton(props: {
       >
         {state === "stop" ? (
           <Square size={11} fill="currentColor" aria-hidden />
+        ) : state === "decline" ? (
+          <Ban size={13} strokeWidth={2.4} aria-hidden />
         ) : (
           <ArrowUp size={15} strokeWidth={2.4} aria-hidden />
+        )}
+        {state === "decline" && (
+          <>
+            <span className={styles.declineLong} aria-hidden>
+              {t("chat.compose.decline")}
+            </span>
+            <span className={styles.declineShort} aria-hidden>
+              {t("chat.compose.declineShort")}
+            </span>
+          </>
         )}
         {state === "queue" && (
           <span className={styles.badge} aria-hidden>

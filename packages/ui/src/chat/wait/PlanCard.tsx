@@ -177,6 +177,10 @@ function OpenPlan(props: {
         title: props.plan.title,
         interpolation: { escapeValue: false },
       })}
+      said={t("chat.plan.title", {
+        title: props.plan.title,
+        interpolation: { escapeValue: false },
+      })}
       testId="chat-plan"
       state="open"
       foot={<PlanEnd plan={props.plan} timeline={props.timeline} />}

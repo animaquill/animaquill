@@ -196,6 +196,11 @@ test("the card has the focus: Enter allows, Esc does not; the line of the work l
   // People were in the box, with nothing written: the card takes the focus.
   await expect(card).toBeFocused();
   await expect(asking(page)).toContainText("等你允许：要改 1 处");
+  // Enter right as it shows is a key meant for before: no answer.
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(300);
+  expect(await markers(page)).toEqual({ m0: "片头@1" });
+  await page.waitForTimeout(400);
   await page.keyboard.press("Enter");
   await expect.poll(() => markers(page)).toMatchObject({ m2: "m2@6" });
   // The next change: from the line of the work, which says it waits, to the card.
@@ -204,6 +209,34 @@ test("the card has the focus: Enter allows, Esc does not; the line of the work l
   await box(page).click();
   await work.getByTestId("chat-work-to-wait").click();
   await expect(card).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(chat(page).getByText("好了。")).toBeVisible({ timeout: 15_000 });
+  expect(await markers(page)).toEqual({ m0: "片头@1", m2: "m2@6" });
+});
+
+test("Enter twice, or held down, allows one change only: the next card has to be seen first", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await setUp(page, [[add("m2", "6")], [add("m3", "8")], "好了。"]);
+  await send(page, "加两个标记");
+  const card = chat(page).getByTestId("chat-wait");
+  await expect(card).toBeFocused();
+  await page.waitForTimeout(600);
+  // Twice in a row, the second held down: the first allows the first change; the second card
+  // shows right after and takes the focus, but the second Enter is too soon for it, and what the
+  // key repeats while held answers nothing either.
+  await page.keyboard.press("Enter");
+  await page.keyboard.down("Enter");
+  await expect(asking(page)).toContainText("要改 1 处");
+  await expect.poll(() => markers(page)).toMatchObject({ m2: "m2@6" });
+  await expect(card).toBeFocused();
+  await page.waitForTimeout(700);
+  await page.keyboard.down("Enter");
+  await page.keyboard.down("Enter");
+  await page.keyboard.up("Enter");
+  await page.waitForTimeout(300);
+  expect(await markers(page)).toEqual({ m0: "片头@1", m2: "m2@6" });
   await page.keyboard.press("Escape");
   await expect(chat(page).getByText("好了。")).toBeVisible({ timeout: 15_000 });
   expect(await markers(page)).toEqual({ m0: "片头@1", m2: "m2@6" });
@@ -221,6 +254,16 @@ test("not allowed with words: typed in the box while asked, they go to AI with t
   const button = chat(page).getByTestId("chat-send");
   await expect(button).toHaveAttribute("data-state", "decline");
   await expect(button).toHaveAttribute("aria-label", "不允许并发送");
+  // Words on it, never the plain arrow: "不允许并发送", "不允许" where the chat is narrow.
+  await expect(button.locator("span:visible")).toHaveText(/^不允许(并发送)?$/u);
+  // The card says what sending does now, and "允许" no longer stands out.
+  await expect(asking(page).getByTestId("chat-approve-typing")).toHaveText(
+    "发送你写的话，就是不允许，并把它告诉 AI",
+  );
+  await expect(asking(page).getByTestId("chat-approve-once")).not.toHaveAttribute(
+    "data-primary",
+    "",
+  );
   await box(page).press("Enter");
   await expect(chat(page).getByTestId("chat-answer")).toHaveText("好，那就放到 3 秒。", {
     timeout: 15_000,

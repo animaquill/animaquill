@@ -112,6 +112,39 @@
   filter: none;
 }
 
+/*
+ * What is written goes as "not allowed" while a change waits for people: a pill that says so, in
+ * the colour of what turns something down, never the plain arrow of sending.
+ */
+.area .send[data-state="decline"],
+.area .send[data-state="decline"]:hover {
+  gap: 4px;
+  width: auto;
+  padding: 0 10px 0 8px;
+  color: var(--aq-on-accent);
+  background: var(--aq-danger);
+  border-radius: 14px;
+}
+
+.declineLong,
+.declineShort {
+  white-space: nowrap;
+}
+
+.declineShort {
+  display: none;
+}
+
+@container (max-width: 379px) {
+  .declineLong {
+    display: none;
+  }
+
+  .declineShort {
+    display: inline;
+  }
+}
+
 .badge {
   position: absolute;
   top: -5px;

@@ -3799,7 +3799,8 @@
       "no": "不允许",
       "allowed": "允许了 {{count}} 处",
       "declined": "没允许",
-      "declinedSaid": "不允许："
+      "declinedSaid": "不允许：",
+      "typing": "发送你写的话，就是不允许，并把它告诉 AI"
     },
     "result": "结果",
     "undoTask": "撤销这一轮",
@@ -4024,7 +4025,9 @@
       "sendEmpty": "发送，先写要说的话",
       "placeholderDecline": "不允许，并告诉 AI 怎么改…",
       "placeholderAnswer": "或者直接回答…",
-      "decline": "不允许并发送"
+      "decline": "不允许并发送",
+      "declineShort": "不允许",
+      "picturesKept": "图片留着，没带上"
     },
     "user": {
       "copy": "复制",

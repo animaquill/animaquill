@@ -9,7 +9,7 @@ import {
   useSyncExternalStore,
   type KeyboardEvent,
 } from "react";
-import { ListChecks, X } from "lucide-react";
+import { ImageOff, ListChecks, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../app/context.ts";
 import { formatCombo } from "../../workbench/keys.ts";
@@ -102,6 +102,8 @@ export const InputArea = forwardRef<
     on: true,
   });
   const carrying = carry.chat !== id || carry.on;
+  // Pictures that stayed in the card as words went to AI with "not allowed".
+  const [kept, setKept] = useState(false);
   // Pressing send while something holds the message back: that thing shakes.
   const [nudge, setNudge] = useState(0);
 
@@ -189,9 +191,12 @@ export const InputArea = forwardRef<
       if (text.trim() === "" || !chat.declineWith(text)) return;
       write("");
       history.current = undefined;
+      // Only words go with "not allowed": pictures stay, and the box says so.
+      setKept(pictures.length > 0);
       props.onSent();
       return;
     }
+    setKept(false);
     if (project === undefined || id === undefined || !hasSomething) return;
     if (holdsBack(why)) {
       setNudge((count) => count + 1);
@@ -322,6 +327,12 @@ export const InputArea = forwardRef<
   return (
     <div className={styles.area}>
       <HoldStrip hold={shown.hold} nudge={nudge} onModel={() => tag.current?.open()} />
+      {kept && pictures.length > 0 && (
+        <p className={styles.strip} role="status" data-testid="chat-pictures-kept">
+          <ImageOff size={12} aria-hidden className={styles.stripIcon} />
+          <span className={styles.stripText}>{t("chat.compose.picturesKept")}</span>
+        </p>
+      )}
       <QueueList
         queued={shown.queued}
         running={running}

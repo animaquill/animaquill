@@ -36,6 +36,7 @@ export function QuestionCard({ question }: { readonly question: Question }) {
       kind="question"
       icon={<MessageCircleQuestion size={13} aria-hidden />}
       title={t("chat.question.title")}
+      said={`${t("chat.question.title")}：${question.question}`}
       testId="chat-question"
       onKeyDown={onKeyDown}
     >

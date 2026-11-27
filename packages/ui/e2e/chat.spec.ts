@@ -19,6 +19,7 @@ const KEY = "sk-ant-test-0123456789abcdefSECRET";
 const ANTHROPIC = "https://api.anthropic.com/**";
 
 const chat = (page: Page) => content(page, "chat");
+const input = (page: Page) => chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
 
 /** Sets up Anthropic with a key and a model, as people do in the settings. */
 async function setUpService(page: Page) {
@@ -355,6 +356,11 @@ test("AI asks a question, the turn stops, and a pick goes as the next message", 
   await send(page, "改一下标题的颜色");
   const question = chat(page).getByTestId("chat-question");
   await expect(question).toContainText("标题用哪种颜色？");
+  // The card has the focus; words typed go to the box, where people can answer too.
+  await expect(chat(page).getByTestId("chat-wait")).toBeFocused();
+  await page.keyboard.type("偏冷一点");
+  await expect(input(page)).toHaveText("偏冷一点");
+  await input(page).fill("");
   // The turn waits for the answer: nothing more went to the service.
   await expect(chat(page).getByRole("button", { name: "停止" })).toBeHidden();
   expect(requests).toHaveLength(1);

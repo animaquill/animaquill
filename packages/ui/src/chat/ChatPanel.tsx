@@ -581,7 +581,11 @@ export function markdownOf(t: TFunction, title: string, entries: readonly ChatEn
     );
     // What people said while not allowing a change, which AI read with it.
     for (const entry of group.entries) {
-      if (entry.role === "tool" && typeof entry.data?.said === "string")
+      if (
+        entry.role === "tool" &&
+        entry.data?.declined === true &&
+        typeof entry.data.said === "string"
+      )
         parts.push(`**${t("chat.youDeclined")}**:\n\n${entry.data.said}`);
     }
     const turn = turnOf(group.user, group.entries);
