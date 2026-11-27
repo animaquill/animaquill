@@ -134,12 +134,16 @@ test("/ at the start: the commands, found by name, pinyin or English; 、 as Chi
   await box(page).click();
   await box(page).pressSequentially("/");
   await expect(menu(page)).toBeVisible();
-  // Nothing to sum up and no name yet in a new conversation: those two are not there.
+  // Nothing to sum up and no name yet in a new conversation: those two say so, greyed.
   await expect(options(page)).toHaveText([
     /\/方案\s*打开先出方案/,
     /\/新对话\s*开一个新对话/,
+    /\/压缩\s*还没有可以压缩的对话/,
     /\/画面\s*截取当前画面/,
+    /\/重命名\s*先发一条消息/,
   ]);
+  await expect(options(page).nth(2)).toHaveAttribute("aria-disabled", "true");
+  await expect(options(page).nth(4)).toHaveAttribute("aria-disabled", "true");
   // The focus stays in the box, which says which one is chosen.
   await expect(box(page)).toBeFocused();
   await expect(options(page).first()).toHaveAttribute("aria-selected", "true");
@@ -149,6 +153,22 @@ test("/ at the start: the commands, found by name, pinyin or English; 、 as Chi
   await expect(options(page).last()).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("ArrowDown");
   await expect(options(page).first()).toHaveAttribute("aria-selected", "true");
+  await box(page).press("Backspace");
+  await expect(menu(page)).toBeHidden();
+
+  // A slash alone is not a command yet: Enter does nothing, sends nothing, keeps the slash.
+  await box(page).pressSequentially("/");
+  await page.keyboard.press("Enter");
+  await expect(box(page)).toHaveText("/");
+  await expect(chat(page).getByTestId("chat-mode-plan")).toBeHidden();
+  await expect(menu(page)).toBeVisible();
+  // One that cannot be used now: Enter does not send it either, and its line says why.
+  await box(page).pressSequentially("压");
+  await expect(options(page)).toHaveText([/\/压缩\s*还没有可以压缩的对话/]);
+  await page.keyboard.press("Enter");
+  await expect(box(page)).toHaveText("/压");
+  expect(sent).toHaveLength(0);
+  await box(page).press("Backspace");
 
   // The first letters of the pinyin: Enter does it, and takes the command out of the box.
   await box(page).pressSequentially("fa");
@@ -170,7 +190,23 @@ test("/ at the start: the commands, found by name, pinyin or English; 、 as Chi
   await typeAsInput(page, "、");
   const ime = await page.context().newCDPSession(page);
   await ime.send("Input.imeSetComposition", { text: "hua", selectionStart: 3, selectionEnd: 3 });
-  await expect(options(page)).toHaveCount(3);
+  await expect(options(page)).toHaveCount(5);
+  // Its keys are its own: Enter picks its word, never a command.
+  await box(page).evaluate((element) => {
+    for (const key of ["ArrowDown", "Enter", "Tab"]) {
+      element.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key,
+          keyCode: 229,
+          isComposing: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    }
+  });
+  await expect(options(page).first()).toHaveAttribute("aria-selected", "true");
+  await expect(chat(page).getByTestId("chat-mode-plan")).toBeHidden();
   await ime.send("Input.insertText", { text: "画" });
   await expect(options(page)).toHaveText([/\/画面/]);
 
@@ -250,11 +286,35 @@ test("@ anywhere after a space: what is selected and the playhead, then clips an
   const clips = menu(page).getByRole("group", { name: "片段" });
   await expect(clips.getByTestId("chat-complete-option")).toHaveCount(6);
   await expect(clips.getByTestId("chat-complete-option").last()).toHaveText("还有 4 个");
+  // Of the same name, each says when it is; those of a name of their own say nothing more.
+  await expect(clips.getByTestId("chat-complete-option").nth(0)).toHaveText("片段「片头标题」");
+  await expect(clips.getByTestId("chat-complete-option").nth(3)).toHaveText(/片段「纯色」\s*0:04/);
+  await expect(clips.getByTestId("chat-complete-option").nth(4)).toHaveText(/片段「纯色」\s*0:06/);
   await expect(menu(page).getByRole("group", { name: "标记" })).toHaveText(/标记「高潮」/);
   // "还有 4 个" shows them all.
   await clips.getByTestId("chat-complete-option").last().click();
   await expect(clips.getByTestId("chat-complete-option")).toHaveCount(9);
   await expect(box(page)).toBeFocused();
+
+  // Words an input method composes after @: its Enter picks its word, never a block; once it is
+  // written, the menu finds by it.
+  const ime = await page.context().newCDPSession(page);
+  await ime.send("Input.imeSetComposition", { text: "cheng", selectionStart: 5, selectionEnd: 5 });
+  await box(page).evaluate((element) =>
+    element.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        keyCode: 229,
+        isComposing: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    ),
+  );
+  await expect(box(page).getByTestId("chat-chip")).toHaveCount(0);
+  await ime.send("Input.insertText", { text: "城" });
+  await expect(options(page)).toHaveText(["片段「城市夜景」", "字幕「欢迎来到这座城市」"]);
+  await box(page).press("Backspace");
 
   // By name, any part of it: names that start with it first.
   await box(page).pressSequentially("城市");
@@ -278,6 +338,24 @@ test("@ anywhere after a space: what is selected and the playhead, then clips an
   await box(page).fill("");
   await box(page).pressSequentially("@没有这个");
   await expect(menu(page)).toHaveText("没有叫“没有这个”的");
+  await box(page).fill("");
+
+  // Words pasted in are not typed: no menu for them, and Enter after them sends.
+  const paste = (text: string) =>
+    box(page).evaluate((element, words) => {
+      const transfer = new DataTransfer();
+      transfer.setData("text/plain", words);
+      element.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }),
+      );
+    }, text);
+  await paste("看看 @城");
+  await expect(box(page)).toHaveText("看看 @城");
+  await expect(menu(page)).toBeHidden();
+  // Typing on is typing: the menu is there for it.
+  await box(page).pressSequentially("市");
+  await expect(options(page)).toHaveCount(2);
+  await page.keyboard.press("Escape");
   await box(page).fill("");
 
   // What is selected: the clips as blocks, as "插入选中的" puts them in.

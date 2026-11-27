@@ -84,6 +84,14 @@ describe("what @ finds", () => {
     expect(city[0]?.refs[0]?.href).toBe("aq://object/late?timeline=main");
     expect(city[0]?.refs[1]?.href).toBe("aq://object/far?timeline=other");
     expect(city[1]?.refs).toEqual([{ label: "素材「城市.mp4」", href: "aq://object/a2" }]);
+    // Where each is, to tell apart those of the same name: the other timeline by its name.
+    expect(city[0]?.places).toEqual([
+      { time: "0:09" },
+      { time: "0:00", timeline: "另一条" },
+      { time: "0:01" },
+      { time: "0:02" },
+    ]);
+    expect(city[1]?.places).toEqual([{}]);
     expect(find("JPG").map((group) => group.kind)).toEqual(["clip", "asset"]);
   });
 

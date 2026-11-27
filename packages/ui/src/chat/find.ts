@@ -19,8 +19,16 @@ export interface FoundGroup {
   readonly kind: FoundKind;
   /** The first so many found, as blocks. */
   readonly refs: readonly ChatRef[];
+  /** Where each of `refs` is, to tell apart those of the same name. */
+  readonly places: readonly FoundPlace[];
   /** How many there are in all. */
   readonly total: number;
+}
+
+/** Where a clip or marker is: when, and on which timeline where it is not the one shown. */
+export interface FoundPlace {
+  readonly time?: string;
+  readonly timeline?: string;
 }
 
 interface Hit {
@@ -31,6 +39,7 @@ interface Hit {
   readonly rank: number;
   readonly at: () => number;
   readonly ref: () => ChatRef;
+  readonly place: () => FoundPlace;
 }
 
 /** A time as seconds, to put things in order: quick, for every clip found in a big project. */
@@ -123,6 +132,9 @@ export function findIn(
   order.forEach((timelineId, rank) => {
     const timeline = entryOf(state.timelines, timelineId);
     if (!timeline) return;
+    const elsewhere = timelineId === shown ? undefined : timeline.name || timelineId;
+    const placeOf = (at: number): FoundPlace =>
+      elsewhere === undefined ? { time: clock(at) } : { time: clock(at), timeline: elsewhere };
     for (const clip of Object.values(timeline.clips)) {
       const name = clipName(t, state, clip);
       const at = where(name);
@@ -132,6 +144,7 @@ export function findIn(
         starts: at === 0,
         rank,
         at: () => seconds(clip.start),
+        place: () => placeOf(seconds(clip.start)),
         ref: () => ({
           label: clipLabelOf(t, state, timelineId, clip.id),
           href: formatAddress({ kind: "object", id: clip.id, timeline: timelineId }),
@@ -149,6 +162,7 @@ export function findIn(
         starts: at === 0,
         rank,
         at: () => seconds(marker.time),
+        place: () => placeOf(seconds(marker.time)),
         ref: () => ({
           label: own
             ? t("chat.refs.marker", { name: shortName(own), interpolation: { escapeValue: false } })
@@ -173,6 +187,7 @@ export function findIn(
         starts: at === 0,
         rank: 0,
         at: () => 0,
+        place: () => ({}),
         ref: () => ({
           label: t(`chat.refs.${kind}`, {
             name: shortName(name),
@@ -197,6 +212,13 @@ export function findIn(
           (timed ? 0 : a.hit.name.localeCompare(b.hit.name)),
       )
       .slice(0, limit);
-    return [{ kind, refs: first.map(({ hit }) => hit.ref()), total: all.length }];
+    return [
+      {
+        kind,
+        refs: first.map(({ hit }) => hit.ref()),
+        places: first.map(({ hit }) => hit.place()),
+        total: all.length,
+      },
+    ];
   });
 }

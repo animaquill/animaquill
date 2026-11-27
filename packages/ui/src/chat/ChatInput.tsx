@@ -226,13 +226,18 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     const waiting = useRef<Piece[][]>([]);
     const { value, onChange, gone, onTrigger } = props;
     const told = useRef<string | undefined>(undefined);
+    // Words pasted in are not typed: no menu for them, until something is typed, a key or the
+    // pointer moves on.
+    const pasted = useRef(false);
+    const pasting = useRef(false);
     /** Says what `/` or `@` started where the caret is now, once it changed. */
     const lookRef = useRef(() => {});
     lookRef.current = () => {
       const root = box.current;
       // What an input method composes is not written yet: the menu waits for it as it is.
       if (!onTrigger || !root || composing.current) return;
-      const found = document.activeElement === root ? triggerIn(root) : undefined;
+      const found =
+        document.activeElement === root && !pasted.current ? triggerIn(root) : undefined;
       const key = found && `${found.kind}/${found.start}/${found.query}`;
       if (key === told.current) return;
       told.current = key;
@@ -355,6 +360,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
     }));
 
     const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+      pasted.current = false;
       const root = box.current;
       const typing = event.nativeEvent.isComposing || event.keyCode === 229 || composing.current;
       if (root && (event.key === "Backspace" || event.key === "Delete") && !typing) {
@@ -388,7 +394,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       props.onKeyDown(event);
     };
 
-    const onPaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    const pasteIn = (event: ClipboardEvent<HTMLDivElement>) => {
       const files = [...event.clipboardData.files].filter((file) => file.type.startsWith("image/"));
       event.preventDefault();
       if (files.length > 0) {
@@ -403,6 +409,17 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
       }
       const text = event.clipboardData.getData("text/plain");
       if (text) put([{ text }]);
+    };
+
+    const onPaste = (event: ClipboardEvent<HTMLDivElement>) => {
+      pasted.current = true;
+      pasting.current = true;
+      lookRef.current();
+      try {
+        pasteIn(event);
+      } finally {
+        pasting.current = false;
+      }
     };
 
     const onCopy = (event: ClipboardEvent<HTMLDivElement>, cut: boolean) => {
@@ -455,7 +472,11 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         data-panel-focus=""
         tabIndex={0}
         spellCheck={false}
-        onInput={changed}
+        onInput={() => {
+          // Typed, not pasted: what `/` or `@` starts has its menu again.
+          if (!pasting.current) pasted.current = false;
+          changed();
+        }}
         onCompositionStart={() => {
           composing.current = true;
         }}
@@ -478,6 +499,9 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
           props.onPoint(pointed(event.target)?.getAttribute(CHIP) ?? undefined)
         }
         onPointerLeave={() => props.onPoint(undefined)}
+        onPointerDown={() => {
+          pasted.current = false;
+        }}
         onClick={(event) => {
           const chip = pointed(event.target);
           if (chip && !chip.hasAttribute("data-gone")) props.onOpen(chip.getAttribute(CHIP) ?? "");
