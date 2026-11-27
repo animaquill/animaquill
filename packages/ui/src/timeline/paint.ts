@@ -193,7 +193,7 @@ export class TimelinePainter extends StagePainter {
   readonly #hasFailed: (clip: ClipState) => boolean;
   /** What a track that a drop would make is called, as a new track of its kind. */
   readonly #newTrackName: (kind: "video" | "audio", number: number) => string;
-  /** What a new track next to a row is called, as "视频 1 上面的新轨道". */
+  /** What a new track next to a row is called, as "「视频 1」上面的新轨道". */
   readonly #besideName: (row: Row, side: Side) => string;
   /** Draws what is under the clips of a track, over the rest. */
   readonly #below: BelowPainter | undefined;

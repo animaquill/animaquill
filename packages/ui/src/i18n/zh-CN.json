@@ -835,7 +835,7 @@
         },
         "removeEmptyTracks": {
           "name": "自动删除空轨道",
-          "help": "改过名字、锁定、静音独奏或调过混音的轨道不删。",
+          "help": "片段都移走或删掉的轨道自动删除；改过名字、锁定、静音独奏、调过混音的，和最后一条视频、音频轨道会留下。",
           "keywords": "轨道 空 删除 清理 自动 track empty"
         }
       },
@@ -1350,9 +1350,9 @@
     "trackName": "轨道名称",
     "renameTrack": "重命名轨道",
     "removeTrack": "删除轨道",
-    "removeTrackConfirm": "删除{{track}}和上面的 {{count}} 个片段？",
+    "removeTrackConfirm": "删除轨道「{{track}}」和上面的 {{count}} 个片段？",
     "removeTrackConfirmButton": "删除",
-    "newTrackBeside": "{{track}}{{side}}的新轨道",
+    "newTrackBeside": "「{{track}}」{{side}}的新轨道",
     "side": {
       "above": "上面",
       "below": "下面"

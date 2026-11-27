@@ -603,7 +603,7 @@ test.describe("tracks", () => {
     const dialog = page.locator("dialog[open]");
     await trackHeader(page, "视频 1").click({ button: "right" });
     await page.getByRole("menuitem", { name: "删除轨道" }).click();
-    await expect(dialog.getByRole("heading")).toHaveText("删除视频 1和上面的 1 个片段？");
+    await expect(dialog.getByRole("heading")).toHaveText("删除轨道「视频 1」和上面的 1 个片段？");
     await dialog.getByRole("button", { name: "取消" }).click();
     await expect(clips(page)).toHaveCount(1);
     await expect(trackHeader(page, "视频 2")).toBeVisible();
@@ -670,7 +670,7 @@ test.describe("dropped right on another clip", () => {
       await page.mouse.move(target.x + target.width / 2, target.y + target.height * half, {
         steps: 8,
       });
-      await expect(status(page)).toHaveText(new RegExp(`^松手放到视频 1${side}的新轨道，`));
+      await expect(status(page)).toHaveText(new RegExp(`^松手放到「视频 1」${side}的新轨道，`));
       await expect(panel(page).getByText("新轨道", { exact: true })).toBeVisible();
       await page.mouse.up();
       await expect(status(page)).toHaveCount(0);

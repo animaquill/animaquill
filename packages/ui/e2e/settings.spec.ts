@@ -302,7 +302,7 @@ test("each group has only what is a setting, and words only where they are neede
     "手动改属性和关键帧时先进入试改",
   );
   await expect(settingsOf(page).getByTestId("settings-editing")).toContainText(
-    "改过名字、锁定、静音独奏或调过混音的轨道不删。",
+    "片段都移走或删掉的轨道自动删除；改过名字、锁定、静音独奏、调过混音的，和最后一条视频、音频轨道会留下。",
   );
   expect(await rows("预览和播放", "settings-playback")).toEqual(["playback.proxyOffer"]);
   await expect(settingsOf(page).getByTestId("settings-playback")).toContainText(
