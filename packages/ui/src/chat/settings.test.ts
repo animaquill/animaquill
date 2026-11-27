@@ -250,7 +250,7 @@ describe("models of services", () => {
     expect(ai.setAllEnabled(d, ["deepseek-flash"], false)).toBe("last");
   });
 
-  it("keep favorites in people's order, the first the default; the default follows them", async () => {
+  it("keep favorites in people's order, the first the default; a star does not change it", async () => {
     const { open } = browser();
     const ai = await open();
     const a = ai.add("anthropic", "Anthropic", {
@@ -260,39 +260,71 @@ describe("models of services", () => {
     const favorites = () => favoritesOf(ai.getSnapshot());
     expect(favorites()).toEqual([]);
     expect(ai.getSnapshot().default).toEqual(ref("claude-opus-5-5"));
-    // The first favorite is the default at once.
+    // The first star: the default goes first among the favorites, and stays the default.
     ai.toggleFavorite(ref("claude-sonnet-5-5"));
-    expect(favorites()).toEqual([ref("claude-sonnet-5-5")]);
-    expect(ai.getSnapshot().default).toEqual(ref("claude-sonnet-5-5"));
+    expect(favorites()).toEqual([ref("claude-opus-5-5"), ref("claude-sonnet-5-5")]);
+    expect(ai.getSnapshot().default).toEqual(ref("claude-opus-5-5"));
     // More go at the end, and leave the default as it is.
     ai.toggleFavorite(ref("claude-haiku-5-5"));
-    ai.toggleFavorite(ref("claude-opus-5-5"));
     expect(favorites()).toEqual([
+      ref("claude-opus-5-5"),
       ref("claude-sonnet-5-5"),
       ref("claude-haiku-5-5"),
-      ref("claude-opus-5-5"),
     ]);
-    expect(ai.getSnapshot().default).toEqual(ref("claude-sonnet-5-5"));
-    // Moved first: the default.
-    ai.moveFavorite(ref("claude-opus-5-5"), 0);
-    expect(favorites()[0]).toEqual(ref("claude-opus-5-5"));
     expect(ai.getSnapshot().default).toEqual(ref("claude-opus-5-5"));
+    // Moved first: the default.
+    ai.moveFavorite(ref("claude-haiku-5-5"), ref("claude-opus-5-5"), "before");
+    expect(favorites()[0]).toEqual(ref("claude-haiku-5-5"));
+    expect(ai.getSnapshot().default).toEqual(ref("claude-haiku-5-5"));
     // The default chosen elsewhere (the model page) is the first favorite.
-    ai.setDefault(ref("claude-haiku-5-5"));
+    ai.setDefault(ref("claude-sonnet-5-5"));
     expect(favorites()).toEqual([
+      ref("claude-sonnet-5-5"),
       ref("claude-haiku-5-5"),
       ref("claude-opus-5-5"),
-      ref("claude-sonnet-5-5"),
     ]);
     // The first taken out: the next one is the default.
-    ai.toggleFavorite(ref("claude-haiku-5-5"));
-    expect(ai.getSnapshot().default).toEqual(ref("claude-opus-5-5"));
-    // None left: the default stays.
-    ai.toggleFavorite(ref("claude-opus-5-5"));
     ai.toggleFavorite(ref("claude-sonnet-5-5"));
+    expect(ai.getSnapshot().default).toEqual(ref("claude-haiku-5-5"));
+    // None left: the default stays.
+    ai.toggleFavorite(ref("claude-haiku-5-5"));
+    ai.toggleFavorite(ref("claude-opus-5-5"));
     expect(favorites()).toEqual([]);
     expect(ai.getSnapshot().favorites).toBeUndefined();
-    expect(ai.getSnapshot().default).toEqual(ref("claude-sonnet-5-5"));
+    expect(ai.getSnapshot().default).toEqual(ref("claude-opus-5-5"));
+    // A first star on the default itself: it alone.
+    ai.toggleFavorite(ref("claude-opus-5-5"));
+    expect(favorites()).toEqual([ref("claude-opus-5-5")]);
+  });
+
+  it("move favorites as people see them, past those turned off, which keep their place", async () => {
+    const { open } = browser();
+    const ai = await open();
+    const a = ai.add("anthropic", "Anthropic", {
+      enabled: ["one", "two", "three", "four"],
+    }) as string;
+    const ref = (model: string) => ({ service: a, model });
+    const favorites = () => favoritesOf(ai.getSnapshot()).map(({ model }) => model);
+    for (const model of ["two", "three", "four"]) ai.toggleFavorite(ref(model));
+    expect(favorites()).toEqual(["one", "two", "three", "four"]);
+    // "two" turned off: shown are one, three, four.
+    ai.setEnabled(a, "two", false);
+    // Up from "three", which is second of those shown: before "one", not past the hidden one.
+    ai.moveFavorite(ref("three"), ref("one"), "before");
+    expect(favorites()).toEqual(["three", "one", "two", "four"]);
+    expect(ai.getSnapshot().default).toEqual(ref("three"));
+    // Down from "one": after "four", the next one shown.
+    ai.moveFavorite(ref("one"), ref("four"), "after");
+    expect(favorites()).toEqual(["three", "two", "four", "one"]);
+    // Dragged onto one shown above: before it.
+    ai.moveFavorite(ref("one"), ref("three"), "before");
+    expect(favorites()).toEqual(["one", "three", "two", "four"]);
+    expect(ai.getSnapshot().default).toEqual(ref("one"));
+    // The hidden one first: the default is the first one on.
+    ai.setEnabled(a, "two", true);
+    ai.moveFavorite(ref("two"), ref("one"), "before");
+    ai.setEnabled(a, "two", false);
+    expect(ai.getSnapshot().default).toEqual(ref("one"));
   });
 
   it("list what pi knows, what people added, and what is on: those on first, in their order", async () => {

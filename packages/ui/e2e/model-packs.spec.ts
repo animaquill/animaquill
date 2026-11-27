@@ -536,10 +536,9 @@ test("in the bubble only models; a model's packs are chosen in the information o
   const items = menu.getByTestId("chat-pack-item");
   await expect(items).toHaveText(["自动：Claude 5(内置)详情", "Opus 稳重版(本机)详情"]);
   await expect(items.first()).toHaveAttribute("data-checked", "");
-  await expect(menu.getByTestId("chat-pack-others-open")).toHaveText(
-    "其他已装的（2 个，不是为这个模型写的）",
-  );
-  await expect(menu.getByTestId("chat-pack-when")).toHaveText("从这个对话的下一轮起用");
+  await expect(menu.getByTestId("chat-pack-others-open")).toHaveText("其他已装的 2 个");
+  // When a choice counts is said once there is one.
+  await expect(menu.getByTestId("chat-pack-when")).toHaveCount(0);
   await menu.getByTestId("chat-pack-others-open").click();
   const others = menu.getByTestId("chat-pack-others");
   await expect(others.getByTestId("chat-pack-item")).toHaveText([

@@ -1177,6 +1177,8 @@ function recoverVersion2(
   return {
     ...now,
     services,
+    // Only this version has favorites: they go back as they were.
+    ...(latest.favorites && !now.favorites && { favorites: latest.favorites }),
     ...(latest.kept && { kept: { ...latest.kept, ...now.kept } }),
   };
 }

@@ -2,14 +2,24 @@ import { describe, expect, it } from "vitest";
 import { findModels, nextEffort, shortName, type Group } from "./models.ts";
 
 describe("the model tag where the chat is narrow", () => {
-  it("says the last word of the name, unless it says too little", () => {
+  it("says the name from its last word that says something", () => {
     expect(shortName("GPT-6.1 Sol")).toBe("Sol");
     expect(shortName("Claude Opus 5.5")).toBe("Opus 5.5");
-    expect(shortName("a-very-long-modelname")).toBe("modelname");
-    expect(shortName("averyverylongmodelname")).toBe("averyverylon…");
     expect(shortName("DeepSeek V4")).toBe("DeepSeek V4");
     expect(shortName("claude-other")).toBe("other");
+    expect(shortName("claude-sonnet-4-5")).toBe("sonnet-4-5");
     expect(shortName("gemini")).toBe("gemini");
+    expect(shortName("averyverylongmodelname")).toBe("averyverylongm…");
+  });
+
+  it("takes a word more while another model would read the same", () => {
+    const names = ["a-sonnet-4-5", "b-sonnet-4-5", "a-opus-4-5"];
+    expect(shortName("a-sonnet-4-5", names)).toBe("a-sonnet-4-5");
+    expect(shortName("b-sonnet-4-5", names)).toBe("b-sonnet-4-5");
+    expect(shortName("a-opus-4-5", names)).toBe("opus-4-5");
+    expect(shortName("GPT-6.1 Sol", ["GPT-6.1 Sol", "Gemini Sol"])).toBe("GPT-6.1 Sol");
+    // The same name twice is no rival of itself.
+    expect(shortName("Claude Opus 5.5", ["Claude Opus 5.5"])).toBe("Opus 5.5");
   });
 });
 

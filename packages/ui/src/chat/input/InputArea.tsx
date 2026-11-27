@@ -147,7 +147,7 @@ export function InputArea(props: {
       selection: insertSelection,
       picture: choose,
       plus: () => plus.current?.openFromBox(box.current?.element ?? null),
-      models: () => tag.current?.open(),
+      models: () => tag.current?.toggle(),
       effort: () => tag.current?.cycleEffort(),
       focus: () => box.current?.focus(),
     }),

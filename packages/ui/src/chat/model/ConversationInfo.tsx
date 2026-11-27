@@ -88,7 +88,8 @@ export function ContextPie(props: {
 export function ConversationInfo(props: {
   readonly entries: readonly ChatEntry[];
   readonly onCompact: (() => void) | undefined;
-  readonly onClose: () => void;
+  /** Closed: with Esc the focus goes back to what opened it (`back`). */
+  readonly onClose: (back: boolean) => void;
 }) {
   const workbench = useWorkbench();
   const { ai, chat, packs } = workbench;
@@ -105,12 +106,12 @@ export function ConversationInfo(props: {
     const away = (event: PointerEvent) => {
       const target = event.target as Element | null;
       if (ref.current?.contains(target) || target?.closest?.("[data-info-open]")) return;
-      onClose();
+      onClose(false);
     };
     const escape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       event.stopPropagation();
-      onClose();
+      onClose(true);
     };
     document.addEventListener("pointerdown", away);
     document.addEventListener("keydown", escape, true);
@@ -140,16 +141,17 @@ export function ConversationInfo(props: {
     usedId === DEFAULT_PACK.id ? DEFAULT_PACK : usedId ? packs.packOf(usedId) : undefined;
   const view = (pack: string, which: "readme" | "full") => {
     if (!model) return;
-    onClose();
+    onClose(false);
     openView?.({ view: which, pack, model });
   };
   const choices = model && now?.state === "ok" ? packChoicesOf(chat, model) : undefined;
+  // Said once people chose: when the choice counts. Nothing before.
   const pending =
     model && chat.repicking(model) && entries.length > 0 && choices
       ? t("chat.picker.packNext", {
           name: packLabel(t, choices.options.current, snapshot, !choices.options.chosen),
         })
-      : t("chat.picker.packWhen");
+      : undefined;
   const choice = (pack: ModelPack, auto: boolean) => {
     const options = choices?.options;
     const checked = auto
@@ -216,7 +218,7 @@ export function ConversationInfo(props: {
                     className={styles.textButton}
                     data-testid="chat-compact"
                     onClick={() => {
-                      onClose();
+                      onClose(false);
                       props.onCompact?.();
                     }}
                   >
@@ -336,9 +338,11 @@ export function ConversationInfo(props: {
                       {choices.others.map((pack) => choice(pack, false))}
                     </div>
                   )}
-                  <p className={styles.factNote} data-testid="chat-pack-when">
-                    {pending}
-                  </p>
+                  {pending && (
+                    <p className={styles.factNote} data-testid="chat-pack-when">
+                      {pending}
+                    </p>
+                  )}
                 </div>
               )}
             </dd>

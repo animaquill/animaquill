@@ -857,6 +857,38 @@ describe("a page of version 2 that wrote over version 3", () => {
       { id: "mine", added: "hand", contextWindow: 32000, edited: ["contextWindow"] },
     ]);
   });
+
+  it("keeps the favorites, which it never had", () => {
+    const starred = {
+      ...latest,
+      favorites: [
+        { service: "g", model: "mine" },
+        { service: "g", model: "team-claude" },
+      ],
+    };
+    const old = {
+      version: 2,
+      services: [
+        {
+          id: "g",
+          kind: "openai-compatible",
+          name: "网关",
+          baseUrl: "https://gateway.example/v1",
+          route: "direct",
+          enabled: ["team-claude", "mine"],
+          model: "team-claude",
+        },
+      ],
+      default: { service: "g", model: "team-claude" },
+    };
+    const recovered = recoverOldWrite(starred, old);
+    expect(recovered?.favorites).toEqual(starred.favorites);
+    // The default it chose is the first favorite now.
+    expect(recovered && favoritesOf(recovered)).toEqual([
+      { service: "g", model: "team-claude" },
+      { service: "g", model: "mine" },
+    ]);
+  });
 });
 
 describe("a page of 0.3.57 to 0.3.63 that makes its settings from the entries of an account", () => {
@@ -986,6 +1018,20 @@ describe("favorite models", () => {
     });
     expect(settings.default).toEqual(ref("opus"));
     expect(favoritesOf(settings)).toEqual([ref("sonnet"), ref("opus")]);
+  });
+
+  it("go through a page of before (0.3.135 and older) as a field it keeps, and come back", () => {
+    const now = settingsOf(
+      saved({ default: ref("opus"), favorites: [ref("opus"), ref("sonnet")] }),
+    );
+    // Such a page reads them as a field it does not know, writes them back as they were, and
+    // makes another model the default with its star.
+    const written = writeAiSettings(now);
+    const old = { ...written, default: ref("haiku") };
+    const back = settingsOf(old);
+    expect(back.favorites).toEqual([ref("opus"), ref("sonnet")]);
+    expect(favoritesOf(back)).toEqual([ref("haiku"), ref("opus"), ref("sonnet")]);
+    expect(back.default).toEqual(ref("haiku"));
   });
 
   it("go with the account as one field", () => {

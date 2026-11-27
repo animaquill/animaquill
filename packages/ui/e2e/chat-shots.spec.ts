@@ -230,13 +230,12 @@ for (const theme of ["light", "dark"] as const) {
       );
       // Favorites first, the first of them what a new conversation uses; a step chosen.
       await tag.click();
-      for (const model of ["claude-eyes", "claude-test"]) {
-        const row = bubble
-          .locator(`[data-testid="chat-model-option"][data-model="${model}"]`)
-          .last();
-        await row.hover();
-        await row.getByTestId("chat-model-fav").click();
-      }
+      const eyes = bubble.locator('[data-testid="chat-model-option"][data-model="claude-eyes"]');
+      await eyes.hover();
+      await eyes.getByTestId("chat-model-fav").click();
+      await expect(
+        bubble.locator('[data-group="favorites"] [data-model="claude-test"]'),
+      ).toBeVisible();
       await chat(page).locator('[data-testid="chat-effort-option"][data-level="high"]').click();
       await expect(chat(page).getByTestId("chat-effort-default")).toBeVisible();
       await page.keyboard.press("Escape");

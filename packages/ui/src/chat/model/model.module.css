@@ -84,6 +84,11 @@
   box-shadow: var(--aq-shadow);
 }
 
+/* The bubble has the focus: its edge says so. */
+.bubble:focus-within {
+  border-color: var(--aq-accent-line);
+}
+
 .bubble button[type="button"] {
   gap: 4px;
   color: var(--aq-text);
@@ -480,9 +485,6 @@
   flex-direction: column;
   align-items: flex-start;
   margin-top: 4px;
-  padding: 4px;
-  background: var(--aq-bg-input);
-  border-radius: 6px;
 }
 
 .packItem {

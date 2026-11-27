@@ -9,7 +9,7 @@ import {
   type AiSyncKey,
   type SettingsStore,
 } from "@animaquill/host";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { AccountAi, AccountAiOffline, CACHE_KEY } from "./account-ai.ts";
 import { AiSettingsStore } from "./settings.ts";
 
@@ -201,6 +201,51 @@ describe("the AI settings of the online mode", () => {
     await later.ai.pull();
     expect(later.ai.getSnapshot()).toMatchObject({ status: "ready", keysRead: true });
     expect(await later.ai.keys.read("s1")).toEqual({ key: "k1" });
+  });
+
+  test("favorites changed online come back offline, and go away everywhere once all are taken out", async () => {
+    const backend = backendOf();
+    const browser = memorySettings();
+    const one = pageOf(backend, browser);
+    await one.ai.start();
+    const store = new AiSettingsStore(one.ai.settings, one.ai.keys, {
+      saveFailed: () => {},
+      keyFailed: () => {},
+    });
+    await store.load();
+    const s1 = store.add("anthropic", "甲", { enabled: ["m1", "m2"] }) as string;
+    store.toggleFavorite({ service: s1, model: "m2" });
+    await vi.waitFor(async () => {
+      await one.ai.flush();
+      expect(backend.entries).toHaveProperty("field:favorites");
+    });
+    expect(backend.entries["field:favorites"]).toMatchObject({
+      value: [
+        { service: s1, model: "m1" },
+        { service: s1, model: "m2" },
+      ],
+    });
+    // A page that starts without the backend has them as it last read them.
+    backend.state.down = true;
+    const later = pageOf(backend, browser);
+    await later.ai.start();
+    expect(await later.ai.settings.load("ai")).toMatchObject({
+      favorites: [
+        { service: s1, model: "m1" },
+        { service: s1, model: "m2" },
+      ],
+    });
+    backend.state.down = false;
+    // All taken out: the backend has none either, and another page reads none.
+    store.toggleFavorite({ service: s1, model: "m1" });
+    store.toggleFavorite({ service: s1, model: "m2" });
+    await vi.waitFor(async () => {
+      await one.ai.flush();
+      expect(backend.entries["field:favorites"]?.value ?? null).toBeNull();
+    });
+    const other = pageOf(backend);
+    await other.ai.start();
+    expect(await other.ai.settings.load("ai")).not.toHaveProperty("favorites");
   });
 
   test("what the backend does not take as too large goes back to what it has", async () => {

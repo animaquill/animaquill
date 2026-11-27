@@ -20,6 +20,7 @@ import {
   saysRed,
   secretsOf,
   favoritesOf,
+  isEnabled,
   settledDefault,
   supportedLevels,
   testModel,
@@ -986,35 +987,43 @@ export class AiSettingsStore {
   }
 
   /**
-   * A model in the favorites, at their end, or out of them. The first favorite is the default: a
-   * first one makes it so; without the first, the next one is; without any, the default stays.
+   * A model in the favorites, at their end, or out of them; a star is a bookmark, not a choice of
+   * the default. The first one starred goes after the default, which becomes a favorite too, so
+   * that what new conversations use stays (`favoritesOf`: the first is the default). Taken out, the
+   * first favorite still on is the default; without any, the default stays.
    */
   toggleFavorite(ref: ModelRef): void {
     const now = this.#settingsNow();
     const listed = favoritesOf(now);
     const kept = listed.some((each) => sameModel(each, ref));
-    const favorites = kept ? listed.filter((each) => !sameModel(each, ref)) : [...listed, ref];
+    const added = listed.length === 0 && now.default ? [now.default, ref] : [...listed, ref];
+    const favorites = kept
+      ? listed.filter((each) => !sameModel(each, ref))
+      : added.filter((each, at) => added.findIndex((other) => sameModel(other, each)) === at);
     const { favorites: _was, ...rest } = now;
+    const first = favorites.find((each) => isEnabled(now.services, each));
     this.#save({
       ...rest,
       ...(favorites.length > 0 && { favorites }),
-      default:
-        favorites.length > 0 && (listed.length === 0 || sameModel(listed[0], now.default))
-          ? (favorites[0] as ModelRef)
-          : now.default,
+      default: kept && first ? first : now.default,
     });
   }
 
-  /** A favorite to another place among them: the first one is the default. */
-  moveFavorite(ref: ModelRef, to: number): void {
+  /**
+   * A favorite just before or after another one, as people see them (those turned off or gone are
+   * not shown, and keep their place among the rest). The first one on is the default.
+   */
+  moveFavorite(ref: ModelRef, target: ModelRef, side: "before" | "after"): void {
     const now = this.#settingsNow();
     const listed = favoritesOf(now);
-    const from = listed.findIndex((each) => sameModel(each, ref));
-    if (from < 0) return;
-    const rest = listed.filter((_, index) => index !== from);
-    const at = Math.max(0, Math.min(to, rest.length));
-    const favorites = [...rest.slice(0, at), ref, ...rest.slice(at)];
-    this.#save({ ...now, favorites, default: favorites[0] as ModelRef });
+    if (sameModel(ref, target) || !listed.some((each) => sameModel(each, ref))) return;
+    const rest = listed.filter((each) => !sameModel(each, ref));
+    const at = rest.findIndex((each) => sameModel(each, target));
+    if (at < 0) return;
+    const place = side === "before" ? at : at + 1;
+    const favorites = [...rest.slice(0, place), ref, ...rest.slice(place)];
+    const first = favorites.find((each) => isEnabled(now.services, each));
+    this.#save({ ...now, favorites, default: first ?? now.default });
   }
 
   /**

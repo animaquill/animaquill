@@ -12,6 +12,8 @@ import { nextEffort, shortName } from "./models.ts";
 export interface ModelTagHandle {
   /** Opens the bubble; with `pictures`, only the models that take pictures light up. */
   open(pictures?: boolean): void;
+  /** Opens the bubble, or closes it where it is open (`Alt+M`). */
+  toggle(): void;
   /** How hard the model reasons, one step up, back to "自动" after the last (`Alt+R`). */
   cycleEffort(): void;
 }
@@ -40,11 +42,18 @@ export const ModelTag = forwardRef<
     ref,
     () => ({
       open: (pictures = false) => setOpen({ pictures }),
+      toggle: () => {
+        if (!open) setOpen({ pictures: false });
+        else {
+          setOpen(undefined);
+          props.onDone();
+        }
+      },
       cycleEffort: () => {
         if (effort) chat.chooseReasoning(nextEffort(effort.levels, effort.chosen));
       },
     }),
-    [chat, effort],
+    [chat, effort, open, props],
   );
   const now = chat.modelNow();
   const info = now && ai.modelOf(now.ref.service, now.ref.model);

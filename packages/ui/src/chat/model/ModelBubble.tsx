@@ -57,20 +57,26 @@ export function ModelBubble(props: {
     for (const kind of kinds.split(" ")) if (kind) void ai.loadKnown(kind);
   }, [ai, kinds]);
 
-  const favorites = favoritesOf(settings);
+  const favorites = useMemo(() => favoritesOf(settings), [settings]);
+  // The models that are on, by service; a search goes through these, favorites with the rest.
+  const searchable = useMemo(
+    () =>
+      settings.services.map((service): Group => {
+        const state = stateOf(settings, service);
+        return {
+          service: service.id,
+          name: service.name,
+          dim: state === "noKey" || state === "failed" ? state : undefined,
+          rows: ai
+            .modelsFor(service.id)
+            .filter((model) => model.enabled)
+            .map((model) => ({ service: service.id, model })),
+        };
+      }),
+    [ai, settings],
+  );
   const groups = useMemo((): readonly Group[] => {
-    const services = settings.services.map((service): Group => {
-      const state = stateOf(settings, service);
-      return {
-        service: service.id,
-        name: service.name,
-        dim: state === "noKey" || state === "failed" ? state : undefined,
-        rows: ai
-          .modelsFor(service.id)
-          .filter((model) => model.enabled)
-          .map((model) => ({ service: service.id, model })),
-      };
-    });
+    const services = searchable;
     const rows = favorites.flatMap((ref) => {
       const row = services
         .find((group) => group.service === ref.service)
@@ -83,11 +89,19 @@ export function ModelBubble(props: {
       dim: undefined,
       rows,
     };
-    return rows.length > 0 ? [favoriteGroup, ...services] : services;
-  }, [ai, settings, favorites, t]);
-  const found = findModels(groups, query);
+    if (rows.length === 0) return services;
+    // A favorite is listed once, among the favorites; its service lists the others.
+    const starred = new Set(rows.map(keyOf));
+    const rest = services
+      .map((group) => ({ ...group, rows: group.rows.filter((row) => !starred.has(keyOf(row))) }))
+      .filter((group) => group.rows.length > 0);
+    return [favoriteGroup, ...rest];
+  }, [searchable, favorites, t]);
+  const found = query.trim() ? findModels(searchable, query) : groups;
   // A favorite is as dim as its service.
-  const dimOf = new Map(groups.map((group) => [group.service, group.dim]));
+  const dimOf = new Map(searchable.map((group) => [group.service, group.dim]));
+  /** The favorites as shown: those turned off or gone are not. */
+  const shownFavorites = groups[0]?.service === FAVORITES ? groups[0].rows : [];
   /** Each row as the cursor goes through them: a favorite is in two groups. */
   const cursorOf = (group: Group, row: Row) =>
     `${group.service === FAVORITES ? "★" : ""}${keyOf(row)}`;
@@ -123,13 +137,17 @@ export function ModelBubble(props: {
     onClose(true);
   };
   const nameOf = (ref: ModelRef) => ai.modelOf(ref.service, ref.model)?.name ?? ref.model;
-  const move = (row: Row, to: number) => {
+  /** A favorite just before or after another shown one; says where it went, for those who listen. */
+  const move = (row: Row, target: Row, side: "before" | "after") => {
     const ref = { service: row.service, model: row.model.id };
-    ai.moveFavorite(ref, to);
+    ai.moveFavorite(ref, { service: target.service, model: target.model.id }, side);
+    const others = shownFavorites.filter((each) => keyOf(each) !== keyOf(row));
+    const by = others.findIndex((each) => keyOf(each) === keyOf(target));
+    const place = side === "before" ? by : by + 1;
     setSaid(
-      to === 0
+      place === 0
         ? t("chat.picker.movedFirst", { model: nameOf(ref) })
-        : t("chat.picker.moved", { model: nameOf(ref), place: to + 1 }),
+        : t("chat.picker.moved", { model: nameOf(ref), place: place + 1 }),
     );
   };
 
@@ -152,9 +170,10 @@ export function ModelBubble(props: {
     event.preventDefault();
     // A favorite moves among them with Alt.
     if (event.altKey && at?.group.service === FAVORITES) {
-      const index = favorites.findIndex((ref) => refKey(ref) === keyOf(at.row));
-      const to = index + (event.key === "ArrowDown" ? 1 : -1);
-      if (index >= 0 && to >= 0 && to < favorites.length) move(at.row, to);
+      const index = shownFavorites.findIndex((row) => keyOf(row) === keyOf(at.row));
+      const down = event.key === "ArrowDown";
+      const target = shownFavorites[index + (down ? 1 : -1)];
+      if (index >= 0 && target) move(at.row, target, down ? "after" : "before");
       return;
     }
     if (rows.length === 0) return;
@@ -181,6 +200,11 @@ export function ModelBubble(props: {
       aria-label={t("chat.picker.label")}
       data-testid="chat-model-bubble"
       onKeyDown={onKeyDown}
+      // Tab out of it, it closes: what has the focus next is what people are at.
+      onBlur={(event) => {
+        const next = event.relatedTarget as Node | null;
+        if (next && !event.currentTarget.contains(next)) onClose(false);
+      }}
     >
       {props.effort && <EffortBar effort={props.effort} />}
       <label className={styles.search}>
@@ -242,8 +266,10 @@ export function ModelBubble(props: {
                 event.preventDefault();
                 const from = dragging;
                 setDragging(undefined);
-                const moved = group.rows.find((each) => keyOf(each) === from);
-                if (moved && from !== keyOf(row)) move(moved, index);
+                const moved = group.rows.findIndex((each) => keyOf(each) === from);
+                const which = group.rows[moved];
+                if (which && from !== keyOf(row))
+                  move(which, row, moved < index ? "after" : "before");
               };
               return (
                 <ModelRow
@@ -259,7 +285,7 @@ export function ModelBubble(props: {
                   }
                   favorite={favorites.some((ref) => refKey(ref) === keyOf(row))}
                   first={favorite && index === 0}
-                  draggable={favorite && found.length === groups.length}
+                  draggable={favorite && !query.trim()}
                   dragging={favorite && dragging === keyOf(row)}
                   onHover={() => setCursor(key)}
                   onChoose={() => choose(row)}

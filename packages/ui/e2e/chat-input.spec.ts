@@ -147,43 +147,53 @@ test("each conversation keeps its own model; the first favorite is the default, 
   await expect(chat(page).getByText("claude-test 回答")).toBeVisible({ timeout: 15_000 });
   expect(asked.at(-1)?.model).toBe("claude-test");
 
-  // A favorite, the first one: the default, for new conversations; this one keeps its model.
+  // A star is a bookmark: the first one takes the default (what new conversations use) along,
+  // first, and leaves it the default. Favorites are listed once, among the favorites.
   await chat(page).getByTestId("chat-model").click();
-  await option(page, "claude-other").first().hover();
-  await option(page, "claude-other")
-    .first()
-    .getByRole("button", { name: "收藏 claude-other" })
-    .click();
+  await option(page, "claude-other").hover();
+  await option(page, "claude-other").getByRole("button", { name: "收藏 claude-other" }).click();
   const favorites = bubble.locator('[data-group="favorites"]');
-  await expect(favorites.getByTestId("chat-model-option")).toHaveCount(1);
-  await expect(favorites.getByTestId("chat-model-first")).toHaveText("新对话用");
-  await expect(option(page, "claude-test").first().getByRole("option")).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
-  // A second one goes after it; dragged first, it is what new conversations use.
-  await option(page, "claude-test").last().hover();
-  await option(page, "claude-test")
-    .last()
-    .getByRole("button", { name: "收藏 claude-test" })
-    .click();
   await expect(favorites.getByTestId("chat-model-option")).toHaveCount(2);
-  await favorites
-    .locator('[data-model="claude-test"]')
-    .dragTo(favorites.locator('[data-model="claude-other"]'));
   await expect(favorites.getByTestId("chat-model-option").first()).toHaveAttribute(
     "data-model",
     "claude-test",
   );
-  // From the keyboard too: Alt+↓ on the first one moves it after the next.
-  await favorites.locator('[data-model="claude-test"]').hover();
-  await bubble.getByRole("combobox", { name: "搜模型、服务" }).focus();
-  await page.keyboard.press("Alt+ArrowDown");
+  await expect(favorites.getByTestId("chat-model-first")).toHaveCount(1);
+  await expect(bubble.getByTestId("chat-model-option")).toHaveCount(2);
+  // Searched, each model shows once, by its service.
+  await bubble.getByRole("combobox", { name: "搜模型、服务" }).fill("claude");
+  await expect(bubble.getByTestId("chat-model-option")).toHaveCount(2);
+  await expect(favorites).toHaveCount(0);
+  await bubble.getByRole("combobox", { name: "搜模型、服务" }).fill("");
+  // Dragged first, it is what new conversations use; this conversation keeps its model.
+  await favorites
+    .locator('[data-model="claude-other"]')
+    .dragTo(favorites.locator('[data-model="claude-test"]'));
   await expect(favorites.getByTestId("chat-model-option").first()).toHaveAttribute(
     "data-model",
     "claude-other",
   );
-  await page.keyboard.press("Escape");
+  await expect(option(page, "claude-test").getByRole("option")).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  // From the keyboard too: Alt+↓ and Alt+↑ on the one the cursor is on.
+  await favorites.locator('[data-model="claude-other"]').hover();
+  await bubble.getByRole("combobox", { name: "搜模型、服务" }).focus();
+  await page.keyboard.press("Alt+ArrowDown");
+  await expect(favorites.getByTestId("chat-model-option").first()).toHaveAttribute(
+    "data-model",
+    "claude-test",
+  );
+  await page.keyboard.press("Alt+ArrowUp");
+  await expect(favorites.getByTestId("chat-model-option").first()).toHaveAttribute(
+    "data-model",
+    "claude-other",
+  );
+  // Alt+M closes it again, the caret back in the box.
+  await page.keyboard.press("Alt+m");
+  await expect(bubble).toBeHidden();
+  await expect(box(page)).toBeFocused();
   await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-test");
   await send(page, "还是第二个");
   await expect(chat(page).getByText("claude-test 回答")).toHaveCount(2, { timeout: 15_000 });

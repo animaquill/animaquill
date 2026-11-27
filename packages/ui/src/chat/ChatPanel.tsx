@@ -130,7 +130,16 @@ export function ChatPanel() {
   const [packView, setPackView] = useState<PackViewRequest | undefined>();
   // What the conversation took and goes with, under the bar.
   const [infoOpen, setInfoOpen] = useState(false);
-  const closeInfo = useCallback(() => setInfoOpen(false), []);
+  const closeInfo = useCallback((back: boolean) => {
+    setInfoOpen(false);
+    // With Esc, back to what opened it: the pie, else "⋯".
+    if (!back) return;
+    const bar = panelRef.current;
+    (
+      bar?.querySelector<HTMLElement>('[data-testid="chat-context"]') ??
+      bar?.querySelector<HTMLElement>('[data-testid="chat-more"]')
+    )?.focus();
+  }, []);
   const modelName = useCallback(
     (id: string) => {
       for (const service of settings.services) {
