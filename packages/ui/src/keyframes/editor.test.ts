@@ -2174,7 +2174,7 @@ describe("the view of the tab", () => {
     const fps = timeline.model?.rate.fps ?? 30;
     const x = () => panel.xAt(timeline.frame / fps);
     timeline.seek(20 * fps);
-    expect(x()).toBeCloseTo(48, 6);
+    expect(x()).toBeCloseTo(WIDTH - 48, 6);
     // Off here is off there: the timeline has the one switch.
     timeline.setFollow(false);
     const scrolled = panel.scrollX;

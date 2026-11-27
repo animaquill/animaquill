@@ -1306,11 +1306,10 @@ export class TimelineEditor implements TouchTarget {
       gap: model && this.#snapshot.gap ? stillAGap(model, this.#snapshot.gap) : undefined,
       track: soundTrackIn(model, this.#snapshot.track),
     };
-    const frame = this.#frame;
+    // A shorter timeline takes the playhead along. That came from elsewhere, such as another window,
+    // so the view stays where it is: only what this window does moves it.
     if (model) this.#frame = Math.min(this.#frame, frameAt(model.duration, model.rate));
     if (model && this.#gesture?.isStale?.(model)) this.#cancelGesture();
-    // A shorter timeline took the playhead along, and the view keeps it in the middle.
-    if (this.#frame !== frame && !this.#gesture) this.#follower.pin();
     this.#emitter.emit();
     this.#viewEmitter.emit();
   }

@@ -43,13 +43,6 @@
   }
 }
 
-/* The slider goes before buttons do: the buttons next to it zoom too. */
-@container (max-width: 820px) {
-  .zoom {
-    display: none;
-  }
-}
-
 /* What the mouse does, what is on or off, what runs at a click: each has its own place. */
 .zone {
   display: flex;
@@ -135,6 +128,19 @@
   margin: 0 2px;
   accent-color: var(--aq-accent);
   cursor: pointer;
+}
+
+/* The slider gets shorter, and then goes, before buttons do: the buttons next to it zoom too. */
+@container (max-width: 820px) {
+  .zoom {
+    width: 52px;
+  }
+}
+
+@container (max-width: 460px) {
+  .zoom {
+    display: none;
+  }
 }
 
 .body {

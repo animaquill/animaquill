@@ -89,7 +89,11 @@ export function followScroll({
     return x < margin || x > width ? toRight : undefined;
   }
   if (x >= margin && x <= width - margin) return undefined;
-  return direction > 0 ? toLeft : toRight;
+  // Asked to look somewhere, people see what comes after it.
+  if (cause === "goto") return direction > 0 ? toLeft : toRight;
+  // Pages are for playing. Anything else, such as keys or the end of what was just added, scrolls
+  // just far enough that the playhead shows, so that what came before it stays in sight.
+  return x < margin ? toLeft : toRight;
 }
 
 /** Something that shows time across, for its follower. */

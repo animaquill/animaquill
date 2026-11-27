@@ -35,9 +35,15 @@ describe("where a view goes after the playhead moved", () => {
     expect(followScroll(input(PAGE, "playing", -20))).toBe(500 - 20 - 48);
   });
 
-  it("brings a jump out of sight to the left going on, and to the right going back", () => {
-    expect(followScroll(input(PAGE, "step", 2000, 1))).toBe(500 + 2000 - 48);
-    expect(followScroll(input(PAGE, "step", -300, -1))).toBe(500 - 300 - 952);
+  it("scrolls just far enough for a jump while not playing, keeping what came before in sight", () => {
+    expect(followScroll(input(PAGE, "step", 2000, 1))).toBe(500 + 2000 - 952);
+    expect(followScroll(input(PAGE, "step", -300, -1))).toBe(500 - 300 - 48);
+    // Going back, where it went was before the view: it shows at the left.
+    expect(followScroll(input(PAGE, "step", 20, 1))).toBe(500 + 20 - 48);
+  });
+
+  it("shows what comes after a place people asked to see", () => {
+    expect(followScroll(input(PAGE, "goto", 2000, 1))).toBe(500 + 2000 - 48);
     expect(followScroll(input(PAGE, "goto", -300, -1))).toBe(500 - 300 - 952);
   });
 
@@ -274,6 +280,6 @@ describe("a view that follows the playhead", () => {
     expect(view.scrollX).toBe(0);
     view.width = 1000;
     follower.resized();
-    expect(x()).toBe(48);
+    expect(x()).toBe(952);
   });
 });

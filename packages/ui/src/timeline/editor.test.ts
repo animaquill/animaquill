@@ -364,9 +364,8 @@ describe("the playhead", () => {
     const x = editor.xAt(200 / 30);
     expect(x).toBeGreaterThanOrEqual(0);
     expect(x).toBeLessThanOrEqual(WIDTH);
-    // A page at a time: past the right edge it goes back to the left, and does not creep along it.
-    expect(x).toBeGreaterThanOrEqual(48);
-    expect(x).toBeLessThan(WIDTH - 48);
+    // Not playing, it scrolls just far enough: the playhead stays at the right, what came before in view.
+    expect(x).toBeCloseTo(WIDTH - 48, 6);
   });
 
   it("goes to both ends", async () => {
@@ -5962,6 +5961,7 @@ describe("following the playhead", () => {
     it("turns back at the left edge playing backwards", async () => {
       const { editor } = await zoomed();
       editor.seek(150);
+      editor.setScroll(editor.scrollX + playheadX(editor) - 48, 0);
       expect(playheadX(editor)).toBeCloseTo(48, 6);
       editor.play(-1);
       editor.tick(0);
@@ -5978,19 +5978,37 @@ describe("following the playhead", () => {
       expect(playheadX(editor)).toBeCloseTo(48, 6);
     });
 
-    it("turns to a jump out of sight, and stays for one in sight", async () => {
+    it("scrolls just far enough for a jump while it does not play, and not for one in sight", async () => {
       const { editor, addClip } = await zoomed();
       addClip("a", 0, 7);
       editor.jumpToEdit(1);
       expect(editor.frame).toBe(210);
-      expect(playheadX(editor)).toBeCloseTo(48, 6);
-      const scrolled = editor.scrollX;
-      editor.stepFrames(5);
-      expect(editor.scrollX).toBe(scrolled);
-      editor.seekToEnd();
-      editor.jumpToEdit(-1);
-      expect(editor.frame).toBe(210);
       expect(playheadX(editor)).toBeCloseTo(WIDTH - 48, 6);
+      editor.stepFrames(-5);
+      expect(playheadX(editor)).toBeLessThan(WIDTH - 48);
+      const scrolled = editor.scrollX;
+      editor.stepFrames(-5);
+      expect(editor.scrollX).toBe(scrolled);
+      editor.seekToStart();
+      expect(editor.scrollX).toBe(0);
+      // A clip added at the playhead: it goes to its end, and the clip stays in view.
+      editor.seek(200);
+      editor.addColorClip();
+      expect(playheadX(editor)).toBeCloseTo(WIDTH - 48, 6);
+    });
+
+    it("leaves the view where it is when a change from elsewhere takes the playhead", async () => {
+      const { editor, store, main } = await zoomed();
+      editor.setFollowMode("center");
+      editor.seekToEnd();
+      const scrolled = editor.scrollX;
+      const [section] = Object.keys(main().sections);
+      store.execute({
+        type: "section.update",
+        params: { timeline: "main", section, duration: "4" },
+      });
+      expect(editor.frame).toBe(120);
+      expect(editor.scrollX).toBe(scrolled);
     });
 
     it("stops following this round when people scroll the playhead away, until it is back", async () => {
@@ -6042,7 +6060,7 @@ describe("following the playhead", () => {
       expect(editor.scrollX).toBe(0);
     });
 
-    it("still brings what people asked to see into view", async () => {
+    it("still brings what people asked to see into view, with what comes after it", async () => {
       const { editor, addClip } = await zoomed();
       addClip("a", 8, 1);
       editor.setFollow(false);
