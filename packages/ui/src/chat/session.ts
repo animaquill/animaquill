@@ -974,18 +974,26 @@ export class ChatSession {
         this.#set({ saved: [summary, ...others] });
       } catch (error) {
         if (error instanceof ChatNewer) {
-          // Another device wrote it meanwhile: theirs is the conversation now, and what this one
-          // had is a conversation of its own (see `AccountChats`), which the list shows. Nothing
-          // here waits for that, as it runs where the writes of this conversation wait: opening
-          // it again waits for them.
-          if (this.#project?.key === project && this.#runs.get(id) === run) {
-            clearTimeout(run.saving);
-            run.pending = undefined;
-            if (this.#busy(run)) {
-              // A task that runs, or what waits to go, goes on in the copy, and writes there from
-              // now on: what the other device wrote stays theirs.
-              if (error.copy) this.#split(run, error.copy);
-            } else if (run === this.#shown) void this.open(id, true);
+          // Another device wrote it meanwhile: theirs is the conversation now. What this page had
+          // went into a copy (see `AccountChats`), and whatever this page writes of it from now on
+          // goes there, never over theirs: also the last write of one the window let go of, or one
+          // being deleted. Nothing here waits for that, as it runs where the writes of this
+          // conversation wait.
+          const hosted = this.#runs.get(id) === run;
+          clearTimeout(run.saving);
+          run.pending = undefined;
+          if (error.copy) {
+            this.#split(run, error.copy, hosted);
+            if (!hosted) void this.#flushRun(run);
+            else if (!this.#busy(run)) {
+              // Nothing goes on in it: the chat shows theirs, and the copy is in the list.
+              if (run === this.#shown) void this.#showTheirs(run, id);
+              else this.#retire(run);
+            }
+          } else if (hosted) {
+            // What this page had says what theirs says: it goes on as it is.
+            if (this.#busy(run)) this.#saveSoon(run);
+            else if (run === this.#shown) void this.open(id, true);
             else this.#retire(run);
           }
           if (this.#project?.key === project) {
@@ -1009,15 +1017,18 @@ export class ChatSession {
    * draft; and it is written there from now on, all of it. The id it had is the other device's
    * conversation now, which opens as they left it.
    */
-  #split(run: Run, copy: { readonly id: string; readonly title: string }): void {
+  #split(run: Run, copy: { readonly id: string; readonly title: string }, hosted: boolean): void {
     const from = run.id;
+    const entries = run.conversation.getSnapshot().entries;
     const title =
       run.fields.titleBy !== undefined && run.fields.title
         ? run.fields.title
-        : firstWords(run.conversation.getSnapshot().entries, TITLE_LENGTH);
-    this.#runs.delete(from);
+        : firstWords(entries, TITLE_LENGTH);
     run.id = copy.id;
-    this.#runs.set(copy.id, run);
+    if (hosted) {
+      this.#runs.delete(from);
+      this.#runs.set(copy.id, run);
+    }
     this.#approvals = this.#approvals.map((each) =>
       each.chat === from ? { ...each, chat: copy.id } : each,
     );
@@ -1026,6 +1037,14 @@ export class ChatSession {
       const draft = this.drafts.read(project, from);
       if (draft) this.drafts.write(project, copy.id, draft);
       this.drafts.clear(project, from);
+      // Plans as people changed them, for "按这个做" there.
+      for (const entry of entries) {
+        if (entry.role !== "tool" || entry.name !== "aq_propose") continue;
+        const steps = this.planDrafts.read(project, from, entry.call);
+        if (steps === undefined) continue;
+        this.planDrafts.write(project, copy.id, entry.call, steps);
+        this.planDrafts.write(project, from, entry.call, undefined);
+      }
     }
     if (run === this.#shown) {
       this.#snapshot = { ...this.#snapshot, id: copy.id };
@@ -1037,6 +1056,20 @@ export class ChatSession {
       splitFrom: { id: from, title },
     });
     this.#saveSoon(run);
+  }
+
+  /**
+   * Shows what another device wrote of a conversation, in place of the copy this page's went on
+   * as, where that copy is still shown and nothing went on in it meanwhile: people who started to
+   * write in it stay there, and "打开那边的版本" shows theirs.
+   */
+  async #showTheirs(run: Run, id: string): Promise<void> {
+    const project = this.#project?.key;
+    if (project === undefined) return;
+    const saved = await this.#chats.load(project, id).catch(() => undefined);
+    if (!saved || this.#project?.key !== project || this.#runs.has(id)) return;
+    if (this.#shown !== run || this.#busy(run)) return;
+    this.#startSaved(id, saved);
   }
 
   /** Writes what a conversation waits to write, after what is on its way. */
@@ -1141,6 +1174,11 @@ export class ChatSession {
       if (now && now !== this.#shown) this.#show(now);
       return;
     }
+    this.#startSaved(id, saved);
+  }
+
+  /** A conversation as it was kept, shown from now on. */
+  #startSaved(id: string, saved: SavedChat): void {
     // What this editor cannot read stays where it was, and goes back as it was.
     const entries = readEntries(saved.entries);
     this.#start(entries, id, saved.caller, {
@@ -1190,7 +1228,7 @@ export class ChatSession {
     const run = this.#shown;
     const project = this.#project?.key;
     if (!run || run.conversation.running || !text.trim() || project === undefined) return undefined;
-    const { conversation, id } = run;
+    const { conversation } = run;
     const went = () =>
       conversation
         .getSnapshot()
@@ -1204,7 +1242,7 @@ export class ChatSession {
         this.#update(run, { planFirst: false });
         this.#keep(run);
       }
-      this.planDrafts.write(project, id, call, undefined);
+      this.planDrafts.write(project, run.id, call, undefined);
     };
     const stop = conversation.subscribe(goneOff);
     try {
@@ -1440,11 +1478,14 @@ export class ChatSession {
         this.#start([], undefined, undefined);
       } else this.#refresh();
     }
+    // Another device wrote it meanwhile, and what this page had went into a copy (`#split`): that
+    // is what goes, and theirs stays.
+    const gone = run?.id ?? id;
     this.drafts.clear(project, id);
-    await this.#chats.remove(project, id).catch((error: unknown) => {
+    await this.#chats.remove(project, gone).catch((error: unknown) => {
       console.warn("A conversation could not be taken away", error);
     });
-    this.#set({ saved: this.#snapshot.saved.filter((saved) => saved.id !== id) });
+    this.#set({ saved: this.#snapshot.saved.filter((saved) => saved.id !== gone) });
   }
 
   /** The packs that can be used here: AnimaQuill's own, then those installed. */
