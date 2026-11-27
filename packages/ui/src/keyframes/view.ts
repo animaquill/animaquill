@@ -2,6 +2,12 @@ import { RULER_HEIGHT, clamp, zoomRange, type TimelineEditor } from "../timeline
 import { ScrubGesture, type Gesture, type Pointer } from "../timeline/gestures.ts";
 import type { StageEditor } from "../timeline/stage.ts";
 import type { TouchStart } from "../timeline/touch.ts";
+import {
+  ViewFollower,
+  followedView,
+  type PlayheadMove,
+  type PlayState,
+} from "../timeline/follow.ts";
 import { Emitter } from "../workbench/emitter.ts";
 import { KeyArea } from "./area.ts";
 import type { KeyframeEditor, ShownClips } from "./editor.ts";
@@ -21,8 +27,6 @@ const ZOOM_STEP = 1.5;
 const TAIL_SHARE = 0.25;
 const BOTTOM_MARGIN = 48;
 const FIT_SHARE = 0.95;
-/** How close to an edge the playhead can be before the view follows it, as on the timeline. */
-const REVEAL_MARGIN = 48;
 /** The rows of keys get taller as on the timeline. Lower than this, the values do not fit. */
 const MIN_ROW_SCALE = 20 / LANE_HEIGHT;
 const MAX_ROW_SCALE = 3;
@@ -51,12 +55,14 @@ export class KeyframesView extends KeyArea implements StageEditor {
   #rowScale = 1;
   /** Rows are this much taller for the size of words people chose, apart from their zoom. */
   #sizeScale = 1;
-  /** The playhead moved while this did not show, so it gets in sight once it does. */
-  #revealLater = false;
+  /** Keeps the view along with the playhead, as the timeline sets it. */
+  readonly #follower: ViewFollower;
   #width = 0;
   #height = 0;
   #scrollY = 0;
   #gesture: Gesture | undefined;
+  /** A drag scrolled the view by itself, see `TimelineEditor.scrollDuringDrag`. */
+  #dragScrolled = false;
   /** What is selected is listed here, wherever it is. */
   readonly shownClips: ShownClips = () => true;
   /** The row of sound at the top: folded or not, and the track it shows by itself, if one. */
@@ -73,6 +79,22 @@ export class KeyframesView extends KeyArea implements StageEditor {
   constructor(keyframes: KeyframeEditor, timeline: TimelineEditor) {
     super(keyframes);
     this.#timeline = timeline;
+    this.#follower = new ViewFollower(
+      followedView({
+        width: () => this.#width,
+        pixelsPerSecond: () => this.#pixelsPerSecond,
+        scrollX: () => this.#scrollX,
+        frame: () => this.frame,
+        fps: () => this.model?.rate.fps ?? 30,
+        lastFrame: () => (this.model ? Math.round(this.model.duration * this.model.rate.fps) : 0),
+        end: () => this.visibleDuration,
+        contentWidth: () => this.contentWidth,
+        placeX: (x) => this.#placeX(x),
+      }),
+      () => timeline.getSnapshot().follow,
+      timeline.followClock,
+      this,
+    );
   }
 
   /** Hears about a new list of lanes. */
@@ -121,8 +143,31 @@ export class KeyframesView extends KeyArea implements StageEditor {
   #fitScale(): number {
     const { model } = this;
     const duration = Math.max(model?.duration ?? 0, 1);
-    const [low, high] = zoomRange(this.#width, model?.duration ?? 1, model?.rate.fps ?? 30);
-    return clamp((Math.max(this.#width, 1) * FIT_SHARE) / duration, low, high);
+    const [low, high] = this.#zoomRange();
+    return clamp((Math.max(this.#fitWidth, 1) * FIT_SHARE) / duration, low, high);
+  }
+
+  /** Holding the playhead in the middle, all of it fits in half of the view, as on the timeline. */
+  get #fitWidth(): number {
+    return this.#follower.centred ? this.#width / 2 : this.#width;
+  }
+
+  #zoomRange(): readonly [number, number] {
+    const { model } = this;
+    return zoomRange(this.#fitWidth, model?.duration ?? 1, model?.rate.fps ?? 30);
+  }
+
+  /** How far across it can scroll, see `TimelineEditor.scrollRange`. */
+  get scrollRange(): { readonly min: number; readonly max: number } {
+    return this.#follower.range();
+  }
+
+  get pinnedPlayhead(): boolean {
+    return this.#follower.centred;
+  }
+
+  get followMode(): "off" | "page" | "center" {
+    return this.#timeline.followMode;
   }
 
   /** How much taller the rows of keys are than usual. */
@@ -314,30 +359,53 @@ export class KeyframesView extends KeyArea implements StageEditor {
     if (showing) this.relist();
     if (this.#pixelsPerSecond === 0 && width > 0) this.#pixelsPerSecond = this.#fitScale();
     this.#clampScroll();
-    if (this.#revealLater) this.#revealPlayhead();
+    this.#follower.resized();
     this.keyframes.redrawTab();
   }
 
   #clampScroll(): void {
+    const { min, max } = this.#follower.range();
     this.#scrollY = clamp(this.#scrollY, 0, this.contentHeight - this.#height);
-    this.#scrollX = clamp(this.#scrollX, 0, this.contentWidth - this.#width);
+    this.#scrollX = clamp(this.#scrollX, min, max);
   }
 
-  setScroll(x: number, y: number): void {
-    this.#scrollX = x;
+  /**
+   * Scrolls as people do, see `TimelineEditor.setScroll`: holding the playhead in the middle, going
+   * across moves the playhead of the timeline. What this scrolls by itself goes through `#placeX`.
+   */
+  setScroll(x: number, y: number, since = this.#timeline.followClock.now()): void {
+    const dx = x - this.#scrollX;
+    const timeline = this.#timeline;
+    const outcome = dx === 0 ? undefined : this.#follower.scrolled(dx, since, timeline.playState);
     this.#scrollY = y;
+    if (outcome?.kind === "scrub") {
+      timeline.pause();
+      this.#clampScroll();
+      timeline.scrubTo(outcome.frame, this, "scroll");
+      this.#viewChanged();
+      return;
+    }
+    if (outcome?.kind !== "drop") this.#scrollX = x;
     this.#clampScroll();
     this.#viewChanged();
   }
 
+  #placeX(x: number): void {
+    const before = this.#scrollX;
+    this.#scrollX = x;
+    this.#clampScroll();
+    if (this.#scrollX !== before) this.#viewChanged();
+  }
+
   zoomAround(x: number, factor: number): void {
     if (this.#pixelsPerSecond === 0) return;
-    const { model } = this;
-    const moment = this.timeAt(x);
-    const [low, high] = zoomRange(this.#width, model?.duration ?? 1, model?.rate.fps ?? 30);
+    const around = this.#follower.zoomCenter(x, this.#timeline.playState);
+    const moment = this.timeAt(around);
+    const [low, high] = this.#zoomRange();
     this.#pixelsPerSecond = clamp(this.#pixelsPerSecond * factor, low, high);
-    this.#scrollX = moment * this.#pixelsPerSecond - x;
+    this.#scrollX = moment * this.#pixelsPerSecond - around;
     this.#clampScroll();
+    this.#follower.pin();
     this.#viewChanged();
   }
 
@@ -355,6 +423,7 @@ export class KeyframesView extends KeyArea implements StageEditor {
     this.#pixelsPerSecond = this.#fitScale();
     this.#scrollX = 0;
     this.#clampScroll();
+    this.#follower.pin();
     this.#viewChanged();
   }
 
@@ -400,22 +469,24 @@ export class KeyframesView extends KeyArea implements StageEditor {
     this.zoomRowsAround(this.lanesTop, 1 / ROW_SCALE_STEP);
   }
 
-  /** The playhead moved. Like the timeline, this scrolls just far enough that it can be seen. */
-  followPlayhead(): void {
-    this.#revealPlayhead();
+  /**
+   * The playhead of the timeline moved. This follows it as the timeline does, with the same setting:
+   * behind another tab it waits until it shows, see `ViewFollower`.
+   */
+  followPlayhead(move: PlayheadMove | undefined, play: PlayState): void {
+    if (move) this.#follower.moved(move, play);
   }
 
-  #revealPlayhead(): void {
-    const { model } = this;
-    this.#revealLater = this.#width === 0;
-    if (!model || this.#revealLater || this.#pixelsPerSecond === 0) return;
-    const x = this.xAt(this.frame / model.rate.fps);
-    const margin = Math.min(REVEAL_MARGIN, this.#width / 4);
-    const before = this.#scrollX;
-    if (x < margin) this.#scrollX += x - margin;
-    else if (x > this.#width - margin) this.#scrollX += x - (this.#width - margin);
+  /** Following was set another way, from `before`. */
+  followChanged(before: { readonly on: boolean; readonly mode: "page" | "center" }): void {
+    this.#follower.changed(before);
     this.#clampScroll();
-    if (this.#scrollX !== before) this.keyframes.rememberSoon();
+    this.#viewChanged();
+  }
+
+  /** Playing started. */
+  playStarted(play: PlayState): void {
+    this.#follower.started(play);
   }
 
   #viewChanged(): void {
@@ -446,7 +517,8 @@ export class KeyframesView extends KeyArea implements StageEditor {
         ? clamp(rowScale, MIN_ROW_SCALE, MAX_ROW_SCALE)
         : 1;
     this.#scrollY = 0;
-    this.#revealLater = false;
+    this.#clampScroll();
+    this.#follower.pin();
   }
 
   /* The mouse. */
@@ -465,6 +537,7 @@ export class KeyframesView extends KeyArea implements StageEditor {
     const { model } = this;
     if (!model) return;
     this.#cancelGesture();
+    this.#follower.pressed();
     this.#gesture =
       pointer.y < this.lanesTop
         ? new ScrubGesture(this.#scrubHost, pointer)
@@ -479,6 +552,19 @@ export class KeyframesView extends KeyArea implements StageEditor {
     const gesture = this.#gesture;
     this.#gesture = undefined;
     gesture?.end(pointer);
+    this.#afterDrag(gesture);
+  }
+
+  /** As on the timeline: in the centred way a drag that scrolled leaves the playhead in the middle. */
+  #afterDrag(gesture: Gesture | undefined): void {
+    const scrolled = this.#dragScrolled && !(gesture instanceof ScrubGesture);
+    this.#dragScrolled = false;
+    const { model } = this;
+    if (scrolled && model && this.#follower.centred) {
+      const frame = Math.round(Math.max(this.timeAt(this.#width / 2), 0) * model.rate.fps);
+      this.#timeline.scrubTo(frame, this, "scroll");
+    }
+    this.#follower.released(this.#timeline.playState);
   }
 
   cancelDrag(): boolean {
@@ -488,8 +574,10 @@ export class KeyframesView extends KeyArea implements StageEditor {
   }
 
   #cancelGesture(): void {
-    this.#gesture?.cancel();
+    const gesture = this.#gesture;
+    gesture?.cancel();
     this.#gesture = undefined;
+    if (gesture) this.#afterDrag(gesture);
   }
 
   /** A change in the project can pull the ground from under a drag. */
@@ -502,7 +590,12 @@ export class KeyframesView extends KeyArea implements StageEditor {
   scrollDuringDrag(pointer: Pointer, dx: number, dy: number): void {
     if (!this.#gesture) return;
     const reachesRows = this.#gesture.reachesRows === true;
-    this.setScroll(this.scrollX + dx, reachesRows ? this.#scrollY + dy : this.#scrollY);
+    this.#follower.stopGliding();
+    if (dx !== 0) this.#dragScrolled = true;
+    this.#scrollX += dx;
+    if (reachesRows) this.#scrollY += dy;
+    this.#clampScroll();
+    this.#viewChanged();
     this.#gesture.move(pointer);
   }
 
@@ -526,7 +619,7 @@ export class KeyframesView extends KeyArea implements StageEditor {
       },
       timeAt: (x: number) => this.timeAt(x),
       snapDistance: (pointer: Pointer) => this.snapDistance(pointer),
-      seek: (frame: number) => timeline.seek(frame),
+      seek: (frame: number) => timeline.scrubTo(frame, this),
     };
   }
 }

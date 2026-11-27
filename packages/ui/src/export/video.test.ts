@@ -331,7 +331,7 @@ function setup(
     frame: 0,
     model,
     getSnapshot: () => ({ selection, model }),
-    seek: vi.fn(),
+    goTo: vi.fn(),
     selectOnly: vi.fn(),
   };
   const videos = new VideoExport({
@@ -757,7 +757,7 @@ describe("the sound of a video", () => {
     await running;
     expect(shown.message).toContain("export.failure.missingFile");
     expect(shown.message).toContain('"frame":31');
-    expect(context.timeline.seek).toHaveBeenCalledWith(30);
+    expect(context.timeline.goTo).toHaveBeenCalledWith(30);
     // Nothing got as far as a place to go on from, which it does not say. It stays in the list to
     // be retried, with its file, which is still empty.
     expect(shown.message).not.toContain("export.video.kept");
@@ -879,7 +879,7 @@ describe("an export that does not finish", () => {
     expect(shown.message).toContain('"frame":46');
     expect(shown.message).toContain("0:01/15");
     expect(shown.message).toContain("export.failure.missingFile");
-    expect(context.timeline.seek).toHaveBeenCalledWith(45);
+    expect(context.timeline.goTo).toHaveBeenCalledWith(45);
     expect(context.timeline.selectOnly).toHaveBeenCalledWith("c");
     expect(context.compositor.frames).toHaveLength(45);
     // Nothing got as far as a place to go on from, which it does not say. It stays in the list,
@@ -918,7 +918,7 @@ describe("an export that does not finish", () => {
     expect(shown.message).toContain("export.failure.join");
     // Half of it is before the cut at two seconds.
     expect(shown.message).toContain('"frame":46');
-    expect(context.timeline.seek).toHaveBeenCalledWith(45);
+    expect(context.timeline.goTo).toHaveBeenCalledWith(45);
     expect(context.timeline.selectOnly).toHaveBeenCalledWith("c");
     expect(context.compositor.frames).toHaveLength(45);
   });

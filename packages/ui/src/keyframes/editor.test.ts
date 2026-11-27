@@ -2167,6 +2167,63 @@ describe("the view of the tab", () => {
     expect(panel.xAt(0)).toBeLessThanOrEqual(WIDTH);
   });
 
+  it("follows the way the timeline is set: a page at a time, in the middle, or not", async () => {
+    const { addClip, timeline, panel } = await setup();
+    addClip("a", 0, 60);
+    panel.zoomAround(0, 8);
+    const fps = timeline.model?.rate.fps ?? 30;
+    const x = () => panel.xAt(timeline.frame / fps);
+    timeline.seek(20 * fps);
+    expect(x()).toBeCloseTo(48, 6);
+    // Off here is off there: the timeline has the one switch.
+    timeline.setFollow(false);
+    const scrolled = panel.scrollX;
+    timeline.seek(50 * fps);
+    expect(panel.scrollX).toBe(scrolled);
+    timeline.goTo(50 * fps);
+    expect(x()).toBeCloseTo(48, 6);
+    timeline.setFollowMode("center");
+    timeline.play(1);
+    timeline.tick(0);
+    timeline.tick(500);
+    expect(x()).toBeCloseTo(WIDTH / 2, 6);
+    expect(timeline.xAt(timeline.frame / fps)).toBeCloseTo(WIDTH / 2, 6);
+  });
+
+  it("in the middle, scrolling the tab across moves the playhead of the timeline", async () => {
+    const { addClip, timeline, panel } = await setup();
+    addClip("a", 0, 60);
+    timeline.setFollowMode("center");
+    panel.zoomAround(0, 8);
+    timeline.play(1);
+    timeline.tick(0);
+    timeline.tick(1000);
+    const fps = timeline.model?.rate.fps ?? 30;
+    const frame = timeline.frame;
+    const perFrame = panel.pixelsPerSecond / fps;
+    panel.setScroll(panel.scrollX + perFrame * 10, panel.scrollY);
+    expect(timeline.getSnapshot().playing).toBe(false);
+    expect(timeline.frame).toBe(frame + 10);
+    expect(panel.xAt(timeline.frame / fps)).toBeCloseTo(WIDTH / 2, 6);
+    expect(timeline.xAt(timeline.frame / fps)).toBeCloseTo(WIDTH / 2, 6);
+    // And the other way round, the tab holds what the timeline scrolled to.
+    timeline.setScroll(timeline.scrollX - timeline.pixelsPerSecond, timeline.scrollY);
+    expect(timeline.frame).toBe(frame + 10 - fps);
+    expect(panel.xAt(timeline.frame / fps)).toBeCloseTo(WIDTH / 2, 6);
+  });
+
+  it("in the middle, behind another tab, it catches up once it shows", async () => {
+    const { addClip, timeline, panel } = await setup();
+    addClip("a", 0, 60);
+    timeline.setFollowMode("center");
+    panel.zoomAround(0, 8);
+    panel.setViewport(0, 0);
+    timeline.seek(900);
+    panel.setViewport(WIDTH, HEIGHT);
+    expect(panel.xAt(900 / (timeline.model?.rate.fps ?? 30))).toBeCloseTo(WIDTH / 2, 6);
+    expect(panel.scrollRange.min).toBe(-WIDTH / 2);
+  });
+
   it("the ruler moves the playhead under the mouse, whatever the timeline shows", async () => {
     const { addClip, timeline, panel } = await setup();
     addClip("a", 0, 60);

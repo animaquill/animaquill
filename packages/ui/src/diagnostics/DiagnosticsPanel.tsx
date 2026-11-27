@@ -105,7 +105,7 @@ function EventRow({ event }: { event: DiagnosticsEvent }) {
         type="button"
         className={styles.event}
         title={t("diagnostics.jump")}
-        onClick={() => timeline.seek(frameAt(seconds, model.rate))}
+        onClick={() => timeline.goTo(frameAt(seconds, model.rate))}
       >
         {content}
       </button>

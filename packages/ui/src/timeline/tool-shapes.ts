@@ -15,6 +15,15 @@ export const TOOL_SHAPES = {
 export type ShapedTool = keyof typeof TOOL_SHAPES;
 
 /**
+ * The two ways of following the playhead, in the same lines: the playhead with an arrow that turns
+ * the page, and the playhead held between two brackets in the middle.
+ */
+export const FOLLOW_SHAPES = {
+  page: "M6 4h6M9 4v16M14 12h7M18 9l3 3-3 3",
+  center: "M6 5H4v14h2M18 5h2v14h-2M9 4h6M12 4v16",
+} as const;
+
+/**
  * A cursor of a shape: black lines on a white outline, which shows on any colour of clip, with
  * its hot spot in the middle; a plain cursor where a browser cannot show it.
  */

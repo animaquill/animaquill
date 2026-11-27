@@ -53,6 +53,7 @@ import { ClipDescriptions, SceneRegistrations } from "../properties/registration
 import type { TrialSession } from "../properties/trial.ts";
 import { keysTakeEffect, type PropertyWriter } from "../properties/writer.ts";
 import type { TimelineEditor } from "../timeline/editor.ts";
+import { DEFAULT_FOLLOW, type FollowSetting } from "../timeline/follow.ts";
 import { frameTime } from "../timeline/frames.ts";
 import { forEachBetween, type ClipBox, type Row, type TimelineModel } from "../timeline/model.ts";
 import { Emitter } from "../workbench/emitter.ts";
@@ -317,6 +318,10 @@ export class KeyframeEditor {
   /** The frame the list is about. It stays while playing, so that the list does not jump. */
   #listedFrame = 0;
   #seenFrame = 0;
+  /** What of following the playhead the tab has seen, see `#followView`. */
+  #seenMove = 0;
+  #seenBegan = Number.NEGATIVE_INFINITY;
+  #seenFollow: FollowSetting = DEFAULT_FOLLOW;
   #seenPlaying = false;
   #seenModel: TimelineModel | undefined;
   #seenClips: ReadonlySet<string> | undefined;
@@ -503,10 +508,25 @@ export class KeyframeEditor {
   };
 
   #followView = (): void => {
-    const { frame } = this.#timeline;
+    const timeline = this.#timeline;
+    const { frame } = timeline;
+    const { follow } = timeline.getSnapshot();
+    const play = timeline.playState;
+    if (follow !== this.#seenFollow) {
+      this.panel.followChanged(this.#seenFollow);
+      this.#seenFollow = follow;
+    }
+    if (play.playing && play.began !== this.#seenBegan) {
+      this.#seenBegan = play.began;
+      this.panel.playStarted(play);
+    }
+    const move = timeline.lastMove;
+    if (move && move.serial !== this.#seenMove) {
+      this.#seenMove = move.serial;
+      this.panel.followPlayhead(move, play);
+    }
     if (frame !== this.#seenFrame) {
       this.#seenFrame = frame;
-      this.panel.followPlayhead();
       const { playing } = this.#timeline.getSnapshot();
       if (!playing && this.#snapshot.range === "here") {
         this.#listedFrame = frame;

@@ -2395,7 +2395,7 @@ export class VideoExport {
     // An export of another project than the one that is open has nowhere to take people.
     if (!model || this.#openKey() !== project) return "";
     const frame = Math.floor(Math.min(seconds, range.to) * model.rate.fps + FRAME_TOLERANCE);
-    timeline.seek(frame);
+    timeline.goTo(frame);
     if ("layer" in failure && model.boxes.has(failure.layer)) timeline.selectOnly(failure.layer);
     return formatTimecode(frame, model.rate);
   }

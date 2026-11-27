@@ -63,6 +63,7 @@ import { TRANSITION_DRAG_TYPE, transitionDrag } from "./transition-drag.ts";
 import { transitionName } from "./transition-names.ts";
 import { pointerOf, useStage } from "./stage.ts";
 import { ToolButton } from "./ToolButton.tsx";
+import { FollowControl } from "./FollowControl.tsx";
 import { nameOfTrack, useTrackName } from "../mixer/names.ts";
 import { RippleToolIcon, RollToolIcon, SlideToolIcon, SlipToolIcon } from "./ToolIcons.tsx";
 import {
@@ -240,6 +241,7 @@ function Toolbar({ editor }: { editor: TimelineEditor }) {
           </div>
         </div>
         <div className={styles.zoneEnd} role="group" aria-label={t("timeline.zone.zoom")}>
+          <FollowControl timeline={editor} />
           <ToolButton
             name={t("timeline.action.zoomOut")}
             usage={t("timeline.help.zoomOut")}
@@ -1306,12 +1308,16 @@ function Surface({
         handleLabel={t("timeline.handleX")}
         handleUsage={t("timeline.help.zoomHandleX")}
         subscribe={editor.subscribeView}
-        read={() => ({
-          content: editor.contentWidth,
-          view: editor.width,
-          offset: editor.scrollX,
-        })}
-        scrollTo={(offset) => editor.setScroll(offset, editor.scrollY)}
+        read={() => {
+          // Holding the playhead in the middle, it goes from before 0 to past the end.
+          const { min, max } = editor.scrollRange;
+          return {
+            content: max - min + editor.width,
+            view: editor.width,
+            offset: editor.scrollX - min,
+          };
+        }}
+        scrollTo={(offset) => editor.setScroll(offset + editor.scrollRange.min, editor.scrollY)}
         beginZoom={(edge) => {
           const start = editor.pixelsPerSecond;
           const x = edge === "start" ? editor.width : 0;

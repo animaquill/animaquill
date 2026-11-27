@@ -43,7 +43,8 @@
   }
 }
 
-@container (max-width: 460px) {
+/* The slider goes before buttons do: the buttons next to it zoom too. */
+@container (max-width: 820px) {
   .zoom {
     display: none;
   }
@@ -324,12 +325,16 @@
   background: var(--aq-timeline-snap);
 }
 
+/*
+ * The handle sits in the lower part of the ruler, under the timecodes, as in Premiere: on top it
+ * covered the timecode of a whole second whenever the playhead stood near one.
+ */
 .playhead::before {
   position: absolute;
-  top: 0;
+  top: 16px;
   left: -5px;
   width: 11px;
-  height: 14px;
+  height: 12px;
   background: var(--aq-timeline-playhead);
   clip-path: polygon(0 0, 100% 0, 100% 55%, 50% 100%, 0 55%);
   content: "";
@@ -566,10 +571,20 @@
   transform: translateY(-50%);
 }
 
-/* On top of the first row, it stays inside the list. */
+/*
+ * On top of the first row it stays inside the list, in the slot the canvas draws there, and what
+ * that row's header shows makes room under it for as long as it is there.
+ */
 .newTrackTag[data-first] {
+  padding: 0 4px;
+  font-size: calc(10px * var(--aq-size-scale));
   line-height: 12px;
-  transform: translateY(3px);
+  transform: translateY(1px);
+}
+
+.headerList > div:has(> .newTrackTag[data-first]) > .header:first-child {
+  align-items: flex-end;
+  padding-bottom: 3px;
 }
 
 .besideLine {
@@ -580,4 +595,35 @@
   margin-top: -1px;
   background: var(--aq-timeline-selected);
   pointer-events: none;
+}
+
+/* Following the playhead: its switch, and a narrow arrow right beside it to choose how. */
+.follow {
+  display: inline-flex;
+  align-items: stretch;
+  margin-right: 6px;
+}
+
+.follow .switch {
+  padding-right: 3px;
+}
+
+.followArrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: calc(24px * var(--aq-size-scale));
+  padding: 0;
+  color: var(--aq-text-muted);
+  background: none;
+  border: 0;
+  border-radius: 0 4px 4px 0;
+  cursor: pointer;
+}
+
+.followArrow:hover,
+.followArrow[aria-expanded="true"] {
+  color: var(--aq-text);
+  background: var(--aq-bg-hover);
 }

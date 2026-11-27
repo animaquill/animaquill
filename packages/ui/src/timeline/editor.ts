@@ -82,6 +82,19 @@ import { MASTER_CLIP, effectTargetOf, trackClipId, trackOfClip } from "../mixer/
 import { joinTroubleKey } from "./transition-names.ts";
 import { soundTemplate } from "./sound-template.ts";
 import type { TouchStart, TouchTarget } from "./touch.ts";
+import {
+  DEFAULT_FOLLOW,
+  FOLLOW_MARGIN,
+  ViewFollower,
+  browserClock,
+  followedView,
+  type FollowClock,
+  type FollowMode,
+  type FollowSetting,
+  type PlayState,
+  type PlayheadCause,
+  type PlayheadMove,
+} from "./follow.ts";
 import type { Theme } from "./stage-painter.ts";
 import {
   EndGesture,
@@ -168,8 +181,8 @@ const SNAP_REACH = 8;
  * pixels, so that the scrollbar stands for the same seconds at every zoom level.
  */
 const TAIL_SHARE = 0.25;
-/** People look at a clip, not at its last frame, when the view follows the playhead. */
-const REVEAL_MARGIN = 48;
+/** Room under the last row, as much as the playhead keeps from an edge. */
+const REVEAL_MARGIN = FOLLOW_MARGIN;
 /** Zoom out to the whole timeline with a little air around it. */
 const FIT_SHARE = 0.95;
 const MIN_ZOOM_SHARE = 0.8;
@@ -478,6 +491,8 @@ export interface TimelineSnapshot {
   /** What is marked with in and out, see `Marks`. */
   readonly marks: Marks;
   readonly headerWidth: number;
+  /** Whether the views scroll along with the playhead, and how. */
+  readonly follow: FollowSetting;
   /** Cut, and waiting to be pasted somewhere else. They stay until then. */
   readonly cut: ReadonlySet<string>;
   /** Selected instead of clips, by id. Like them it is no part of the project. */
@@ -564,7 +579,9 @@ function parseRemembered(text: string | undefined): RememberedView | undefined {
   try {
     const value = JSON.parse(text) as Partial<RememberedView>;
     const { pixelsPerSecond, scrollX, scrollY, frame } = value;
-    const numbers = [pixelsPerSecond, scrollX, scrollY, frame];
+    // Across it can be before 0, in the centred way of following the playhead.
+    if (!Number.isFinite(scrollX)) return undefined;
+    const numbers = [pixelsPerSecond, scrollY, frame];
     if (!numbers.every((number) => Number.isFinite(number) && (number as number) >= 0)) {
       return undefined;
     }
@@ -588,12 +605,16 @@ interface SavedPreferences {
   readonly inserting?: boolean;
   readonly multiSelecting: boolean;
   readonly headerWidth: number;
+  /** Since following the playhead could be turned off. Without them it is on, a page at a time. */
+  readonly follow?: boolean;
+  readonly followMode?: FollowMode;
 }
 
 function parsePreferences(value: unknown): SavedPreferences | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   const { version, snapping, overwriting, inserting, multiSelecting, headerWidth } =
     value as Partial<SavedPreferences>;
+  const { follow, followMode } = value as Partial<SavedPreferences>;
   if (version !== SETTINGS_VERSION) return undefined;
   if (typeof snapping !== "boolean" || typeof overwriting !== "boolean") return undefined;
   return {
@@ -603,6 +624,8 @@ function parsePreferences(value: unknown): SavedPreferences | undefined {
     inserting: inserting === true && !overwriting,
     multiSelecting: multiSelecting === true,
     headerWidth: typeof headerWidth === "number" ? headerWidth : DEFAULT_HEADER_WIDTH,
+    follow: typeof follow === "boolean" ? follow : DEFAULT_FOLLOW.on,
+    followMode: followMode === "center" || followMode === "page" ? followMode : DEFAULT_FOLLOW.mode,
   };
 }
 
@@ -657,6 +680,7 @@ export class TimelineEditor implements TouchTarget {
     rate: 1,
     marks: NO_MARKS,
     headerWidth: DEFAULT_HEADER_WIDTH,
+    follow: DEFAULT_FOLLOW,
     cut: new Set(),
     marker: undefined,
     editingMarker: undefined,
@@ -675,6 +699,16 @@ export class TimelineEditor implements TouchTarget {
   #razorAt: number | undefined;
   #pointedAt: number | undefined;
   #frame = 0;
+  /** The last time the playhead moved, and why, for the views that follow it. */
+  #lastMove: PlayheadMove | undefined;
+  /** When this round of playing began, by the clock of following. */
+  #began = Number.NEGATIVE_INFINITY;
+  readonly #clock: FollowClock;
+  readonly #follower: ViewFollower;
+  /** A drag scrolled the view by itself, which in the centred way moves the playhead after. */
+  #dragScrolled = false;
+  /** A drag moved the playhead itself, as on the ruler. */
+  #dragSought = false;
   /** Where the clock and the playhead were together last, and how fast it goes from there. */
   #playback: PlaybackStart | undefined;
   /** The frame playing stops on, as when it goes from in to out. */
@@ -720,11 +754,29 @@ export class TimelineEditor implements TouchTarget {
     memory: WindowMemory,
     settings: SettingsStore,
     messages: TimelineMessages,
+    clock: FollowClock = browserClock,
   ) {
     this.#session = session;
     this.#memory = memory;
     this.#settings = settings;
     this.#messages = messages;
+    this.#clock = clock;
+    this.#follower = new ViewFollower(
+      followedView({
+        width: () => this.#width,
+        pixelsPerSecond: () => this.#pixelsPerSecond,
+        scrollX: () => this.#scrollX,
+        frame: () => this.#frame,
+        fps: () => this.model?.rate.fps ?? 30,
+        lastFrame: () => (this.model ? frameAt(this.visibleDuration, this.model.rate) : 0),
+        end: () => this.#contentEnd,
+        contentWidth: () => this.contentWidth,
+        placeX: (x) => this.#scrollTo(x, this.#scrollY),
+      }),
+      () => this.#snapshot.follow,
+      clock,
+      this,
+    );
     session.subscribe(() => this.#followSession());
     this.#followSession();
   }
@@ -743,6 +795,12 @@ export class TimelineEditor implements TouchTarget {
     const { snapping, overwriting, multiSelecting } = saved;
     const inserting = saved.inserting === true;
     const headerWidth = clamp(saved.headerWidth, MIN_HEADER_WIDTH, MAX_HEADER_WIDTH);
+    const before = this.#snapshot.follow;
+    const follow: FollowSetting = {
+      on: saved.follow ?? DEFAULT_FOLLOW.on,
+      mode: saved.followMode ?? DEFAULT_FOLLOW.mode,
+    };
+    const same = follow.on === before.on && follow.mode === before.mode;
     this.#snapshot = {
       ...this.#snapshot,
       snapping,
@@ -750,19 +808,24 @@ export class TimelineEditor implements TouchTarget {
       inserting,
       multiSelecting,
       headerWidth,
+      follow: same ? before : follow,
     };
+    if (!same) this.#followChanged(before);
     this.#emitter.emit();
   }
 
   #savePreferences(): void {
-    const { snapping, overwriting, inserting, multiSelecting, headerWidth } = this.#snapshot;
-    const saved = {
+    const { snapping, overwriting, inserting, multiSelecting, headerWidth, follow } =
+      this.#snapshot;
+    const saved: SavedPreferences = {
       version: SETTINGS_VERSION,
       snapping,
       overwriting,
       inserting,
       multiSelecting,
       headerWidth,
+      follow: follow.on,
+      followMode: follow.mode,
     };
     this.#settings
       .save(SETTINGS_KEY, saved)
@@ -916,11 +979,24 @@ export class TimelineEditor implements TouchTarget {
     return this.#preview?.end ?? this.model?.duration ?? 0;
   }
 
-  /** The size of everything that can be scrolled to. */
+  /** The size of everything that can be scrolled to the usual way. */
   get contentWidth(): number {
+    return Math.max(this.#contentEnd * (1 + TAIL_SHARE) * this.#pixelsPerSecond, this.#width);
+  }
+
+  /** The end of the timeline, or of clips dragged past it. */
+  get #contentEnd(): number {
     let last = this.visibleDuration;
     for (const { end } of this.#preview?.clips?.values() ?? []) last = Math.max(last, end);
-    return Math.max(last * (1 + TAIL_SHARE) * this.#pixelsPerSecond, this.#width);
+    return last;
+  }
+
+  /**
+   * How far across the view can scroll. Holding the playhead in the middle it goes below 0 and
+   * past the end, so that both can be in the middle too.
+   */
+  get scrollRange(): { readonly min: number; readonly max: number } {
+    return this.#follower.range();
   }
 
   get contentHeight(): number {
@@ -950,10 +1026,32 @@ export class TimelineEditor implements TouchTarget {
     if (width === 0) this.#cancelGesture();
     if (this.#pixelsPerSecond === 0 && width > 0) this.#fit();
     this.#clampScroll();
+    this.#follower.resized();
     this.#viewChanged();
   }
 
-  setScroll(x: number, y: number): void {
+  /**
+   * Scrolls as people do: with the wheel, a trackpad, the scrollbars or a finger. `since` is when
+   * by the clock of following their movement began, see `ViewFollower.scrolled`. Holding the
+   * playhead in the middle, going across moves the playhead instead. Whatever the editor scrolls
+   * by itself goes through `#scrollTo`, never through this.
+   */
+  setScroll(x: number, y: number, since = this.#clock.now()): void {
+    const dx = x - this.#scrollX;
+    if (dx === 0 && y === this.#scrollY) return;
+    const outcome = dx === 0 ? undefined : this.#follower.scrolled(dx, since, this.playState);
+    if (outcome?.kind === "scrub") {
+      this.pause();
+      this.#scrollTo(this.#scrollX, y);
+      this.#playback = undefined;
+      this.#seekTo(outcome.frame, "scroll", this);
+      return;
+    }
+    this.#scrollTo(outcome?.kind === "drop" ? this.#scrollX : x, y);
+  }
+
+  /** Scrolls by itself: following, bringing something into view, zooming. */
+  #scrollTo(x: number, y: number): void {
     if (x === this.#scrollX && y === this.#scrollY) return;
     this.#scrollX = x;
     this.#scrollY = y;
@@ -961,13 +1059,18 @@ export class TimelineEditor implements TouchTarget {
     this.#viewChanged();
   }
 
-  /** Zooms while the moment under `x` stays where it is. Before the panel has a size, it waits. */
+  /**
+   * Zooms while the moment under `x` stays where it is. Before the panel has a size, it waits.
+   * Following the playhead, it zooms around that instead, see `ViewFollower.zoomCenter`.
+   */
   zoomAround(x: number, factor: number): void {
     if (this.#pixelsPerSecond === 0) return;
-    const moment = this.timeAt(x);
+    const around = this.#follower.zoomCenter(x, this.playState);
+    const moment = this.timeAt(around);
     this.#pixelsPerSecond = this.#limitZoom(this.#pixelsPerSecond * factor);
-    this.#scrollX = moment * this.#pixelsPerSecond - x;
+    this.#scrollX = moment * this.#pixelsPerSecond - around;
     this.#clampScroll();
+    this.#follower.pin();
     this.#viewChanged();
   }
 
@@ -1035,6 +1138,7 @@ export class TimelineEditor implements TouchTarget {
       this.#scrollX = 0;
     }
     this.#clampScroll();
+    this.#follower.pin();
     const fitted = this.#viewPlace();
     if (!back && !sameView(here, fitted)) this.#beforeFit = { from: here, fitted };
     else if (back && !sameView(back.fitted, here)) this.#beforeFit = { from: here, fitted };
@@ -1066,7 +1170,15 @@ export class TimelineEditor implements TouchTarget {
 
   #zoomRange(): readonly [number, number] {
     const { model } = this;
-    return zoomRange(this.#width, model?.duration ?? 1, model?.rate.fps ?? 30);
+    return zoomRange(this.#fitWidth, model?.duration ?? 1, model?.rate.fps ?? 30);
+  }
+
+  /**
+   * What the whole timeline fits into. Holding the playhead in the middle that is half of the
+   * view: with the playhead at the start or at the end, all of it still shows.
+   */
+  get #fitWidth(): number {
+    return this.#follower.centred ? this.#width / 2 : this.#width;
   }
 
   #limitZoom(value: number): number {
@@ -1083,21 +1195,13 @@ export class TimelineEditor implements TouchTarget {
 
   #fit(): void {
     const duration = Math.max(this.model?.duration ?? 0, 1);
-    this.#pixelsPerSecond = this.#limitZoom((this.#width * FIT_SHARE) / duration);
+    this.#pixelsPerSecond = this.#limitZoom((this.#fitWidth * FIT_SHARE) / duration);
   }
 
   #clampScroll(): void {
-    this.#scrollX = clamp(this.#scrollX, 0, this.contentWidth - this.#width);
+    const { min, max } = this.#follower.range();
+    this.#scrollX = clamp(this.#scrollX, min, max);
     this.#scrollY = clamp(this.#scrollY, 0, this.contentHeight - this.#height);
-  }
-
-  /** Scrolls just far enough that a moment can be seen. */
-  #reveal(seconds: number): void {
-    const x = this.xAt(seconds);
-    const margin = Math.min(REVEAL_MARGIN, this.#width / 4);
-    if (x < margin) this.#scrollX += x - margin;
-    else if (x > this.#width - margin) this.#scrollX += x - (this.#width - margin);
-    this.#clampScroll();
   }
 
   #viewChanged(): void {
@@ -1165,6 +1269,7 @@ export class TimelineEditor implements TouchTarget {
     this.#refresh();
     if (this.#pixelsPerSecond === 0 && this.#width > 0) this.#fit();
     this.#clampScroll();
+    this.#follower.pin();
     this.#viewEmitter.emit();
   }
 
@@ -1201,8 +1306,11 @@ export class TimelineEditor implements TouchTarget {
       gap: model && this.#snapshot.gap ? stillAGap(model, this.#snapshot.gap) : undefined,
       track: soundTrackIn(model, this.#snapshot.track),
     };
+    const frame = this.#frame;
     if (model) this.#frame = Math.min(this.#frame, frameAt(model.duration, model.rate));
     if (model && this.#gesture?.isStale?.(model)) this.#cancelGesture();
+    // A shorter timeline took the playhead along, and the view keeps it in the middle.
+    if (this.#frame !== frame && !this.#gesture) this.#follower.pin();
     this.#emitter.emit();
     this.#viewEmitter.emit();
   }
@@ -1287,6 +1395,63 @@ export class TimelineEditor implements TouchTarget {
     };
     this.#emitter.emit();
     this.#savePreferences();
+  }
+
+  /* Following the playhead, see `ViewFollower`. */
+
+  setFollow(on: boolean): void {
+    this.#setFollow({ ...this.#snapshot.follow, on });
+  }
+
+  toggleFollow(): void {
+    this.setFollow(!this.#snapshot.follow.on);
+  }
+
+  /** Choosing a way to follow turns following on. */
+  setFollowMode(mode: FollowMode): void {
+    this.#setFollow({ on: true, mode });
+  }
+
+  #setFollow(follow: FollowSetting): void {
+    const before = this.#snapshot.follow;
+    if (follow.on === before.on && follow.mode === before.mode) return;
+    this.#snapshot = { ...this.#snapshot, follow };
+    this.#followChanged(before);
+    this.#emitter.emit();
+    this.#savePreferences();
+  }
+
+  #followChanged(before: FollowSetting): void {
+    this.#follower.changed(before);
+    this.#clampScroll();
+    this.#viewChanged();
+  }
+
+  /** The last time the playhead moved, and why: the other views follow it by that. */
+  get lastMove(): PlayheadMove | undefined {
+    return this.#lastMove;
+  }
+
+  /** Whether it plays, how fast, and since when, for the views that follow the playhead. */
+  get playState(): PlayState {
+    const { playing, rate } = this.#snapshot;
+    return { playing, rate, began: this.#began };
+  }
+
+  /** The clock that following goes by, which the other views share. */
+  get followClock(): FollowClock {
+    return this.#clock;
+  }
+
+  /** How the views follow the playhead, in one word. */
+  get followMode(): "off" | FollowMode {
+    const { on, mode } = this.#snapshot.follow;
+    return on ? mode : "off";
+  }
+
+  /** Whether the playhead stays in the middle of the views. */
+  get pinnedPlayhead(): boolean {
+    return this.#follower.centred;
   }
 
   toggleMultiSelecting(): void {
@@ -1415,15 +1580,13 @@ export class TimelineEditor implements TouchTarget {
       this.selectTransition(box.id, part.edge);
     } else if (box) this.selectOnly(box.id);
     const start = join ? join.start : (box?.start ?? 0);
-    this.seek(frameAt(start, model.rate));
+    this.goTo(frameAt(start, model.rate));
     const row = box && model.rowOfClip.get(box.id);
     if (row) {
-      if (row.top < this.#scrollY) this.#scrollY = row.top;
-      else if (row.top + row.height > this.#scrollY + this.#height) {
-        this.#scrollY = row.top + row.height - this.#height;
-      }
-      this.#clampScroll();
-      this.#viewChanged();
+      let y = this.#scrollY;
+      if (row.top < y) y = row.top;
+      else if (row.top + row.height > y + this.#height) y = row.top + row.height - this.#height;
+      this.#scrollTo(this.#scrollX, y);
     }
     return true;
   }
@@ -1496,7 +1659,9 @@ export class TimelineEditor implements TouchTarget {
     if (!this.model || rate === 0 || !Number.isFinite(rate)) return;
     this.#stopAt = undefined;
     this.#playback = undefined;
+    this.#began = this.#clock.now();
     this.#snapshot = { ...this.#snapshot, playing: true, rate };
+    this.#follower.started(this.playState);
     this.#emitter.emit();
   }
 
@@ -1528,31 +1693,53 @@ export class TimelineEditor implements TouchTarget {
     const { frame, since } = this.#playback;
     const next = frame + ((milliseconds - since) / 1000) * model.rate.fps * rate;
     if (rate < 0) {
-      this.#seekTo(Math.max(next, 0));
+      this.#seekTo(Math.max(next, 0), "playing");
       if (next <= 0) this.pause();
       return;
     }
     // The out frame is part of what is marked: it shows for as long as any other.
     const stop = this.#stopAt;
     const last = stop ?? frameAt(model.duration, model.rate);
-    this.#seekTo(Math.min(next, last));
+    this.#seekTo(Math.min(next, last), "playing");
     if (next >= (stop === undefined ? last : stop + 1)) this.pause();
   }
 
-  /** Moves the playhead, and playing carries on from there. */
+  /**
+   * Moves the playhead, and playing carries on from there. The views follow it as people set, see
+   * `ViewFollower`: that is what keys, buttons and edits do.
+   */
   seek(frame: number): void {
     this.#playback = undefined;
-    this.#seekTo(frame);
+    this.#seekTo(frame, "step");
   }
 
-  #seekTo(frame: number): void {
+  /** Moves the playhead to where people asked to look: it gets in view, also when not following. */
+  goTo(frame: number): void {
+    this.#playback = undefined;
+    this.#seekTo(frame, "goto");
+  }
+
+  /**
+   * Moves the playhead where a pointer put it in a view, such as on a ruler, or in the centred way
+   * where scrolling there took it. That view stays where it is, and the others follow.
+   */
+  scrubTo(frame: number, by: object, cause: "pointer" | "scroll" = "pointer"): void {
+    this.#playback = undefined;
+    if (by === this) this.#dragSought = true;
+    this.#seekTo(frame, cause, by);
+  }
+
+  #seekTo(frame: number, cause: PlayheadCause, by?: object): void {
     const model = this.model;
     if (!model) return;
     const last = frameAt(this.visibleDuration, model.rate);
     const next = clamp(Math.round(frame), 0, Math.max(last, 0));
-    if (next === this.#frame) return;
+    // Asked to look at where it is already, it still has to get in sight.
+    if (next === this.#frame && cause !== "goto") return;
+    const serial = (this.#lastMove?.serial ?? 0) + 1;
+    this.#lastMove = { frame: next, from: this.#frame, cause, by, serial };
     this.#frame = next;
-    this.#reveal(frameSeconds(next, model.rate));
+    this.#follower.moved(this.#lastMove, this.playState);
     this.#viewChanged();
   }
 
@@ -2931,7 +3118,8 @@ export class TimelineEditor implements TouchTarget {
 
   /**
    * Scrolls so that what was just added is in the middle, when it is not in sight already: across
-   * by its time, and down to its first track. The playhead stays where it is.
+   * by its time, and down to its first track. The playhead stays where it is, and holding it in
+   * the middle the view only goes down.
    */
   #bringIntoView(from: number, to: number, clips: readonly string[]): void {
     const model = this.model;
@@ -2940,7 +3128,7 @@ export class TimelineEditor implements TouchTarget {
     let y = this.#scrollY;
     const left = this.xAt(from);
     const right = this.xAt(to);
-    if (right < 0 || left > this.#width)
+    if ((right < 0 || left > this.#width) && !this.#follower.centred)
       x = ((from + to) / 2) * this.#pixelsPerSecond - this.#width / 2;
     const rows = clips.flatMap((id) => {
       const row = model.rowOfClip.get(id);
@@ -2953,7 +3141,7 @@ export class TimelineEditor implements TouchTarget {
       const bottom = top + first.height;
       if (bottom <= 0 || top >= visible) y = first.top + first.height / 2 - visible / 2;
     }
-    this.setScroll(x, y);
+    this.#scrollTo(x, y);
   }
 
   /**
@@ -3925,6 +4113,7 @@ export class TimelineEditor implements TouchTarget {
     if (!model) return;
     // Whatever was going on, its mouse button is up by now and something got in the way of saying so.
     this.#cancelGesture();
+    this.#follower.pressed();
     this.#gesture = this.#extras?.press(pointer);
     if (this.#gesture) return;
     const hit = this.hitAt(pointer);
@@ -4095,6 +4284,22 @@ export class TimelineEditor implements TouchTarget {
     const gesture = this.#gesture;
     this.#gesture = undefined;
     gesture?.end(pointer);
+    this.#afterDrag();
+  }
+
+  /**
+   * Holding the playhead in the middle, a drag that scrolled the view by itself leaves the view
+   * where it went, with the playhead in its middle; a drag of the playhead glides back.
+   */
+  #afterDrag(): void {
+    const { model } = this;
+    const scrolled = this.#dragScrolled && !this.#dragSought;
+    this.#dragScrolled = false;
+    this.#dragSought = false;
+    if (scrolled && model && this.#follower.centred) {
+      this.seek(frameAt(Math.max(this.timeAt(this.#width / 2), 0), model.rate));
+    }
+    this.#follower.released(this.playState);
   }
 
   /** Escape, or the pointer got lost. */
@@ -4105,13 +4310,17 @@ export class TimelineEditor implements TouchTarget {
   }
 
   #cancelGesture(): void {
+    const had = this.#gesture !== undefined;
     this.#gesture?.cancel();
     this.#gesture = undefined;
+    if (had) this.#afterDrag();
   }
 
-  /** Keeps a drag going past the edge of the view. */
+  /** Keeps a drag going past the edge of the view. Only the view moves, not the playhead. */
   scrollDuringDrag(pointer: Pointer, dx: number, dy: number): void {
     if (!this.#gesture) return;
+    if (dx !== 0) this.#dragScrolled = true;
+    this.#follower.stopGliding();
     this.#scrollX += dx;
     if (this.#gesture.reachesRows) this.#scrollY += dy;
     this.#clampScroll();
@@ -4158,7 +4367,7 @@ export class TimelineEditor implements TouchTarget {
       select: (clips) => this.#select(this.#withLinked(clips)),
       selectTransition: (clip, edge) => this.selectTransition(clip, edge),
       selectJoin: (join) => this.selectJoin(join),
-      seek: (frame) => this.seek(frame),
+      seek: (frame) => this.scrubTo(frame, this),
       run: (calls) => this.#run(calls),
       rippleTracks: () => this.#rippleTracks(snapshot().model as TimelineModel),
       runRipple: (call, onlyThese) =>

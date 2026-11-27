@@ -61,10 +61,11 @@ const TRANSITION_HANDLE = 8;
 /** How tall a track that a drop would make shows, before it is there: as rows of its kind are. */
 const NEW_TRACK_HEIGHT = { video: 52, audio: 44, caption: 32 } as const;
 /**
- * How tall a new track next to a row shows while clips are dragged onto another clip, as a part of
- * a row of its kind: over the line between two rows, which stay where they are under the pointer.
+ * How tall a new track next to a row shows while clips are dragged onto another clip: a slot over
+ * the line between two rows, which stay where they are under the pointer. It is a slot to go in,
+ * not a track that covers the rows, so it is low and what is under it shows through.
  */
-const BESIDE_SCALE = 0.6;
+const BESIDE_HEIGHT = 16;
 /**
  * What goes on clips, whose colours are what they are in either theme, so these are too: words and
  * marks, and a transition that does not work, on the dark plate of its block.
@@ -406,7 +407,7 @@ export class TimelinePainter extends StagePainter {
       if (band) {
         const name = this.#besideName(band.row, band.beside.side);
         const label = [name, this.#labelOf(box)].filter((part) => part !== "").join(" · ");
-        this.#paintGhost(start, end, band.top, band.height, band.beside.kind, label);
+        this.#paintGhost(start, end, band.top, band.height, band.beside.kind, label, true);
       } else {
         this.#paintClip(box, { row, start, end, selected: true });
       }
@@ -473,21 +474,18 @@ export class TimelinePainter extends StagePainter {
       if (!row) continue;
       const boundary = beside.side === "above" ? row.top : row.top + row.height + row.below;
       const line = this.sharp(RULER_HEIGHT - editor.scrollY + boundary);
-      const full = Math.round(NEW_TRACK_HEIGHT[beside.kind] * model.rowScale * BESIDE_SCALE);
-      // Over the line; on top of the first row it starts right under the ruler instead, over the
-      // top of the row, so that nothing of it is hidden and the label of the clip there is covered.
-      const centered = Math.round(line - full / 2);
+      const height = Math.round(BESIDE_HEIGHT * this.theme.fontScale);
+      // Over the line; on top of the first row it starts right under the ruler instead, so that
+      // nothing of it is hidden.
+      const centered = Math.round(line - height / 2);
       const top = centered < RULER_HEIGHT ? Math.max(line, RULER_HEIGHT) : centered;
-      const height = full;
       bands.set(beside.key, { beside, row, top, height });
       context.save();
-      // A track of its own between the rows: what is under it does not show through.
-      context.fillStyle = this.theme.background;
-      context.fillRect(0, top, editor.width, height);
-      context.globalAlpha = 0.14;
+      // Faint, with a dashed edge: the clips of the rows show through, as they are.
+      context.globalAlpha = 0.1;
       context.fillStyle = this.theme.selected;
       context.fillRect(0, top, editor.width, height);
-      context.globalAlpha = 0.8;
+      context.globalAlpha = 0.7;
       context.strokeStyle = this.theme.selected;
       context.lineWidth = 1;
       context.setLineDash([4, 3]);
@@ -509,13 +507,15 @@ export class TimelinePainter extends StagePainter {
     height: number,
     kind: "video" | "audio" | "caption",
     label: string,
+    /** In the slot of a new track over other rows: lighter, so that it reads as not there yet. */
+    faint = false,
   ): void {
     const editor = this.#editor;
     const { context } = this;
     const left = this.sharp(editor.xAt(start));
     const width = Math.max(this.sharp(editor.xAt(end)) - left, 2);
     context.save();
-    context.globalAlpha = 0.55;
+    context.globalAlpha = faint ? 0.35 : 0.55;
     context.fillStyle =
       kind === "audio"
         ? this.theme.sound
@@ -533,7 +533,9 @@ export class TimelinePainter extends StagePainter {
     context.roundRect(left + 1, top + 1, width - 2, height - 2, CLIP_RADIUS);
     context.stroke();
     context.setLineDash([]);
-    if (width >= LABEL_MIN_WIDTH && label) {
+    // In a slot over other rows the words would run into those of the clips there: the header of
+    // the slot and the status say where it goes.
+    if (width >= LABEL_MIN_WIDTH && label && !faint) {
       context.beginPath();
       context.rect(left, top, width, height);
       context.clip();
@@ -581,7 +583,7 @@ export class TimelinePainter extends StagePainter {
         const name = this.#newTrackName(part.kind, number.length + 1);
         label = label ? `${name} · ${label}` : name;
       }
-      this.#paintGhost(part.start, part.end, top, height, part.kind, label);
+      this.#paintGhost(part.start, part.end, top, height, part.kind, label, band !== undefined);
     }
   }
 
@@ -1240,8 +1242,11 @@ export class TimelinePainter extends StagePainter {
     const editor = this.#editor;
     const { context } = this;
     const end = this.sharp(editor.xAt(editor.visibleDuration));
-    if (end >= editor.width) return;
+    // Before 0 too, where the playhead held in the middle lets the view go.
+    const start = this.sharp(editor.xAt(0));
     context.fillStyle = this.theme.outside;
+    if (start > 0) context.fillRect(0, RULER_HEIGHT, Math.min(start, editor.width), editor.height);
+    if (end >= editor.width) return;
     context.fillRect(Math.max(end, 0), RULER_HEIGHT, editor.width, editor.height);
   }
 
@@ -1269,6 +1274,11 @@ export class TimelinePainter extends StagePainter {
     const theme = this.theme;
     const look = { ...theme, background: theme.ruler };
     paintRuler(context, editor, model.rate, RULER_HEIGHT, look, (value) => this.sharp(value));
+    const start = this.sharp(editor.xAt(0));
+    if (start > 0) {
+      context.fillStyle = theme.outside;
+      context.fillRect(0, 0, Math.min(start, editor.width), RULER_HEIGHT);
+    }
     this.#paintMarkers(model);
     this.#paintMarks();
 

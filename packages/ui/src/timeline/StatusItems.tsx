@@ -37,7 +37,7 @@ function TimeBubble({ anchor, onClose }: { anchor: DOMRect; onClose: () => void 
       return;
     }
     timeline.setEnd(total);
-    timeline.seek(current);
+    timeline.goTo(current);
     onClose();
   };
 

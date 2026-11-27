@@ -68,6 +68,15 @@ export function looksLikeNotch(input: WheelInput): boolean {
 export class WheelInterpreter {
   #device: "mouse" | "trackpad" | undefined;
   #last = Number.NEGATIVE_INFINITY;
+  #movementStart = Number.NEGATIVE_INFINITY;
+
+  /**
+   * When the movement of the last event began: events closer together than a pause are one. A
+   * trackpad goes on by itself after the fingers left, and that still counts as the same movement.
+   */
+  get movementStart(): number {
+    return this.#movementStart;
+  }
 
   /** What the last event was taken for. */
   get device(): "mouse" | "trackpad" | undefined {
@@ -76,7 +85,10 @@ export class WheelInterpreter {
 
   /** `forced` is for people who said what they use, because the steps can be misleading. */
   read(input: WheelInput, forced?: "mouse" | "trackpad", area: WheelArea = "time"): WheelAction {
-    if (input.time - this.#last > PAUSE_MS) this.#device = undefined;
+    if (input.time - this.#last > PAUSE_MS) {
+      this.#device = undefined;
+      this.#movementStart = input.time;
+    }
     this.#last = input.time;
     if (forced) this.#device = forced;
     else if (!looksLikeNotch(input)) this.#device = "trackpad";

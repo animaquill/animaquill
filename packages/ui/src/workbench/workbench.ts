@@ -988,7 +988,7 @@ export class Workbench {
       },
       seek: (timeline, seconds) => {
         const model = this.timeline.model;
-        if (model?.id === timeline) this.timeline.seek(frameAt(seconds, model.rate));
+        if (model?.id === timeline) this.timeline.goTo(frameAt(seconds, model.rate));
       },
     });
     this.stills = new StillExport({
@@ -1881,7 +1881,7 @@ export class Workbench {
     if (subject.kind === "marker") {
       const marker = state.timelines[at]?.markers[subject.id];
       if (!marker) return false;
-      this.timeline.seek(frameAt(toSeconds(parseTime(marker.time)), timeline.rate));
+      this.timeline.goTo(frameAt(toSeconds(parseTime(marker.time)), timeline.rate));
       this.layout.openPanel("timeline");
       return true;
     }
@@ -4405,7 +4405,7 @@ export class Workbench {
         if (!model) return false;
         if (address.timeline !== undefined && address.timeline !== model.id)
           return this.#elsewhere(address.timeline);
-        this.timeline.seek(frameAt(toSeconds(parseTime(address.t)), model.rate));
+        this.timeline.goTo(frameAt(toSeconds(parseTime(address.t)), model.rate));
         this.layout.openPanel("timeline");
         return true;
       }

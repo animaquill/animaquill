@@ -444,7 +444,7 @@ export function SectionBand({
             onPointerDown={(event) => {
               if (event.button !== 0 || !band.current || renaming === section.id) return;
               const { x } = pointerOf(event, band.current);
-              editor.seek(frameAt(Math.max(editor.timeAt(x), 0), rate));
+              editor.goTo(frameAt(Math.max(editor.timeAt(x), 0), rate));
             }}
             onDoubleClick={() => setRenaming(section.id)}
             onContextMenu={(event) => {

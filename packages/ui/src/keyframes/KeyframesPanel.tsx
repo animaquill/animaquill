@@ -17,6 +17,7 @@ import { RULER_HEIGHT } from "../timeline/editor.ts";
 import { pointerOf, useStage } from "../timeline/stage.ts";
 import timelineStyles from "../timeline/TimelinePanel.module.css";
 import { ToolButton } from "../timeline/ToolButton.tsx";
+import { FollowControl } from "../timeline/FollowControl.tsx";
 import { WheelInterpreter, wheelInputOf } from "../timeline/wheel.ts";
 import { ZoomBar } from "../timeline/ZoomBar.tsx";
 import { KeyList } from "./KeyList.tsx";
@@ -93,6 +94,7 @@ function Toolbar({ view }: { view: KeyframesView }) {
         </div>
         <div className={timelineStyles.spacer} />
         <div className={timelineStyles.zoneEnd} role="group" aria-label={t("timeline.zone.zoom")}>
+          <FollowControl timeline={timeline} />
           <ToolButton
             name={t("timeline.action.zoomOut")}
             usage={t("timeline.help.zoomOut")}
@@ -256,7 +258,7 @@ function List({ view }: { view: KeyframesView }) {
       const action = wheel.read(wheelInputOf(event), input.wheelDevice, "headers");
       if (wheel.device) input.notice(wheel.device);
       if (action.kind === "scroll") {
-        view.setScroll(view.scrollX + action.dx, view.scrollY + action.dy);
+        view.setScroll(view.scrollX + action.dx, view.scrollY + action.dy, wheel.movementStart);
       } else {
         const box = element?.getBoundingClientRect();
         view.zoomRowsAround(event.clientY - (box?.top ?? 0) + view.lanesTop, action.factor);
@@ -430,12 +432,12 @@ function Surface({ view }: { view: KeyframesView }) {
         handleLabel={t("timeline.handleX")}
         handleUsage={t("timeline.help.zoomHandleX")}
         subscribe={keyframes.subscribeView}
-        read={() => ({
-          content: view.contentWidth,
-          view: view.width,
-          offset: view.scrollX,
-        })}
-        scrollTo={(offset) => view.setScroll(offset, view.scrollY)}
+        read={() => {
+          // Holding the playhead in the middle, it goes from before 0 to past the end.
+          const { min, max } = view.scrollRange;
+          return { content: max - min + view.width, view: view.width, offset: view.scrollX - min };
+        }}
+        scrollTo={(offset) => view.setScroll(offset + view.scrollRange.min, view.scrollY)}
         beginZoom={(edge) => {
           const start = view.pixelsPerSecond;
           const x = edge === "start" ? view.width : 0;

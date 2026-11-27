@@ -146,3 +146,15 @@ it("does what people said when they said what they use", () => {
     dy: 100,
   });
 });
+
+describe("one movement of the wheel", () => {
+  it("began with its first event, until a pause starts the next", () => {
+    const wheel = new WheelInterpreter();
+    wheel.read(fingers(1000, 3, 0));
+    wheel.read(fingers(1150, 3, 0));
+    wheel.read(fingers(1300, 3, 0));
+    expect(wheel.movementStart).toBe(1000);
+    wheel.read(fingers(1600, 3, 0));
+    expect(wheel.movementStart).toBe(1600);
+  });
+});

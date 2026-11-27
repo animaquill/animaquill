@@ -782,15 +782,16 @@ export class KeyframesPainter extends StagePainter {
 
     const top = view.lanesTop;
     const end = sharp(view.xAt(view.visibleDuration));
+    // Before 0, where the playhead held in the middle lets the view go.
+    const start = sharp(view.xAt(0));
     context.save();
     context.beginPath();
     context.rect(0, top, width, height - top);
     context.clip();
     this.#lanes.paint(context, theme, sharp);
-    if (end < width) {
-      context.fillStyle = theme.outside;
-      context.fillRect(Math.max(end, 0), top, width, height);
-    }
+    context.fillStyle = theme.outside;
+    if (end < width) context.fillRect(Math.max(end, 0), top, width, height);
+    if (start > 0) context.fillRect(0, top, Math.min(start, width), height);
     paintMarquee(context, view, theme);
     context.restore();
     this.#paintSound(theme, end);
@@ -803,6 +804,10 @@ export class KeyframesPainter extends StagePainter {
       { ...theme, background: theme.ruler },
       sharp,
     );
+    if (start > 0) {
+      context.fillStyle = theme.outside;
+      context.fillRect(0, 0, Math.min(start, width), RULER_HEIGHT);
+    }
     paintSnapLine(context, view, theme, sharp);
   }
 
@@ -826,10 +831,10 @@ export class KeyframesPainter extends StagePainter {
       soundLevels(sound.heard, (layer) => view.peaksOf(layer.id), view, this.#levels);
       paintSoundLevels(this.context, this.#levels, pixels, { top, height }, theme.sound);
     }
-    if (end < width) {
-      context.fillStyle = theme.outside;
-      context.fillRect(Math.max(end, 0), top, width, height);
-    }
+    context.fillStyle = theme.outside;
+    if (end < width) context.fillRect(Math.max(end, 0), top, width, height);
+    const start = this.sharp(view.xAt(0));
+    if (start > 0) context.fillRect(0, top, Math.min(start, width), height);
     context.fillStyle = theme.line;
     context.fillRect(0, top + height - 1 / ratio, width, 1 / ratio);
   }

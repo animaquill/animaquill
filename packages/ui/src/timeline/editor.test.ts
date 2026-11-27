@@ -28,7 +28,36 @@ import { sceneTemplate } from "./scene-template.ts";
 const WIDTH = 1000;
 const HEIGHT = 400;
 
-async function setup(memory = memoryWindow(), { sized = true } = {}) {
+/** A clock of following that tests move on by hand, frame by frame. */
+function handClock() {
+  let time = 0;
+  const frames: (() => void)[] = [];
+  return {
+    now: () => time,
+    nextFrame(run: () => void) {
+      frames.push(run);
+      return () => {
+        const index = frames.indexOf(run);
+        if (index >= 0) frames.splice(index, 1);
+      };
+    },
+    pass(milliseconds: number) {
+      const end = time + milliseconds;
+      while (time < end) {
+        time = Math.min(time + 16, end);
+        for (const run of frames.splice(0)) run();
+      }
+    },
+  };
+}
+
+async function setup(
+  memory = memoryWindow(),
+  {
+    sized = true,
+    clock = handClock(),
+  }: { sized?: boolean; clock?: ReturnType<typeof handClock> } = {},
+) {
   const session = new ProjectSession(new MemoryLibrary(), memoryAddress(), {
     createFailed: vi.fn(),
     notFound: vi.fn(),
@@ -55,12 +84,13 @@ async function setup(memory = memoryWindow(), { sized = true } = {}) {
   const joinsRemoved = vi.fn<(count: number) => void>();
   const lockedLeft = vi.fn<(count: number) => void>();
   const rippleBlocked = vi.fn<(failure: CommandFailure, onlyThese: () => void) => void>();
-  const editor = new TimelineEditor(session, memory, settings, {
-    commandFailed,
-    joinsRemoved,
-    lockedLeft,
-    rippleBlocked,
-  });
+  const editor = new TimelineEditor(
+    session,
+    memory,
+    settings,
+    { commandFailed, joinsRemoved, lockedLeft, rippleBlocked },
+    clock,
+  );
   await editor.load();
   if (sized) editor.setViewport(WIDTH, HEIGHT);
 
@@ -140,6 +170,7 @@ async function setup(memory = memoryWindow(), { sized = true } = {}) {
     saved,
     settings,
     saveInOtherWindow: (value: unknown) => fromOtherWindow(value),
+    clock,
     main,
     addClip,
     at,
@@ -333,6 +364,9 @@ describe("the playhead", () => {
     const x = editor.xAt(200 / 30);
     expect(x).toBeGreaterThanOrEqual(0);
     expect(x).toBeLessThanOrEqual(WIDTH);
+    // A page at a time: past the right edge it goes back to the left, and does not creep along it.
+    expect(x).toBeGreaterThanOrEqual(48);
+    expect(x).toBeLessThan(WIDTH - 48);
   });
 
   it("goes to both ends", async () => {
@@ -5846,5 +5880,358 @@ describe("nudging, slipping, sliding and rolling", () => {
     expect(editor.preview?.delta?.frames).toBe(-30);
     editor.release(edge(at(3), -2));
     expect(editor.held).toBeUndefined();
+  });
+});
+
+describe("following the playhead", () => {
+  /** Where the playhead is on screen. */
+  const playheadX = (editor: TimelineEditor) => editor.xAt(editor.frame / 30);
+
+  /** 380 pixels a second, so that the ten seconds of the timeline are almost four views. */
+  async function zoomed(options?: Parameters<typeof setup>[1]) {
+    const tools = await setup(undefined, options);
+    tools.editor.zoomAround(0, 4);
+    return tools;
+  }
+
+  it("is on and turns pages by default, and people can change both", async () => {
+    const { editor, saved } = await setup();
+    expect(editor.getSnapshot().follow).toEqual({ on: true, mode: "page" });
+    editor.setFollowMode("center");
+    expect(saved.get("timeline")).toMatchObject({ follow: true, followMode: "center" });
+    editor.toggleFollow();
+    expect(editor.getSnapshot().follow).toEqual({ on: false, mode: "center" });
+    expect(saved.get("timeline")).toMatchObject({ follow: false, followMode: "center" });
+    // Choosing a way turns it back on.
+    editor.setFollowMode("page");
+    expect(editor.getSnapshot().follow).toEqual({ on: true, mode: "page" });
+  });
+
+  it("reads what was saved before there was following as on, a page at a time", async () => {
+    const { editor, saveInOtherWindow } = await setup();
+    const before = { version: 1, snapping: false, overwriting: false, multiSelecting: false };
+    saveInOtherWindow({ ...before, headerWidth: 180 });
+    expect(editor.getSnapshot().follow).toEqual({ on: true, mode: "page" });
+    expect(editor.getSnapshot().snapping).toBe(false);
+    saveInOtherWindow({ ...before, headerWidth: 180, follow: false, followMode: "center" });
+    expect(editor.getSnapshot().follow).toEqual({ on: false, mode: "center" });
+    saveInOtherWindow({ ...before, headerWidth: 180, follow: "yes", followMode: "sideways" });
+    expect(editor.getSnapshot().follow).toEqual({ on: true, mode: "page" });
+  });
+
+  it("has commands that say which way it follows", async () => {
+    const { editor } = await setup();
+    const actions = new ActionRegistry();
+    registerTimelineActions(actions, editor, {
+      hasSelection: false,
+      canChangeSelection: false,
+      hasClipboard: false,
+      nudge: () => {},
+      deleteSelected: () => {},
+      copySelected: () => {},
+      cutSelected: () => {},
+      paste: () => {},
+    });
+    const selected = (id: string) => actions.get(`timeline.${id}`)?.selected?.();
+    expect([selected("toggleFollow"), selected("followPage"), selected("followCenter")]).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    actions.get("timeline.followCenter")?.run();
+    expect([selected("followPage"), selected("followCenter")]).toEqual([false, true]);
+    actions.get("timeline.toggleFollow")?.run();
+    expect([selected("toggleFollow"), selected("followPage"), selected("followCenter")]).toEqual([
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  describe("a page at a time", () => {
+    it("turns the page at the right edge while playing, and the playhead goes to the left", async () => {
+      const { editor } = await zoomed();
+      editor.play(1);
+      editor.tick(0);
+      editor.tick(2400);
+      expect(editor.scrollX).toBe(0);
+      editor.tick(2600);
+      expect(playheadX(editor)).toBeCloseTo(48, 6);
+    });
+
+    it("turns back at the left edge playing backwards", async () => {
+      const { editor } = await zoomed();
+      editor.seek(150);
+      expect(playheadX(editor)).toBeCloseTo(48, 6);
+      editor.play(-1);
+      editor.tick(0);
+      editor.tick(100);
+      expect(playheadX(editor)).toBeCloseTo(WIDTH - 48, 6);
+    });
+
+    it("lands right when playing fast crossed more than a page", async () => {
+      const { editor } = await zoomed();
+      editor.play(4);
+      editor.tick(0);
+      editor.tick(2000);
+      expect(editor.frame).toBe(240);
+      expect(playheadX(editor)).toBeCloseTo(48, 6);
+    });
+
+    it("turns to a jump out of sight, and stays for one in sight", async () => {
+      const { editor, addClip } = await zoomed();
+      addClip("a", 0, 7);
+      editor.jumpToEdit(1);
+      expect(editor.frame).toBe(210);
+      expect(playheadX(editor)).toBeCloseTo(48, 6);
+      const scrolled = editor.scrollX;
+      editor.stepFrames(5);
+      expect(editor.scrollX).toBe(scrolled);
+      editor.seekToEnd();
+      editor.jumpToEdit(-1);
+      expect(editor.frame).toBe(210);
+      expect(playheadX(editor)).toBeCloseTo(WIDTH - 48, 6);
+    });
+
+    it("stops following this round when people scroll the playhead away, until it is back", async () => {
+      const { editor, clock } = await zoomed();
+      editor.play(1);
+      editor.tick(0);
+      editor.tick(100);
+      clock.pass(16);
+      editor.setScroll(2000, 0);
+      editor.tick(2600);
+      expect(editor.scrollX).toBe(2000);
+      // Playing from here again follows again.
+      editor.pause();
+      clock.pass(16);
+      editor.play(1);
+      editor.tick(3000);
+      editor.tick(3100);
+      expect(playheadX(editor)).toBeGreaterThanOrEqual(0);
+      expect(playheadX(editor)).toBeLessThanOrEqual(WIDTH);
+    });
+
+    it("zooms around the playhead while playing, and around the mouse when not", async () => {
+      const { editor } = await zoomed();
+      editor.seek(30);
+      const x = playheadX(editor);
+      editor.zoomAround(900, 2);
+      expect(playheadX(editor)).not.toBeCloseTo(x, 1);
+      editor.zoomAround(900, 0.5);
+      editor.seek(30);
+      editor.play(1);
+      const playing = playheadX(editor);
+      editor.zoomAround(900, 2);
+      expect(playheadX(editor)).toBeCloseTo(playing, 6);
+    });
+  });
+
+  describe("turned off", () => {
+    it("does not scroll for playing or for keys", async () => {
+      const { editor, addClip } = await zoomed();
+      addClip("a", 0, 7);
+      editor.setFollow(false);
+      editor.play(1);
+      editor.tick(0);
+      editor.tick(5000);
+      expect(editor.scrollX).toBe(0);
+      editor.pause();
+      editor.jumpToEdit(1);
+      editor.seekToEnd();
+      expect(editor.scrollX).toBe(0);
+    });
+
+    it("still brings what people asked to see into view", async () => {
+      const { editor, addClip } = await zoomed();
+      addClip("a", 8, 1);
+      editor.setFollow(false);
+      expect(editor.revealClip("a")).toBe(true);
+      expect(playheadX(editor)).toBeCloseTo(48, 6);
+      editor.setScroll(0, 0);
+      editor.goTo(240);
+      expect(playheadX(editor)).toBeCloseTo(48, 6);
+    });
+  });
+
+  describe("held in the middle", () => {
+    it("keeps the playhead in the middle while playing, also backwards", async () => {
+      const { editor } = await zoomed();
+      editor.setFollowMode("center");
+      editor.play(1);
+      for (const time of [0, 400, 1300, 2500]) {
+        editor.tick(time);
+        expect(playheadX(editor)).toBeCloseTo(WIDTH / 2, 6);
+      }
+      editor.play(-2);
+      editor.tick(3000);
+      editor.tick(5000);
+      expect(editor.frame).toBe(0);
+      // 0 is in the middle too, with the room before it on the left.
+      expect(playheadX(editor)).toBeCloseTo(WIDTH / 2, 6);
+      expect(editor.scrollX).toBeLessThan(0);
+    });
+
+    it("glides to a far jump, and goes right to a near one", async () => {
+      const { editor, clock } = await zoomed();
+      editor.setFollowMode("center");
+      clock.pass(300);
+      editor.seek(200);
+      expect(playheadX(editor)).not.toBeCloseTo(WIDTH / 2, 1);
+      clock.pass(100);
+      expect(Math.abs(playheadX(editor) - WIDTH / 2)).toBeGreaterThan(1);
+      clock.pass(150);
+      expect(playheadX(editor)).toBeCloseTo(WIDTH / 2, 6);
+      editor.stepFrames(1);
+      expect(playheadX(editor)).toBeCloseTo(WIDTH / 2, 6);
+    });
+
+    it("moves the playhead when people scroll across, and pauses playing first", async () => {
+      const { editor, clock } = await zoomed();
+      editor.setFollowMode("center");
+      clock.pass(300);
+      editor.seek(30);
+      clock.pass(300);
+      const before = editor.scrollX;
+      // 380 pixels a second: 38 pixels are three frames.
+      editor.setScroll(before + 38, 0);
+      expect(editor.frame).toBe(33);
+      expect(playheadX(editor)).toBeCloseTo(WIDTH / 2, 6);
+      clock.pass(16);
+      editor.play(1);
+      editor.tick(0);
+      clock.pass(16);
+      editor.setScroll(editor.scrollX - 38, 0);
+      expect(editor.getSnapshot().playing).toBe(false);
+      expect(editor.frame).toBe(30);
+    });
+
+    it("lets what was left of a movement from before playing pass by", async () => {
+      const { editor, clock } = await zoomed();
+      editor.setFollowMode("center");
+      clock.pass(300);
+      const since = clock.now();
+      clock.pass(100);
+      editor.play(1);
+      editor.tick(0);
+      editor.setScroll(editor.scrollX + 100, 0, since);
+      expect(editor.getSnapshot().playing).toBe(true);
+    });
+
+    it("never moves the playhead when the editor scrolls by itself", async () => {
+      const { editor, clock, addClip, at } = await zoomed();
+      addClip("a", 1, 2);
+      editor.setFollowMode("center");
+      clock.pass(300);
+      editor.seek(45);
+      clock.pass(300);
+      const steps: [string, () => void][] = [
+        ["zoomIn", () => editor.zoomIn()],
+        ["zoomAround", () => editor.zoomAround(100, 0.7)],
+        ["zoomToFit", () => editor.zoomToFit()],
+        ["zoomToFit back", () => editor.zoomToFit()],
+        ["narrower", () => editor.setViewport(WIDTH - 200, HEIGHT)],
+        ["wider", () => editor.setViewport(WIDTH, HEIGHT)],
+        ["rowsTaller", () => editor.rowsTaller()],
+        ["down", () => editor.setScroll(editor.scrollX, 30)],
+      ];
+      for (const [name, step] of steps) {
+        step();
+        expect(editor.frame, name).toBe(45);
+      }
+      // A new clip goes at the playhead, which goes to its end as a step, and nowhere else.
+      editor.addColorClip();
+      expect(editor.frame).toBe(45 + 150);
+      // Dragging a clip into the edge scrolls only the view, and nothing else while it lasts.
+      const press = at(1.5);
+      editor.press(press);
+      editor.drag({ ...press, x: WIDTH - 5 });
+      for (let step = 0; step < 10; step += 1) editor.scrollDuringDrag(press, 50, 0);
+      expect(editor.frame).toBe(195);
+      clock.pass(300);
+      expect(editor.frame).toBe(195);
+    });
+
+    it("leaves the view where a drag took it, with the playhead in its middle", async () => {
+      const { editor, clock, addClip, at } = await zoomed();
+      addClip("a", 1, 2);
+      editor.setFollowMode("center");
+      clock.pass(300);
+      const press = at(2);
+      editor.press(press);
+      for (let step = 0; step < 10; step += 1) editor.scrollDuringDrag(press, 50, 0);
+      const scrolled = editor.scrollX;
+      editor.release(press);
+      expect(Math.abs(playheadX(editor) - WIDTH / 2)).toBeLessThan(380 / 30);
+      clock.pass(300);
+      expect(playheadX(editor)).toBeCloseTo(WIDTH / 2, 6);
+      expect(Math.abs(editor.scrollX - scrolled)).toBeLessThan(380 / 30);
+    });
+
+    it("glides back after a click on the ruler", async () => {
+      const { editor, clock, onRuler } = await zoomed();
+      editor.setFollowMode("center");
+      clock.pass(300);
+      editor.seek(60);
+      clock.pass(300);
+      const ruler = onRuler(editor.timeAt(800));
+      editor.press(ruler);
+      editor.release(ruler);
+      expect(playheadX(editor)).toBeCloseTo(800, -1);
+      clock.pass(300);
+      expect(playheadX(editor)).toBeCloseTo(WIDTH / 2, 6);
+    });
+
+    it("zooms around the playhead, wherever the mouse is", async () => {
+      const { editor, clock } = await zoomed();
+      editor.setFollowMode("center");
+      editor.seek(100);
+      clock.pass(300);
+      editor.zoomAround(900, 2);
+      expect(playheadX(editor)).toBeCloseTo(WIDTH / 2, 6);
+      editor.zoomAround(50, 0.25);
+      expect(playheadX(editor)).toBeCloseTo(WIDTH / 2, 6);
+    });
+
+    it("shows all of the timeline with the playhead at either end", async () => {
+      const { editor, clock } = await zoomed();
+      editor.setFollowMode("center");
+      clock.pass(300);
+      editor.seekToStart();
+      editor.zoomToFit();
+      expect(playheadX(editor)).toBeCloseTo(WIDTH / 2, 6);
+      expect(editor.xAt(10)).toBeLessThanOrEqual(WIDTH);
+      editor.seekToEnd();
+      clock.pass(300);
+      expect(playheadX(editor)).toBeCloseTo(WIDTH / 2, 6);
+      expect(editor.xAt(0)).toBeGreaterThanOrEqual(0);
+    });
+
+    it("goes before 0 and past the end, and no further", async () => {
+      const { editor, clock } = await zoomed();
+      editor.setFollowMode("center");
+      clock.pass(300);
+      expect(editor.scrollRange).toEqual({ min: -WIDTH / 2, max: 3800 - WIDTH / 2 });
+      editor.setScroll(-1e9, 0);
+      expect(editor.frame).toBe(0);
+      expect(editor.scrollX).toBe(-WIDTH / 2);
+      editor.setScroll(1e9, 0);
+      expect(editor.frame).toBe(300);
+      expect(editor.scrollX).toBeCloseTo(3800 - WIDTH / 2, 6);
+    });
+
+    it("comes back in the middle of what was remembered", async () => {
+      const memory = memoryWindow();
+      const { editor, session, store, clock } = await setup(memory);
+      const id = store.getState().manifest.id;
+      editor.setFollowMode("center");
+      clock.pass(300);
+      editor.flush();
+      expect(editor.scrollX).toBeLessThan(0);
+      await session.close();
+      await session.open(id);
+      expect(editor.scrollX).toBeLessThan(0);
+      expect(playheadX(editor)).toBeCloseTo(WIDTH / 2, 6);
+    });
   });
 });

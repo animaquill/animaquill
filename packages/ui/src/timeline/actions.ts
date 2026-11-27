@@ -258,7 +258,7 @@ export function registerTimelineActions(
   const everywhere = (
     id: TimelineAction,
     run: () => void,
-    extra: Pick<Action, "keys" | "enabled" | "release" | "repeats"> = {},
+    extra: Pick<Action, "keys" | "enabled" | "release" | "repeats" | "selected"> = {},
     group = "play",
   ) =>
     actions.register({
@@ -291,6 +291,23 @@ export function registerTimelineActions(
     release: () => shuttle.forwardUp(),
   });
   everywhere("playInToOut", () => editor.playInToOut(), { keys: ["mod+shift+space"] });
+
+  // How the views go along with the playhead: wherever people are, as playing is. No keys, as in
+  // Premiere; people can give them some.
+  const follow = () => editor.getSnapshot().follow;
+  everywhere("toggleFollow", () => editor.toggleFollow(), { selected: () => follow().on }, "zoom");
+  everywhere(
+    "followPage",
+    () => editor.setFollowMode("page"),
+    { selected: () => follow().on && follow().mode === "page" },
+    "zoom",
+  );
+  everywhere(
+    "followCenter",
+    () => editor.setFollowMode("center"),
+    { selected: () => follow().on && follow().mode === "center" },
+    "zoom",
+  );
 
   // What is chosen in the assets tab goes in, or over what is there, at the in or the playhead,
   // with the keys of Premiere: wherever people are, as with in and out.

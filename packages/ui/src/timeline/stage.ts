@@ -39,6 +39,8 @@ export interface StageEditor extends TouchTarget {
   setTouchInput(on: boolean): void;
   /** How much taller rows are for the size of words people chose, see `sizeScale`. */
   setSizeScale?(scale: number): void;
+  /** How the view follows the playhead, which the page tells the tests and screen readers. */
+  readonly followMode?: "off" | "page" | "center";
 }
 
 export function pointerOf(event: MouseEvent | PointerEvent, stage: HTMLElement): Pointer {
@@ -143,6 +145,7 @@ export function useStage(
         // The moment something points at, for the browser tests: it is drawn on the canvas.
         if (editor.pointedAt === undefined) delete stageElement.dataset["pointedAt"];
         else stageElement.dataset["pointedAt"] = String(editor.pointedAt);
+        if (editor.followMode !== undefined) stageElement.dataset["follow"] = editor.followMode;
       }
       painter.invalidate();
     };
@@ -171,7 +174,10 @@ export function useStage(
       if (action.kind === "zoom") editor.zoomAround(event.clientX - box.left, action.factor);
       else if (action.kind === "zoomRows") {
         editor.zoomRowsAround(event.clientY - box.top, action.factor);
-      } else editor.setScroll(editor.scrollX + action.dx, editor.scrollY + action.dy);
+      } else {
+        const { scrollX, scrollY } = editor;
+        editor.setScroll(scrollX + action.dx, scrollY + action.dy, wheel.movementStart);
+      }
     };
 
     const stopView = editor.subscribeView(show);

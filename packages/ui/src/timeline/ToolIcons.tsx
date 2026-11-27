@@ -1,7 +1,11 @@
-import { TOOL_SHAPES, type ShapedTool } from "./tool-shapes.ts";
+import { FOLLOW_SHAPES, TOOL_SHAPES, type ShapedTool } from "./tool-shapes.ts";
 
 /** An icon of an editing tool, drawn like the icons of the rest of the toolbar. */
 function shaped(tool: ShapedTool) {
+  return iconOf(TOOL_SHAPES[tool], `${tool}ToolIcon`);
+}
+
+function iconOf(path: string, name: string) {
   const Icon = ({ size = 24 }: { size?: number }) => (
     <svg
       width={size}
@@ -14,10 +18,10 @@ function shaped(tool: ShapedTool) {
       strokeLinejoin="round"
       aria-hidden="true"
     >
-      <path d={TOOL_SHAPES[tool]} />
+      <path d={path} />
     </svg>
   );
-  Icon.displayName = `${tool}ToolIcon`;
+  Icon.displayName = name;
   return Icon;
 }
 
@@ -25,3 +29,5 @@ export const RippleToolIcon = shaped("ripple");
 export const RollToolIcon = shaped("roll");
 export const SlipToolIcon = shaped("slip");
 export const SlideToolIcon = shaped("slide");
+export const FollowPageIcon = iconOf(FOLLOW_SHAPES.page, "FollowPageIcon");
+export const FollowCenterIcon = iconOf(FOLLOW_SHAPES.center, "FollowCenterIcon");

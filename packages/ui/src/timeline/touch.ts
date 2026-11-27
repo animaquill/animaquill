@@ -25,7 +25,13 @@ export interface TouchTarget {
   drag(pointer: Pointer): void;
   release(pointer: Pointer): void;
   cancelDrag(): boolean;
-  setScroll(x: number, y: number): void;
+  /**
+   * Scrolls as people do, see `TimelineEditor.setScroll`: `since` is when the movement began, by
+   * the clock of `TouchEnvironment.now`. Holding the playhead in the middle, going across moves it.
+   */
+  setScroll(x: number, y: number, since?: number): void;
+  /** The playhead stays in the middle: two fingers zoom around it, and do not move the view across. */
+  readonly pinnedPlayhead?: boolean;
   zoomAround(x: number, factor: number): void;
   zoomRowsAround(y: number, factor: number): void;
   touchAt(pointer: Pointer): TouchStart;
@@ -81,6 +87,8 @@ export class TouchController {
   #axis: "x" | "y" | undefined;
   #velocity = { x: 0, y: 0 };
   #lastMove = 0;
+  /** When the first finger landed, which is when its movement began, see `TouchTarget.setScroll`. */
+  #downAt = 0;
   /** It started on a selected clip, so moving means dragging that. */
   #onSelected = false;
   #pinch: { spread: number; center: Finger; axis: "x" | "y" } | undefined;
@@ -93,6 +101,7 @@ export class TouchController {
   down(id: number, x: number, y: number): void {
     this.#stopGlide();
     this.#fingers.set(id, { x, y });
+    if (this.#fingers.size === 1) this.#downAt = this.#environment.now();
     if (this.#fingers.size === 1) this.#firstFinger({ x, y });
     else if (this.#fingers.size === 2) this.#secondFinger();
   }
@@ -192,9 +201,11 @@ export class TouchController {
     const factor = spread / Math.max(pinch.spread, 1);
     if (pinch.axis === "x") editor.zoomAround(center.x, factor);
     else editor.zoomRowsAround(center.y, factor);
+    const across = editor.pinnedPlayhead === true ? 0 : center.x - pinch.center.x;
     editor.setScroll(
-      editor.scrollX - (center.x - pinch.center.x),
+      editor.scrollX - across,
       editor.scrollY - (center.y - pinch.center.y),
+      this.#downAt,
     );
     this.#pinch = { ...pinch, spread, center };
   }
@@ -203,7 +214,7 @@ export class TouchController {
     const editor = this.#editor;
     const x = this.#axis === "y" ? 0 : dx;
     const y = this.#axis === "x" ? 0 : dy;
-    editor.setScroll(editor.scrollX - x, editor.scrollY - y);
+    editor.setScroll(editor.scrollX - x, editor.scrollY - y, this.#downAt);
     const now = this.#environment.now();
     const elapsed = Math.max(now - this.#lastMove, 1);
     const limit = (speed: number) => Math.max(Math.min(speed, MAX_GLIDE), -MAX_GLIDE);
@@ -232,7 +243,7 @@ export class TouchController {
     const step = () => {
       if (Math.hypot(x, y) < MIN_GLIDE) return;
       const editor = this.#editor;
-      editor.setScroll(editor.scrollX - x * FRAME_MS, editor.scrollY - y * FRAME_MS);
+      editor.setScroll(editor.scrollX - x * FRAME_MS, editor.scrollY - y * FRAME_MS, this.#downAt);
       x *= GLIDE_DECAY;
       y *= GLIDE_DECAY;
       this.#stopGlide = this.#environment.nextFrame(step);

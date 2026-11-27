@@ -368,3 +368,69 @@ it("gives up when the browser takes the touch away", async () => {
   expect(editor.isDragging).toBe(false);
   expect(clip()?.start).toBe("2");
 });
+
+describe("fingers and the playhead held in the middle", () => {
+  /** A target that only keeps where it scrolled to, and since when. */
+  function target(pinnedPlayhead: boolean) {
+    const scrolls: { x: number; y: number; since: number | undefined }[] = [];
+    let now = 1000;
+    const view = {
+      holdsDrag: false,
+      scrollX: 0,
+      scrollY: 0,
+      pinnedPlayhead,
+      press: () => {},
+      drag: () => {},
+      release: () => {},
+      cancelDrag: () => false,
+      setScroll(x: number, y: number, since?: number) {
+        scrolls.push({ x, y, since });
+        view.scrollX = x;
+        view.scrollY = y;
+      },
+      zoomAround: () => {},
+      zoomRowsAround: () => {},
+      touchAt: () => "plain" as const,
+      hold: () => {},
+    };
+    const frames: (() => void)[] = [];
+    const touch = new TouchController(view, {
+      later: () => () => {},
+      nextFrame(run) {
+        frames.push(run);
+        return () => {};
+      },
+      now: () => now,
+      openMenu: () => {},
+      held: () => {},
+    });
+    return { view, touch, scrolls, frames, later: (by: number) => (now += by) };
+  }
+
+  it("say when the movement began, also while it glides on", () => {
+    const { touch, scrolls, frames, later } = target(false);
+    touch.down(1, 500, 200);
+    later(50);
+    touch.move(1, 400, 200);
+    later(16);
+    touch.move(1, 300, 200);
+    touch.up(1);
+    later(16);
+    for (const run of frames.splice(0)) run();
+    expect(scrolls.length).toBeGreaterThan(2);
+    expect(scrolls.every(({ since }) => since === 1000)).toBe(true);
+  });
+
+  it("do not move the view across while two zoom around the playhead", () => {
+    const { touch, scrolls } = target(true);
+    touch.down(1, 400, 200);
+    touch.down(2, 500, 200);
+    touch.move(2, 700, 200);
+    expect(scrolls.every(({ x }) => x === 0)).toBe(true);
+    const free = target(false);
+    free.touch.down(1, 400, 200);
+    free.touch.down(2, 500, 200);
+    free.touch.move(2, 700, 200);
+    expect(free.scrolls.some(({ x }) => x !== 0)).toBe(true);
+  });
+});
