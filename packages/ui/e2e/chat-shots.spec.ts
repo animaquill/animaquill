@@ -67,13 +67,18 @@ async function widen(page: Page, width: number) {
     .toBeLessThanOrEqual(2);
 }
 
-/** One scene at each width: nothing sticks out, and a picture of the chat. */
-async function scene(page: Page, theme: string, name: string) {
+/**
+ * One scene at each width: nothing sticks out, and a picture of the chat. What only shows until a
+ * click elsewhere, such as a menu, is opened by `open` once the chat has its width.
+ */
+async function scene(page: Page, theme: string, name: string, open?: () => Promise<void>) {
   const panel = chat(page).getByTestId("chat");
   for (const width of WIDTHS) {
     await widen(page, width);
+    await open?.();
     expect(await overflowing(panel), `${name} at ${width}`).toEqual([]);
     await panel.screenshot({ path: `${DIR}/${theme}-${width}-${name}.png` });
+    if (open) await page.keyboard.press("Escape");
   }
 }
 
@@ -102,7 +107,13 @@ for (const theme of ["light", "dark"] as const) {
       await addModel(page, "claude-eyes");
       await closeSettings(page);
       await showTab(page, "chat");
-      await expect(chat(page).getByTestId("chat-send")).toHaveAttribute("data-state", "empty");
+      const send = chat(page).getByTestId("chat-send");
+      await expect(send).toHaveAttribute("data-state", "empty");
+      // Still a button: those who listen hear why there is nothing to send.
+      await expect(send).toHaveAttribute("aria-label", "发送，先写要说的话");
+      await expect(send).toBeEnabled();
+      // Nothing selected: nothing to say of what goes with the message.
+      await expect(chat(page).getByTestId("chat-carry")).toHaveCount(0);
       await scene(page, theme, "1-empty");
 
       // Written, with "先出方案" on: the pill, and send lit.
@@ -111,10 +122,11 @@ for (const theme of ["light", "dark"] as const) {
       await chat(page).getByTestId("chat-plus-plan").click();
       await expect(chat(page).getByTestId("chat-send")).toHaveAttribute("data-state", "ready");
       await scene(page, theme, "2-written-plan");
-      await chat(page).getByTestId("chat-plus").click();
-      await expect(chat(page).getByTestId("chat-plus-menu")).toBeVisible();
-      await scene(page, theme, "3-plus-menu");
-      await page.keyboard.press("Escape");
+      await scene(page, theme, "3-plus-menu", async () => {
+        await chat(page).getByTestId("chat-plus").click();
+        await expect(chat(page).getByTestId("chat-plus-menu")).toBeVisible();
+      });
+      await expect(chat(page).getByTestId("chat-plus-menu")).toBeHidden();
       await chat(page).getByTestId("chat-mode-plan-off").click();
 
       // A task runs: stop; two messages queued; more written, to queue; a picture in the card.
@@ -148,8 +160,6 @@ for (const theme of ["light", "dark"] as const) {
       await scene(page, theme, "4-running-queued");
       await chat(page).getByTestId("chat-queued-more").click();
       await scene(page, theme, "5-queued-all");
-      await chat(page).getByTestId("chat-carry-off").click();
-      await scene(page, theme, "6-carry-off");
       for (let left = 4; left > 0; left -= 1)
         await chat(page).getByTestId("chat-queued-drop").first().click();
       await chat(page).getByTestId("chat-picture-remove").click();
@@ -180,7 +190,7 @@ for (const theme of ["light", "dark"] as const) {
       const hold = chat(page).getByTestId("chat-hold");
       await expect(hold).toHaveAttribute("data-why", "modelOff");
       await expect(hold.getByRole("button", { name: "换一个模型" })).toBeVisible();
-      await scene(page, theme, "7-held");
+      await scene(page, theme, "6-held");
     });
   });
 }

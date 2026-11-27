@@ -177,6 +177,8 @@ test("the time and the objects selected go in as blocks, and AI gets them as lin
   await expect(objects).toHaveAttribute("title", "先在时间轴、预览或资源里选中");
   await expect(chat(page).getByTestId("chat-plus-time")).toHaveText(/^插入播放头时间 0:00\/00/);
   await page.keyboard.press("Escape");
+  // Nothing selected: no line of what goes with the message.
+  await expect(chat(page).getByTestId("chat-carry")).toHaveCount(0);
   // All of the first track and the caption.
   await showTab(page, "timeline");
   await stage(page).focus();

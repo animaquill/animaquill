@@ -1,4 +1,4 @@
-import { Boxes, Camera, Check, Clock, ImagePlus, ListChecks, Plus } from "lucide-react";
+import { Boxes, Camera, Clock, ImagePlus, Plus, Square, SquareCheck } from "lucide-react";
 import { forwardRef, useImperativeHandle } from "react";
 import { useTranslation } from "react-i18next";
 import { Tip } from "../../app/Tip.tsx";
@@ -111,10 +111,11 @@ export const PlusMenu = forwardRef<
                 props.onPlanFirst();
               }}
             >
+              {/* A box to tick, as a switch is in a menu: empty while off, ticked while on. */}
               {props.planFirst ? (
-                <Check size={13} aria-hidden className={styles.menuCheck} />
+                <SquareCheck size={13} aria-hidden className={styles.menuCheck} />
               ) : (
-                <ListChecks size={13} aria-hidden />
+                <Square size={13} aria-hidden />
               )}
               <span className={styles.menuName}>{t("chat.compose.planFirst")}</span>
             </button>

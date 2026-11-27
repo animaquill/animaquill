@@ -35,6 +35,8 @@ export function SendButton(props: {
       : state === "queue"
         ? t("chat.compose.queue")
         : t("chat.send");
+  // Nothing to send: still a button (it puts the caret in the box), and those who listen hear why.
+  const said = state === "empty" ? t("chat.compose.sendEmpty") : label;
   return (
     <Tip name={label} usage="" shortcut={state === "stop" ? "Esc" : props.keys}>
       <button
@@ -42,7 +44,7 @@ export function SendButton(props: {
         className={styles.send}
         data-state={state}
         data-testid="chat-send"
-        aria-label={label}
+        aria-label={said}
         // The box keeps its caret and what is selected in it.
         onPointerDown={(event) => event.preventDefault()}
         onClick={() => {

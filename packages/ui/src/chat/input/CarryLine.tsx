@@ -11,7 +11,7 @@ import styles from "./input.module.css";
  * now keeps of the editor, which AI can read (`aq_selection_read`, decision of 2026-11-15) — the
  * clips selected and the playhead. Pointed at, the clips light up on the timeline. × leaves them out
  * of the next message only (and says so, to put them back). The playhead does not run along while playing: it says where it
- * stopped. Nothing shows where there is no timeline.
+ * stopped. Nothing shows where nothing is selected.
  */
 export function CarryLine(props: { readonly on: boolean; readonly onToggle: () => void }) {
   const workbench = useWorkbench();
@@ -25,7 +25,8 @@ export function CarryLine(props: { readonly on: boolean; readonly onToggle: () =
     return rest.current;
   });
   const { model, selection } = view;
-  if (!model) return null;
+  // Nothing selected: nothing to say. The playhead still goes with each message, as it always did.
+  if (!model || selection.size === 0) return null;
   if (!props.on) {
     return (
       <div className={styles.carry} role="note" data-testid="chat-carry" data-off="">
@@ -54,24 +55,20 @@ export function CarryLine(props: { readonly on: boolean; readonly onToggle: () =
       <Crosshair size={11} aria-hidden className={styles.carryIcon} />
       <span className={styles.carryText}>
         <span className={styles.wideOnly}>{t("chat.compose.carry")}</span>
-        {clips.length > 0 && (
-          <>
-            <span
-              className={styles.carryPart}
-              onPointerEnter={() => pointClips(true)}
-              onPointerLeave={() => pointClips(false)}
-              data-testid="chat-carry-clips"
-            >
-              <span className={styles.wideOnly}>
-                {t("chat.compose.carryClips", { count: clips.length })}
-              </span>
-              <span className={styles.narrowOnly}>
-                {t("chat.compose.carryClipsShort", { count: clips.length })}
-              </span>
-            </span>
-            {" · "}
-          </>
-        )}
+        <span
+          className={styles.carryPart}
+          onPointerEnter={() => pointClips(true)}
+          onPointerLeave={() => pointClips(false)}
+          data-testid="chat-carry-clips"
+        >
+          <span className={styles.wideOnly}>
+            {t("chat.compose.carryClips", { count: clips.length })}
+          </span>
+          <span className={styles.narrowOnly}>
+            {t("chat.compose.carryClipsShort", { count: clips.length })}
+          </span>
+        </span>
+        {" · "}
         <span className={styles.carryPart} data-testid="chat-carry-playhead">
           <span className={styles.wideOnly}>{t("chat.compose.carryPlayhead", { time })}</span>
           <span className={styles.narrowOnly}>{time}</span>

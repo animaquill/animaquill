@@ -4027,7 +4027,8 @@
       "carryPlayhead": "播放头 {{time}}",
       "carryOff": "这一条不带选中和播放头",
       "carryOffNow": "这一条不带选中和播放头",
-      "carryOn": "带上"
+      "carryOn": "带上",
+      "sendEmpty": "发送，先写要说的话"
     },
     "user": {
       "copy": "复制",
