@@ -275,3 +275,80 @@ test("the work of a turn: running, folded, open with a step that failed, stopped
   await sceneBothThemes(page, "4-stopped", "3a");
   for (const route of waiting) await route.abort().catch(() => {});
 });
+
+test("the work of a turn waiting: a busy service, a quiet model; an answer cut short", async ({
+  page,
+  problems,
+}) => {
+  test.setTimeout(240_000);
+  await page.clock.install();
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const waiting: Route[] = [];
+  let busy = 0;
+  await page.route(ANTHROPIC, (route) => {
+    const sent = route.request().postDataJSON() as { messages?: { content: unknown }[] };
+    const said = JSON.stringify(sent?.messages?.at(-1)?.content ?? "");
+    const fulfil = (text: string) =>
+      route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream", "access-control-allow-origin": "*" },
+        body: text,
+      });
+    if (isConnectionTest(route)) return fulfil(anthropicSays("OK"));
+    if (said.includes("忙")) {
+      busy += 1;
+      if (busy === 1)
+        return route.fulfill({
+          status: 429,
+          headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+          body: JSON.stringify({
+            type: "error",
+            error: { type: "rate_limit_error", message: "Too many requests" },
+          }),
+        });
+      return void waiting.push(route);
+    }
+    if (said.includes("长"))
+      return fulfil(
+        anthropicSays("这是一段很长的回答，写到一半就到了单次回答的上限……").replace(
+          '"stop_reason":"end_turn"',
+          '"stop_reason":"max_tokens"',
+        ),
+      );
+    return void waiting.push(route);
+  });
+  await addAnthropic(page, KEY, "claude-test");
+  await closeSettings(page);
+  await showTab(page, "chat");
+  const now = chat(page).locator('[data-testid="chat-work"][data-tone]');
+
+  // A busy service: why, which try, and the countdown, which is never cut short.
+  await box(page).fill("服务忙的时候");
+  await box(page).press("Enter");
+  await expect(now).toHaveAttribute("data-state", "retry");
+  await expect(chat(page).getByTestId("chat-work-tail")).toBeVisible();
+  await sceneBothThemes(page, "7-retry", "3a");
+  await chat(page).getByTestId("chat-send").click();
+
+  // Quiet for a minute: says so, with waiting on and stopping.
+  await box(page).fill("等着");
+  await box(page).press("Enter");
+  await expect(now).toHaveAttribute("data-state", "waiting");
+  await page.clock.fastForward("01:05");
+  await expect(now).toHaveAttribute("data-state", "quiet");
+  await sceneBothThemes(page, "8-quiet", "3a");
+  await chat(page).getByTestId("chat-send").click();
+
+  // Cut short: one line, and a way on.
+  await box(page).fill("写长一点");
+  await box(page).press("Enter");
+  await expect(chat(page).getByTestId("chat-length")).toBeVisible({ timeout: 15_000 });
+  await sceneBothThemes(page, "9-length", "3a");
+  for (const route of waiting) await route.abort().catch(() => {});
+  // The busy service, as the browser says it.
+  problems.splice(
+    0,
+    problems.length,
+    ...problems.filter((line) => !line.includes("status of 429")),
+  );
+});

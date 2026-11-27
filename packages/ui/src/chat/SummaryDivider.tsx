@@ -8,7 +8,7 @@ import { tokens } from "./usage.ts";
 
 /**
  * Where the earlier conversation was summed up for the model (mcp.md 8 "上下文"): a line across the
- * chat that says how many entries and about how many tokens, with the summary to read. People still
+ * chat that says how many entries (about how many tokens on pointing at it), with the summary to read. People still
  * see everything before it, as it was; only the model gets the summary in its place.
  */
 export function SummaryDivider({ entry }: { readonly entry: SummaryEntry }) {
@@ -17,19 +17,21 @@ export function SummaryDivider({ entry }: { readonly entry: SummaryEntry }) {
   const less = Math.max(0, entry.before - entry.after);
   const saved = tokens(less);
   return (
-    <div className={styles.summed} data-testid="chat-summed" data-kind={entry.kind}>
+    <div
+      className={styles.summed}
+      data-testid="chat-summed"
+      data-kind={entry.kind}
+      // How much it made room for, a count of tokens, for who asks: not on the line itself.
+      title={less > 0 ? t("chat.summed.saved", { saved }) : undefined}
+    >
       <span className={styles.summedLine} aria-hidden />
       <span className={styles.summedText}>
         {entry.kind === "summary" && entry.through === 0
           ? // A conversation that goes on from the summary of another: none of it is here.
             t("chat.summed.carried")
           : entry.kind === "summary"
-            ? less > 0
-              ? t("chat.summed.divider", { count: entry.count, saved })
-              : t("chat.summed.dividerOnly", { count: entry.count })
-            : less > 0
-              ? t("chat.summed.pictures", { saved })
-              : t("chat.summed.picturesOnly")}
+            ? t("chat.summed.divider", { count: entry.count })
+            : t("chat.summed.pictures")}
         {entry.kind === "summary" && (
           <>
             {" · "}

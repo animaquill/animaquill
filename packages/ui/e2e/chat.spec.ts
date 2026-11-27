@@ -6,6 +6,7 @@ import {
   openSettingsPage,
   settingsOf,
 } from "./ai-support.ts";
+import { sceneBothThemes } from "./shots-support.ts";
 import { clips } from "./property-helpers.ts";
 import { content, expect, test, showTab } from "./support.ts";
 
@@ -748,9 +749,10 @@ test("what a conversation took: a pie on top opening to it all, and a line under
   // The turn: what it cost at the end of its line, the model and the tokens in its tip.
   const cost = chat(page).getByTestId("chat-work-cost");
   await expect(cost).toHaveText("$0.24");
-  await expect(cost).toHaveAttribute(
+  // The model and the tokens on pointing at the whole line, with a price or without.
+  await expect(chat(page).getByTestId("chat-work").getByRole("button").first()).toHaveAttribute(
     "title",
-    /^Claude Opus 5 · 输入 380k · 输出 1\.1k · 缓存读 374k/,
+    /Claude Opus 5 · 输入 380k · 输出 1\.1k · 缓存读 374k/,
   );
   await pie.click();
   const panel = chat(page).getByTestId("chat-info");
@@ -882,6 +884,13 @@ test("the states of a turn, at 420 and 320 wide: done, open, running, stopped, f
   await shoot(page, "done");
   await openProcess(page);
   await shoot(page, "done-open");
+  // Open: a thought, words between tools, a step that failed with why on its line.
+  await expect(
+    chat(page)
+      .locator('[data-testid="chat-tool"][data-state="failed"]')
+      .getByTestId("chat-tool-summary"),
+  ).not.toHaveText("");
+  await sceneBothThemes(page, "10-steps-thinking-said-failed", "3a");
 
   // Running: what it does now in one line, each step as it comes once open, stop in place of send.
   await newConversation(page);
@@ -919,6 +928,7 @@ test("the states of a turn, at 420 and 320 wide: done, open, running, stopped, f
   await expect(limit).toContainText("调用了 3 次工具，先停在这里");
   await expect(limit.getByRole("button", { name: "继续" })).toBeVisible();
   await shoot(page, "limit");
+  await sceneBothThemes(page, "11-limit", "3a");
   for (const route of waiting) await route.abort().catch(() => {});
   expectedInConsole(problems);
 });

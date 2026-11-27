@@ -9,7 +9,7 @@ import {
   Square,
   TriangleAlert,
 } from "lucide-react";
-import { memo, useState, useSyncExternalStore } from "react";
+import { memo, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../app/context.ts";
 import { useNow } from "../clock.ts";
@@ -25,7 +25,15 @@ import { durationText, type Step, type Turn } from "../turns.ts";
 import { dollars, tokens, usageOf } from "../usage.ts";
 import { liveThinking, liveThinkingSince, livePhase, useLive } from "../useLive.ts";
 import styles from "./turn.module.css";
-import { LISTEN_TOOL, LOOK_TOOL, phaseOf, workDone } from "./work.ts";
+import {
+  LISTEN_TOOL,
+  LOOK_TOOL,
+  phaseKey,
+  phaseOf,
+  STEADY_MS,
+  workDone,
+  type Phase,
+} from "./work.ts";
 
 /** A link of the editor in what AI wrote: a block, as in people's words. */
 const appLink = (href: string, label: string) => <RefChip chatRef={{ href, label }} />;
@@ -50,7 +58,10 @@ export function WorkLine(props: {
   readonly modelName: (model: string) => string;
 }) {
   const { turn, running } = props;
-  const [open, setOpen] = useOpened(`${turn.task}/process`, false);
+  const { ai } = useWorkbench();
+  // Where people want thinking in full, the steps of a turn that runs come open, to see it come.
+  const expand = useSyncExternalStore(ai.subscribe, ai.getSnapshot).expandThinking;
+  const [open, setOpen] = useOpened(`${turn.task}/process`, running !== undefined && expand);
   const looks = turn.steps.flatMap((step) =>
     step.kind === "tool" && step.call.name === LOOK_TOOL && step.result
       ? [{ call: step.call, result: step.result as ToolEntry }]
@@ -114,7 +125,7 @@ function RunningHead(props: {
   const [waitedOn, setWaitedOn] = useState(0);
   const { running } = props;
   const pending = approvals.find(({ task }) => task === running.task);
-  const phase = phaseOf(say, {
+  const newest = phaseOf(say, {
     running,
     live,
     heardAt: Math.max(props.conversation.live.getState().heardAt, waitedOn),
@@ -123,6 +134,26 @@ function RunningHead(props: {
     now,
     names: props.names,
   });
+  // Each state stays a moment before the next one shows: quick steps do not flicker by, and the
+  // last one is never lost.
+  const key = phaseKey(newest);
+  const latest = useRef(newest);
+  useEffect(() => {
+    latest.current = newest;
+  });
+  const [held, setHeld] = useState<
+    { readonly key: string; readonly phase: Phase; readonly since: number } | undefined
+  >();
+  useEffect(() => {
+    if (held?.key === key) return;
+    const take = () =>
+      setHeld({ key: phaseKey(latest.current), phase: latest.current, since: Date.now() });
+    const left = held ? held.since + STEADY_MS - Date.now() : 0;
+    const timer = setTimeout(take, Math.max(0, left));
+    return () => clearTimeout(timer);
+  }, [key, held]);
+  const phase = held && held.key !== key ? held.phase : newest;
+  const whole = phase.tail ? `${phase.text} · ${phase.tail}` : phase.text;
   return (
     <div
       className={styles.head}
@@ -134,6 +165,7 @@ function RunningHead(props: {
         type="button"
         className={styles.toggle}
         aria-expanded={props.open}
+        title={whole}
         onClick={props.onToggle}
       >
         <span className={styles.icon} aria-hidden>
@@ -147,6 +179,13 @@ function RunningHead(props: {
           {phase.text}
           {props.changed > 0 && ` · ${t("chat.work.changed", { count: props.changed })}`}
         </span>
+        {/* A countdown is what an ellipsis never takes away. */}
+        {phase.tail && (
+          <span className={styles.tail} data-testid="chat-work-tail">
+            {phase.tail}
+          </span>
+        )}
+        <span className={styles.grow} />
         <span className={styles.time} aria-hidden data-testid="chat-work-time">
           {durationText(say, now - running.startedAt)}
         </span>
@@ -166,7 +205,7 @@ function RunningHead(props: {
       )}
       {/* What it does, said once each time it changes, not with each second. */}
       <span className={styles.live} aria-live="polite">
-        {phase.kind === "retry" || phase.kind === "quiet" ? phase.kind : phase.text}
+        {phase.said}
       </span>
     </div>
   );
@@ -231,6 +270,14 @@ function DoneHead(props: {
     done.changed,
   ].filter((part): part is string => part !== undefined);
   if (parts.length === 0 && !done.failed && usage.cost === undefined) return null;
+  // The whole line and what it took, on pointing at it: also where it has no price, or is narrow.
+  const whole = [
+    [...parts, ...(done.failed ? [done.failed] : [])].join(" · "),
+    detail,
+    ...(usage.cost !== undefined ? [dollars(usage.cost)] : []),
+  ]
+    .filter(Boolean)
+    .join("\n");
   return (
     <div
       className={styles.head}
@@ -242,6 +289,7 @@ function DoneHead(props: {
         className={styles.toggle}
         aria-expanded={props.open}
         disabled={!props.opens}
+        title={whole}
         onClick={props.onToggle}
       >
         <span className={styles.icon} aria-hidden>
@@ -249,15 +297,17 @@ function DoneHead(props: {
         </span>
         <span className={styles.text} data-testid="chat-work-text">
           {parts.join(" · ")}
-          {done.failed && (
-            <span className={styles.failed}>
-              {parts.length > 0 ? " · " : ""}
-              {done.failed}
-            </span>
-          )}
         </span>
+        {/* What did not work is never what an ellipsis takes away. */}
+        {done.failed && (
+          <span className={styles.failed} data-testid="chat-work-failed">
+            {parts.length > 0 ? "· " : ""}
+            {done.failed}
+          </span>
+        )}
+        <span className={styles.grow} />
         {usage.cost !== undefined && (
-          <span className={styles.cost} data-testid="chat-work-cost" title={detail}>
+          <span className={styles.cost} data-testid="chat-work-cost">
             {dollars(usage.cost)}
           </span>
         )}

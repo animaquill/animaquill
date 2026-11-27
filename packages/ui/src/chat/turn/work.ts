@@ -34,6 +34,13 @@ export interface Phase {
     | "writing"
     | "quiet";
   readonly text: string;
+  /** What comes after the words and is never cut short where the line is narrow: a countdown. */
+  readonly tail?: string;
+  /**
+   * What those who listen hear of it: the words without what changes each second, said once as
+   * the kind of state changes.
+   */
+  readonly said: string;
   /** Yellow where the task waits on something people may want to know of, blue where on them. */
   readonly tone: "normal" | "warn" | "accent";
 }
@@ -83,7 +90,8 @@ export function phaseOf(say: Say, input: PhaseInput): Phase {
   const { running, look, now } = input;
   const { tool, retry } = running;
   if (running.compacting) {
-    return { kind: "compacting", text: say("chat.phase.compacting"), tone: "normal" };
+    const text = say("chat.phase.compacting");
+    return { kind: "compacting", text, said: text, tone: "normal" };
   }
   if (retry) {
     const code = codeIn(retry.failure.message);
@@ -94,17 +102,15 @@ export function phaseOf(say: Say, input: PhaseInput): Phase {
         reason: code ? `${reason}（${code}）` : reason,
         attempt: retry.attempt,
         of: retry.of,
-        seconds: Math.max(0, Math.ceil((retry.at - now) / 1000)),
       }),
+      tail: say("chat.phase.retryIn", { seconds: Math.max(0, Math.ceil((retry.at - now) / 1000)) }),
+      said: say("chat.phase.retrySaid", { reason }),
       tone: "warn",
     };
   }
   if (input.approving !== undefined) {
-    return {
-      kind: "approve",
-      text: say("chat.phase.approve", { count: input.approving }),
-      tone: "accent",
-    };
+    const text = say("chat.phase.approve", { count: input.approving });
+    return { kind: "approve", text, said: text, tone: "accent" };
   }
   if (tool?.name === LOOK_TOOL) {
     if (look.kind === "rendering") {
@@ -114,13 +120,16 @@ export function phaseOf(say: Say, input: PhaseInput): Phase {
           done: Math.min(look.done + 1, look.total),
           total: look.total,
         }),
+        said: say("chat.phase.look.start"),
         tone: "normal",
       };
     }
     if (look.kind !== "idle") {
-      return { kind: "lookWaits", text: say(`chat.phase.look.${look.kind}`), tone: "warn" };
+      const text = say(`chat.phase.look.${look.kind}`);
+      return { kind: "lookWaits", text, said: text, tone: "warn" };
     }
-    return { kind: "look", text: say("chat.phase.look.start"), tone: "normal" };
+    const text = say("chat.phase.look.start");
+    return { kind: "look", text, said: text, tone: "normal" };
   }
   if (tool) {
     const name = say(`chat.tool.${tool.name}`, { defaultValue: tool.name });
@@ -133,16 +142,19 @@ export function phaseOf(say: Say, input: PhaseInput): Phase {
       : tool.name === "aq_edit" && operations > 0
         ? say("chat.phase.toolOps", { name, count: operations })
         : say("chat.phase.tool", { name });
-    return { kind: "tool", text, tone: "normal" };
+    return { kind: "tool", text, said: text, tone: "normal" };
   }
   if (input.heardAt > 0 && now - input.heardAt >= QUIET_MS) {
     return {
       kind: "quiet",
       text: say("chat.phase.quiet", { seconds: Math.floor((now - input.heardAt) / 1000) }),
+      said: say("chat.phase.quietSaid"),
       tone: "warn",
     };
   }
-  return { kind: input.live, text: say(`chat.phase.${input.live}`), tone: "normal" };
+  // The model at work: not said aloud, each turn has it between every two steps.
+  const text = say(`chat.phase.${input.live}`);
+  return { kind: input.live, text, said: "", tone: "normal" };
 }
 
 /** The calls that failed and were not done right by a later call of the same tool. */
@@ -194,3 +206,15 @@ export function workDone(
     failed: failed > 0 ? say("chat.work.failed", { count: failed }) : undefined,
   };
 }
+
+/** How long a line of a running turn stays at least, so that quick steps do not flicker by. */
+export const STEADY_MS = 500;
+
+/**
+ * Which phase a line holds for a moment (`STEADY_MS`) before the next one shows: a countdown or the
+ * frame rendered are still the same one, and change at once.
+ */
+export const phaseKey = (phase: Phase): string =>
+  phase.kind === "retry" || phase.kind === "quiet" || phase.kind === "look"
+    ? phase.kind
+    : `${phase.kind}\n${phase.text}`;

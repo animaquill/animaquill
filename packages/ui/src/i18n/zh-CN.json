@@ -3632,7 +3632,7 @@
       "tool": "正在{{name}}…",
       "toolOps": "正在{{name}}（{{count}} 个操作）…",
       "approve": "等你允许改 {{count}} 处",
-      "retry": "{{reason}}，正在重试 {{attempt}}/{{of}} · {{seconds}} 秒后",
+      "retry": "{{reason}}，正在重试 {{attempt}}/{{of}}",
       "quiet": "模型 {{seconds}} 秒没有回应",
       "keepWaiting": "继续等",
       "look": {
@@ -3644,7 +3644,10 @@
       },
       "compacting": "正在压缩较早的对话…",
       "editNamed": "正在改「{{name}}」…",
-      "editNamedMore": "正在改「{{name}}」等（{{count}} 个操作）…"
+      "editNamedMore": "正在改「{{name}}」等（{{count}} 个操作）…",
+      "quietSaid": "模型没有回应",
+      "retrySaid": "{{reason}}，正在重试",
+      "retryIn": "{{seconds}} 秒后"
     },
     "retryReason": {
       "rate": "服务太忙",
@@ -4194,15 +4197,14 @@
       "viewerRange": "{{from}}–{{to}}"
     },
     "summed": {
-      "divider": "较早的 {{count}} 条已压缩成一段摘要，省下 {{saved}}",
-      "pictures": "较早的图片已不再发给 AI，省下 {{saved}}",
+      "divider": "较早的 {{count}} 条已压缩成一段摘要",
+      "pictures": "较早的图片已不再发给 AI",
       "open": "看摘要",
       "title": "AI 读到的摘要",
       "asked": "接着做的事（你的原话）",
       "close": "关闭",
-      "dividerOnly": "较早的 {{count}} 条已压缩成一段摘要",
-      "picturesOnly": "较早的图片已不再发给 AI",
-      "carried": "带着上一段对话的摘要"
+      "carried": "带着上一段对话的摘要",
+      "saved": "省下约 {{saved}} token"
     },
     "listen": {
       "name": "听了声音",
@@ -4306,7 +4308,14 @@
       "file_read": "读了文件",
       "aq_render_frames": "看了画面",
       "aq_audio_analyze": "听了声音"
-    }
+    },
+    "heldStep": {
+      "plan": "先出方案，没改",
+      "declined": "没改项目 · 你没允许",
+      "afterDeclined": "没改项目 · 前面的没允许",
+      "stopped": "停了，没改"
+    },
+    "failedStep": "{{name}}没成"
   },
   "account": {
     "signIn": "登录",

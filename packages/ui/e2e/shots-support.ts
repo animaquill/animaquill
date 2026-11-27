@@ -67,6 +67,8 @@ export async function scene(
   step = "1",
 ) {
   mkdirSync(dirOf(step), { recursive: true });
+  // A width a test set on the chat itself gives way to the one dragged here.
+  await page.addStyleTag({ content: `[data-testid="chat"] { width: auto !important; }` });
   const panel = chat(page).getByTestId("chat");
   for (const width of WIDTHS) {
     await widen(page, width);

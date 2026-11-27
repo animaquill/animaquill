@@ -172,7 +172,7 @@ test("not allowed: nothing is written, nor the rest of the answer, and AI asks w
   // The steps say what people answered; not allowing is no failure, nor what it held back.
   await chat(page).getByTestId("chat-work").getByRole("button").first().click();
   const tools = chat(page).getByTestId("chat-tool");
-  await expect(tools.filter({ hasText: "没允许" })).toHaveCount(1);
+  await expect(tools.filter({ hasText: "你没允许" })).toHaveCount(1);
   await expect(chat(page).locator('[data-testid="chat-tool"][data-state="failed"]')).toHaveCount(0);
   await expect(chat(page).locator('[data-testid="chat-tool"][data-state="held"]')).toHaveCount(2);
   await shoot(page, "4-answered");

@@ -51,20 +51,39 @@ export function ToolRow({
 }) {
   const { t } = useTranslation();
   const say = t as unknown as Say;
-  const held = heldWhy(result) !== undefined;
+  const why = heldWhy(result);
+  const held = why !== undefined;
+  const code = result && !result.ok && !held ? toolErrorCode(result) : undefined;
+  const changedWhileAsked = result?.data?.changedWhileAsked === true;
   // Not open by itself where it failed: AI mostly reads again and goes on (chat-panel.md 5.3).
   const [open, setOpen] = useOpened(call.id, false);
   const now = useNow(running !== undefined);
-  // What it does while it runs; what it did once done.
+  const doing = say(`chat.tool.${call.name}`, { defaultValue: commandOf(call.name) });
+  // What it does while it runs; what it did once done; that it did not happen, and why, where it
+  // did not; that it did not work.
   const label =
     result === undefined
-      ? say(`chat.tool.${call.name}`, { defaultValue: commandOf(call.name) })
-      : say(`chat.toolDone.${call.name}`, { defaultValue: commandOf(call.name) });
-  // What people answered, where they were asked, before the rest of the line.
-  const answered = approvalText(say, result);
-  const summary = [answered, toolSummary(say, call, result, names)]
-    .filter((part) => part !== undefined && part !== "")
-    .join(" · ");
+      ? doing
+      : why
+        ? say(`chat.heldStep.${why}`)
+        : result.ok
+          ? say(`chat.toolDone.${call.name}`, { defaultValue: commandOf(call.name) })
+          : say("chat.failedStep", { name: doing });
+  // Failed: why, in words, on the line itself; what it was about follows once open.
+  const reason =
+    result && !result.ok && !held
+      ? say(`chat.toolErrors.${changedWhileAsked ? "changedWhileAsked" : (code ?? "other")}`, {
+          defaultValue: say("chat.toolErrors.other", { code: code ?? "?" }),
+          code: code ?? "?",
+        })
+      : undefined;
+  // What people answered, where they allowed it, before the rest of the line.
+  const answered = held ? undefined : approvalText(say, result);
+  const summary =
+    reason ??
+    [answered, toolSummary(say, call, result, names)]
+      .filter((part) => part !== undefined && part !== "")
+      .join(" · ");
   const state =
     result === undefined
       ? running !== undefined
@@ -98,7 +117,7 @@ export function ToolRow({
           )}
         </span>
         <span className={styles.toolName}>{label}</span>
-        <span className={styles.toolArgs} data-testid="chat-tool-summary">
+        <span className={styles.toolArgs} data-testid="chat-tool-summary" title={summary}>
           {summary}
         </span>
         {ms !== undefined && ms >= SHOWN_MS && (

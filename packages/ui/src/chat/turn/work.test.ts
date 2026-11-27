@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import zh from "../../i18n/zh-CN.json";
 import type { Names, Say } from "../toolSummary.ts";
 import type { Step } from "../turns.ts";
-import { finalFailures, phaseOf, QUIET_MS, workDone, type PhaseInput } from "./work.ts";
+import { finalFailures, phaseKey, phaseOf, QUIET_MS, workDone, type PhaseInput } from "./work.ts";
 
 let say: Say;
 beforeAll(async () => {
@@ -43,8 +43,8 @@ const tool = (name: string, args: Record<string, unknown> = {}) => ({
 });
 
 describe("what a running turn says of itself (all the states RunState had)", () => {
-  it("the model: waited on, thinking, writing", () => {
-    expect(phaseOf(say, input())).toMatchObject({ kind: "waiting", text: "等模型回答…" });
+  it("the model: waited on, thinking, writing; not said aloud, it is between every two steps", () => {
+    expect(phaseOf(say, input())).toMatchObject({ kind: "waiting", text: "等模型回答…", said: "" });
     expect(phaseOf(say, input({ live: "thinking" })).text).toBe("正在想…");
     expect(phaseOf(say, input({ live: "writing" })).text).toBe("正在写回答…");
   });
@@ -93,10 +93,13 @@ describe("what a running turn says of itself (all the states RunState had)", () 
         }),
       }),
     );
+    // The countdown apart, never cut short; those who listen hear it without the seconds.
     expect(phase).toMatchObject({
       kind: "retry",
       tone: "warn",
-      text: "服务太忙（429），正在重试 2/5 · 8 秒后",
+      text: "服务太忙（429），正在重试 2/5",
+      tail: "8 秒后",
+      said: "服务太忙，正在重试",
     });
   });
 
@@ -118,6 +121,7 @@ describe("what a running turn says of itself (all the states RunState had)", () 
       kind: "quiet",
       tone: "warn",
       text: "模型 65 秒没有回应",
+      said: "模型没有回应",
     });
     expect(phaseOf(say, { ...quiet, running: running({ tool: tool("aq_search") }) }).kind).toBe(
       "tool",
@@ -184,5 +188,32 @@ describe("the line of a turn that is over", () => {
       changed: undefined,
       failed: undefined,
     });
+  });
+});
+
+describe("how long a line holds a state", () => {
+  it("holds each state by what it says; a countdown or a frame more is the same one", () => {
+    const at = (more: Partial<PhaseInput>) => phaseKey(phaseOf(say, input(more)));
+    expect(at({ running: running({ tool: tool("aq_search") }) })).not.toBe(
+      at({ running: running({ tool: tool("aq_guide") }) }),
+    );
+    const retry = (seconds: number) =>
+      at({
+        running: running({
+          retry: {
+            attempt: 1,
+            of: 3,
+            at: NOW + seconds * 1000,
+            failure: { kind: "rate", message: "" },
+          },
+        }),
+      });
+    expect(retry(8)).toBe(retry(3));
+    const look = (done: number) =>
+      at({
+        running: running({ tool: tool("aq_render_frames") }),
+        look: { kind: "rendering", done, total: 4 },
+      });
+    expect(look(0)).toBe(look(2));
   });
 });

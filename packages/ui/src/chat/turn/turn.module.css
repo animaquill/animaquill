@@ -76,7 +76,7 @@
 }
 
 .text {
-  flex: 1;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -84,7 +84,19 @@
 }
 
 .failed {
+  flex: none;
   color: var(--aq-danger-text);
+  white-space: nowrap;
+}
+
+.tail {
+  flex: none;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.grow {
+  flex: 1;
 }
 
 .time,
