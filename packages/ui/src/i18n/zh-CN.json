@@ -3625,21 +3625,13 @@
     "continue": "继续",
     "continueMessage": "继续",
     "latest": "最新",
-    "process": {
-      "title": "过程",
-      "thinking": "{{count}} 次思考",
-      "tools": "{{count}} 次工具",
-      "failed": "{{count}} 次失败",
-      "said": "{{count}} 段话"
-    },
-    "thinkingLine": "思考",
     "phase": {
       "waiting": "等模型回答…",
-      "thinking": "正在思考…",
+      "thinking": "正在想…",
       "writing": "正在写回答…",
       "tool": "正在{{name}}…",
       "toolOps": "正在{{name}}（{{count}} 个操作）…",
-      "approve": "等你允许改项目",
+      "approve": "等你允许改 {{count}} 处",
       "retry": "{{reason}}，正在重试 {{attempt}}/{{of}} · {{seconds}} 秒后",
       "quiet": "模型 {{seconds}} 秒没有回应",
       "keepWaiting": "继续等",
@@ -3650,7 +3642,9 @@
         "exporting": "正在导出，AI 等导出完再看画面",
         "hidden": "等你回到这个页面才能看画面"
       },
-      "compacting": "正在压缩较早的对话…"
+      "compacting": "正在压缩较早的对话…",
+      "editNamed": "正在改「{{name}}」…",
+      "editNamedMore": "正在改「{{name}}」等（{{count}} 个操作）…"
     },
     "retryReason": {
       "rate": "服务太忙",
@@ -3760,8 +3754,6 @@
       "fresh": "从这里开新对话"
     },
     "usage": {
-      "in": "↑{{n}}",
-      "out": "↓{{n}}",
       "detail": "输入 {{input}} · 输出 {{output}} · 缓存读 {{cacheRead}} · 缓存写 {{cacheWrite}}",
       "cost": "花费",
       "context": "上下文",
@@ -3788,9 +3780,8 @@
     "undoTask": "撤销这次任务",
     "redoTask": "重做这次任务",
     "changes": "改了 {{count}} 处",
-    "stopped": "已停止。到这里为止的改动都保留了，可以撤销这次任务。",
-    "limit": "这次任务调用了 {{count}} 次工具，停下了。",
-    "length": "回答太长，被截断了。",
+    "limit": "调用了 {{count}} 次工具，先停在这里",
+    "length": "回答太长，被截断了",
     "failed": {
       "network": "连不上服务。可能是浏览器不让直接连这家服务（可以在设置里改成“通过服务器转发”），也可能是地址或网络有问题，或者 key 不对。",
       "networkLocal": "连不上服务。可能是浏览器不让直接连这家服务（这里不能通过服务器转发），也可能是地址或网络有问题，或者 key 不对。",
@@ -4283,6 +4274,38 @@
       "packChoose": "换",
       "packTake": "这个对话也换",
       "sent": "看模型收到的"
+    },
+    "work": {
+      "thought": "想了 {{time}}",
+      "steps": "做了 {{count}} 步",
+      "changed": "改了 {{count}} 处",
+      "failed": "{{count}} 步没成",
+      "stopped": "停了",
+      "looks": "看了 {{count}} 张",
+      "tokens": "输入 {{input}} · 输出 {{output}} · 缓存读 {{cacheRead}}",
+      "thinking": "想了想",
+      "thinkingNow": "在想",
+      "said": "说"
+    },
+    "toolDone": {
+      "aq_project_status": "读了项目概况",
+      "aq_timeline_read": "读了时间轴",
+      "aq_object_read": "读了对象",
+      "aq_search": "查找了",
+      "aq_file_read": "读了文件",
+      "aq_selection_read": "读了选中内容",
+      "aq_guide": "查了手册",
+      "aq_edit": "改了项目",
+      "aq_file_edit": "改了代码",
+      "aq_file_write": "写了代码文件",
+      "aq_propose": "问了你",
+      "aq_check_run": "检查了项目",
+      "project_overview": "读了项目结构",
+      "timeline_read": "读了时间轴",
+      "selection_read": "读了选中内容",
+      "file_read": "读了文件",
+      "aq_render_frames": "看了画面",
+      "aq_audio_analyze": "听了声音"
     }
   },
   "account": {

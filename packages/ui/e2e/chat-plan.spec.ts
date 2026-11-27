@@ -122,9 +122,9 @@ test("plan first: changes are held, the plan is changed and accepted, and then A
   expect(lastWords(requests[0])).not.toContain("按这个做");
   expect(await markers(page)).toEqual({});
   await expect(chat(page).locator('[data-testid="chat-tool"][data-state="failed"]')).toHaveCount(0);
-  await chat(page).getByTestId("chat-process").getByRole("button").first().click();
+  await chat(page).getByTestId("chat-work").getByRole("button").first().click();
   await expect(chat(page).locator('[data-testid="chat-tool"][data-state="held"]')).toHaveCount(2);
-  await chat(page).getByTestId("chat-process").getByRole("button").first().click();
+  await chat(page).getByTestId("chat-work").getByRole("button").first().click();
 
   // Not quite: said in the box, with the switch still on, and a new version replaces the card.
   await box.fill("短一点");

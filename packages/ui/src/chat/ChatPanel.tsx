@@ -32,7 +32,6 @@ import type { ModelPacksSnapshot } from "./packs.ts";
 import packStyles from "./ModelPacks.module.css";
 import { OpenPackView, PackViewer, type PackViewRequest } from "./PackViews.tsx";
 import { noteLabel, packLabel } from "./packText.ts";
-import { RunState } from "./RunState.tsx";
 import { followsAfterScroll, showsToLatest } from "./scroll.ts";
 import type { Names } from "./toolSummary.ts";
 import { groupsOf, turnOf } from "./turns.ts";
@@ -362,9 +361,6 @@ export function ChatPanel() {
           )}
         </div>
 
-        {conversation && talk.running && (
-          <RunState conversation={conversation} running={talk.running} />
-        )}
         <InputArea
           onSent={() => {
             following.current = true;

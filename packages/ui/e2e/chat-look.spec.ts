@@ -12,7 +12,9 @@ import {
   isConnectionTest,
   openSettingsPage,
   settingsOf,
+  openWork,
 } from "./ai-support.ts";
+import { sceneBothThemes } from "./shots-support.ts";
 import { chooseFolder } from "./scene-support.ts";
 import { content, expect, tab, test, showTab } from "./support.ts";
 
@@ -225,7 +227,13 @@ test("AI looks at frames: small pictures with their times and boxes, a line of w
   expect(words).toContain('clip_title "标题" color=#e5484d box 700,-100 400×200');
   expect(words).toContain("past the edge: right 140");
 
-  // The row shows its pictures without opening, even with the process folded.
+  // Folded, the work of the turn shows the pictures it looked at, at most four, a click away
+  // from large; open, its step shows them with what it found.
+  const folded = chat(page).getByTestId("chat-work-looks");
+  await expect(folded.getByTestId("chat-look-picture")).toHaveCount(3);
+  await sceneBothThemes(page, "5-looks-folded", "3a");
+  await openWork(chat(page));
+  await sceneBothThemes(page, "6-looks-open", "3a");
   const row = look(page);
   await expect(row).toHaveAttribute("data-look", "frames");
   await expect(row.getByTestId("chat-tool-summary")).toHaveText(
@@ -321,6 +329,7 @@ test("a comparison shows before, after and what differs; an overview its one pic
   await ask(page, "把标题挪进画面，然后对比一下");
   await expect(chat(page).getByTestId("chat-answer")).toHaveText("挪好了。", { timeout: 60_000 });
 
+  await openWork(chat(page));
   const rows = look(page);
   await expect(rows).toHaveCount(3);
   const compared = rows.nth(0);
@@ -381,16 +390,18 @@ test("while people play, AI waits for them to stop, and says so", async ({ page 
   await preview.getByRole("button", { name: "播放", exact: true }).click();
   await ask(page, "看一眼");
   release();
-  const phase = chat(page).getByTestId("chat-phase");
+  const phase = chat(page).locator('[data-testid="chat-work"][data-tone]');
   await expect(phase).toHaveText(/你在播放，AI 等你停下再看画面/);
-  await expect(phase).toHaveAttribute("data-look", "playing");
+  await expect(phase).toHaveAttribute("data-state", "lookWaits");
   await shoot(page, "L2-phase-playing", chat(page).getByTestId("chat"));
   // Nothing renders meanwhile.
   await page.waitForTimeout(1000);
   await expect(look(page).getByTestId("chat-look-picture")).toHaveCount(0);
   await preview.getByRole("button", { name: "暂停", exact: true }).click();
   await expect(chat(page).getByTestId("chat-answer")).toHaveText("看到了。", { timeout: 60_000 });
-  await expect(look(page).getByTestId("chat-look-picture")).toHaveCount(1);
+  await expect(
+    chat(page).getByTestId("chat-work-looks").getByTestId("chat-look-picture"),
+  ).toHaveCount(1);
 });
 
 test("with the page in the background, AI waits for it to show", async ({ page }) => {
@@ -410,7 +421,7 @@ test("with the page in the background, AI waits for it to show", async ({ page }
     document.dispatchEvent(new Event("visibilitychange"));
   });
   release();
-  const phase = chat(page).getByTestId("chat-phase");
+  const phase = chat(page).locator('[data-testid="chat-work"][data-tone]');
   await expect(phase).toHaveText(/等你回到这个页面才能看画面/);
   await shoot(page, "L2-phase-hidden", chat(page).getByTestId("chat"));
   await page.evaluate(() => {
@@ -421,7 +432,9 @@ test("with the page in the background, AI waits for it to show", async ({ page }
     document.dispatchEvent(new Event("visibilitychange"));
   });
   await expect(chat(page).getByTestId("chat-answer")).toHaveText("看到了。", { timeout: 60_000 });
-  await expect(look(page).getByTestId("chat-look-picture")).toHaveCount(1);
+  await expect(
+    chat(page).getByTestId("chat-work-looks").getByTestId("chat-look-picture"),
+  ).toHaveCount(1);
 });
 
 test("a frame that cannot be rendered is no picture: the row is red and says why, as AI was told", async ({
@@ -452,6 +465,7 @@ test("a frame that cannot be rendered is no picture: the row is red and says why
   await expect(chat(page).getByTestId("chat-answer")).toHaveText("这一帧画不出来。", {
     timeout: 60_000,
   });
+  await openWork(chat(page));
   const row = look(page);
   await expect(row).toHaveAttribute("data-state", "failed");
   await expect(row.getByTestId("chat-tool-summary")).toHaveText(
@@ -491,7 +505,7 @@ test("a model that cannot see gets the list only, and the row says so", async ({
     timeout: 60_000,
   });
   // Without pictures the row folds away with the process, as other calls do.
-  await chat(page).getByTestId("chat-process").getByRole("button").first().click();
+  await chat(page).getByTestId("chat-work").getByRole("button").first().click();
   const row = look(page);
   await expect(row.getByTestId("chat-tool-summary")).toHaveText(
     "（这个模型不能看图，只收到了画面里有什么的清单）",

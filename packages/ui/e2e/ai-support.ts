@@ -1,4 +1,4 @@
-import type { Page, Route } from "@playwright/test";
+import type { Locator, Page, Route } from "@playwright/test";
 import { expect } from "./support.ts";
 
 /**
@@ -240,4 +240,13 @@ export async function noAutoTitle(page: Page) {
   await goToSettingsGroup(page, "AI 聊天");
   await settingsOf(page).getByRole("switch", { name: "第一轮后自动起标题" }).uncheck();
   await goToSettingsGroup(page, "AI 模型");
+}
+
+/**
+ * Opens the work of every turn in the chat that is folded (chat-panel.md 5.2), to see its steps:
+ * each turn's line, as people click it.
+ */
+export async function openWork(chat: Locator): Promise<void> {
+  const folded = chat.locator('[data-testid="chat-work"] > button[aria-expanded="false"]:enabled');
+  while ((await folded.count()) > 0) await folded.first().click();
 }

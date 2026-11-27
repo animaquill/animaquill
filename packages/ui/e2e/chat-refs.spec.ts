@@ -322,7 +322,7 @@ test("AI reads what was selected as a message was sent, though people selected a
   expect(now).not.toContain("clip_0");
 
   // Each call says which it read.
-  const process = chat(page).getByTestId("chat-process").last();
+  const process = chat(page).getByTestId("chat-work").last();
   await process.getByRole("button").first().click();
   const summaries = chat(page).getByTestId("chat-tool-summary");
   await expect(summaries).toHaveText(["「把这个放慢一点」发出时的", "现在的"]);

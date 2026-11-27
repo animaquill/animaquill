@@ -8,18 +8,6 @@
   container-type: inline-size;
 }
 
-.none {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  padding: 16px;
-  color: var(--aq-text-muted);
-  text-align: center;
-}
-
 .panel button {
   display: inline-flex;
   gap: 4px;
@@ -155,10 +143,6 @@
   transform: translateX(-50%);
 }
 
-.empty {
-  color: var(--aq-text-muted);
-}
-
 .task {
   display: flex;
   flex-direction: column;
@@ -179,10 +163,6 @@
   border-radius: 10px;
 }
 
-.answer {
-  color: var(--aq-text);
-}
-
 .text {
   margin: 0;
   white-space: pre-wrap;
@@ -194,63 +174,22 @@
   color: var(--aq-text-muted);
 }
 
-/* The process of a turn: one line once done, open to its steps. */
-.process {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.panel .processHead {
-  align-self: flex-start;
-  padding: 1px 2px;
-  color: var(--aq-text-muted);
-  background: none;
-}
-
-.panel .processHead:hover {
-  color: var(--aq-text);
-  background: none;
-}
-
-.steps {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.process .steps:not(:empty) {
-  padding-left: 10px;
-  border-left: 1px solid var(--aq-border);
-}
-
 .said {
   margin: 0;
   color: var(--aq-text);
 }
 
-/* A call of a tool, and a thought: one line each, open to the rest. */
-.tool,
-.thinking {
-  background: var(--aq-bg-panel);
-  border: 1px solid var(--aq-border);
+.tool {
+  min-width: 0;
   border-radius: 4px;
 }
 
-.tool[data-state="ok"] {
-  border-left: 2px solid var(--aq-success);
+.tool[data-state="failed"] .toolName,
+.tool[data-state="failed"] .toolArgs {
+  color: var(--aq-danger-text);
 }
 
-.tool[data-state="failed"] {
-  border-color: var(--aq-danger);
-}
-
-.tool[data-state="running"] {
-  border-color: var(--aq-accent);
-}
-
-.panel .toolHead,
-.panel .thinkingHead {
+.panel .toolHead {
   display: flex;
   gap: 6px;
   align-items: center;
@@ -259,13 +198,6 @@
   padding: 3px 6px;
   text-align: left;
   background: none;
-}
-
-.thinkingHead {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  padding: 3px 6px;
 }
 
 .toolIcon {
@@ -286,29 +218,18 @@
   color: var(--aq-link);
 }
 
-.toolName,
-.thinkingLabel {
+.toolName {
   flex: none;
   color: var(--aq-text-strong);
 }
 
-.toolArgs,
-.thinkingFirst {
+.toolArgs {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   color: var(--aq-text-muted);
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-.thinkingFirst {
-  font-style: italic;
-}
-
-.thinking svg {
-  flex: none;
-  color: var(--aq-warning);
 }
 
 .toolMs {
@@ -388,14 +309,6 @@
 .raw summary {
   color: var(--aq-text-muted);
   cursor: pointer;
-}
-
-.thinkingText {
-  padding: 4px 8px 6px;
-  color: var(--aq-text-muted);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  border-top: 1px solid var(--aq-border);
 }
 
 /* The card of what a task changed. */
@@ -764,26 +677,6 @@
   color: var(--aq-text-muted);
 }
 
-/* The line of what a turn took. */
-.usageLine {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 10px;
-  margin: 0;
-  color: var(--aq-text-muted);
-  font-size: var(--aq-font-11);
-  font-variant-numeric: tabular-nums;
-}
-
-.notice {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  margin: 0;
-  color: var(--aq-warning);
-}
-
 .failure {
   display: flex;
   flex-direction: column;
@@ -816,53 +709,6 @@
   gap: 4px;
   padding-top: 6px;
   border-top: 1px solid var(--aq-border);
-}
-
-/* What the task does now, above the input. */
-.phase {
-  display: flex;
-  flex: none;
-  gap: 6px;
-  align-items: center;
-  min-width: 0;
-  padding: 4px 8px;
-  color: var(--aq-text-muted);
-  border-top: 1px solid var(--aq-border);
-}
-
-.phase[data-state="retry"],
-.phase[data-state="quiet"],
-.phase[data-state="waiting"] {
-  color: var(--aq-warning);
-  background: color-mix(in srgb, var(--aq-warning) 10%, transparent);
-}
-
-.dot {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  background: var(--aq-accent);
-  border-radius: 50%;
-  animation: pulse 1.4s ease-in-out infinite;
-}
-
-.phase[data-state="retry"] .dot,
-.phase[data-state="quiet"] .dot,
-.phase[data-state="waiting"] .dot {
-  background: var(--aq-warning);
-}
-
-.phaseText {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.phaseTime {
-  flex: none;
-  font-variant-numeric: tabular-nums;
 }
 
 /* The words of the input card: text and blocks, 1 to about 10 lines, then it scrolls. */
@@ -1210,20 +1056,6 @@ span.sentPicture {
   background: transparent;
 }
 
-.tag {
-  margin-left: 4px;
-  padding: 0 4px;
-  color: var(--aq-text-muted);
-  font-size: var(--aq-font-11);
-  border: 1px solid var(--aq-border);
-  border-radius: 3px;
-}
-
-.tag[data-kind="mine"] {
-  color: var(--aq-link);
-  border-color: var(--aq-accent);
-}
-
 /* The conversations, over the one open. */
 .sheet {
   position: absolute;
@@ -1457,8 +1289,7 @@ span.sentPicture {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .spin,
-  .dot {
+  .spin {
     animation: none;
   }
 }
@@ -1600,11 +1431,6 @@ span.sentPicture {
 }
 
 @container (max-width: 400px) {
-  .usageCost,
-  .usageModel {
-    display: none;
-  }
-
   .user {
     max-width: 90%;
   }

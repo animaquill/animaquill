@@ -177,7 +177,7 @@ const refusal = (route: Route, status: number, type: string, message: string) =>
 
 /** Opens the process of the last turn that is done, which comes folded. */
 async function openProcess(page: Page) {
-  const process = chat(page).getByTestId("chat-process").last();
+  const process = chat(page).getByTestId("chat-work").last();
   await process.getByRole("button").first().click();
   await expect(process.getByRole("button").first()).toHaveAttribute("aria-expanded", "true");
 }
@@ -262,16 +262,17 @@ test("AI changes the timeline, and the whole task goes back in one step", async 
     timeout: 15_000,
   });
   await expect(clips(page)).toHaveCount(1);
-  // Done, the process folds into one line: what it took, open to every step.
-  const process = chat(page).getByTestId("chat-process");
-  await expect(process).toContainText("过程 · 1 次思考 · 3 次工具");
+  // Done, the work folds into one line: how long, how many steps, how many places; open to them.
+  const process = chat(page).getByTestId("chat-work");
+  await expect(process).toContainText(/^想了 [\d.]+ 秒 · 做了 3 步 · 改了 2 处/);
   const tools = chat(page).getByTestId("chat-tool");
   await expect(tools).toHaveCount(0);
   await openProcess(page);
   await expect(tools).toHaveCount(3);
-  await expect(tools.nth(0)).toContainText("读项目概况");
-  await expect(tools.nth(1)).toContainText("读时间轴");
-  await expect(tools.nth(2)).toContainText("改项目");
+  // Each step said as done: in the past tense.
+  await expect(tools.nth(0)).toContainText("读了项目概况");
+  await expect(tools.nth(1)).toContainText("读了时间轴");
+  await expect(tools.nth(2)).toContainText("改了项目");
   await expect(tools.nth(2)).toHaveAttribute("data-state", "ok");
   // A line in words for each call: what it was about, not its JSON.
   await expect(tools.nth(2).getByTestId("chat-tool-summary")).toHaveText(
@@ -283,7 +284,7 @@ test("AI changes the timeline, and the whole task goes back in one step", async 
   await expect(body).toContainText("clip.add");
   await expect(body).not.toContainText('{"op"');
   // What the model said of its thinking, for people to follow, folded.
-  await expect(chat(page).getByTestId("chat-thinking").first()).toContainText("思考");
+  await expect(chat(page).getByTestId("chat-thinking").first()).toContainText("想了想");
 
   // The card of the turn: what AI said the batch does, and each object, with where it is.
   await expect(chat(page).getByTestId("chat-card")).toContainText("改了 2 处");
@@ -415,7 +416,7 @@ test("an earlier conversation with the tools before goes on, with those calls as
   await page.reload();
   await showTab(page, "chat");
   await openProcess(page);
-  await expect(chat(page).getByTestId("chat-tool")).toContainText("读项目结构");
+  await expect(chat(page).getByTestId("chat-tool")).toContainText("读了项目结构");
   await send(page, "继续");
   await expect(chat(page).getByText("接着来。")).toBeVisible();
   const sent = requests.at(-1)?.postDataJSON() as Sent;
@@ -558,25 +559,30 @@ test("stopping ends the task right away, and the chat goes on", async ({ page })
   const stop = chat(page).getByRole("button", { name: "停止" });
   await expect(stop).toBeVisible();
   // What it does now, and for how long, above the input.
-  await expect(chat(page).getByTestId("chat-phase")).toContainText("等模型回答…");
+  await expect(chat(page).locator('[data-testid="chat-work"][data-tone]')).toContainText(
+    "等模型回答…",
+  );
   await stop.click();
-  await expect(chat(page).getByTestId("chat-stopped")).toHaveText(
-    "已停止。到这里为止的改动都保留了，可以撤销这次任务。",
+  // The line of the work ends as stopped; nothing more is said.
+  await expect(chat(page).locator('[data-testid="chat-work"][data-state="stopped"]')).toContainText(
+    "停了",
   );
   await expect(stop).toBeHidden();
-  await expect(chat(page).getByTestId("chat-phase")).toBeHidden();
+  await expect(chat(page).locator('[data-testid="chat-work"][data-tone]')).toBeHidden();
 
   await send(page, "再来");
   await expect(chat(page).getByText("这次很快。")).toBeVisible();
 
   // Esc in the input stops too.
   await send(page, "还是慢慢来");
-  await expect(chat(page).getByTestId("chat-phase")).toBeVisible();
+  await expect(chat(page).locator('[data-testid="chat-work"][data-tone]')).toBeVisible();
   await chat(page)
     .getByRole("textbox", { name: /给 AI 发消息/ })
     .press("Escape");
-  await expect(chat(page).getByTestId("chat-stopped")).toHaveCount(2);
-  await expect(chat(page).getByTestId("chat-phase")).toBeHidden();
+  await expect(chat(page).locator('[data-testid="chat-work"][data-state="stopped"]')).toHaveCount(
+    2,
+  );
+  await expect(chat(page).locator('[data-testid="chat-work"][data-tone]')).toBeHidden();
   for (const route of waiting) await route.abort().catch(() => {});
 });
 
@@ -613,7 +619,7 @@ test("says what to do when the service cannot be reached, or refuses the key", a
   expectedInConsole(problems);
 });
 
-test("a turn of six tools folds once done, a failed one shows open, and the answer is Markdown", async ({
+test("a turn of six tools folds once done, a failed one red and folded too, and the answer is Markdown", async ({
   page,
 }) => {
   test.setTimeout(60_000);
@@ -663,16 +669,20 @@ test("a turn of six tools folds once done, a failed one shows open, and the answ
   await expect(doc).toHaveAttribute("target", "_blank");
   await expect(answerBlock.getByRole("link", { name: "坏的" })).toHaveCount(0);
 
-  const process = chat(page).getByTestId("chat-process");
-  await expect(process).toContainText("6 次工具 · 1 次失败");
-  // Folded, only the failed call shows, and open: why, in words, the words for AI folded away.
+  const process = chat(page).getByTestId("chat-work");
+  await expect(process).toContainText("做了 6 步");
+  // Folded, no step shows, a failed one neither: AI mostly reads again and goes on.
   const tools = chat(page).getByTestId("chat-tool");
-  await expect(tools).toHaveCount(1);
-  await expect(tools.first()).toHaveAttribute("data-state", "failed");
-  await expect(tools.first().getByTestId("chat-tool-error")).toContainText("没有成功");
-  await expect(tools.first().getByText("给 AI 的原文")).toBeVisible();
+  await expect(tools).toHaveCount(0);
   await openProcess(page);
   await expect(tools).toHaveCount(6);
+  // Open, the failed one is red, folded too; opened, why, in words, the words for AI folded away.
+  const failed = chat(page).locator('[data-testid="chat-tool"][data-state="failed"]');
+  await expect(failed).toHaveCount(1);
+  await expect(failed.getByTestId("chat-tool-body")).toHaveCount(0);
+  await failed.getByRole("button").first().click();
+  await expect(failed.getByTestId("chat-tool-error")).toContainText("没有成功");
+  await expect(failed.getByText("给 AI 的原文")).toBeVisible();
   await expect(tools.nth(1).getByTestId("chat-tool-summary")).toContainText("0:00–0:30");
   await expect(tools.nth(3).getByTestId("chat-tool-summary")).toHaveText("「标题」");
 });
@@ -711,7 +721,7 @@ test("a busy service is tried again by itself, and the chat says so meanwhile", 
   });
   await setUpService(page);
   await send(page, "你好");
-  const phase = chat(page).getByTestId("chat-phase");
+  const phase = chat(page).locator('[data-testid="chat-work"][data-tone]');
   await expect(phase).toContainText("服务太忙（429），正在重试 1/3");
   await expect(phase).toHaveAttribute("data-state", "retry");
   await expect(chat(page).getByText("等了一下，好了。")).toBeVisible({ timeout: 10_000 });
@@ -735,12 +745,13 @@ test("what a conversation took: a pie on top opening to it all, and a line under
   const pie = chat(page).getByTestId("chat-context");
   await expect(pie).toHaveAttribute("aria-label", "上下文 38%（380k / 1M） · 这个对话花了 $0.24");
   await expect(pie).toHaveText("");
-  const line = chat(page).getByTestId("chat-usage");
-  await expect(line).toContainText("Claude Opus 5");
-  await expect(line).toContainText("↑380k ↓1.1k");
-  await expect(line).toContainText("$0.24");
-  // The parts do not run into each other: the cost has its separator before it.
-  await expect(line).toContainText(/↓1\.1k · \$0\.24/);
+  // The turn: what it cost at the end of its line, the model and the tokens in its tip.
+  const cost = chat(page).getByTestId("chat-work-cost");
+  await expect(cost).toHaveText("$0.24");
+  await expect(cost).toHaveAttribute(
+    "title",
+    /^Claude Opus 5 · 输入 380k · 输出 1\.1k · 缓存读 374k/,
+  );
   await pie.click();
   const panel = chat(page).getByTestId("chat-info");
   await expect(panel).toContainText("380k / 1M");
@@ -864,20 +875,30 @@ test("the states of a turn, at 420 and 320 wide: done, open, running, stopped, f
 
   // Done: the process folded, the failed call open, the answer, the card, what it took.
   await send(page, "把开场放慢一点，字幕跟着对齐");
-  await expect(chat(page).getByTestId("chat-usage")).toBeVisible({ timeout: 15_000 });
+  await expect(chat(page).locator('[data-testid="chat-work"][data-state="done"]')).toBeVisible({
+    timeout: 15_000,
+  });
   await expect(chat(page).getByTestId("chat-card")).toContainText("改了 2 处");
   await shoot(page, "done");
   await openProcess(page);
   await shoot(page, "done-open");
 
-  // Running: each step as it comes, what it does now, and stop in place of send.
+  // Running: what it does now in one line, each step as it comes once open, stop in place of send.
   await newConversation(page);
   await send(page, "结尾加一段黑场");
+  await expect(chat(page).locator('[data-testid="chat-work"][data-tone]')).toBeVisible();
+  await chat(page)
+    .locator('[data-testid="chat-work"][data-tone]')
+    .getByRole("button")
+    .first()
+    .click();
   await expect(chat(page).getByTestId("chat-tool")).toHaveAttribute("data-state", "ok");
-  await expect(chat(page).getByTestId("chat-phase")).toContainText("等模型回答…");
+  await expect(chat(page).locator('[data-testid="chat-work"][data-tone]')).toContainText(
+    "等模型回答…",
+  );
   await shoot(page, "running");
   await chat(page).getByRole("button", { name: "停止" }).click();
-  await expect(chat(page).getByTestId("chat-stopped")).toBeVisible();
+  await expect(chat(page).locator('[data-testid="chat-work"][data-state="stopped"]')).toBeVisible();
   await shoot(page, "stopped");
 
   // Failed: what to do first, buttons, what the service said folded away.
@@ -895,7 +916,7 @@ test("the states of a turn, at 420 and 320 wide: done, open, running, stopped, f
   await newConversation(page);
   await send(page, "一直读");
   const limit = chat(page).getByTestId("chat-limit");
-  await expect(limit).toContainText("这次任务调用了 3 次工具，停下了。");
+  await expect(limit).toContainText("调用了 3 次工具，先停在这里");
   await expect(limit.getByRole("button", { name: "继续" })).toBeVisible();
   await shoot(page, "limit");
   for (const route of waiting) await route.abort().catch(() => {});

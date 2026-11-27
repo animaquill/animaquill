@@ -8,6 +8,7 @@ import {
   leaveSettings,
   openSettingsPage,
   settingsOf,
+  openWork,
 } from "./ai-support.ts";
 import { content, expect, test, showTab } from "./support.ts";
 
@@ -326,6 +327,8 @@ test("the chat says which pack a conversation has, and a new one when the model 
   await expect(chat(page).getByTestId("chat-model-name")).toHaveText("claude-other");
   await send(page, "再说");
   await expect(chat(page).getByText("回答 2")).toBeVisible({ timeout: 15_000 });
+  // Said first in the steps of the turn.
+  await openWork(chat(page));
   await expect(chat(page).getByTestId("chat-pack-switch")).toHaveText(
     "换成 claude-other，用 自动：通用(内置)",
   );
@@ -575,12 +578,14 @@ test("in the bubble only models; a model's packs are chosen in the information o
   await send(page, "二");
   await expect(chat(page).getByText("回答 2")).toBeVisible({ timeout: 15_000 });
   expect(systemOf(requests[1])).toContain(steady);
+  await openWork(chat(page));
   await expect(chat(page).getByTestId("chat-pack-switch")).toHaveText(
     "改用适配包 DeepSeek steady(本机)",
   );
   await send(page, "三");
   await expect(chat(page).getByText("回答 3")).toBeVisible({ timeout: 15_000 });
   expect(systemOf(requests[2])).toContain(steady);
+  await openWork(chat(page));
   await expect(chat(page).getByTestId("chat-pack-switch")).toHaveCount(1);
 
   // Its page, over the chat with a way back: against automatic, piece by piece where narrow.
@@ -634,6 +639,7 @@ test("in the bubble only models; a model's packs are chosen in the information o
   await send(page, "四");
   await expect(chat(page).getByText("回答 4")).toBeVisible({ timeout: 15_000 });
   expect(systemOf(requests[3])).not.toContain(steady);
+  await openWork(chat(page));
   await expect(chat(page).getByTestId("chat-pack-switch").nth(1)).toHaveText(
     "改用适配包 Claude 5(内置)",
   );

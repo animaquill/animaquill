@@ -1,0 +1,242 @@
+/*
+ * A turn's work and answer (docs/design/chat-panel.md of AnimaQuill Cloud, 5.2–5.4): one line of
+ * what it does or did, open to its steps on a thin line, then the answer, the largest words of the
+ * chat. Rules start from a class of their own, so that they go over the buttons of the chat as they
+ * are by default (`.panel button`).
+ */
+
+.work {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  color: var(--aq-text-muted);
+}
+
+.head[data-tone="warn"] {
+  color: var(--aq-warning-text);
+}
+
+.head[data-tone="accent"] {
+  color: var(--aq-link);
+}
+
+.head button.toggle {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 2px 4px;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+  border-radius: 4px;
+}
+
+.head button.toggle:hover:not(:disabled) {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.head button.toggle:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.icon {
+  display: inline-flex;
+  flex: none;
+}
+
+.head[data-state="done"] .icon {
+  color: var(--aq-link);
+}
+
+.head[data-tone="normal"] .icon {
+  color: var(--aq-link);
+}
+
+.spin {
+  animation: spin 1.2s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.failed {
+  color: var(--aq-danger-text);
+}
+
+.time,
+.cost {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.chevron {
+  display: inline-flex;
+  flex: none;
+}
+
+.actions {
+  display: inline-flex;
+  flex: none;
+  gap: 4px;
+}
+
+.head button.action {
+  padding: 1px 6px;
+  color: var(--aq-link);
+  background: transparent;
+}
+
+.head button.action:hover {
+  background: var(--aq-bg-hover);
+}
+
+.live,
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The steps: one a line, on a thin line at their left. */
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 9px;
+  padding-left: 10px;
+  border-left: 1px solid var(--aq-border);
+}
+
+.stepNote {
+  margin: 0;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+}
+
+.step {
+  min-width: 0;
+}
+
+.step button.stepHead,
+.step .stepHead {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  padding: 2px 4px;
+  color: var(--aq-text);
+  text-align: left;
+  background: transparent;
+  border-radius: 4px;
+}
+
+.step button.stepHead:hover {
+  background: var(--aq-bg-hover);
+}
+
+.stepIcon {
+  flex: none;
+  color: var(--aq-text-muted);
+}
+
+.stepName {
+  flex: none;
+  color: var(--aq-text-strong);
+}
+
+.stepSummary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.stepTime {
+  flex: none;
+  color: var(--aq-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.stepBody {
+  padding: 2px 4px 6px 22px;
+  color: var(--aq-text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.saidBody {
+  padding: 2px 4px 6px 22px;
+  color: var(--aq-text);
+}
+
+/* The answer: the largest words of the chat. */
+.answer {
+  color: var(--aq-text-strong);
+  font-size: var(--aq-font-14);
+  line-height: 1.6;
+}
+
+.caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--aq-link);
+  animation: blink 1s steps(1) infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.outcome {
+  margin: 0;
+  color: var(--aq-text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin,
+  .caret {
+    animation: none;
+  }
+}
+
+/* About 320 wide: what the turn cost is in its tip only. */
+@container (max-width: 379px) {
+  .cost {
+    display: none;
+  }
+}

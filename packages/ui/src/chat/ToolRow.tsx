@@ -35,7 +35,7 @@ const commandOf = (tool: string) => tool.replaceAll("_", ".");
 /**
  * A call of a tool in one line: whether it runs, went through or failed, the tool in words, what
  * it was about, how long it took. Open, its arguments as "name: value" lines and what it gave AI;
- * a failure says why in words first. A failed call comes open, and stays as people leave it.
+ * a failure says why in words first. A failed one is red, and folded like the rest.
  */
 export function ToolRow({
   call,
@@ -52,10 +52,14 @@ export function ToolRow({
   const { t } = useTranslation();
   const say = t as unknown as Say;
   const held = heldWhy(result) !== undefined;
-  const failed = result !== undefined && !result.ok && !held;
-  const [open, setOpen] = useOpened(call.id, failed);
+  // Not open by itself where it failed: AI mostly reads again and goes on (chat-panel.md 5.3).
+  const [open, setOpen] = useOpened(call.id, false);
   const now = useNow(running !== undefined);
-  const label = say(`chat.tool.${call.name}`, { defaultValue: commandOf(call.name) });
+  // What it does while it runs; what it did once done.
+  const label =
+    result === undefined
+      ? say(`chat.tool.${call.name}`, { defaultValue: commandOf(call.name) })
+      : say(`chat.toolDone.${call.name}`, { defaultValue: commandOf(call.name) });
   // What people answered, where they were asked, before the rest of the line.
   const answered = approvalText(say, result);
   const summary = [answered, toolSummary(say, call, result, names)]

@@ -7,6 +7,7 @@ import {
   closeSettings,
   goToSettingsGroup,
   settingsOf,
+  openWork,
 } from "./ai-support.ts";
 import { content, devPageOnly, expect, test, showTab } from "./support.ts";
 import { execute } from "./undo-support.ts";
@@ -169,7 +170,7 @@ test("not allowed: nothing is written, nor the rest of the answer, and AI asks w
   expect(await markers(page)).toEqual({ m0: "片头@1" });
   expect(requests()).toBe(2);
   // The steps say what people answered; not allowing is no failure, nor what it held back.
-  await chat(page).getByTestId("chat-process").getByRole("button").first().click();
+  await chat(page).getByTestId("chat-work").getByRole("button").first().click();
   const tools = chat(page).getByTestId("chat-tool");
   await expect(tools.filter({ hasText: "没允许" })).toHaveCount(1);
   await expect(chat(page).locator('[data-testid="chat-tool"][data-state="failed"]')).toHaveCount(0);
@@ -238,8 +239,10 @@ test("people change the same place while asked: nothing is written, and the step
   await asking(page).getByTestId("chat-approve-once").click();
   await expect(chat(page).getByText("你刚改过它，我没动。")).toBeVisible({ timeout: 15_000 });
   expect((await markers(page)).m0).toBe("我改的@1");
+  await openWork(chat(page));
   const failed = chat(page).locator('[data-testid="chat-tool"][data-state="failed"]');
   await expect(failed).toHaveCount(1);
+  await failed.getByRole("button").first().click();
   await expect(failed.getByTestId("chat-tool-error")).toHaveText(
     "没有成功：等你允许的时候，要改的地方被改过了",
   );

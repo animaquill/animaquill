@@ -534,3 +534,69 @@ function LookViewer({
     document.body,
   );
 }
+
+/** At most this many pictures under the folded work of a turn. */
+const FOLDED_PICTURES = 4;
+
+/**
+ * The pictures AI looked at in a turn, in one row under its folded work (docs/design/chat-panel.md
+ * of AnimaQuill Cloud, 5.3): is what it saw what people see? At most four; "看了 N 张" opens the
+ * steps for the rest. A click shows one large, as in its step.
+ */
+export function LookThumbs({
+  looks,
+  onMore,
+}: {
+  readonly looks: readonly { readonly call: ToolCallEntry; readonly result: ToolEntry }[];
+  readonly onMore: () => void;
+}) {
+  const { t } = useTranslation();
+  const say = t as unknown as Say;
+  const [large, setLarge] = useState<{ readonly look: number; readonly at: number } | undefined>();
+  const all = looks.flatMap(({ result }, index) => {
+    const look = lookOf(result);
+    if (!look) return [];
+    const flat = shotsOf(say, result, look).flatMap((shot) =>
+      shot.pictures.map((each) => ({ ...each, shot })),
+    );
+    return [{ index, look, result, flat }];
+  });
+  const pictures = all.flatMap(({ index, look, flat }) =>
+    flat.map((item, at) => ({ item, look, index, at })),
+  );
+  if (pictures.length === 0) return null;
+  const opened = large ? all.find(({ index }) => index === large.look) : undefined;
+  return (
+    <div className={styles.lookStrip} data-testid="chat-work-looks">
+      {pictures.slice(0, FOLDED_PICTURES).map(({ item, look, index, at }) => (
+        <Thumb
+          key={`${index}/${at}`}
+          picture={item.picture}
+          label={item.label ?? (item.shot.data ? timeText(item.shot.data.t) : undefined)}
+          look={look}
+          onOpen={() => setLarge({ look: index, at })}
+        />
+      ))}
+      {pictures.length > FOLDED_PICTURES && (
+        <button
+          type="button"
+          className={styles.link}
+          data-testid="chat-work-looks-more"
+          onClick={onMore}
+        >
+          {t("chat.work.looks", { count: pictures.length })}
+        </button>
+      )}
+      {opened && large && opened.flat[large.at] && (
+        <LookViewer
+          look={opened.look}
+          text={opened.result.text}
+          items={opened.flat}
+          at={large.at}
+          onMove={(at) => setLarge({ look: large.look, at })}
+          onClose={() => setLarge(undefined)}
+        />
+      )}
+    </div>
+  );
+}

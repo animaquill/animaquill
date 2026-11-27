@@ -12,6 +12,7 @@ import {
   isConnectionTest,
   openSettingsPage,
   settingsOf,
+  openWork,
 } from "./ai-support.ts";
 import { chooseFolder } from "./scene-support.ts";
 import { content, expect, tab, test, showTab } from "./support.ts";
@@ -278,6 +279,9 @@ test("AI hears the sound: loudness, peak, clips and silence over a small picture
   expect(alone).toContain('clip clip_ding \\"叮\\" alone');
   expect(alone).toMatch(/attack 1\d ms/);
 
+  // Folded, the sound hangs nowhere: it is a step, open with the others.
+  await expect(listened(page)).toHaveCount(0);
+  await openWork(chat(page));
   const rows = listened(page);
   await expect(rows).toHaveCount(2);
   const mix = rows.nth(0);
@@ -335,7 +339,7 @@ test("a request too long for the model sums up the earlier conversation: the lin
   }
   await ask(page, "把配乐降 2 dB");
   // While the model sums up, the line over the input says so.
-  const phase = chat(page).getByTestId("chat-phase");
+  const phase = chat(page).locator('[data-testid="chat-work"][data-tone]');
   await expect(phase).toHaveAttribute("data-state", "compacting", { timeout: 60_000 });
   await expect(phase).toContainText("正在压缩较早的对话…");
   await shoot(page, "L2-compacting", chat(page).getByTestId("chat"));

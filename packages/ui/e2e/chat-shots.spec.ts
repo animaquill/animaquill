@@ -1,15 +1,17 @@
 import { mkdirSync } from "node:fs";
-import type { Locator, Page, Route } from "@playwright/test";
+import type { Page, Route } from "@playwright/test";
 import {
   ANTHROPIC,
   addAnthropic,
   addModel,
+  anthropicCalls,
   anthropicSays,
   closeSettings,
   isConnectionTest,
   openSettingsPage,
   settingsOf,
 } from "./ai-support.ts";
+import { dirOf, scene, sceneBothThemes } from "./shots-support.ts";
 import { content, expect, test, showTab } from "./support.ts";
 
 /**
@@ -19,74 +21,10 @@ import { content, expect, test, showTab } from "./support.ts";
  * go to `test-results/chat-shots/<step>/`, for people to look at.
  */
 
-const WIDTHS = [320, 420, 560] as const;
-/** Where the pictures of a step go. */
-const dirOf = (step: string) => `test-results/chat-shots/${step}`;
 const KEY = "sk-ant-test-0123456789abcdef";
 
 const chat = (page: Page) => content(page, "chat");
 const box = (page: Page) => chat(page).getByRole("textbox", { name: /给 AI 发消息/ });
-
-/** What of an area sticks out of it, or whose words stick out of their box without "…". */
-const overflowing = (area: Locator) =>
-  area.evaluate((element) => {
-    const edge = element.getBoundingClientRect().right + 1;
-    return [...element.querySelectorAll<HTMLElement>("*")]
-      .filter((each) => {
-        const style = getComputedStyle(each);
-        if (style.display === "none" || style.visibility === "hidden") return false;
-        if (style.position === "absolute" && style.clipPath !== "none") return false;
-        const place = each.getBoundingClientRect();
-        if (place.width === 0) return false;
-        // Out of the chat, or its own words out of their box where they do not end in "…".
-        if (place.right > edge) return true;
-        if (style.overflowX === "auto" || style.overflowX === "scroll") return false;
-        if (style.textOverflow === "ellipsis" || style.overflowX === "hidden") return false;
-        const words = [...each.childNodes].some(
-          (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
-        );
-        return words && each.scrollWidth > each.clientWidth + 1 && each.clientWidth > 0;
-      })
-      .map((each) => `${each.tagName}.${each.className} ${each.textContent?.slice(0, 30)}`);
-  });
-
-/** Makes the chat a width, by the edge between it and what is left of it, as people drag it. */
-async function widen(page: Page, width: number) {
-  const panel = chat(page).getByTestId("chat");
-  for (let tries = 0; tries < 3; tries += 1) {
-    const edge = await panel.boundingBox();
-    if (!edge || Math.abs(edge.width - width) <= 2) return;
-    const y = edge.y + edge.height / 2;
-    await page.mouse.move(edge.x - 1, y);
-    await page.mouse.down();
-    await page.mouse.move(edge.x - 1 - (width - edge.width), y, { steps: 5 });
-    await page.mouse.up();
-  }
-  await expect
-    .poll(async () => Math.abs(((await panel.boundingBox())?.width ?? 0) - width))
-    .toBeLessThanOrEqual(2);
-}
-
-/**
- * One scene at each width: nothing sticks out, and a picture of the chat. What only shows until a
- * click elsewhere, such as a menu, is opened by `open` once the chat has its width.
- */
-async function scene(
-  page: Page,
-  theme: string,
-  name: string,
-  open?: () => Promise<void>,
-  step = "1",
-) {
-  const panel = chat(page).getByTestId("chat");
-  for (const width of WIDTHS) {
-    await widen(page, width);
-    await open?.();
-    expect(await overflowing(panel), `${name} at ${width}`).toEqual([]);
-    await panel.screenshot({ path: `${dirOf(step)}/${theme}-${width}-${name}.png` });
-    if (open) await page.keyboard.press("Escape");
-  }
-}
 
 for (const theme of ["light", "dark"] as const) {
   test.describe(`in ${theme} colours`, () => {
@@ -278,3 +216,62 @@ for (const theme of ["light", "dark"] as const) {
     });
   });
 }
+
+test("the work of a turn: running, folded, open with a step that failed, stopped", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const waiting: Route[] = [];
+  await page.route(ANTHROPIC, (route) => {
+    const sent = route.request().postDataJSON() as { messages?: { content: unknown }[] };
+    const body = JSON.stringify(sent?.messages?.at(-1)?.content ?? "");
+    const fulfil = (text: string) =>
+      route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream", "access-control-allow-origin": "*" },
+        body: text,
+      });
+    if (isConnectionTest(route)) return fulfil(anthropicSays("OK"));
+    if (body.includes("慢慢来") && !body.includes("tool_result")) return void waiting.push(route);
+    if (!body.includes("tool_result"))
+      return fulfil(
+        anthropicCalls([
+          { name: "aq_timeline_read", input: {} },
+          { name: "aq_object_read", input: { ids: ["clip_none"] } },
+          { name: "aq_search", input: { query: "标题" } },
+        ]),
+      );
+    return fulfil(
+      anthropicSays("看过了：时间轴上还没有片段，标题也没找到。要我先做一个片名场景吗？"),
+    );
+  });
+  await addAnthropic(page, KEY, "claude-test");
+  await closeSettings(page);
+  await showTab(page, "chat");
+  const work = chat(page).getByTestId("chat-work");
+
+  // Done: one line, folded; open, the steps on their line, the one that failed red.
+  await box(page).fill("看看标题在哪");
+  await box(page).press("Enter");
+  await expect(chat(page).getByTestId("chat-answer")).toBeVisible({ timeout: 15_000 });
+  await expect(work).toHaveAttribute("data-state", "done");
+  await expect(work).toContainText("做了 3 步");
+  await sceneBothThemes(page, "1-done", "3a");
+  await work.getByRole("button").first().click();
+  await expect(chat(page).getByTestId("chat-steps")).toBeVisible();
+  await sceneBothThemes(page, "2-done-open", "3a");
+  await work.getByRole("button").first().click();
+
+  // Running: what it does now, and for how long; open, the steps as they come.
+  await box(page).fill("慢慢来");
+  await box(page).press("Enter");
+  const now = chat(page).locator('[data-testid="chat-work"][data-tone]');
+  await expect(now).toContainText("等模型回答…");
+  await sceneBothThemes(page, "3-running", "3a");
+  // Stopped: the line says so, and what it did.
+  await chat(page).getByTestId("chat-send").click();
+  await expect(chat(page).locator('[data-testid="chat-work"][data-state="stopped"]')).toBeVisible();
+  await sceneBothThemes(page, "4-stopped", "3a");
+  for (const route of waiting) await route.abort().catch(() => {});
+});

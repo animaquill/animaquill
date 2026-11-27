@@ -247,7 +247,7 @@ test("a draft stays through a reload, and messages queue while a task runs", asy
 
   // While a task runs, Enter queues; what is queued shows above the box, and goes after it.
   await send(page, "慢慢来");
-  await expect(chat(page).getByTestId("chat-phase")).toBeVisible();
+  await expect(chat(page).locator('[data-testid="chat-work"][data-tone]')).toBeVisible();
   await expect.poll(() => draft(page)).toBe("");
   await send(page, "排着的第一句");
   await send(page, "排着的第二句");

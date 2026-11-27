@@ -1,14 +1,6 @@
 import type { AttachedImage, Conversation, RunningTask, TaskOutcome } from "@animaquill/agent";
 import { failureOf, promptOf } from "@animaquill/agent";
-import {
-  ChevronDown,
-  ChevronRight,
-  Copy,
-  GitBranchPlus,
-  History,
-  Lightbulb,
-  RotateCcw,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, GitBranchPlus, History, RotateCcw } from "lucide-react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { ChatImageHeld } from "@animaquill/host";
 import { useTranslation } from "react-i18next";
@@ -16,7 +8,6 @@ import { useWorkbench } from "../app/context.ts";
 import { TaskApproval } from "./ApprovalCard.tsx";
 import { ChangeCard } from "./ChangeCard.tsx";
 import styles from "./ChatPanel.module.css";
-import { useNow } from "./clock.ts";
 import { useOpened } from "./expanded.ts";
 import { failureText } from "./failure.ts";
 import { GoBack, type GoingBack } from "./GoBack.tsx";
@@ -27,30 +18,20 @@ import { planOf, plansIn } from "./plan.ts";
 import { PlanCard } from "./PlanCard.tsx";
 import { piecesOf, plainOf } from "./refs.ts";
 import { summaryOf } from "./summary.ts";
-import { ListenRow } from "./ListenRow.tsx";
-import { LookRow } from "./LookRow.tsx";
-import { ToolRow } from "./ToolRow.tsx";
-import { isHeld, type Names, type Say } from "./toolSummary.ts";
-import { durationText, type Step, type Turn } from "./turns.ts";
-import { dollars, tokens, usageOf } from "./usage.ts";
-import { liveText, liveThinking, liveThinkingSince, useLive } from "./useLive.ts";
+import type { Names } from "./toolSummary.ts";
+import type { Turn } from "./turns.ts";
+import turnStyles from "./turn/turn.module.css";
+import { WorkLine } from "./turn/WorkLine.tsx";
+import { liveText, useLive } from "./useLive.ts";
 
 /** A link of the editor in what AI wrote: a block, as in people's words. */
 const appLink = (href: string, label: string) => <RefChip chatRef={{ href, label }} />;
 
-/** The tool whose pictures show in the chat, see `LookRow`. */
-const LOOK_TOOL = "aq_render_frames";
-/** The tool whose level of the sound shows in the chat, see `ListenRow`. */
-const LISTEN_TOOL = "aq_audio_analyze";
-
-/** A thought quicker than this says nothing of how long it took. */
-const SHOWN_MS = 100;
-
 /**
- * One turn of the chat: what people said; the process of AI, folded once the turn is done into one
- * line that says how much thinking and how many tools it took (a failed call stays out, open); the
- * answer, as Markdown; the card of what it changed; and a line of what it took. A turn that runs
- * shows each step as it comes and the words on their way.
+ * One turn of the chat (docs/design/chat-panel.md of AnimaQuill Cloud, 5): what people said; the
+ * work of AI in one line, open to its steps (`WorkLine`), which says what it does while it runs;
+ * the answer, the largest words of the chat, on its way while it runs; how it ended where that
+ * calls for a word; and the card of what it changed.
  */
 export function TurnView({
   turn,
@@ -91,24 +72,21 @@ export function TurnView({
       data-running={running ? "" : undefined}
     >
       <UserView turn={turn} latest={latest} busy={busy} onForked={onForked} />
-      {switches.map((line) => (
-        <p key={line} className={styles.muted} data-testid="chat-pack-switch">
-          {line}
-        </p>
-      ))}
-      {running ? (
-        <>
-          {turn.steps.map((step) => (
-            <StepView key={step.id} step={step} running={running} names={names} />
-          ))}
-          <LiveView conversation={conversation} />
-          <TaskApproval task={turn.task} />
-        </>
-      ) : (
-        turn.steps.length > 0 && <ProcessView turn={turn} names={names} />
+      {(running || turn.steps.length > 0 || turn.answerEntry || shown?.end === "stopped") && (
+        <WorkLine
+          turn={turn}
+          running={running}
+          conversation={conversation}
+          stopped={shown?.end === "stopped"}
+          names={names}
+          switches={switches}
+          modelName={modelName}
+        />
       )}
+      {running && <LiveAnswer conversation={conversation} />}
+      {running && <TaskApproval task={turn.task} />}
       {turn.answer !== undefined && (
-        <div className={styles.answer} data-testid="chat-answer">
+        <div className={turnStyles.answer} data-testid="chat-answer">
           <Markdown text={turn.answer} renderAppLink={appLink} />
         </div>
       )}
@@ -125,7 +103,6 @@ export function TurnView({
       {question && <QuestionView question={question} />}
       <TurnPlan turn={turn} conversation={conversation} busy={busy} running={running} />
       <ChangeCard task={turn.task} entries={turn.entries} running={running !== undefined} />
-      {!running && <UsageLine turn={turn} modelName={modelName} />}
     </div>
   );
 }
@@ -260,237 +237,15 @@ function UserView(props: {
   );
 }
 
-/** The process of a turn that is done: one line, open to all of it. A failed call shows anyway. */
-function ProcessView({ turn, names }: { readonly turn: Turn; readonly names: Names }) {
-  const { t } = useTranslation();
-  const say = t as unknown as Say;
-  const [open, setOpen] = useOpened(`${turn.task}/process`, false);
-  const parts = [
-    t("chat.process.title"),
-    ...(turn.thoughts > 0 ? [t("chat.process.thinking", { count: turn.thoughts })] : []),
-    ...(turn.tools > 0 ? [t("chat.process.tools", { count: turn.tools })] : []),
-    ...(turn.failed > 0 ? [t("chat.process.failed", { count: turn.failed })] : []),
-    ...(turn.ms !== undefined ? [durationText(say, turn.ms, true)] : []),
-  ];
-  // What failed shows anyway, and so do the pictures AI looked at and the sound it heard: is what
-  // it saw and heard what people see and hear?
-  const failed = turn.steps.filter(
-    (step) =>
-      step.kind === "tool" &&
-      step.result &&
-      ((!step.result.ok && !isHeld(step.result)) ||
-        (step.call.name === LOOK_TOOL && (step.result.images?.length ?? 0) > 0) ||
-        step.call.name === LISTEN_TOOL),
-  );
-  return (
-    <div className={styles.process} data-testid="chat-process">
-      <button
-        type="button"
-        className={styles.processHead}
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        <span>{parts.join(" · ")}</span>
-      </button>
-      <div className={styles.steps}>
-        {(open ? turn.steps : failed).map((step) => (
-          <StepView key={step.id} step={step} running={undefined} names={names} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function StepView({
-  step,
-  running,
-  names,
-}: {
-  readonly step: Step;
-  readonly running: RunningTask | undefined;
-  readonly names: Names;
-}) {
-  switch (step.kind) {
-    case "thinking":
-      return <ThinkingRow id={step.id} text={step.text} ms={step.ms} />;
-    case "said":
-      return (
-        <div className={styles.said} data-testid="chat-said">
-          <Markdown text={step.text} renderAppLink={appLink} />
-        </div>
-      );
-    case "tool":
-      if (step.call.name === LOOK_TOOL) {
-        return (
-          <LookRow
-            call={step.call}
-            result={step.result}
-            running={running?.tool?.id === step.call.id ? running.tool.startedAt : undefined}
-            names={names}
-          />
-        );
-      }
-      if (step.call.name === LISTEN_TOOL) {
-        return (
-          <ListenRow
-            call={step.call}
-            result={step.result}
-            running={running?.tool?.id === step.call.id ? running.tool.startedAt : undefined}
-            names={names}
-          />
-        );
-      }
-      return (
-        <ToolRow
-          call={step.call}
-          result={step.result}
-          running={running?.tool?.id === step.call.id ? running.tool.startedAt : undefined}
-          names={names}
-        />
-      );
-  }
-}
-
-/** What the model said of its thinking: its first line and how long, open to all of it. */
-function ThinkingRow({
-  id,
-  text,
-  ms,
-}: {
-  readonly id: string;
-  readonly text: string;
-  readonly ms: number | undefined;
-}) {
-  const { ai } = useWorkbench();
-  const { t } = useTranslation();
-  const say = t as unknown as Say;
-  // Open from the start where people want thinking in full, see `AiSettings.expandThinking`.
-  const expand = useSyncExternalStore(ai.subscribe, ai.getSnapshot).expandThinking;
-  const [open, setOpen] = useOpened(id, expand);
-  const first = text.split("\n").find((line) => line.trim() !== "") ?? "";
-  return (
-    <div className={styles.thinking} data-testid="chat-thinking">
-      <button
-        type="button"
-        className={styles.thinkingHead}
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        <Lightbulb size={12} aria-hidden="true" />
-        <span className={styles.thinkingLabel}>{t("chat.thinkingLine")}</span>
-        <span className={styles.thinkingFirst}>{first}</span>
-        {ms !== undefined && ms >= SHOWN_MS && (
-          <span className={styles.toolMs}>{durationText(say, ms, true)}</span>
-        )}
-      </button>
-      {open && <div className={styles.thinkingText}>{text}</div>}
-    </div>
-  );
-}
-
-/**
- * The answer on its way: what the model thinks, by its last line with the time going, and what it
- * writes, as Markdown that parses only its last block again. Only this draws with each piece.
- */
-function LiveView({ conversation }: { readonly conversation: Conversation }) {
-  const { ai } = useWorkbench();
-  const expand = useSyncExternalStore(ai.subscribe, ai.getSnapshot).expandThinking;
-  const { t } = useTranslation();
-  const say = t as unknown as Say;
+/** The answer on its way, as Markdown that parses only its last block again. */
+function LiveAnswer({ conversation }: { readonly conversation: Conversation }) {
   const text = useLive(conversation.live, liveText);
-  const thinking = useLive(conversation.live, liveThinking);
-  const since = useLive(conversation.live, liveThinkingSince);
-  const now = useNow(since !== undefined);
-  const last =
-    thinking
-      .split("\n")
-      .filter((line) => line.trim() !== "")
-      .at(-1) ?? "";
+  if (text === "") return null;
   return (
-    <>
-      {thinking.trim() !== "" && (
-        <div className={styles.thinking} data-testid="chat-thinking" data-live="">
-          <div className={styles.thinkingHead}>
-            <Lightbulb size={12} aria-hidden="true" />
-            <span className={styles.thinkingLabel}>{t("chat.thinkingLine")}</span>
-            <span className={styles.thinkingFirst}>{expand ? "" : last}</span>
-            {since !== undefined && (
-              <span className={styles.toolMs}>{durationText(say, now - since)}</span>
-            )}
-          </div>
-          {expand && <div className={styles.thinkingText}>{thinking}</div>}
-        </div>
-      )}
-      {text !== "" && (
-        <div className={styles.answer} data-testid="chat-live" aria-live="polite">
-          <Markdown text={text} streaming renderAppLink={appLink} />
-        </div>
-      )}
-    </>
-  );
-}
-
-/** What a turn took, in a line: the model, tokens in and out, the cost, how long. */
-function UsageLine({
-  turn,
-  modelName,
-}: {
-  readonly turn: Turn;
-  readonly modelName: (model: string) => string;
-}) {
-  const { t } = useTranslation();
-  const say = t as unknown as Say;
-  const usage = usageOf(turn.entries);
-  if (turn.models.length === 0) return null;
-  const names = turn.models.map(modelName);
-  const model =
-    names.length > 1
-      ? t("chat.models", { from: names.slice(0, -1).join(" → "), to: names.at(-1) })
-      : names[0];
-  const parts = [
-    <span key="model" className={styles.usageModel}>
-      {model}
-    </span>,
-    ...(usage.answers > 0
-      ? [
-          <span
-            key="tokens"
-            title={t("chat.usage.detail", {
-              input: tokens(usage.input),
-              output: tokens(usage.output),
-              cacheRead: tokens(usage.cacheRead),
-              cacheWrite: tokens(usage.cacheWrite),
-            })}
-          >
-            {t("chat.usage.in", { n: tokens(usage.input + usage.cacheRead + usage.cacheWrite) })}{" "}
-            {t("chat.usage.out", { n: tokens(usage.output) })}
-          </span>,
-        ]
-      : []),
-    ...(usage.cost !== undefined
-      ? [
-          <span key="cost" className={styles.usageCost}>
-            {dollars(usage.cost)}
-          </span>,
-        ]
-      : []),
-    ...(turn.ms !== undefined ? [<span key="ms">{durationText(say, turn.ms, true)}</span>] : []),
-  ];
-  return (
-    <p className={styles.usageLine} data-testid="chat-usage">
-      {parts.flatMap((part, at) =>
-        at === 0
-          ? [part]
-          : [
-              // A word of its own between the parts, so that a line reads "…↓198 · $0.0115 · 16 秒".
-              <span key={`dot${at}`} aria-hidden>
-                {" · "}
-              </span>,
-              part,
-            ],
-      )}
-    </p>
+    <div className={turnStyles.answer} data-testid="chat-live" aria-live="polite">
+      <Markdown text={text} streaming renderAppLink={appLink} />
+      <span className={turnStyles.caret} aria-hidden />
+    </div>
   );
 }
 
@@ -536,24 +291,32 @@ function OutcomeView({
   const [asking, setAsking] = useState(false);
   switch (outcome.end) {
     case "stopped":
+      // The line of the work says so: "停了 · 做了 3 步 · 改了 2 处".
+      return null;
+    case "limit":
+    case "length":
       return (
-        <p className={styles.notice} data-testid="chat-stopped">
-          {t("chat.stopped")}
+        <p
+          className={turnStyles.outcome}
+          data-testid={outcome.end === "limit" ? "chat-limit" : "chat-length"}
+        >
+          <span>
+            {outcome.end === "limit" ? t("chat.limit", { count: maxToolCalls }) : t("chat.length")}
+          </span>
+          {latest && (
+            <>
+              {" · "}
+              <button
+                type="button"
+                className={styles.link}
+                onClick={() => void chat.send(t("chat.continueMessage"))}
+              >
+                {t("chat.continue")}
+              </button>
+            </>
+          )}
         </p>
       );
-    case "limit":
-      return (
-        <div className={styles.notice} data-testid="chat-limit">
-          <span>{t("chat.limit", { count: maxToolCalls })}</span>
-          {latest && (
-            <button type="button" onClick={() => void chat.send(t("chat.continueMessage"))}>
-              {t("chat.continue")}
-            </button>
-          )}
-        </div>
-      );
-    case "length":
-      return <p className={styles.notice}>{t("chat.length")}</p>;
     case "failed": {
       const { advice, detail } = failureText(t, outcome.failure, {
         relayed: outcome.relayed === true,

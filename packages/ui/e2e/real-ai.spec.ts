@@ -116,17 +116,19 @@ test("a real model: edits, reads, looks, plans first", async ({ page }) => {
     await box(page).fill(words);
     await box(page).press("Enter");
     await done();
-    const line = chat(page).getByTestId("chat-usage").last();
+    const line = chat(page).locator('[data-testid="chat-work"][data-state="done"]').last();
     await expect(line).toBeVisible({ timeout: 60_000 });
-    const text = ((await line.textContent()) ?? "").trim();
-    const detail = (await line.locator("span[title]").first().getAttribute("title")) ?? "";
+    const text = ((await line.getByTestId("chat-work-text").textContent()) ?? "").trim();
+    const detail = ((await line.getByTestId("chat-work-detail").textContent()) ?? "").trim();
     usage.push(`${name}: ${text} | ${detail}`);
     note(`turn ${name}: ${text} | ${detail}`);
     note(`  tools called so far: ${called.join(" ")}`);
     await page.screenshot({ path: test.info().outputPath(`${name}.png`) });
   };
   const answered = () =>
-    expect(chat(page).getByTestId("chat-phase")).toBeHidden({ timeout: 240_000 });
+    expect(chat(page).locator('[data-testid="chat-work"][data-tone]')).toBeHidden({
+      timeout: 240_000,
+    });
   const failures = () => chat(page).getByTestId("chat-failure");
 
   try {
