@@ -289,16 +289,16 @@ test("AI changes the timeline, and the whole task goes back in one step", async 
 
   // The card of the turn: what AI said the batch does, and each object, with where it is.
   await expect(chat(page).getByTestId("chat-card")).toContainText("改了 2 处");
+  await expect(chat(page).getByTestId("chat-card-said")).toHaveText("加一个蓝色片段和一个标记");
   const changes = chat(page).getByTestId("chat-changes");
-  await expect(changes).toContainText("加一个蓝色片段和一个标记");
   const rows = changes.getByTestId("chat-change");
   await expect(rows).toHaveCount(2);
-  await expect(rows.filter({ hasText: "新加了片段" })).toHaveCount(1);
+  const added = rows.filter({ hasText: /^片段「.+」新加了$/ });
+  await expect(added).toHaveCount(1);
   // A clip without a name has what people call it elsewhere, never its inner id.
-  await expect(rows.filter({ hasText: "新加了片段" })).toContainText(/新加了片段「.+」/);
-  await expect(rows.filter({ hasText: "新加了片段" })).not.toContainText("clip_");
-  await expect(rows.filter({ hasText: "新加了标记「AI」" })).toHaveCount(1);
-  await rows.filter({ hasText: "新加了片段" }).getByRole("button", { name: "定位" }).click();
+  await expect(added).not.toContainText("clip_");
+  await expect(rows.filter({ hasText: "标记「AI」新加了" })).toHaveCount(1);
+  await added.getByRole("button", { name: "定位" }).click();
 
   // Straight to the service, with the key, the tools of AnimaQuill and the system prompt in parts.
   const first = requests[0] as Request;
@@ -315,10 +315,10 @@ test("AI changes the timeline, and the whole task goes back in one step", async 
   expect(offered).not.toContain("clip_add");
   expect(JSON.stringify(firstSent.system)).toContain("You are the AI assistant inside AnimaQuill");
 
-  await chat(page).getByRole("button", { name: "撤销这次任务", exact: true }).click();
+  await chat(page).getByRole("button", { name: "撤销这一轮", exact: true }).click();
   await expect(clips(page)).toHaveCount(0);
   await expect(rows.first().getByRole("button", { name: "定位" })).toBeDisabled();
-  await chat(page).getByRole("button", { name: "重做这次任务", exact: true }).click();
+  await chat(page).getByRole("button", { name: "重做这一轮", exact: true }).click();
   await expect(clips(page)).toHaveCount(1);
 
   // The conversation is still there after a reload, with its summary; the key never shows.
@@ -607,15 +607,24 @@ test("says what to do when the service cannot be reached, or refuses the key", a
   await send(page, "你好");
   // Each task keeps what went wrong in it: the newest is last.
   const failure = chat(page).getByTestId("chat-failure").last();
-  await expect(failure).toContainText("连不上服务");
-  await expect(failure).toContainText("服务器转发");
+  await expect(failure).toHaveAttribute("data-kind", "network");
+  // This page has no relay: nothing to switch to, the address and the network said too.
+  await expect(failure.locator("p").first()).toHaveText(
+    /^连不上 .+，可能是浏览器挡住了直连，也可能是地址或网络不对。$/u,
+  );
+  await expect(failure.getByTestId("chat-failure-relay")).toHaveCount(0);
+  await expect(failure.getByTestId("chat-failure-retry")).toBeVisible();
 
   refuse = true;
   await send(page, "再试一次");
-  await expect(failure).toContainText("服务拒绝了这个 key");
+  await expect(failure).toHaveAttribute("data-kind", "key");
+  await expect(failure.locator("p").first()).toHaveText(/^.+ 的 key 不对。$/u);
   // What the service said is folded away, without the key; the way out is a button.
+  await expect(failure.getByText("401")).toBeHidden();
+  await failure.getByText("详情").click();
   await expect(failure).toContainText("401");
-  await expect(failure.getByRole("button", { name: "去设置" })).toBeVisible();
+  await expect(failure.getByTestId("chat-failure-key")).toHaveText("去填 key");
+  await expect(failure.getByTestId("chat-failure-relay")).toHaveCount(0);
   expect(await page.content()).not.toContain("SECRET");
   expectedInConsole(problems);
 });
@@ -700,9 +709,9 @@ test("a failed task is tried again from where it was, as the same task", async (
   await setUpService(page);
   await send(page, "你好");
   const failure = chat(page).getByTestId("chat-failure");
-  await expect(failure).toContainText("服务拒绝了这个 key");
+  await expect(failure).toContainText("的 key 不对");
   refusing = false;
-  await failure.getByRole("button", { name: "重试" }).click();
+  await failure.getByTestId("chat-failure-retry").click();
   await expect(chat(page).getByText("这次成了。")).toBeVisible();
   await expect(failure).toHaveCount(0);
   // Still one turn: what people said went once.
@@ -913,7 +922,7 @@ test("the states of a turn, at 420 and 320 wide: done, open, running, stopped, f
   // Failed: what to do first, buttons, what the service said folded away.
   await newConversation(page);
   await send(page, "加一个蓝色片段");
-  await expect(chat(page).getByTestId("chat-failure")).toContainText("服务拒绝了这个 key");
+  await expect(chat(page).getByTestId("chat-failure")).toContainText("的 key 不对");
   await shoot(page, "failed");
 
   // At the limit of tools: it says so, with a way to go on.

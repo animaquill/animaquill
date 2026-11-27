@@ -204,7 +204,7 @@ export class Conversation {
     target: TaskTarget,
     images: readonly AttachedImage[] = [],
     selection?: SelectionFacts,
-    marks: Pick<UserEntry, "plan" | "fromPlan"> = {},
+    marks: Pick<UserEntry, "plan" | "fromPlan" | "rewrites"> = {},
   ): Promise<TaskOutcome | undefined> {
     if (this.running || (!text.trim() && images.length === 0)) return undefined;
     const now = this.#options.now ?? Date.now;
@@ -218,6 +218,7 @@ export class Conversation {
       ...(selection && { selection }),
       ...(marks.plan && { plan: true as const }),
       ...(marks.fromPlan !== undefined && { fromPlan: marks.fromPlan }),
+      ...(marks.rewrites !== undefined && { rewrites: marks.rewrites }),
     };
     const history = this.#snapshot.entries;
     this.#set({ entries: [...history, user] });

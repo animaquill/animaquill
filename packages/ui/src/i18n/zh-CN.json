@@ -3726,10 +3726,26 @@
     },
     "card": {
       "noChanges": "没有改项目",
-      "undoTitle": "只撤 AI 这次的改动，你自己的改动不动",
+      "compare": "对比",
+      "row": {
+        "code": "代码",
+        "lines": "+{{added}} −{{removed}} 行",
+        "fieldsMore": "{{field}}等 {{count}} 项",
+        "added": "新加了",
+        "removed": "删了",
+        "changed": "改了",
+        "cleared": "去掉了"
+      },
+      "rowPending": {
+        "added": "新加",
+        "removed": "删掉",
+        "changed": "改",
+        "cleared": "去掉"
+      },
+      "undoTitle": "只撤 AI 这一轮的改动，你自己的改动不动",
       "whyNot": {
-        "changed": "这次任务改的地方后来都被改过了",
-        "inUse": "这次任务改的地方还被别的内容用着",
+        "changed": "这一轮改的地方后来都被改过了",
+        "inUse": "这一轮改的地方还被别的内容用着",
         "count": "撤销记录只留最近 50 次",
         "age": "撤销记录只留 30 天",
         "elsewhere": "在做这次改动的那台电脑上能撤销"
@@ -3745,12 +3761,11 @@
     },
     "failure": {
       "retry": "重试",
-      "settings": "去设置",
+      "key": "去填 key",
       "otherModel": "换个模型",
       "useRelay": "改用服务器转发",
       "details": "详情",
-      "retryChanged": "上次已经改了 {{count}} 处，重试会接着改。要先撤销吗？",
-      "undoThenRetry": "先撤销再重试",
+      "undoThenRetry": "撤销 {{count}} 处再重试",
       "retryOn": "接着改",
       "cancel": "算了",
       "withoutPictures": "去掉图片重发",
@@ -3780,22 +3795,23 @@
       "declined": "没允许"
     },
     "result": "结果",
-    "undoTask": "撤销这次任务",
-    "redoTask": "重做这次任务",
+    "undoTask": "撤销这一轮",
+    "redoTask": "重做这一轮",
     "changes": "改了 {{count}} 处",
     "limit": "调用了 {{count}} 次工具，先停在这里",
     "length": "回答太长，被截断了",
     "failed": {
-      "network": "连不上服务。可能是浏览器不让直接连这家服务（可以在设置里改成“通过服务器转发”），也可能是地址或网络有问题，或者 key 不对。",
-      "networkLocal": "连不上服务。可能是浏览器不让直接连这家服务（这里不能通过服务器转发），也可能是地址或网络有问题，或者 key 不对。",
+      "someService": "服务",
+      "network": "连不上 {{service}}，可能是浏览器挡住了直连。",
+      "networkLocal": "连不上 {{service}}，可能是浏览器挡住了直连，也可能是地址或网络不对。",
       "networkRelay": "连不上服务器，请检查网络后再试。",
       "relayUpload": "请求没能及时传到服务器：通过服务器转发时，请求要在大约一分钟内传完（最多 20 MB）。网络慢时少带一些图片或内容再试。",
-      "key": "服务拒绝了这个 key。请在设置里检查 key 是否正确、是否还有额度。",
-      "rate": "请求太多或额度用完了，请稍后再试。",
-      "notFound": "服务说找不到。请检查地址和模型名。",
-      "server": "服务那边出了问题，请稍后再试。",
+      "key": "{{service}} 的 key 不对。",
+      "rate": "{{service}} 说请求太多或额度用完了。",
+      "notFound": "{{service}} 找不到这个模型。",
+      "server": "{{service}} 那边出了问题。",
       "other": "出错了。",
-      "contextFull": "上下文满了，"
+      "contextFull": "上下文满了。"
     },
     "detail": "服务的原话：{{message}}",
     "relay": {
@@ -4001,12 +4017,26 @@
     },
     "user": {
       "copy": "复制",
+      "edit": "编辑后重发",
+      "more": "更多",
+      "back": "回到这一轮之前",
+      "fork": "从这里分出新对话",
+      "sent": "看 AI 收到的原文",
+      "sentTitle": "AI 收到的原文",
+      "close": "关闭",
+      "editing": "改写这条消息",
+      "cancel": "取消",
       "resend": "重发",
-      "fork": "从这里开新对话",
-      "resendAsk": "这一轮的 {{count}} 处改动要先撤销吗？",
-      "undoThenResend": "撤销后重发",
+      "undoResend": "撤销 {{count}} 处再重发",
+      "undoResendFull": "撤销这一轮的 {{count}} 处再重发",
       "keepResend": "保留改动重发",
-      "back": "回到这一轮之前"
+      "resendWays": "别的重发方式",
+      "rewritten": "已改写重发 · 原来的一轮",
+      "rewrittenKept": "改动还在（{{count}} 处）"
+    },
+    "answer": {
+      "copy": "复制回答",
+      "fork": "从这里分出新对话"
     },
     "back": {
       "title": "撤掉 {{turns}} 轮的 {{count}} 处改动",
@@ -4107,11 +4137,7 @@
       "removeFailedOnes": "去掉标红的图片"
     },
     "attached": {
-      "title": "附带",
-      "picture": "图片 {{number}}",
-      "refs": "{{count}} 个链接",
-      "sent": "AI 实际收到的",
-      "copy": "复制"
+      "picture": "图片 {{number}}"
     },
     "notify": {
       "done": "AI 做完了",

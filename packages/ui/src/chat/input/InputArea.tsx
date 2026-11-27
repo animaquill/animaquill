@@ -1,6 +1,9 @@
 import {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -45,10 +48,19 @@ const COMMANDS = {
  * goes while an input method composes, ↑ in an empty box brings back what people said before.
  * While a task runs, Enter queues the message for after it and Esc stops the task.
  */
-export function InputArea(props: {
-  /** Something went out: the list follows the newest again. */
-  readonly onSent: () => void;
-}) {
+export interface InputAreaHandle {
+  /** Opens the bubble of the model, on the models that see pictures where asked. */
+  openModels(pictures?: boolean): void;
+  focus(): void;
+}
+
+export const InputArea = forwardRef<
+  InputAreaHandle,
+  {
+    /** Something went out: the list follows the newest again. */
+    readonly onSent: () => void;
+  }
+>(function InputArea(props, handle) {
   const workbench = useWorkbench();
   const { chat, ai, keybindings, pointing } = workbench;
   const { t } = useTranslation();
@@ -140,17 +152,29 @@ export function InputArea(props: {
     input.addEventListener("change", () => addFiles([...(input.files ?? [])]));
     input.click();
   };
-  // The commands of the palette reach the box through the workbench.
-  useEffect(() =>
-    workbench.composeWith({
-      time: insertTime,
-      selection: insertSelection,
-      picture: choose,
+  // The commands of the palette reach the box through the workbench, as it is at the moment.
+  const commands = useRef({ insertTime, insertSelection, choose });
+  commands.current = { insertTime, insertSelection, choose };
+  const compose = useMemo(
+    () => ({
+      time: () => commands.current.insertTime(),
+      selection: () => commands.current.insertSelection(),
+      picture: () => commands.current.choose(),
       plus: () => plus.current?.openFromBox(box.current?.element ?? null),
       models: () => tag.current?.toggle(),
       effort: () => tag.current?.cycleEffort(),
       focus: () => box.current?.focus(),
     }),
+    [],
+  );
+  useEffect(() => workbench.composeWith(compose), [workbench, compose]);
+  useImperativeHandle(
+    handle,
+    () => ({
+      openModels: (vision) => tag.current?.open(vision),
+      focus: () => box.current?.focus(),
+    }),
+    [],
   );
 
   const hasSomething = text.trim() !== "" || ready.length > 0;
@@ -336,6 +360,8 @@ export function InputArea(props: {
           gone={(href) => pointing.stateOf(href) === "gone"}
           onPoint={(href) => workbench.pointAt(href)}
           onOpen={(href) => workbench.goToRef(href)}
+          // Back in this box, the commands come here again, not to where a message was edited.
+          onFocus={() => workbench.composeWith(compose)}
         />
         <div className={styles.row}>
           <PlusMenu
@@ -387,6 +413,6 @@ export function InputArea(props: {
       )}
     </div>
   );
-}
+});
 
 const NONE: readonly never[] = [];

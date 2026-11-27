@@ -72,6 +72,11 @@ export interface UserEntry {
   readonly plan?: true;
   /** It is the plan of that call of `aq_propose`, as people accepted it ("按这个做"). */
   readonly fromPlan?: string;
+  /**
+   * It is the message of that task, which people edited and sent again: that turn stays in the
+   * conversation, folded away under this one.
+   */
+  readonly rewrites?: string;
 }
 
 /** What a message that asked for a plan first says to the model, after the words of people. */
@@ -440,6 +445,7 @@ export function readEntry(value: unknown): ChatEntry | undefined {
       ...(selection && { selection }),
       ...(value.plan === true && { plan: true as const }),
       ...(typeof value.fromPlan === "string" && { fromPlan: value.fromPlan }),
+      ...(typeof value.rewrites === "string" && { rewrites: value.rewrites }),
     };
   }
   if (role === "tool") {

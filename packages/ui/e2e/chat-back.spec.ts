@@ -14,10 +14,12 @@ devPageOnly("window.aqExecute and window.aqState");
 const chat = (page: Page) => content(page, "chat");
 const message = (page: Page, text: string) =>
   chat(page).getByTestId("chat-user").filter({ hasText: text });
-/** The button on a message, which shows when it is hovered. */
+/** "回到这一轮之前" in "⋯" of a message, which shows when it is hovered. */
 const backOf = async (page: Page, text: string) => {
   await message(page, text).hover();
-  return message(page, text).locator("xpath=..").getByRole("button", { name: "回到这一轮之前" });
+  const more = message(page, text).locator("xpath=..").getByTestId("chat-user-more");
+  await more.click();
+  return chat(page).getByRole("menuitem", { name: "回到这一轮之前" });
 };
 const list = (page: Page) => chat(page).getByTestId("chat-back");
 
@@ -82,7 +84,7 @@ test("back to before the first turn takes back every turn from there, and does t
   await expect(cards.nth(0)).toContainText("改了 2 处");
   await expect(list(page).getByText("后来改过的 1 处保留")).toBeVisible();
   await rows.nth(1).getByTestId("chat-back-why").hover();
-  await expect(page.getByRole("tooltip")).toHaveText("这次任务改的地方后来都被改过了");
+  await expect(page.getByRole("tooltip")).toHaveText("这一轮改的地方后来都被改过了");
   await shot(page, "sd2-list");
 
   await list(page).getByRole("button", { name: "撤掉" }).click();
@@ -90,8 +92,8 @@ test("back to before the first turn takes back every turn from there, and does t
   const done = chat(page).getByTestId("chat-back-done");
   await expect(done).toContainText("撤掉了 3 处");
   // Each card says so, as if each turn had been taken back on its own.
-  await expect(cards.nth(0).getByRole("button", { name: "重做这次任务" })).toBeVisible();
-  await expect(cards.nth(2).getByRole("button", { name: "重做这次任务" })).toBeVisible();
+  await expect(cards.nth(0).getByRole("button", { name: "重做这一轮" })).toBeVisible();
+  await expect(cards.nth(2).getByRole("button", { name: "重做这一轮" })).toBeVisible();
   await shot(page, "sd2-done");
 
   await done.getByRole("button", { name: "重做" }).click();
@@ -99,8 +101,8 @@ test("back to before the first turn takes back every turn from there, and does t
     .poll(() => markers(page))
     .toEqual({ m1: "一", m2: "我改的", m4: "四", m5: "五", m9: "别的对话" });
   await expect(done).toHaveCount(0);
-  await expect(cards.nth(0).getByRole("button", { name: "撤销这次任务" })).toBeVisible();
-  await expect(cards.nth(2).getByRole("button", { name: "撤销这次任务" })).toBeVisible();
+  await expect(cards.nth(0).getByRole("button", { name: "撤销这一轮" })).toBeVisible();
+  await expect(cards.nth(2).getByRole("button", { name: "撤销这一轮" })).toBeVisible();
   await shot(page, "sd2-redone");
 
   // Loaded again, from the last turn: only that one.

@@ -235,11 +235,13 @@ test("the time and the objects selected go in as blocks, and AI gets them as lin
   expect(words).toBe(
     "把 [0:01/00](aq://time?timeline=main&t=1) 之后的 [字幕「欢迎来到这座城市看看」](aq://object/cap_1?timeline=main) [片段「城市」](aq://object/clip_0?timeline=main) [片段「纯色」](aq://object/clip_1?timeline=main) [片段「纯色」](aq://object/clip_2?timeline=main) 放慢一点",
   );
-  // In the conversation the words keep their blocks; "附带" opens to what AI got.
+  // In the conversation the words keep their blocks; "⋯" shows what AI got.
   const user = chat(page).getByTestId("chat-user");
   await expect(user.getByTestId("chat-chip")).toHaveCount(5);
-  await chat(page).getByTestId("chat-sent-with").getByRole("button").first().click();
-  await expect(chat(page).getByTestId("chat-sent-text")).toHaveText(words);
+  await user.hover();
+  await chat(page).getByTestId("chat-user-more").click();
+  await chat(page).getByRole("menuitem", { name: "看 AI 收到的原文" }).click();
+  await expect(chat(page).getByTestId("chat-user-sent").locator("pre")).toHaveText(words);
   await shoot(page, "C3-sent", chat(page).getByTestId("chat"));
   // A click goes to the clip, and to the moment.
   await user.getByTestId("chat-chip").nth(3).click();

@@ -1,0 +1,313 @@
+/*
+ * The card of what a turn changed (docs/design/chat-panel.md of AnimaQuill Cloud, 5.5): its title
+ * with "对比" and "撤销这一轮", the first thing AI said of it, a row for each object, and at its foot
+ * what people or others changed meanwhile and the problems. Rules start from a class of their own,
+ * so that they go over the buttons of the chat as they are by default (`.panel button`).
+ */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 8px;
+}
+
+.head {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  padding: 5px 6px 5px 10px;
+}
+
+.title {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  color: var(--aq-text-strong);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.title svg {
+  flex: none;
+  color: var(--aq-text-muted);
+}
+
+.card .textButton {
+  flex: none;
+  height: 24px;
+  padding: 0 8px;
+  color: var(--aq-text-strong);
+  white-space: nowrap;
+  background: transparent;
+  border: 1px solid var(--aq-border);
+  border-radius: 5px;
+}
+
+.card .textButton:hover {
+  background: var(--aq-bg-hover);
+}
+
+.card .textButton[aria-pressed="true"] {
+  color: var(--aq-link);
+  background: var(--aq-accent-soft);
+  border-color: var(--aq-accent-line);
+}
+
+.card .textButton[aria-disabled="true"] {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.card .textButton[aria-disabled="true"]:hover {
+  background: transparent;
+}
+
+.said {
+  margin: -2px 0 0;
+  padding: 0 10px 6px;
+  color: var(--aq-text-muted);
+  overflow-wrap: anywhere;
+}
+
+.changes {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-top: 1px solid var(--aq-border);
+}
+
+.changes > .said {
+  margin: 0;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.row {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-bottom: 1px solid var(--aq-border);
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.row > [data-testid="chat-change-detail"] {
+  padding: 2px 10px 8px 26px;
+}
+
+.line {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  padding-right: 4px;
+}
+
+.card .open,
+.still {
+  display: flex;
+  flex: 1;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding: 5px 0 5px 6px;
+  color: var(--aq-text);
+  text-align: left;
+  background: transparent;
+  border-radius: 0;
+}
+
+.card .open:hover {
+  background: var(--aq-bg-hover);
+}
+
+.still {
+  padding-left: 10px;
+}
+
+.still[data-indent] {
+  padding-left: 24px;
+}
+
+.twisty {
+  flex: none;
+  color: var(--aq-text-muted);
+  transition: transform 0.12s;
+}
+
+.open[aria-expanded="true"] .twisty {
+  transform: rotate(90deg);
+}
+
+.object {
+  flex: 0 1 auto;
+  min-width: 3em;
+  overflow: hidden;
+  color: var(--aq-text-strong);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.what {
+  flex: none;
+  color: var(--aq-text-muted);
+  white-space: nowrap;
+}
+
+.value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.after {
+  color: var(--aq-text);
+}
+
+/* A row that does not open keeps all of its values in sight. */
+.still .value {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.card[data-undone] .object,
+.card[data-undone] .what,
+.card[data-undone] .value {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+
+.card .go {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--aq-text-muted);
+  background: transparent;
+  border-radius: 4px;
+}
+
+.card .go:hover:not(:disabled) {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.card .more {
+  align-self: stretch;
+  padding: 5px 10px;
+  color: var(--aq-link);
+  text-align: left;
+  background: transparent;
+  border-top: 1px solid var(--aq-border);
+  border-radius: 0;
+}
+
+.others,
+.foot {
+  min-width: 0;
+  border-top: 1px solid var(--aq-border);
+}
+
+.card .othersHead {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 5px 10px;
+  color: var(--aq-text-muted);
+  text-align: left;
+  background: transparent;
+  border-radius: 0;
+}
+
+.card .othersHead:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.othersHead svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+.warn {
+  color: var(--aq-warning-text);
+}
+
+.others ul {
+  margin: 0;
+  padding: 0 10px 6px 32px;
+  color: var(--aq-text);
+}
+
+.foot {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 5px 10px;
+  color: var(--aq-text-muted);
+}
+
+.ok {
+  flex: none;
+  color: var(--aq-success);
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
+}
+
+.card .link {
+  flex: none;
+  padding: 0;
+  color: var(--aq-link);
+  white-space: nowrap;
+  background: none;
+}
+
+.card .link:hover {
+  text-decoration: underline;
+  background: none;
+}
+
+/*
+ * A narrow chat: a row says the object and what of it, its values in the row opened. A row that
+ * does not open has them on a line of their own instead, never cut.
+ */
+@container (max-width: 379px) {
+  .line[data-opens] .value {
+    display: none;
+  }
+
+  .line[data-opens] .what {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .still {
+    flex-wrap: wrap;
+    row-gap: 0;
+  }
+
+  .still .value {
+    flex-basis: 100%;
+  }
+}

@@ -110,6 +110,10 @@ describe("a message that asks for a plan first", () => {
     const accepted = { ...(user as object), plan: undefined, fromPlan: "call-1" };
     expect(readEntry(JSON.parse(JSON.stringify(accepted)))).toMatchObject({ fromPlan: "call-1" });
     expect(readEntry(JSON.parse(JSON.stringify(accepted)))).not.toHaveProperty("plan");
+    // A message edited and sent again says which one it rewrites, as kept.
+    const edited = { ...(user as object), rewrites: "task-1" };
+    expect(readEntry(JSON.parse(JSON.stringify(edited)))).toMatchObject({ rewrites: "task-1" });
+    expect(readEntry({ ...(user as object), rewrites: 3 })).not.toHaveProperty("rewrites");
     expect(promptOf({ text: "做个片头" })).toBe("做个片头");
     // The plan accepted: that turn's model reads the earlier message without the line, and writes.
     await conversation.send("按这个做：片头", target, [], undefined, { fromPlan: "call-1" });

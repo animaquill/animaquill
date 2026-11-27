@@ -221,7 +221,7 @@ test("each line opens to before and after: a value, keys, code, the picture", as
   await showTab(page, "chat");
   await opener(row(page, "标题")).click();
   await expect(title).toBeHidden();
-  const file = await openLine(row(page, "改了文件「code/helper.js」"));
+  const file = await openLine(row(page, "文件「code/helper.js」代码"));
   const lines = file.getByTestId("chat-change-code").locator("[data-kind]");
   await expect(file.getByTestId("chat-change-code").locator('[data-kind="removed"]')).toHaveText([
     "10export const n10 = 10;",
@@ -252,7 +252,7 @@ test("each line opens to before and after: a value, keys, code, the picture", as
   // The width of a phone.
   await page.setViewportSize({ width: 390, height: 844 });
   await showTab(page, "chat");
-  await opener(row(page, "改了文件「code/helper.js」")).click();
+  await opener(row(page, "文件「code/helper.js」代码")).click();
   await opener(row(page, "标题")).click();
   await row(page, "标题").getByTestId("chat-change-pictures").scrollIntoViewIfNeeded();
   await shoot(page, "390");
@@ -265,11 +265,11 @@ test("after a reload, once the task was taken back, and in a conversation opened
   await prepare(page);
   await aiChanges(page);
   await reload(page);
-  await expect(card(page).getByRole("button", { name: "撤销这次任务" })).toBeVisible();
+  await expect(card(page).getByRole("button", { name: "撤销这一轮" })).toBeVisible();
   await checkLogo(page);
 
-  await card(page).getByRole("button", { name: "撤销这次任务" }).click();
-  await expect(card(page).getByRole("button", { name: "重做这次任务" })).toBeVisible();
+  await card(page).getByRole("button", { name: "撤销这一轮" }).click();
+  await expect(card(page).getByRole("button", { name: "重做这一轮" })).toBeVisible();
   // Taken back, the line shows what the task did, as before.
   await opener(row(page, "Logo")).click();
   await checkLogo(page);

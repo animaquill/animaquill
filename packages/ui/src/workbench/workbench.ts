@@ -504,7 +504,8 @@ export class Workbench {
   /** What the chat points at: the playhead, what is selected, and where its blocks go. */
   readonly pointing: ChatPointing;
   /** What the box of the chat does with the commands of the palette, while it is there. */
-  #compose: ComposeHandlers | undefined;
+  /** The boxes of the chat that take the commands, the one people were in last at the end. */
+  #composers: Partial<ComposeHandlers>[] = [];
   /** The browser was asked in this page whether the chat may tell people. */
   #askedToNotify = false;
   /** The conversations of the online mode, which the backend has, see `AccountChats`. */
@@ -4334,12 +4335,22 @@ export class Workbench {
     }
   }
 
-  /** The box of the chat says what it does with the commands; resolves to taking that back. */
-  composeWith(handlers: ComposeHandlers): () => void {
-    this.#compose = handlers;
+  /**
+   * A box of the chat says what it does with the commands; resolves to taking that back. Said again,
+   * as the box gets the focus, it is the one the commands go to, until another one is: a box that
+   * lost the focus keeps them, so that a key pressed on the timeline still reaches it. A box that
+   * does only some of them (the one a message is edited in) leaves the others to the one before.
+   */
+  composeWith(handlers: Partial<ComposeHandlers>): () => void {
+    this.#composers = [...this.#composers.filter((each) => each !== handlers), handlers];
     return () => {
-      if (this.#compose === handlers) this.#compose = undefined;
+      this.#composers = this.#composers.filter((each) => each !== handlers);
     };
+  }
+
+  /** What a command of the box does, in the box people were in last that does it. */
+  #compose(which: keyof ComposeHandlers): (() => void) | undefined {
+    return this.#composers.findLast((each) => each[which] !== undefined)?.[which];
   }
 
   /** The frame at the playhead goes with the next message of the chat, which opens for it. */
@@ -4351,7 +4362,7 @@ export class Workbench {
     void this.chat.attachments.shoot(project, id, this.t("chat.pictures.frame")).then((refused) => {
       if (refused) this.notifications.push(this.t(`chat.pictures.${refused}`));
     });
-    if (!this.#compose) requestAnimationFrame(() => this.#compose?.focus());
+    if (!this.#compose("focus")) requestAnimationFrame(() => this.#compose("focus")?.());
   }
 
   /**
@@ -4835,12 +4846,13 @@ export class Workbench {
     const hasProject = () => this.session.store !== undefined && this.timeline.model !== undefined;
     const viaBox = (which: keyof ComposeHandlers) => () => {
       // The box takes it right away where it is there, else once the chat shows.
-      if (this.#compose) {
-        this.#compose[which]();
+      const run = this.#compose(which);
+      if (run) {
+        run();
         return;
       }
       this.layout.openPanel("chat");
-      requestAnimationFrame(() => this.#compose?.[which]());
+      requestAnimationFrame(() => this.#compose(which)?.());
     };
     // Option and a letter types a character on a Mac: there it is with Control as well.
     const keys = (letter: string) => [

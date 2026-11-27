@@ -37,6 +37,9 @@ export interface ChatInputProps {
   readonly gone: (href: string) => boolean;
   readonly onPoint: (href: string | undefined) => void;
   readonly onOpen: (href: string) => void;
+  readonly onFocus?: () => void;
+  /** Where there is more than one box: the one people write new messages in is "chat-input". */
+  readonly testId?: string;
 }
 
 const CHIP = "data-href";
@@ -335,7 +338,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
         aria-label={props.label}
         data-placeholder={props.placeholder}
         data-empty={value === "" ? "" : undefined}
-        data-testid="chat-input"
+        data-testid={props.testId ?? "chat-input"}
         data-panel-focus=""
         tabIndex={0}
         spellCheck={false}
@@ -351,6 +354,7 @@ export const ChatInput = forwardRef<ChatInputHandle, ChatInputProps>(
           if (pieces.length > 0) put(pieces);
         }}
         onKeyDown={onKeyDown}
+        onFocus={props.onFocus}
         onPaste={onPaste}
         onCopy={(event) => onCopy(event, false)}
         onCut={(event) => onCopy(event, true)}

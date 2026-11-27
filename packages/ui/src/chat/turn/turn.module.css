@@ -239,6 +239,413 @@
   color: var(--aq-text-muted);
 }
 
+/*
+ * What people said (5.1): on the right, its actions under it on hovering or with the focus in it,
+ * where they keep their room so that nothing moves; edited, a box in its place.
+ */
+.userWrap {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 0;
+}
+
+.user {
+  max-width: 85%;
+  padding: 6px 10px;
+  color: var(--aq-text-strong);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--aq-bg-input);
+  border-radius: 12px 12px 4px 12px;
+}
+
+.userNote {
+  max-width: 85%;
+  margin: 0;
+  color: var(--aq-text-muted);
+  text-align: right;
+}
+
+.userActions,
+.answerActions {
+  display: flex;
+  gap: 0;
+  height: 24px;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+
+.userWrap:hover .userActions,
+.userActions:focus-within,
+.userActions:has([data-open]),
+.answerWrap:hover .answerActions,
+.answerActions:focus-within {
+  opacity: 1;
+}
+
+/* A finger has no hovering: the actions are always there. */
+@media (hover: none) {
+  .userActions,
+  .answerActions {
+    opacity: 1;
+  }
+}
+
+.userWrap .iconButton,
+.answerWrap .iconButton {
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--aq-text-muted);
+  background: transparent;
+  border-radius: 4px;
+}
+
+.userWrap .iconButton:hover:not(:disabled),
+.answerWrap .iconButton:hover:not(:disabled),
+.userWrap .iconButton[aria-expanded="true"] {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.moreWrap {
+  position: relative;
+}
+
+.userWrap .menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  width: max-content;
+  min-width: 180px;
+  max-width: calc(100cqw - 16px);
+  padding: 4px;
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 8px;
+  box-shadow: var(--aq-shadow);
+}
+
+.userWrap .menu button {
+  justify-content: flex-start;
+  padding: 4px 8px;
+  color: var(--aq-text);
+  text-align: left;
+  white-space: nowrap;
+  background: transparent;
+  border-radius: 4px;
+}
+
+.userWrap .menu button:hover:not(:disabled),
+.userWrap .menu button:focus-visible {
+  background: var(--aq-bg-hover);
+}
+
+.userWrap .menu button:disabled {
+  color: var(--aq-text-muted);
+  opacity: 0.6;
+}
+
+.menuLine {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--aq-border);
+}
+
+/* What AI got as it was, under the message. */
+.sentCard {
+  align-self: stretch;
+  padding: 6px 8px 8px 10px;
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 8px;
+  outline: none;
+}
+
+.sentCard:focus-visible {
+  box-shadow: 0 0 0 2px var(--aq-accent-line);
+}
+
+.sentHead {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.sentTitle {
+  flex: 1;
+  min-width: 0;
+  color: var(--aq-text-strong);
+  font-weight: 600;
+}
+
+.userWrap .textLink {
+  padding: 0;
+  color: var(--aq-link);
+  background: none;
+}
+
+.userWrap .textLink:hover {
+  text-decoration: underline;
+  background: none;
+}
+
+.sentCard pre {
+  max-height: 240px;
+  margin: 0;
+  overflow: auto;
+  color: var(--aq-text);
+  font-family: ui-monospace, monospace;
+  font-size: var(--aq-font-11);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-self: stretch;
+  min-width: 0;
+  padding: 8px 10px;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-accent-line);
+  border-radius: 10px;
+}
+
+.editorRow {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.userWrap .primary,
+.userWrap .ghost,
+.failure .failureActions button {
+  height: 26px;
+  padding: 0 10px;
+  color: var(--aq-text-strong);
+  white-space: nowrap;
+  background: var(--aq-bg-raised);
+  border: 1px solid var(--aq-border);
+  border-radius: 5px;
+}
+
+.userWrap .primary,
+.failure .failureActions button.primary {
+  color: var(--aq-on-accent);
+  background: var(--aq-accent);
+  border-color: var(--aq-accent);
+}
+
+.userWrap .primary:hover:not(:disabled),
+.failure .failureActions button.primary:hover {
+  background: var(--aq-accent);
+  filter: brightness(1.1);
+}
+
+.userWrap .ghost,
+.failure .failureActions button.ghost {
+  color: var(--aq-text-muted);
+  background: transparent;
+  border-color: transparent;
+}
+
+.userWrap .ghost:hover,
+.failure .failureActions button:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.split {
+  display: inline-flex;
+}
+
+.split > span:first-child .primary {
+  border-radius: 5px 0 0 5px;
+}
+
+.split > .primary {
+  padding: 0 5px;
+  border-left-color: color-mix(in srgb, var(--aq-on-accent) 35%, transparent);
+  border-radius: 0 5px 5px 0;
+}
+
+.split .menu {
+  top: calc(100% + 4px);
+}
+
+.sentPictures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
+.user .sentPicture {
+  justify-content: center;
+  width: 84px;
+  height: 47px;
+  padding: 0;
+  overflow: hidden;
+  color: var(--aq-on-picture-muted);
+  font-size: var(--aq-font-10);
+  background: var(--aq-picture-backdrop);
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.sentPicture img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* A picture of the account that could not be read: what it says, and trying again. */
+span.sentPicture {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.user .pictureRetry {
+  padding: 0 4px;
+  color: var(--aq-link);
+  font-size: var(--aq-font-10);
+  background: none;
+  border: 0;
+  text-decoration: underline;
+}
+
+/* The answer and, on hovering, what to do with it. */
+.answerWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* A failure: red, one sentence, the way out of it. */
+.failure {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--aq-danger) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--aq-danger) 45%, transparent);
+  border-left: 3px solid var(--aq-danger);
+  border-radius: 8px;
+}
+
+.failureText {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  margin: 0;
+  color: var(--aq-text-strong);
+  font-size: var(--aq-font-13);
+  overflow-wrap: anywhere;
+}
+
+.failureIcon {
+  flex: none;
+  margin-top: 2px;
+  color: var(--aq-danger-text);
+}
+
+.failureActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.failureDetail {
+  color: var(--aq-text-muted);
+}
+
+.failureDetail summary {
+  display: inline-flex;
+  gap: 2px;
+  align-items: center;
+  color: var(--aq-text-muted);
+  list-style: none;
+  cursor: pointer;
+}
+
+.failureDetail summary::-webkit-details-marker {
+  display: none;
+}
+
+.failureDetail[open] .failureChevron {
+  transform: rotate(90deg);
+}
+
+.failureDetail p {
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A turn people edited and sent again: one line, open to all of it. */
+.fold {
+  min-width: 0;
+}
+
+.fold > button.rewritten {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  align-self: flex-start;
+  max-width: 100%;
+  padding: 2px 6px;
+  margin-left: -6px;
+  color: var(--aq-text-muted);
+  text-align: left;
+  background: transparent;
+  border-radius: 5px;
+}
+
+.fold > button.rewritten:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.rewrittenText {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.rewrittenChevron {
+  flex: none;
+  transition: transform 0.12s;
+}
+
+.fold > button.rewritten[aria-expanded="true"] .rewrittenChevron {
+  transform: rotate(90deg);
+}
+
+.rewrittenBody {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--aq-border);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .spin,
   .caret {
@@ -246,9 +653,14 @@
   }
 }
 
-/* About 320 wide: what the turn cost is in its tip only. */
+/* About 320 wide: what the turn cost is in its tip only; the message takes more of the width. */
 @container (max-width: 379px) {
   .cost {
     display: none;
+  }
+
+  .user,
+  .userNote {
+    max-width: 88%;
   }
 }

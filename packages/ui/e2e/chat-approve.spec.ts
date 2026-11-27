@@ -128,7 +128,11 @@ test("allowed: the card shows what would change and opens to before and after; t
   await expect(asking(page)).toContainText("要改 2 处");
   await expect(asking(page)).toContainText("片头标记挪到 2 秒，再加一个");
   const lines = asking(page).getByTestId("chat-change");
-  await expect(lines).toHaveText([/把标记「片头」的时间从 1 改成 2/, /新加标记「m1」/]);
+  // A row: the object, what of it, before and after; the whole sentence is what it is called.
+  await expect(lines).toHaveText([/^标记「片头」时间1 → 2$/, /^标记「m1」新加$/]);
+  const said = (line: number) => lines.nth(line).locator("[aria-label]").first();
+  await expect(said(0)).toHaveAttribute("aria-label", "把标记「片头」的时间从 1 改成 2");
+  await expect(said(1)).toHaveAttribute("aria-label", "新加标记「m1」");
   await expect(asking(page)).not.toContainText("新加了");
   expect(await markers(page)).toEqual({ m0: "片头@1" });
   await shoot(page, "2-card");
@@ -152,7 +156,7 @@ test("allowed: the card shows what would change and opens to before and after; t
   await expect(chat(page).getByText("好了。")).toBeVisible({ timeout: 15_000 });
   expect(await markers(page)).toEqual({ m0: "片头@2", m1: "m1@4", m2: "m2@6" });
   // Written, the card of the task says it as done.
-  await expect(chat(page).getByTestId("chat-card")).toContainText("新加了标记「m1」");
+  await expect(chat(page).getByTestId("chat-card")).toContainText("标记「m1」新加了");
 });
 
 test("not allowed: nothing is written, nor the rest of the answer, and AI asks what instead", async ({

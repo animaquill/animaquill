@@ -34,16 +34,16 @@ test("a task of AI goes back from its card after a reload, and comes again", asy
   await expect(card(page)).toContainText("改了 2 处");
   await reload(page);
 
-  await expect(card(page).getByRole("button", { name: "撤销这次任务" })).toBeVisible();
+  await expect(card(page).getByRole("button", { name: "撤销这一轮" })).toBeVisible();
   await shot(page, "card-after-reload");
-  await card(page).getByRole("button", { name: "撤销这次任务" }).click();
+  await card(page).getByRole("button", { name: "撤销这一轮" }).click();
   await expect.poll(() => markers(page)).toEqual({});
   await expect(page.getByText("撤销了 2 处")).toBeVisible();
-  await expect(card(page).getByRole("button", { name: "重做这次任务" })).toBeVisible();
+  await expect(card(page).getByRole("button", { name: "重做这一轮" })).toBeVisible();
 
   // Taken back, and loaded again: it can be done again.
   await reload(page);
-  await card(page).getByRole("button", { name: "重做这次任务" }).click();
+  await card(page).getByRole("button", { name: "重做这一轮" }).click();
   await expect.poll(() => markers(page)).toEqual({ m1: "一", m2: "二" });
 });
 
@@ -93,17 +93,17 @@ test("what people changed since stays, and says which; all of it changed, nothin
   await reload(page);
 
   // The second task: nothing of it is left to take back, which its button says.
-  const blocked = card(page).getByRole("button", { name: "撤销这次任务" });
+  const blocked = card(page).getByRole("button", { name: "撤销这一轮" });
   await expect(blocked).toHaveAttribute("aria-disabled", "true");
   await blocked.hover();
-  await expect(page.getByRole("tooltip")).toHaveText("这次任务改的地方后来都被改过了");
+  await expect(page.getByRole("tooltip")).toHaveText("这一轮改的地方后来都被改过了");
   await shot(page, "blocked-hover");
   await blocked.click({ force: true });
   await expect.poll(() => markers(page)).toEqual({ m1: "一", m2: "我改的" });
 
   // The first: what people changed stays.
   const first = chat(page).getByTestId("chat-card").first();
-  await first.getByRole("button", { name: "撤销这次任务" }).click();
+  await first.getByRole("button", { name: "撤销这一轮" }).click();
   await expect.poll(() => markers(page)).toEqual({ m2: "我改的" });
   const notice = page.getByText("撤销了 1 处");
   await expect(notice).toBeVisible();
@@ -138,9 +138,7 @@ test("the undo logs show in the settings, and go", async ({ page }) => {
   await expect(line).toHaveCount(0);
   await closeSettings(page);
   await reload(page);
-  await expect(card(page).getByRole("button", { name: /撤销这次任务|重做这次任务/ })).toHaveCount(
-    0,
-  );
+  await expect(card(page).getByRole("button", { name: /撤销这一轮|重做这一轮/ })).toHaveCount(0);
 });
 
 test.describe("a project of the platform", () => {
@@ -170,14 +168,14 @@ test.describe("a project of the platform", () => {
     await expect(page.locator("footer [data-cloud]")).toHaveAttribute("data-cloud", "online");
     await aiAdds(page, [[["m1", "一"]]]);
     await send(page, "加一个标记");
-    await expect(card(page).getByRole("button", { name: "撤销这次任务" })).not.toHaveAttribute(
+    await expect(card(page).getByRole("button", { name: "撤销这一轮" })).not.toHaveAttribute(
       "aria-disabled",
     );
     // What the other device has: the conversation, which goes with the account, and no undo log.
     await page.evaluate(() =>
       (window as unknown as { aqUndoElsewhere: () => Promise<unknown> }).aqUndoElsewhere(),
     );
-    const button = card(page).getByRole("button", { name: "撤销这次任务" });
+    const button = card(page).getByRole("button", { name: "撤销这一轮" });
     await expect(button).toHaveAttribute("aria-disabled", "true");
     await button.hover();
     await expect(page.getByRole("tooltip")).toHaveText("在做这次改动的那台电脑上能撤销");

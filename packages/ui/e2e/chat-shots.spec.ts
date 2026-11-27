@@ -352,3 +352,207 @@ test("the work of a turn waiting: a busy service, a quiet model; an answer cut s
     ...problems.filter((line) => !line.includes("status of 429")),
   );
 });
+
+test("the card of changes, a message and its menu, editing it, a failure of each kind", async ({
+  page,
+  problems,
+}) => {
+  test.setTimeout(420_000);
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  /** What the model does with the next message: tools first, then its answer; or a failure. */
+  let next: {
+    readonly calls?: readonly { readonly name: string; readonly input: Record<string, unknown> }[];
+    readonly answer?: string;
+    readonly fail?: "network" | "key" | "notFound";
+    /** It fails after its tools ran. */
+    readonly failAfter?: boolean;
+  } = {};
+  let round = 0;
+  await page.route(ANTHROPIC, (route) => {
+    const fulfil = (body: string) =>
+      route.fulfill({
+        status: 200,
+        headers: { "content-type": "text/event-stream", "access-control-allow-origin": "*" },
+        body,
+      });
+    const refuse = (status: number, type: string, message: string) =>
+      route.fulfill({
+        status,
+        headers: { "content-type": "application/json", "access-control-allow-origin": "*" },
+        body: JSON.stringify({ type: "error", error: { type, message } }),
+      });
+    if (isConnectionTest(route)) return fulfil(anthropicSays("OK"));
+    const sent = route.request().postDataJSON() as { messages?: { content: unknown }[] };
+    const after = JSON.stringify(sent?.messages?.at(-1)?.content ?? "").includes("tool_result");
+    const failing = next.fail && (!next.failAfter || after);
+    if (failing && next.fail === "network") return route.abort("failed");
+    if (failing && next.fail === "key")
+      return refuse(401, "authentication_error", "invalid x-api-key");
+    if (failing) return refuse(404, "not_found_error", "model: claude-test not found");
+    if (!after && next.calls) {
+      round += 1;
+      return fulfil(anthropicCalls(next.calls).replaceAll("toolu_", `toolu_${round}_`));
+    }
+    return fulfil(anthropicSays(next.answer ?? "好的。"));
+  });
+  await addAnthropic(page, KEY, "claude-test");
+  await closeSettings(page);
+  await showTab(page, "chat");
+  const say = async (text: string) => {
+    await box(page).fill(text);
+    await box(page).press("Enter");
+  };
+  const fresh = async () => {
+    await chat(page).getByTestId("chat-more").click();
+    await chat(page).getByRole("menuitem", { name: "新对话" }).click();
+  };
+  const lastUser = () => chat(page).getByTestId("chat-user").last();
+
+  // Two markers, then changed: the card says how, each row before and after.
+  next = {
+    calls: [
+      {
+        name: "aq_edit",
+        input: {
+          summary: "加片头和片尾两个标记",
+          operations: [
+            { op: "marker.add", timeline: "main", id: "m1", time: "1", name: "片头" },
+            { op: "marker.add", timeline: "main", id: "m2", time: "8", name: "片尾" },
+          ],
+        },
+      },
+    ],
+    answer: "加好了。",
+  };
+  await say("加两个标记");
+  await expect(chat(page).getByText("加好了。")).toBeVisible({ timeout: 15_000 });
+  next = {
+    calls: [
+      {
+        name: "aq_edit",
+        input: {
+          summary: "片头标记往后挪半秒，片尾的改个名字",
+          operations: [
+            {
+              op: "marker.update",
+              timeline: "main",
+              marker: "m1",
+              changes: { time: "1.5" },
+            },
+            {
+              op: "marker.update",
+              timeline: "main",
+              marker: "m2",
+              changes: { name: "片尾字幕开始" },
+            },
+          ],
+        },
+      },
+    ],
+    answer: "挪好了：片头标记往后挪了半秒，片尾的标记改成了“片尾字幕开始”。",
+  };
+  await say("片头标记往后挪一点，片尾的改个名字");
+  const card = chat(page).getByTestId("chat-card").last();
+  await expect(card).toContainText("改了 2 处", { timeout: 15_000 });
+  await expect(card.getByTestId("chat-card-said")).toHaveText("片头标记往后挪半秒，片尾的改个名字");
+  await expect(card.getByTestId("chat-change-value")).toHaveCount(2);
+  await sceneBothThemes(page, "1-card", "3b");
+  const compare = card.getByTestId("chat-card-compare");
+  await sceneBothThemes(page, "2-card-compare", "3b", async () => {
+    if ((await compare.getAttribute("aria-pressed")) !== "true") await compare.click();
+    await expect(card.getByTestId("chat-change-detail")).toHaveCount(2);
+  });
+  await compare.click();
+
+  // A message: on hovering, copying, editing, "⋯"; in it, what AI got.
+  await sceneBothThemes(page, "3-user-menu", "3b", async () => {
+    await lastUser().hover();
+    await chat(page).getByTestId("chat-user-more").last().click();
+    await expect(chat(page).getByRole("menuitem", { name: "看 AI 收到的原文" })).toBeVisible();
+  });
+  await sceneBothThemes(page, "4-user-sent", "3b", async () => {
+    await lastUser().hover();
+    await chat(page).getByTestId("chat-user-more").last().click();
+    await chat(page).getByRole("menuitem", { name: "看 AI 收到的原文" }).click();
+    await expect(chat(page).getByTestId("chat-user-sent")).toBeVisible();
+  });
+  // Edited: a box in its place; sending takes back what the turn changed first, or keeps it.
+  const editor = chat(page).getByTestId("chat-user-editor");
+  const edit = async () => {
+    if (await editor.isVisible()) return;
+    await lastUser().hover();
+    await chat(page).getByTestId("chat-user-edit").click();
+    await expect(editor).toBeVisible();
+  };
+  await sceneBothThemes(page, "5-editing", "3b", edit);
+  await sceneBothThemes(page, "6-editing-ways", "3b", async () => {
+    await edit();
+    const ways = editor.getByTestId("chat-user-resend-ways");
+    if ((await ways.getAttribute("aria-expanded")) !== "true") await ways.click();
+    await expect(editor.locator('[data-mode="keep"]')).toBeVisible();
+  });
+  if (await editor.isVisible()) await page.keyboard.press("Escape");
+  await expect(editor).toBeHidden();
+  await edit();
+  await expect(editor.getByTestId("chat-user-resend").first()).toHaveText("撤销 2 处再重发");
+  await editor.getByTestId("chat-user-editor-input").fill("片头标记往后挪一秒");
+  next = { answer: "片头标记往后挪了一秒。" };
+  await editor.getByTestId("chat-user-resend-ways").click();
+  await editor.locator('[data-testid="chat-user-resend"][data-mode="keep"]').click();
+  await expect(chat(page).getByText("片头标记往后挪了一秒。")).toBeVisible({ timeout: 15_000 });
+  // The turn before folds into one line, which says its changes are still there.
+  const folded = chat(page).getByTestId("chat-rewritten");
+  await expect(folded).toHaveText("已改写重发 · 原来的一轮 · 改动还在（2 处）");
+  await sceneBothThemes(page, "7-rewritten", "3b");
+
+  // Failures, each kind its own sentence and way out.
+  for (const [fail, name] of [
+    ["network", "8-failure-network"],
+    ["key", "9-failure-key"],
+    ["notFound", "10-failure-model"],
+  ] as const) {
+    await fresh();
+    next = { fail };
+    await say("给片头加一个淡入");
+    await expect(chat(page).getByTestId("chat-failure")).toHaveAttribute("data-kind", fail, {
+      timeout: 15_000,
+    });
+    await sceneBothThemes(page, name, "3b");
+  }
+  // "换个模型" opens the bubble of the model, not the settings.
+  await chat(page).getByTestId("chat-failure-model").click();
+  await expect(chat(page).getByTestId("chat-model-bubble")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  // It changed something, then failed: trying again asks, in place, whether that goes back first.
+  await fresh();
+  next = {
+    calls: [
+      {
+        name: "aq_edit",
+        input: {
+          summary: "加一个标记",
+          operations: [{ op: "marker.add", timeline: "main", id: "m3", time: "3", name: "中段" }],
+        },
+      },
+    ],
+    fail: "network",
+    failAfter: true,
+  };
+  await say("加个中段标记再看看");
+  const failure = chat(page).getByTestId("chat-failure");
+  await expect(failure).toHaveAttribute("data-kind", "network", { timeout: 15_000 });
+  await failure.getByTestId("chat-failure-retry").click();
+  const asking = failure.getByTestId("chat-retry-confirm");
+  await expect(asking.getByRole("button").first()).toHaveText("撤销 1 处再重试");
+  await expect(asking.getByRole("button").first()).toBeFocused();
+  await sceneBothThemes(page, "11-failure-retry", "3b");
+  // The browser says what it could not reach.
+  problems.splice(
+    0,
+    problems.length,
+    ...problems.filter(
+      (line) => !/Failed to load resource|net::ERR_FAILED|Failed to fetch/u.test(line),
+    ),
+  );
+});

@@ -410,7 +410,8 @@ test("where nothing more fits, the chat says so, and a new conversation goes on 
   await ask(page, "把整部片子的声音都检查一遍");
   const failure = chat(page).getByTestId("chat-failure");
   await expect(failure).toHaveAttribute("data-kind", "contextFull", { timeout: 60_000 });
-  await expect(failure.locator("p").first()).toHaveText("上下文满了，从这里开新对话");
+  await expect(failure.locator("p").first()).toHaveText("上下文满了。");
+  await expect(failure.getByTestId("chat-fresh")).toHaveText("从这里开新对话");
   await shoot(page, "L2-full", chat(page).getByTestId("chat"));
   await failure.getByTestId("chat-fresh").click();
   await expect(chat(page).getByTestId("chat-failure")).toHaveCount(0);

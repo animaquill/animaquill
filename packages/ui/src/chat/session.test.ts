@@ -987,6 +987,43 @@ describe("a conversation of its own", () => {
     expect(chat.getSnapshot().saved).toHaveLength(2);
   });
 
+  it("starts a new conversation after a turn, from its answer: all of it, the box empty", async () => {
+    const { chat, fake } = setup({ chats: memoryChats(), memory: windowMemory() });
+    fake({ fake: [{ text: "一" }, { text: "二" }] });
+    await chat.send("第一句");
+    await chat.send("第二句");
+    const first = chat.getSnapshot().conversation?.tasks[0] as string;
+    chat.fork(first, "after");
+    const { id, forkedFrom, conversation } = chat.getSnapshot();
+    expect(forkedFrom).toMatchObject({ turn: 1 });
+    expect(conversation?.getSnapshot().entries.map((entry) => entry.role)).toEqual([
+      "user",
+      "assistant",
+    ]);
+    expect(chat.drafts.read("p1", id as string)).toBe("");
+  });
+
+  it("sends the last message again as people edited it, marked as rewriting the one before", async () => {
+    const { chat, fake } = setup({ chats: memoryChats() });
+    fake({ fake: [{ text: "一" }, { text: "二" }, { text: "三" }] });
+    chat.setPlanFirst(true);
+    await chat.send("把标题挪上去");
+    chat.setPlanFirst(false);
+    const users = () =>
+      (chat.getSnapshot().conversation?.getSnapshot().entries ?? []).flatMap((entry) =>
+        entry.role === "user" ? [entry] : [],
+      );
+    const [first] = users();
+    await chat.resend({ text: "把标题挪下去" });
+    // A new turn, the old one still there; the words edited, the rest as it went.
+    expect(users()).toHaveLength(2);
+    expect(users()[1]).toMatchObject({ text: "把标题挪下去", plan: true, rewrites: first?.task });
+    // The same words again rewrite nothing: that is sending it again.
+    await chat.resend({ text: "把标题挪下去" });
+    expect(users()).toHaveLength(3);
+    expect(users()[2]).not.toHaveProperty("rewrites");
+  });
+
   it("gets a short title from its model after the first turn, unless people named it", async () => {
     const asked: string[] = [];
     const { ai, chat, fake, chats } = setup({

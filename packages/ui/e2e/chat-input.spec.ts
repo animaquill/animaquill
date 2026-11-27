@@ -294,7 +294,8 @@ test("the list: rename, search, delete; a new conversation from a turn; quoting 
   // A new conversation from the second turn: what came before, its words in the box, not sent.
   const second = chat(page).getByTestId("chat-task").nth(1);
   await second.getByTestId("chat-user").hover();
-  await second.getByRole("button", { name: "从这里开新对话" }).click();
+  await second.getByTestId("chat-user-more").click();
+  await second.getByRole("menuitem", { name: "从这里分出新对话" }).click();
   await expect(chat(page).getByTestId("chat-forked")).toHaveText(
     "从《把字幕往上挪一点》第 2 轮分出来；那之后的改动还在项目里。",
   );

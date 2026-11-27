@@ -870,9 +870,10 @@ export class ChatSession {
 
   /**
    * A new conversation with what the one open said before a turn, and the words of that turn in its
-   * input box, not sent. It keeps the model; the project stays as it is, with what AI changed after.
+   * input box, not sent; or, from its answer (`after`), with all of that turn too and the box empty.
+   * It keeps the model; the project stays as it is, with what AI changed after.
    */
-  fork(task: string): void {
+  fork(task: string, from: "before" | "after" = "before"): void {
     const { conversation, id } = this.#snapshot;
     const project = this.#project?.key;
     if (!conversation || this.running || project === undefined || id === undefined) return;
@@ -881,18 +882,23 @@ export class ChatSession {
     const user = entries[start];
     if (user?.role !== "user") return;
     const turn = entries.slice(0, start + 1).filter((entry) => entry.role === "user").length;
+    // After the turn: all of it goes along, up to the next message of people, and the box is empty.
+    const next = entries.findIndex((entry, index) => index > start && entry.role === "user");
+    const end = from === "before" ? start : next < 0 ? entries.length : next;
     const title = this.#snapshot.title || firstWords(entries, TITLE_LENGTH);
     const { model, reasoning, repick } = this.#snapshot;
     void this.flush();
     const copy = newChatId();
-    this.#start(entries.slice(0, start), copy, undefined, {
+    this.#start(entries.slice(0, end), copy, undefined, {
       ...(model && { model }),
       ...(reasoning !== undefined && { reasoning }),
       repick,
       forkedFrom: { title, turn },
     });
-    this.drafts.write(project, copy, user.text);
-    this.attachments.restore(project, copy, user.images ?? []);
+    if (from === "before") {
+      this.drafts.write(project, copy, user.text);
+      this.attachments.restore(project, copy, user.images ?? []);
+    }
     this.#keep();
   }
 
@@ -1116,7 +1122,7 @@ export class ChatSession {
     text: string,
     images: readonly AttachedImage[] = [],
     selection?: SelectionFacts,
-    marks?: Pick<UserEntry, "plan" | "fromPlan">,
+    marks?: Pick<UserEntry, "plan" | "fromPlan" | "rewrites">,
   ): Promise<TaskOutcome | undefined> {
     // Before anything waits: people may select something else meanwhile, or switch "先出方案".
     const shown = selection ?? this.#shown();
@@ -1168,16 +1174,21 @@ export class ChatSession {
   }
 
   /**
-   * The last turn once more, as a new turn with the same words. What it changed stays, unless
-   * people took it back first (`undoTask`). It asks for a plan first as it did.
+   * The last turn once more, as a new turn: with the same words, or with the words people edited
+   * it to, which marks the new message as rewriting the old one (`UserEntry.rewrites`), so that the
+   * old turn folds away under it. Its pictures and what the editor showed go as they went; what it
+   * changed stays, unless people took it back first (`undoTask`). It asks for a plan first as it did.
    */
-  async resend(): Promise<TaskOutcome | undefined> {
+  async resend(edited?: { readonly text: string }): Promise<TaskOutcome | undefined> {
     const last = this.#snapshot.conversation
       ?.getSnapshot()
       .entries.findLast((entry) => entry.role === "user");
-    return last?.role === "user"
-      ? this.send(last.text, last.images, last.selection, { ...(last.plan && { plan: true }) })
-      : undefined;
+    if (last?.role !== "user") return undefined;
+    const rewritten = edited !== undefined && edited.text !== last.text;
+    return this.send(rewritten ? edited.text : last.text, last.images, last.selection, {
+      ...(last.plan && { plan: true }),
+      ...(rewritten && { rewrites: last.task }),
+    });
   }
 
   /** The last turn once more without its pictures, where its model or service took none. */
