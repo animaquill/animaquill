@@ -293,19 +293,19 @@ export function registerTimelineActions(
   everywhere("playInToOut", () => editor.playInToOut(), { keys: ["mod+shift+space"] });
 
   // How the views go along with the playhead: wherever people are, as playing is. No keys, as in
-  // Premiere; people can give them some.
+  // Premiere; people can give them some. The way stays ticked while following is off.
   const follow = () => editor.getSnapshot().follow;
   everywhere("toggleFollow", () => editor.toggleFollow(), { selected: () => follow().on }, "zoom");
   everywhere(
     "followPage",
     () => editor.setFollowMode("page"),
-    { selected: () => follow().on && follow().mode === "page" },
+    { selected: () => follow().mode === "page" },
     "zoom",
   );
   everywhere(
     "followCenter",
     () => editor.setFollowMode("center"),
-    { selected: () => follow().on && follow().mode === "center" },
+    { selected: () => follow().mode === "center" },
     "zoom",
   );
 

@@ -2,6 +2,7 @@ import { ChevronDown } from "lucide-react";
 import { useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { PopupMenu } from "../app/Menu.tsx";
+import { Tip } from "../app/Tip.tsx";
 import type { TimelineEditor } from "./editor.ts";
 import type { FollowMode } from "./follow.ts";
 import { FollowCenterIcon, FollowPageIcon } from "./ToolIcons.tsx";
@@ -29,24 +30,26 @@ export function FollowControl({ timeline }: { timeline: TimelineEditor }) {
     <span className={styles.follow} data-follow-control>
       <ToolButton
         name={t("timeline.follow")}
-        usage={t("timeline.help.follow")}
+        usage={t(`timeline.help.followModes.${follow.mode}`)}
         action="toggleFollow"
         icon={follow.mode === "center" ? FollowCenterIcon : FollowPageIcon}
         pressed={follow.on}
         isSwitch
         onClick={() => timeline.toggleFollow()}
       />
-      <button
-        ref={arrow}
-        type="button"
-        className={styles.followArrow}
-        aria-label={t("timeline.followMode")}
-        aria-haspopup="menu"
-        aria-expanded={menu !== undefined}
-        onClick={() => (menu ? setMenu(undefined) : open())}
-      >
-        <ChevronDown size={12} aria-hidden />
-      </button>
+      <Tip name={t("timeline.followMode")} usage={t("timeline.help.followMode")}>
+        <button
+          ref={arrow}
+          type="button"
+          className={styles.followArrow}
+          aria-label={t("timeline.followMode")}
+          aria-haspopup="menu"
+          aria-expanded={menu !== undefined}
+          onClick={() => (menu ? setMenu(undefined) : open())}
+        >
+          <ChevronDown size={12} aria-hidden />
+        </button>
+      </Tip>
       {menu && (
         <PopupMenu
           label={t("timeline.followMode")}
@@ -56,7 +59,8 @@ export function FollowControl({ timeline }: { timeline: TimelineEditor }) {
             MODES.map((mode) => ({
               id: mode,
               label: t(`timeline.followModes.${mode}`),
-              selected: follow.on && follow.mode === mode,
+              // Off, the way it was set still shows: choosing one turns it on again.
+              selected: follow.mode === mode,
               run: () => timeline.setFollowMode(mode),
             })),
           ]}

@@ -474,11 +474,13 @@ export class TimelinePainter extends StagePainter {
       if (!row) continue;
       const boundary = beside.side === "above" ? row.top : row.top + row.height + row.below;
       const line = this.sharp(RULER_HEIGHT - editor.scrollY + boundary);
-      const height = Math.round(BESIDE_HEIGHT * this.theme.fontScale);
+      const full = Math.round(BESIDE_HEIGHT * this.theme.fontScale);
       // Over the line; on top of the first row it starts right under the ruler instead, so that
-      // nothing of it is hidden.
-      const centered = Math.round(line - height / 2);
-      const top = centered < RULER_HEIGHT ? Math.max(line, RULER_HEIGHT) : centered;
+      // nothing of it is hidden, and half as high, above the names of the clips of that row.
+      const centered = Math.round(line - full / 2);
+      const first = centered < RULER_HEIGHT;
+      const top = first ? Math.max(line, RULER_HEIGHT) : centered;
+      const height = first ? Math.round(full / 2) : full;
       bands.set(beside.key, { beside, row, top, height });
       context.save();
       // Faint, with a dashed edge: the clips of the rows show through, as they are.

@@ -583,7 +583,7 @@
  */
 .newTrackTag[data-first] {
   padding: 0 4px;
-  font-size: calc(10px * var(--aq-size-scale));
+  font-size: calc(11px * var(--aq-size-scale));
   line-height: 12px;
   transform: translateY(1px);
 }
@@ -615,6 +615,7 @@
 }
 
 .followArrow {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -626,6 +627,13 @@
   border: 0;
   border-radius: 0 4px 4px 0;
   cursor: pointer;
+}
+
+/* It looks narrow, and takes the mouse a little further to the right, where there is room. */
+.followArrow::after {
+  position: absolute;
+  inset: 0 -8px 0 0;
+  content: "";
 }
 
 .followArrow:hover,

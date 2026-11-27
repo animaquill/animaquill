@@ -5940,10 +5940,11 @@ describe("following the playhead", () => {
     actions.get("timeline.followCenter")?.run();
     expect([selected("followPage"), selected("followCenter")]).toEqual([false, true]);
     actions.get("timeline.toggleFollow")?.run();
+    // Off, the way it was set still shows.
     expect([selected("toggleFollow"), selected("followPage"), selected("followCenter")]).toEqual([
       false,
       false,
-      false,
+      true,
     ]);
   });
 
