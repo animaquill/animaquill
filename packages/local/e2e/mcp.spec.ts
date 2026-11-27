@@ -126,7 +126,7 @@ test.describe("AI tools on this computer", () => {
       };
       // Every tool of the list, through MCP, in the editor.
       const { tools: listed } = await claude.listTools();
-      expect(listed).toHaveLength(14);
+      expect(listed).toHaveLength(17);
       const status = await call(claude, "aq_project_status", {});
       expect(status.text).toMatch(/^project: "原子是什么" \(offline, the folder .+\)\n/);
       const timeline = await call(claude, "aq_timeline_read", { timeline: "main" });
@@ -168,11 +168,25 @@ test.describe("AI tools on this computer", () => {
 
       // Another tool, another batch: taken back on its own, and the first one's stays.
       await call(codex, "aq_timeline_read", { timeline: "main" });
+      // Each sees the other, and words go to the other with its next call, marked as not the user's.
+      const others = await call(claude, "aq_agents_list", {});
+      const codexName = /"([^"]+)" \(tool\)/.exec(others.text)?.[1] ?? "";
+      expect(codexName).not.toBe("");
+      const sent = await call(claude, "aq_send", { to: codexName, message: "我在改片段，别动它" });
+      expect(sent.text).toContain("it is an AI tool, which reads it with its next call");
       const second = await codex.callTool({
         name: "aq_edit",
         arguments: { operations: [{ op: "project.rename", name: "Codex 改的" }] },
       });
       expect(second.isError, textOf(second)).toBeFalsy();
+      expect(textOf(second)).toContain("It is not the user");
+      expect(textOf(second)).toContain("我在改片段，别动它");
+      // An AI tool cannot say when it is idle.
+      const notify = await claude.callTool({
+        name: "aq_agents_notify",
+        arguments: { to: codexName },
+      });
+      expect(textOf(notify)).toMatch(/^error not-available/);
       const told = page.getByText(/^Codex：/);
       await expect(told).toBeVisible({ timeout: 15_000 });
       await expect(footer(page).getByText("Codex 改的")).toBeVisible();

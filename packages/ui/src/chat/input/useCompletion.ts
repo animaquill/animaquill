@@ -7,6 +7,7 @@ import {
   Flag,
   Image as ImageIcon,
   ListChecks,
+  MessagesSquare,
   type LucideIcon,
   Minimize2,
   PencilLine,
@@ -23,6 +24,7 @@ import {
   type RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { formatAddress } from "@animaquill/tools";
 import { useProject, useSession, useWorkbench } from "../../app/context.ts";
 import type { BoxTrigger, ChatInputHandle } from "../ChatInput.tsx";
 import type { FoundGroup, FoundKind, FoundPlace } from "../find.ts";
@@ -271,9 +273,53 @@ export function useCompletion(
         }
         groups.push({ key: group.kind, name: t(`chat.complete.${group.kind}`), options });
       }
+      // Other conversations of the project, to ask by name (docs/design/ai-teamwork.md of
+      // AnimaQuill Cloud, 3): those that run first.
+      const chats = conversationsFor(trigger.query);
+      if (chats.length > 0) {
+        groups.push({
+          key: "agent",
+          name: t("chat.agents.group"),
+          options: chats.slice(0, FIND_SHOWN).map(({ id, title, running }) =>
+            option(
+              {
+                key: `aq://agent/${id}`,
+                kind: "agent",
+                icon: MessagesSquare,
+                label: t("chat.complete.conversation", {
+                  title,
+                  interpolation: { escapeValue: false },
+                }),
+                note: running ? t("chat.agents.running") : undefined,
+              },
+              putIn([
+                {
+                  label: t("chat.complete.conversation", {
+                    title,
+                    interpolation: { escapeValue: false },
+                  }),
+                  href: formatAddress({ kind: "agent", id }),
+                },
+              ]),
+            ),
+          ),
+        });
+      }
     }
     return { groups, picks, keys };
   };
+  /** The other conversations of the project called something like `typed`, those that run first. */
+  function conversationsFor(typed: string) {
+    const snapshot = workbench.chat.getSnapshot();
+    const running = new Set(
+      snapshot.runs.filter((run) => run.state === "running").map((run) => run.id),
+    );
+    const wanted = typed.trim().toLowerCase();
+    return snapshot.saved
+      .filter((each) => each.id !== snapshot.id && each.title.toLowerCase().includes(wanted))
+      .map((each) => ({ id: each.id, title: each.title, running: running.has(each.id) }))
+      .toSorted((a, b) => Number(b.running) - Number(a.running));
+  }
   const { groups, picks, keys } = build(found);
   // `/` with nothing it could be is words, not a command: no menu.
   const showing = open && (trigger.kind === "at" || groups.length > 0);

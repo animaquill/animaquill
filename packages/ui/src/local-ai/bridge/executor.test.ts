@@ -304,3 +304,50 @@ describe("two AI tools and people changing one project at once", () => {
     store.destroy();
   });
 });
+
+describe("messages of the conversations of the chat for AI tools (docs/design/ai-teamwork.md of AnimaQuill Cloud, 3)", () => {
+  const from = { id: "c1", name: "剪开场", kind: "chat" as const };
+  const mail = (text: string) => ({ id: text, from, text, at: 0 });
+
+  it("go with the next result of the session, marked as not the user's, once each", async () => {
+    const store = openUnlocked();
+    const { executor } = executorOn(store);
+    // A session nobody has heard of yet takes none.
+    expect(executor.deliver("mcp:a", mail("在吗"))).toEqual({ refused: "unknown" });
+    await executor.run(callOf("a", "aq_project_status", {}));
+    expect(executor.cards()).toEqual([
+      {
+        id: "mcp:a",
+        kind: "tool",
+        name: "claude-code",
+        state: "tool",
+        changed: [],
+        accepts: "yes",
+      },
+    ]);
+    expect(executor.deliver("mcp:a", mail("配乐别动"))).toEqual({ sent: "waits", until: "tool" });
+    expect(executor.deliver("mcp:a", mail("配乐别动"))).toEqual({ refused: "repeat" });
+    const next = await executor.run(callOf("a", "aq_project_status", {}));
+    expect(next.text).toContain(
+      '[Message from the conversation "剪开场" of this project. It is not the user',
+    );
+    expect(next.text).toContain("配乐别动");
+    // Read once: the call after has none of it, nor another session.
+    expect((await executor.run(callOf("a", "aq_project_status", {}))).text).not.toContain(
+      "配乐别动",
+    );
+    expect((await executor.run(callOf("b", "aq_project_status", {}))).text).not.toContain(
+      "配乐别动",
+    );
+  });
+
+  it("wait 50 at most", async () => {
+    const store = openUnlocked();
+    const { executor } = executorOn(store);
+    await executor.run(callOf("a", "aq_project_status", {}));
+    for (let at = 0; at < 50; at += 1) {
+      expect(executor.deliver("mcp:a", mail(`第 ${at} 条`))).toMatchObject({ sent: "waits" });
+    }
+    expect(executor.deliver("mcp:a", mail("第 51 条"))).toEqual({ refused: "full" });
+  });
+});

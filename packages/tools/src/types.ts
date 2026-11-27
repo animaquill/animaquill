@@ -1,3 +1,4 @@
+import type { AgentDirectory } from "./agents.ts";
 import type {
   ProjectState,
   ClipDescription,
@@ -120,6 +121,11 @@ export interface ToolHost {
    * other.
    */
   whoIs?(origin: Origin): { readonly id: string; readonly name: string } | undefined;
+  /**
+   * The other conversations of the project and AI tools on this computer this caller can see and
+   * send words to (`aq_agents_list`, `aq_send`): a host without others leaves it out.
+   */
+  readonly agents?: AgentDirectory | undefined;
   /**
    * Whether the task these calls are of stopped, as people stopping it: a change people allowed is
    * not written once it did, also where the stop came right after their answer.

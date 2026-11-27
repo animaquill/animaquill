@@ -52,6 +52,7 @@ export const SETTING_ITEMS: readonly SettingItem[] = [
   { id: "packs.hidden", group: "packs", where: "account" },
   { id: "chat.maxToolCalls", group: "chat", where: "account" },
   { id: "chat.askBeforeEdit", group: "chat", where: "account" },
+  { id: "chat.fromAgents", group: "chat", where: "account" },
   { id: "chat.autoTitle", group: "chat", where: "account" },
   { id: "chat.expandThinking", group: "chat", where: "account" },
   { id: "chat.sendWith", group: "chat", where: "account" },

@@ -1,4 +1,5 @@
 import {
+  framedMessage,
   latestSummary,
   promptOf,
   type AnswerUsage,
@@ -175,8 +176,11 @@ export function transcriptOf(entries: readonly ChatEntry[], through: number): st
     switch (entry.role) {
       case "user":
         lines.push(
-          `User: ${promptOf({ text: entry.text, images: (entry.images ?? []).map((image) => ({ ...image, note: pictureLine(image.note) })) })}`,
+          `User: ${promptOf({ text: entry.text, ...(entry.from && { from: entry.from }), images: (entry.images ?? []).map((image) => ({ ...image, note: pictureLine(image.note) })) })}`,
         );
+        break;
+      case "message":
+        lines.push(`User: ${framedMessage(entry.from, entry.text)}`);
         break;
       case "assistant":
         if (entry.text.trim() !== "") lines.push(`Assistant: ${entry.text}`);
@@ -236,6 +240,9 @@ export function estimateTokens(entries: readonly ChatEntry[], pictures = true): 
         break;
       case "summary":
         characters += entry.text?.length ?? 0;
+        break;
+      case "message":
+        characters += framedMessage(entry.from, entry.text).length;
         break;
       case "other":
         break;

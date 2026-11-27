@@ -15,6 +15,7 @@ import type { Turn } from "./turns.ts";
 import { AnswerView, LiveAnswer } from "./turn/AnswerView.tsx";
 import { FailureCard } from "./turn/FailureCard.tsx";
 import turnStyles from "./turn/turn.module.css";
+import { AgentBubble } from "./turn/AgentMessage.tsx";
 import { UserBubble } from "./turn/UserBubble.tsx";
 import { WorkLine } from "./turn/WorkLine.tsx";
 import { TaskApproval } from "./wait/ApprovalCard.tsx";
@@ -116,7 +117,11 @@ function TurnBody({
   const question = latest && !running ? questionOf(turn.entries) : undefined;
   const body = (
     <>
-      <UserBubble turn={turn} latest={latest} busy={busy} onForked={onForked} />
+      {turn.user.from ? (
+        <AgentBubble from={turn.user.from} text={turn.user.text} />
+      ) : (
+        <UserBubble turn={turn} latest={latest} busy={busy} onForked={onForked} />
+      )}
       {(running || turn.steps.length > 0 || turn.answerEntry || shown?.end === "stopped") && (
         <WorkLine
           turn={turn}

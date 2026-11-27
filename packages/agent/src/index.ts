@@ -24,6 +24,7 @@ export {
   NOT_ATTACHED,
   PLAN_FIRST_LINE,
   entriesToKeep,
+  framedMessage,
   latestSummary,
   readEntries,
   promptOf,
@@ -46,7 +47,10 @@ export {
   type ToolEntry,
   type ToolPicture,
   type UserEntry,
+  type MessageEntry,
+  type MessageFrom,
 } from "./entries.ts";
+export type { Inbox, Mail } from "./inbox.ts";
 export {
   COMPACT_AT,
   COMPACT_PROMPT,

@@ -168,6 +168,10 @@ export function toolSummary(
         ? say("chat.toolSummary.selectionSentLatest")
         : say("chat.toolSummary.selectionSentBack", { count: back });
     }
+    case "aq_send": {
+      const message = text(args.message);
+      return message ? firstSentence(message) : "";
+    }
     default:
       // aq_project_status and the tools before these: the name says it.
       return "";

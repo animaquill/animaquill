@@ -939,6 +939,11 @@
           "name": "AI 看画面时等你停下播放",
           "keywords": "look playback wait 看画面 播放 等待 排队"
         },
+        "fromAgents": {
+          "name": "别的对话发来的消息",
+          "keywords": "message agent conversation send 消息 传话 别的对话 来回 收",
+          "help": "这个项目里别的对话（和电脑上的 AI 工具）给这个对话发的消息：直接收，先问你，还是不收。"
+        },
         "askBeforeEdit": {
           "name": "AI 改项目前先问我",
           "keywords": "approve ask permission confirm 批准 允许 询问 确认 权限 改项目 先问",
@@ -1047,6 +1052,11 @@
       "retry": "重试显卡"
     },
     "numberRange": "要是 {{min}} 到 {{max}} 之间的整数",
+    "fromAgents": {
+      "yes": "直接收",
+      "ask": "先问我",
+      "no": "不收"
+    },
     "sendWith": {
       "enter": "Enter",
       "modEnter": "Ctrl+Enter"
@@ -3620,6 +3630,35 @@
     "history": "以前的对话",
     "untitled": "（空对话）",
     "markedBy": "「{{title}}」刚改过",
+    "agents": {
+      "from": "来自「{{name}}」",
+      "idleFrom": "「{{name}}」做完了",
+      "open": "切到这个对话",
+      "nothingSaid": "（没有说什么）",
+      "read": "读到「{{name}}」发来的消息",
+      "readIdle": "「{{name}}」做完了",
+      "doing": {
+        "aq_send": "给「{{name}}」发消息",
+        "aq_agents_notify": "等「{{name}}」做完"
+      },
+      "done": {
+        "sent": "给「{{name}}」发了消息",
+        "waits": {
+          "people": "给「{{name}}」发了消息，它等人回答后读",
+          "tool": "给「{{name}}」发了消息，它下次调工具时读",
+          "asked": "给「{{name}}」发了消息，等那边的人点头",
+          "paused": "给「{{name}}」发了消息，它停着，等人说一句"
+        },
+        "notify": "「{{name}}」做完时会告诉这个对话"
+      },
+      "paused": "和「{{name}}」来回说了 {{count}} 轮，停下等你",
+      "goOn": "接着说",
+      "mailTitle": "「{{name}}」发来消息",
+      "mailRead": "让它处理",
+      "mailIgnore": "不处理",
+      "group": "对话",
+      "running": "在跑"
+    },
     "runs": {
       "one": "「{{title}}」在跑",
       "many": "{{count}} 个对话在跑",
@@ -3708,6 +3747,11 @@
     },
     "toolErrors": {
       "conflict": "你或别处在 AI 读过之后改了这些内容，AI 要重新读一遍",
+      "declined": "对方设了不收别的对话的消息",
+      "paused": "和别的对话来回太多轮，等你说一句再接着发",
+      "busy": "对方排着的消息太多了",
+      "repeat": "刚发过一样的，没再发",
+      "not-available": "这里联系不到别的对话",
       "not-read": "AI 还没读过要改的内容",
       "file-not-read": "AI 还没读完这个文件",
       "file-changed": "文件在 AI 读过之后被改过",
@@ -3888,7 +3932,10 @@
       "selection_read": "读选中内容",
       "file_read": "读文件",
       "aq_render_frames": "看画面",
-      "aq_audio_analyze": "听声音"
+      "aq_audio_analyze": "听声音",
+      "aq_agents_list": "看别的对话",
+      "aq_send": "发消息",
+      "aq_agents_notify": "等别的对话做完"
     },
     "summary": {
       "more": "还有 {{count}} 处",
@@ -4372,7 +4419,10 @@
       "selection_read": "读了选中内容",
       "file_read": "读了文件",
       "aq_render_frames": "看了画面",
-      "aq_audio_analyze": "听了声音"
+      "aq_audio_analyze": "听了声音",
+      "aq_agents_list": "看了别的对话",
+      "aq_send": "发了消息",
+      "aq_agents_notify": "等别的对话做完"
     },
     "heldStep": {
       "plan": "先出方案，没改",
@@ -4400,6 +4450,7 @@
       "marker": "在播放头 {{time}} 加一个标记"
     },
     "complete": {
+      "conversation": "对话「{{title}}」",
       "commands": "命令",
       "refs": "引用",
       "planOn": "打开先出方案",

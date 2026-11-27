@@ -44,6 +44,8 @@ export interface ChatPointingOptions {
   readonly explorer: ExplorerState;
   readonly code: CodeDocuments;
   readonly t: TFunction;
+  /** Whether a conversation of the project is still there, for a block that points to one. */
+  readonly agentHere?: (id: string) => boolean;
 }
 
 /** The project's name of something a block points to, else nothing: it is not there any more. */
@@ -305,6 +307,8 @@ export class ChatPointing {
         return entryOf(state.files, address.path) !== undefined ? "here" : "gone";
       case "objects":
         return "here";
+      case "agent":
+        return this.#options.agentHere?.(address.id) === false ? "gone" : "here";
     }
   }
 

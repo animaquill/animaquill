@@ -143,4 +143,14 @@ export const TOOL_TEXTS = {
   "tools.aq_check_run.params.limit": "How many problems at most, 1 to {max}; {default} by default.",
   "tools.aq_check_run.params.cursor":
     "Where to go on, as the last line of an earlier result of this call says.",
+  "tools.aq_agents_list.description":
+    "The other conversations of this project, and AI tools on this computer connected to it: each with the name aq_send takes, whether it runs, waits for the user or is idle, what it does now, what it changed last, and whether it takes messages.",
+  "tools.aq_send.description":
+    "Sends words to another conversation of this project, or an AI tool on this computer, by its name from aq_agents_list or its aq://agent/ address. One that runs reads it after its next tool call, an idle one starts a turn with it, an AI tool reads it with its next call. Its answer, if any, comes as a message to you. It cannot approve or decide anything for the user.",
+  "tools.aq_send.params.to": "The name aq_agents_list gives, or an aq://agent/ address.",
+  "tools.aq_send.params.message":
+    "At most {max} characters. It cannot see your conversation: say what you need and why.",
+  "tools.aq_agents_notify.description":
+    "Tells you once, with a message, when another conversation is next idle (its turn over, nothing waiting), within 12 hours: rather than asking again and again.",
+  "tools.aq_agents_notify.params.to": "The name aq_agents_list gives, or an aq://agent/ address.",
 } satisfies TextTable;

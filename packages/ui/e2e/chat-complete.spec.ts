@@ -394,6 +394,8 @@ test("@ typed fast: ↓ and Enter before the project is looked through go by wha
   // No wait between the keys: what the menu had a moment ago ("@" alone, or "@城") is not what ↓
   // moves in, nor what Enter picks from.
   await box(page).pressSequentially("看看 @城市", { delay: 0 });
+  // Once the menu is there, whatever it has found yet: before it, ↓ is a key of the box.
+  await expect(menu(page)).toBeVisible();
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("Enter");
   await expect(box(page).getByTestId("chat-chip")).toHaveText(["字幕「欢迎来到这座城市」"]);

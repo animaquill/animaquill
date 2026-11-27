@@ -235,6 +235,19 @@ export function ChatGroup() {
           onChange={(on) => ai.setAskBeforeEdit(on)}
         />
       </SettingRow>
+      <SettingRow id="chat.fromAgents">
+        <Segmented
+          label={t("settings.items.chat.fromAgents.name")}
+          value={settings.fromAgents ?? "yes"}
+          options={[
+            { value: "yes", label: t("settings.fromAgents.yes") },
+            { value: "ask", label: t("settings.fromAgents.ask") },
+            { value: "no", label: t("settings.fromAgents.no") },
+          ]}
+          disabled={held}
+          onChange={(how) => ai.setFromAgents(how)}
+        />
+      </SettingRow>
       <SettingRow id="chat.autoTitle">
         <Toggle
           label={t("settings.items.chat.autoTitle.name")}

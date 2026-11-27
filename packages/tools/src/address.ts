@@ -9,6 +9,7 @@
  *   aq://keyframe/clip_7Hq2?timeline=main&property=position&t=3   a keyframe of a clip
  *   aq://file/scenes/intro/scene.html#L12-18   lines of a code file
  *   aq://objects?timeline=main&ids=clip_a,clip_b   several objects
+ *   aq://agent/chat-mx2…                       another conversation, or an AI tool, by its id
  */
 
 export type Address =
@@ -41,6 +42,11 @@ export type Address =
       readonly kind: "objects";
       readonly ids: readonly string[];
       readonly timeline: string | undefined;
+    }
+  | {
+      /** Another conversation of the project, or an AI tool on this computer: see `aq_send`. */
+      readonly kind: "agent";
+      readonly id: string;
     };
 
 const PREFIX = "aq://";
@@ -112,6 +118,8 @@ export function parseAddress(text: string): Address | undefined {
       const ids = (query.get("ids") ?? "").split(",").filter((id) => id !== "");
       return ids.length > 0 ? { kind, ids, timeline } : undefined;
     }
+    case "agent":
+      return tail ? { kind, id: tail } : undefined;
     default:
       return undefined;
   }
@@ -159,6 +167,8 @@ export function formatAddress(address: Address): string {
         ["timeline", address.timeline],
         ["ids", address.ids.join(",")],
       ])}`;
+    case "agent":
+      return `${PREFIX}agent/${part(address.id)}`;
   }
 }
 
@@ -174,6 +184,7 @@ export function valueOfAddress(text: string): string | readonly string[] | undef
       return address.t;
     case "object":
     case "keyframe":
+    case "agent":
       return address.id;
     case "file":
       return address.path;

@@ -327,7 +327,7 @@ describe("checkPack refuses", () => {
     );
     expect(codes(small({ params }))).toEqual(["too-large tools"]);
     expect(MAX_SYSTEM).toBe(12_000);
-    expect(MAX_LIST).toBe(76_000);
+    expect(MAX_LIST).toBe(81_000);
   });
 
   it("examples that do not fit their operation, or that only people may write", () => {
@@ -758,6 +758,7 @@ describe("what a model gets, and two packs side by side", () => {
         texts: usePack(steady, "deepseek-chat").texts,
         pictures: true,
         sent: true,
+        agents: true,
       }),
     );
     const keys = segmentsOf(preview).map(({ key }) => key);

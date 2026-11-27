@@ -119,6 +119,11 @@ export class CallerState {
   readonly own = new Set<Origin>();
   /** The code files this conversation wrote, which aq_check_run tells whether they have run. */
   readonly changedCode = new Set<string>();
+  /**
+   * Other conversations by the names `aq_agents_list` last gave them, for a name that changed
+   * since: never kept, as names do.
+   */
+  readonly agentNames = new Map<string, string>();
   /** The last revision at which anything was read: the base of objects that were not read. */
   lastRead: RevisionId | undefined;
   /** The revision after the last call, to tell what others changed since. */

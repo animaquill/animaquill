@@ -1,3 +1,4 @@
+import { framedMessage, type Mail } from "@animaquill/agent";
 import { aiTask, type Origin, type ProjectState, type ProjectStore } from "@animaquill/core";
 import {
   CallerState,
@@ -12,6 +13,9 @@ import {
   type Tool,
   type ToolHost,
   type ToolResult,
+  type AgentCard,
+  type AgentDirectory,
+  type SendOutcome,
 } from "@animaquill/tools";
 
 /**
@@ -82,7 +86,16 @@ export interface BridgeExecutorOptions {
   ) => Promise<{ readonly type: string; readonly data: string } | undefined>;
   readonly wrote?: (write: BridgeWrite) => void;
   readonly now?: () => number;
+  /**
+   * The other conversations of the project a session sees and sends words to, as `mcp:` and its
+   * session, by the name of its tool (docs/design/ai-teamwork.md of AnimaQuill Cloud, 3).
+   */
+  readonly agents?: (id: string, name: () => string) => AgentDirectory;
 }
+
+/** Messages that wait for one session at most, and how long the same words go once. */
+const MAX_MAIL = 50;
+const REPEAT_MS = 60_000;
 
 interface SessionState {
   readonly caller: CallerState;
@@ -114,6 +127,10 @@ export class BridgeExecutor {
   #answerBytes = 0;
   /** The last batch of each session on this page, which a session read anew goes on from. */
   readonly #batches = new Map<string, number>();
+  /** Messages of conversations for each session, which go with its next result. */
+  readonly #mail = new Map<string, Mail[]>();
+  /** The words each sent to a session lately, and when, for the same words within a minute. */
+  readonly #recent = new Map<string, number>();
   /** This start of the page, in the origins of its batches. */
   readonly #start: string;
   #queue: Promise<unknown> = Promise.resolve();
@@ -216,6 +233,9 @@ export class BridgeExecutor {
       ...(parts.problemInputs && { problemInputs: parts.problemInputs }),
       ...(parts.ranNow && { ranNow: parts.ranNow }),
       ...(parts.whoIs && { whoIs: parts.whoIs }),
+      ...(this.#options.agents && {
+        agents: this.#options.agents(`mcp:${call.session}`, () => nameOf(state.client)),
+      }),
       ...(parts.look && {
         look: (request: LookRequest) =>
           parts.look?.(
@@ -298,11 +318,47 @@ export class BridgeExecutor {
         result,
       });
     }
-    return this.#forBridge(result);
+    return this.#forBridge(result, call.session);
   }
 
-  /** A result as it goes to the AI tool: its pictures as bytes, those for people left out. */
-  async #forBridge(result: ToolResult): Promise<BridgeResult> {
+  /** The sessions on this page, as others the conversations of the chat see and send to. */
+  cards(): readonly AgentCard[] {
+    return [...this.#sessions].map(([session, state]) => ({
+      id: `mcp:${session}`,
+      kind: "tool" as const,
+      name: nameOf(state.client),
+      state: "tool" as const,
+      changed: [],
+      accepts: "yes" as const,
+    }));
+  }
+
+  /**
+   * A message of a conversation for a session, by `mcp:` and its session: it goes with its next
+   * result, as nothing here can wake an AI tool.
+   */
+  deliver(id: string, mail: Mail): SendOutcome {
+    const session = id.slice("mcp:".length);
+    if (!this.#sessions.has(session)) return { refused: "unknown" };
+    const now = (this.#options.now ?? Date.now)();
+    for (const [key, at] of this.#recent) if (now - at > REPEAT_MS) this.#recent.delete(key);
+    const key = `${session}\n${mail.from.id}\n${mail.text}`;
+    if (this.#recent.has(key)) return { refused: "repeat" };
+    const waiting = this.#mail.get(session) ?? [];
+    if (waiting.length >= MAX_MAIL) return { refused: "full" };
+    this.#recent.set(key, now);
+    this.#mail.set(session, [...waiting, mail]);
+    return { sent: "waits", until: "tool" };
+  }
+
+  /**
+   * A result as it goes to the AI tool: its pictures as bytes, those for people left out, and the
+   * messages of conversations that wait for the session after it, marked as theirs.
+   */
+  async #forBridge(result: ToolResult, session?: string): Promise<BridgeResult> {
+    const mail = session === undefined ? [] : (this.#mail.get(session) ?? []);
+    if (session !== undefined) this.#mail.delete(session);
+    const messages = mail.map((each) => `\n\n${framedMessage(each.from, each.text)}`).join("");
     const images: { type: string; data: string }[] = [];
     const missing: string[] = [];
     for (const image of result.images ?? []) {
@@ -312,7 +368,13 @@ export class BridgeExecutor {
       else
         missing.push(`${image.note.replace(/\]$/, "")} — not attached: the picture is not here]`);
     }
-    const text = missing.length === 0 ? result.text : `${missing.join("\n")}\n${result.text}`;
+    const text =
+      (missing.length === 0 ? result.text : `${missing.join("\n")}\n${result.text}`) + messages;
     return { text, isError: result.isError, ...(images.length > 0 && { images }) };
   }
+}
+
+/** The name of an AI tool as it says it, for the conversations of the chat. */
+function nameOf(client: BridgeClient | undefined): string {
+  return client?.name?.trim() || "AI tool";
 }

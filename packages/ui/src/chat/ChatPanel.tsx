@@ -36,6 +36,7 @@ import { followsAfterScroll, showsToLatest } from "./scroll.ts";
 import { namesIn } from "./names.ts";
 import { groupsOf, turnOf } from "./turns.ts";
 import { TurnView } from "./TurnView.tsx";
+import { AgentWaits } from "./wait/MailCard.tsx";
 import { SummaryDivider } from "./SummaryDivider.tsx";
 import { ChatUiContext, type ChatUi } from "./ui.ts";
 
@@ -319,6 +320,7 @@ export function ChatPanel() {
                         </Fragment>
                       );
                     })}
+                  <AgentWaits />
                 </div>
               </div>
               <QuoteButton

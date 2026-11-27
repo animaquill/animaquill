@@ -58,7 +58,15 @@ export function ToolRow({
   // Not open by itself where it failed: AI mostly reads again and goes on (chat-panel.md 5.3).
   const [open, setOpen] = useOpened(call.id, false);
   const now = useNow(running !== undefined);
-  const doing = say(`chat.tool.${call.name}`, { defaultValue: commandOf(call.name) });
+  // To another conversation: by its name, as the result says it, else as AI wrote it.
+  const to =
+    call.name === "aq_send" || call.name === "aq_agents_notify"
+      ? agentNameOf(result, call.args.to)
+      : undefined;
+  const doing =
+    to !== undefined
+      ? say(`chat.agents.doing.${call.name}`, { name: to })
+      : say(`chat.tool.${call.name}`, { defaultValue: commandOf(call.name) });
   // What it does while it runs; what it did once done; that it did not happen, and why, where it
   // did not; that it did not work.
   const label =
@@ -67,7 +75,9 @@ export function ToolRow({
       : why
         ? say(`chat.heldStep.${why}`)
         : result.ok
-          ? say(`chat.toolDone.${call.name}`, { defaultValue: commandOf(call.name) })
+          ? to !== undefined
+            ? say(`chat.agents.done.${sentHow(call.name, result)}`, { name: to })
+            : say(`chat.toolDone.${call.name}`, { defaultValue: commandOf(call.name) })
           : say("chat.failedStep", { name: doing });
   // Failed: why, in words, on the line itself; what it was about follows once open.
   const reason =
@@ -204,4 +214,24 @@ function ToolBody({
       )}
     </div>
   );
+}
+
+/** The name of another conversation a call was to, as its result says it, else as AI wrote it. */
+function agentNameOf(result: ToolEntry | undefined, given: unknown): string {
+  const to = result?.data?.to;
+  if (
+    typeof to === "object" &&
+    to !== null &&
+    typeof (to as { name?: unknown }).name === "string"
+  ) {
+    return (to as { name: string }).name;
+  }
+  return typeof given === "string" ? given.replace(/^aq:\/\/agent\//, "") : "";
+}
+
+/** How a message went, as the line of its step says: sent, a turn, waits for people… */
+function sentHow(tool: string, result: ToolEntry): string {
+  if (tool === "aq_agents_notify") return "notify";
+  const outcome = result.data?.outcome as { sent?: string; until?: string } | undefined;
+  return outcome?.sent === "waits" ? `waits.${outcome.until ?? "people"}` : "sent";
 }

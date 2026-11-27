@@ -53,7 +53,7 @@ export function keptData(
  * each message was sent (see `SENT_FACT`).
  */
 export const browserSystemPrompt = (texts?: TextTable, pictures = true): string =>
-  systemPromptOf({ entry: "browser", ...(texts && { texts }), pictures, sent: true });
+  systemPromptOf({ entry: "browser", ...(texts && { texts }), pictures, sent: true, agents: true });
 
 /** What answers with the default words of the tools are recorded as made with. */
 export const DEFAULT_STAMP: AnswerStamp = { toolset: TOOLSET_VERSION, texts: DEFAULT_TEXTS_USED };

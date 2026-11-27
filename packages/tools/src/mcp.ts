@@ -33,7 +33,7 @@ const HOST: Readonly<Record<McpPlace, string>> = {
 
 /** The instructions of a server, as MCP gives them to the client. */
 export function mcpInstructions(place: McpPlace): string {
-  return `${INTRO[place]}\n\n${systemPromptOf({ entry: "mcp" })}\n${HOST[place]}`;
+  return `${INTRO[place]}\n\n${systemPromptOf({ entry: "mcp", agents: true })}\n${HOST[place]}`;
 }
 
 /** A tool as `tools/list` gives it. */

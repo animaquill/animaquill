@@ -10,6 +10,14 @@ export {
   withoutAddresses,
   type Address,
 } from "./address.ts";
+export {
+  MAX_MESSAGE,
+  type AgentCard,
+  type AgentDirectory,
+  type AgentFrom,
+  type NotifyOutcome,
+  type SendOutcome,
+} from "./agents.ts";
 export { Approvals, type Approval, type ApproveRequest } from "./approve.ts";
 export { CallerState } from "./caller.ts";
 export { describeChanges, type ObjectChange } from "./changes.ts";

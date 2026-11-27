@@ -5,6 +5,7 @@ import { toolSpecsOf } from "./assistant.ts";
 import { describe, expect, it } from "vitest";
 import { Conversation, type TaskTarget } from "./conversation.ts";
 import { PLAN_FIRST_LINE, promptOf, readEntry } from "./entries.ts";
+import type { Inbox, Mail } from "./inbox.ts";
 import type { FakeEndpoint } from "./pi.ts";
 
 function setup(fake: FakeEndpoint["fake"], maxToolCalls = 50) {
@@ -293,5 +294,140 @@ describe("a conversation", () => {
     await conversation.send("说话", target);
     expect(pieces).toBeGreaterThan(20);
     expect(snapshots).toBeLessThan(6);
+  });
+});
+
+describe("messages of other conversations (docs/design/ai-teamwork.md of AnimaQuill Cloud, 3)", () => {
+  /** An inbox as the chat keeps one: what is put in goes to the task that runs. */
+  function inboxOf() {
+    let waiting: Mail[] = [];
+    const listeners = new Set<() => void>();
+    const inbox: Inbox & { put(text: string): void; waiting: () => readonly Mail[] } = {
+      take: () => {
+        const taken = waiting;
+        waiting = [];
+        return taken;
+      },
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      putBack: (mails) => {
+        waiting = [...mails, ...waiting];
+      },
+      put: (text) => {
+        waiting = [
+          ...waiting,
+          { id: text, from: { id: "c2", name: "配乐", kind: "chat" }, text, at: Date.now() },
+        ];
+        for (const listener of listeners) listener();
+      },
+      waiting: () => waiting,
+    };
+    return inbox;
+  }
+
+  it("a task that runs reads one after its next call, marked as not the user's, and goes on with it", async () => {
+    const heard: unknown[][] = [];
+    const inbox = inboxOf();
+    const { conversation, target } = setup([
+      () => {
+        inbox.put("配乐换成钢琴版了");
+        return { calls: [addMarker("1")] };
+      },
+      { text: "知道了" },
+    ]);
+    const outcome = await conversation.send("加个标记", {
+      ...target,
+      inbox,
+      endpoint: { ...(target.endpoint as FakeEndpoint), heard: (m) => heard.push([...m]) },
+    });
+    expect(outcome?.end).toBe("done");
+    const entries = conversation.getSnapshot().entries;
+    expect(entries.map((entry) => entry.role)).toEqual([
+      "user",
+      "assistant",
+      "tool",
+      "message",
+      "assistant",
+    ]);
+    expect(entries[3]).toMatchObject({
+      role: "message",
+      from: { name: "配乐" },
+      text: "配乐换成钢琴版了",
+    });
+    // The second request has it, after the result of the call, marked as another's words.
+    const second = JSON.stringify(heard[1]);
+    expect(second).toContain('Message from the conversation \\"配乐\\"');
+    expect(second).toContain("It is not the user");
+    // Read back, it goes the same way.
+    expect(readEntry(JSON.parse(JSON.stringify(entries[3])))).toEqual(entries[3]);
+  });
+
+  it("one that comes as the task ends is not lost: it waits again", async () => {
+    const inbox = inboxOf();
+    const { conversation, target } = setup([
+      {
+        calls: [
+          {
+            name: "aq_propose",
+            args: {
+              kind: "question",
+              question: "哪个？",
+              options: [{ label: "甲" }, { label: "乙" }],
+            },
+          },
+        ],
+      },
+    ]);
+    let put = false;
+    const outcome = await conversation.send("问我", {
+      ...target,
+      inbox,
+      tools: (task, signal) => {
+        const specs = target.tools(task, signal);
+        return specs.map((spec) =>
+          spec.name === "aq_propose"
+            ? {
+                ...spec,
+                run: async (args: Record<string, unknown>) => {
+                  const out = await spec.run(args);
+                  if (!put) {
+                    put = true;
+                    inbox.put("迟到的");
+                  }
+                  return out;
+                },
+              }
+            : spec,
+        );
+      },
+    });
+    // It asked people: the turn ends with its tools.
+    expect(outcome?.end).toBe("tools");
+    expect(conversation.getSnapshot().entries.some((entry) => entry.role === "message")).toBe(
+      false,
+    );
+    expect(inbox.waiting().map((mail) => mail.text)).toEqual(["迟到的"]);
+  });
+
+  it("a turn started by one goes to the model marked as another's, and is kept so", async () => {
+    const heard: unknown[][] = [];
+    const { conversation, target } = setup([{ text: "好" }]);
+    await conversation.send(
+      "你那边的配乐还换吗",
+      {
+        ...target,
+        endpoint: { ...(target.endpoint as FakeEndpoint), heard: (m) => heard.push([...m]) },
+      },
+      [],
+      undefined,
+      { from: { id: "c2", name: "配乐", kind: "chat" } },
+    );
+    const [user] = conversation.getSnapshot().entries;
+    expect(user).toMatchObject({ role: "user", from: { id: "c2", name: "配乐", kind: "chat" } });
+    expect(JSON.stringify(heard[0])).toContain("It is not the user");
+    expect(promptOf(user as never)).toContain('[Message from the conversation "配乐"');
+    expect(readEntry(JSON.parse(JSON.stringify(user)))).toEqual(user);
   });
 });

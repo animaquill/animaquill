@@ -117,7 +117,7 @@ describe("the tools through MCP", () => {
         annotations,
       })),
     );
-    expect(listed.length).toBe(14);
+    expect(listed.length).toBe(17);
   });
 
   it("load aq_project_status at once, and mark what changes the project as not destructive", async () => {

@@ -3,6 +3,7 @@ import { CallerState } from "./caller.ts";
 import { DEFAULT_TEXTS, hashOfTexts, type TextTable, type TextsUsed } from "./texts/index.ts";
 import { DETAIL_LIMITS, filledTexts, type Detail } from "./packs/detail.ts";
 import { makeTool, paramMaxima, type ToolDefinition } from "./tool.ts";
+import { agentsList, agentsNotify, send } from "./tools/agents.ts";
 import { checkRun, propose } from "./tools/ask.ts";
 import { edit } from "./tools/edit.ts";
 import { fileEdit, fileWrite } from "./tools/files.ts";
@@ -37,6 +38,9 @@ export const DEFINITIONS: readonly ToolDefinition<any>[] = [
   renderFrames,
   audioAnalyze,
   checkRun,
+  agentsList,
+  send,
+  agentsNotify,
 ];
 
 /**
@@ -44,7 +48,7 @@ export const DEFINITIONS: readonly ToolDefinition<any>[] = [
  * version they are the same to the byte, so that services keep them in their caches; any change of
  * them is a new version (a test compares them with a snapshot).
  */
-export const TOOLSET_VERSION = "2026.21";
+export const TOOLSET_VERSION = "2026.22";
 
 /** The words of the tools as AnimaQuill writes them: what a conversation records it used. */
 export const DEFAULT_TEXTS_USED: TextsUsed = {
@@ -101,7 +105,7 @@ export interface ToolsetOptions {
  * The tools that AI uses on a project, the same for the assistant in the browser, a command line
  * and the MCP of a platform: six that read, the manual, three that change, one that asks the user,
  * one that renders frames, one that
- * measures the sound and one that checks. The caller keeps what was read, over all messages of one conversation.
+ * measures the sound, one that checks, and three for the other conversations of the project. The caller keeps what was read, over all messages of one conversation.
  * What the tools say comes from `texts`, with how much results give: the same table at the same
  * step of detail gives the same tools, to the byte.
  */

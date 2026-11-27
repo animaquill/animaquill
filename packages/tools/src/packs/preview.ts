@@ -41,7 +41,13 @@ export function previewOf(pack: ModelPack, model: string, pictures = true): Pack
   return {
     // With what the browser says of pictures, for a model that takes them unless said otherwise,
     // and of the messages it keeps.
-    system: systemPromptOf({ entry: "browser", texts: use.texts, pictures, sent: true }),
+    system: systemPromptOf({
+      entry: "browser",
+      texts: use.texts,
+      pictures,
+      sent: true,
+      agents: true,
+    }),
     parts: SYSTEM_PARTS.map((part) => ({
       part,
       text: textIn(use.texts, `system.${part}`)?.trim() ?? "",

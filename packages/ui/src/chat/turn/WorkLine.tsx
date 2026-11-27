@@ -26,6 +26,7 @@ import type { Names, Say } from "../toolSummary.ts";
 import { durationText, type Step, type Turn } from "../turns.ts";
 import { dollars, tokens, usageOf } from "../usage.ts";
 import { liveThinking, liveThinkingSince, livePhase, useLive } from "../useLive.ts";
+import { MessageStep } from "./AgentMessage.tsx";
 import styles from "./turn.module.css";
 import {
   LISTEN_TOOL,
@@ -360,6 +361,8 @@ export const StepView = memo(function StepView({
       return <ThinkingStep id={step.id} text={step.text} ms={step.ms} />;
     case "said":
       return <SaidStep id={step.id} text={step.text} />;
+    case "message":
+      return <MessageStep id={step.id} from={step.from} text={step.text} />;
     case "tool":
       if (step.call.name === LOOK_TOOL) {
         return (

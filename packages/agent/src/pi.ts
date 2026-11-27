@@ -40,7 +40,10 @@ import { openAIResponsesApi } from "@earendil-works/pi-ai/api/openai-responses.l
 import type { CallSettings, TextsUsed } from "@animaquill/tools";
 import {
   NOT_ATTACHED,
+  framedMessage,
   promptOf,
+  type MessageEntry,
+  type MessageFrom,
   type AnswerEnd,
   type AnswerUsage,
   type AssistantEntry,
@@ -54,6 +57,7 @@ import {
   type UserEntry,
 } from "./entries.ts";
 import type { ModelValues } from "./ai-settings.ts";
+import type { Inbox, Mail } from "./inbox.ts";
 import {
   SUMMARY_TOKENS,
   compactRequest,
@@ -233,7 +237,7 @@ export type RunEvent =
   | { readonly type: "text"; readonly delta: string }
   /** What the model said of its thinking, where its service gives a summary. */
   | { readonly type: "thinking"; readonly delta: string }
-  | { readonly type: "entry"; readonly entry: AssistantEntry | ToolEntry }
+  | { readonly type: "entry"; readonly entry: AssistantEntry | ToolEntry | MessageEntry }
   | {
       readonly type: "tool";
       readonly id: string;
@@ -276,6 +280,13 @@ export interface RunOptions {
   readonly images?: readonly AttachedImage[];
   /** The prompt asked for a plan first: its line goes after its words, see `PLAN_FIRST_LINE`. */
   readonly plan?: true;
+  /** The prompt is the message of another one, not people's: it goes marked as such. */
+  readonly from?: MessageFrom;
+  /**
+   * Messages of others for this conversation: the task reads those it may after each call of a
+   * tool, and before its first request (`Agent.steer`). Each goes as an entry of its own.
+   */
+  readonly inbox?: Inbox;
   /** Whether pictures go to the model, see `Pictures`; without it, only their lines. */
   readonly pictures?: Pictures;
   readonly signal: AbortSignal;
@@ -305,6 +316,8 @@ export interface RunResult {
   readonly overflow?: true;
   /** It went on with tools, and stopped there as `RunOptions.full` said: it goes on after room is made. */
   readonly full?: true;
+  /** Messages it took from the inbox and did not get to read, as the task ended first. */
+  readonly unread?: readonly Mail[];
 }
 
 const NO_USAGE: Usage = {
@@ -637,6 +650,14 @@ function messagesOf(
       case "user":
         messages.push({ role: "user", content: said(entry, index), timestamp: entry.at });
         break;
+      // Another one's words, read in the middle of a task: as the user's turn, marked as theirs.
+      case "message":
+        messages.push({
+          role: "user",
+          content: framedMessage(entry.from, entry.text),
+          timestamp: entry.at,
+        });
+        break;
       case "tool": {
         const call = old.get(entry.call);
         if (call !== undefined) {
@@ -868,7 +889,7 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
             : undefined;
   /** What people said in a message, with the pictures that go, and the lines of those that do not. */
   const said = (
-    entry: Pick<UserEntry, "text" | "images" | "plan">,
+    entry: Pick<UserEntry, "text" | "images" | "plan" | "from">,
     at: number,
   ): UserMessage["content"] => {
     const text = promptOf(entry, why(at));
@@ -999,6 +1020,8 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
       return key || (isFake(endpoint) ? undefined : "none");
     },
     toolExecution: "sequential",
+    // Every message that came goes in at once, after the calls of the answer before.
+    steeringMode: "all",
     identity: IDENTITY,
     beforeToolCall: async ({ toolCall }) => {
       const no = options.before?.({ id: toolCall.id, name: toolCall.name });
@@ -1030,6 +1053,8 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
     if (thoughtFrom !== undefined && thinkingMs === undefined)
       thinkingMs = Date.now() - thoughtFrom;
   };
+  /** Says that a message of another one was read, see `RunOptions.inbox`: set further down. */
+  let readMail: (message: object) => void = () => {};
   agent.subscribe((event: AgentEvent) => {
     if (event.type === "turn_start") {
       thinking = "";
@@ -1085,6 +1110,8 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
         thinking = "";
         thoughtFrom = undefined;
         thinkingMs = undefined;
+      } else if (message.role === "user") {
+        readMail(event.message);
       } else if (message.role === "toolResult") {
         const details = (message as { details?: unknown }).details;
         const startedAt = toolStarts.get(message.toolCallId);
@@ -1112,36 +1139,78 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
 
   const stop = () => agent.abort();
   signal.addEventListener("abort", stop);
-  try {
-    if (signal.aborted) return { end: "stopped" };
-    if (options.prompt === undefined) await agent.continue();
-    else {
-      const content = said(
-        { text: options.prompt, images: options.images ?? [], ...(options.plan && { plan: true }) },
-        -1,
-      );
-      await agent.prompt({ role: "user", content, timestamp: Date.now() } as AgentMessage);
+  // Messages of others: steered in as they come, each an entry once the task reads it.
+  const steered = new Map<object, Mail>();
+  const read = new Set<Mail>();
+  const pull = () => {
+    if (signal.aborted) return;
+    for (const mail of options.inbox?.take() ?? []) {
+      const message = {
+        role: "user",
+        content: framedMessage(mail.from, mail.text),
+        timestamp: mail.at,
+      };
+      steered.set(message, mail);
+      agent.steer(message as AgentMessage);
     }
-  } catch (error) {
-    return { end: "failed", error: clean(error instanceof Error ? error.message : String(error)) };
-  } finally {
-    signal.removeEventListener("abort", stop);
+  };
+  readMail = (message) => {
+    const mail = steered.get(message);
+    if (!mail || read.has(mail)) return;
+    read.add(mail);
+    onEvent({
+      type: "entry",
+      entry: { role: "message", from: mail.from, text: mail.text, at: mail.at },
+    });
+  };
+  const unsubscribe = options.inbox?.subscribe(pull);
+  pull();
+  const result = await runAgent();
+  unsubscribe?.();
+  agent.clearSteeringQueue();
+  const unread = [...steered.values()].filter((mail) => !read.has(mail));
+  return unread.length > 0 ? { ...result, unread } : result;
+
+  async function runAgent(): Promise<RunResult> {
+    try {
+      if (signal.aborted) return { end: "stopped" };
+      if (options.prompt === undefined) await agent.continue();
+      else {
+        const content = said(
+          {
+            text: options.prompt,
+            images: options.images ?? [],
+            ...(options.plan && { plan: true }),
+            ...(options.from && { from: options.from }),
+          },
+          -1,
+        );
+        await agent.prompt({ role: "user", content, timestamp: Date.now() } as AgentMessage);
+      }
+    } catch (error) {
+      return {
+        end: "failed",
+        error: clean(error instanceof Error ? error.message : String(error)),
+      };
+    } finally {
+      signal.removeEventListener("abort", stop);
+    }
+    const last = agent.state.messages.findLast(
+      (message): message is AssistantMessage => message.role === "assistant",
+    );
+    if (signal.aborted) return { end: "stopped" };
+    if (!last) return { end: "failed", error: clean(agent.state.errorMessage ?? "") };
+    const end = endOf(last);
+    if (end === "failed")
+      return {
+        end,
+        error: clean(last.errorMessage ?? ""),
+        ...(isContextOverflow(last, model.contextWindow) && { overflow: true as const }),
+      };
+    // Set in `finishTurn`, which control flow does not see.
+    const full = (filled as boolean) && end === "tools";
+    return { end, ...(full && { full: true as const }) };
   }
-  const last = agent.state.messages.findLast(
-    (message): message is AssistantMessage => message.role === "assistant",
-  );
-  if (signal.aborted) return { end: "stopped" };
-  if (!last) return { end: "failed", error: clean(agent.state.errorMessage ?? "") };
-  const end = endOf(last);
-  if (end === "failed")
-    return {
-      end,
-      error: clean(last.errorMessage ?? ""),
-      ...(isContextOverflow(last, model.contextWindow) && { overflow: true as const }),
-    };
-  // Set in `finishTurn`, which control flow does not see.
-  const full = (filled as boolean) && end === "tools";
-  return { end, ...(full && { full: true as const }) };
 }
 
 /**

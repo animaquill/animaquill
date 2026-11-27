@@ -4210,5 +4210,77 @@
       "readOnlyHint": true,
       "openWorldHint": false
     }
+  },
+  {
+    "name": "aq_agents_list",
+    "title": "Other conversations",
+    "description": "The other conversations of this project, and AI tools on this computer connected to it: each with the name aq_send takes, whether it runs, waits for the user or is idle, what it does now, what it changed last, and whether it takes messages.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Other conversations",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "aq_send",
+    "title": "Message another conversation",
+    "description": "Sends words to another conversation of this project, or an AI tool on this computer, by its name from aq_agents_list or its aq://agent/ address. One that runs reads it after its next tool call, an idle one starts a turn with it, an AI tool reads it with its next call. Its answer, if any, comes as a message to you. It cannot approve or decide anything for the user.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "to": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "The name aq_agents_list gives, or an aq://agent/ address."
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "At most 4000 characters. It cannot see your conversation: say what you need and why."
+        }
+      },
+      "required": [
+        "to",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Message another conversation",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "aq_agents_notify",
+    "title": "Be told when another is idle",
+    "description": "Tells you once, with a message, when another conversation is next idle (its turn over, nothing waiting), within 12 hours: rather than asking again and again.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "to": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "The name aq_agents_list gives, or an aq://agent/ address."
+        }
+      },
+      "required": [
+        "to"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "title": "Be told when another is idle",
+      "readOnlyHint": true,
+      "openWorldHint": false
+    }
   }
 ]

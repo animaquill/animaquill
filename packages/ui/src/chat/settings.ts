@@ -1372,6 +1372,12 @@ export class AiSettingsStore {
     this.#save({ ...now, ...(on && { askBeforeEdit: true as const }) });
   }
 
+  /** What conversations do with messages of other conversations: take them, ask first, or none. */
+  setFromAgents(how: "yes" | "ask" | "no"): void {
+    const { fromAgents: _was, ...now } = this.#settingsNow();
+    this.#save({ ...now, ...(how !== "yes" && { fromAgents: how }) });
+  }
+
   /** Whether AI waits for people to stop playing before it renders frames. */
   setLookWaits(waits: boolean): void {
     const { lookWhilePlaying: _was, ...now } = this.#settingsNow();

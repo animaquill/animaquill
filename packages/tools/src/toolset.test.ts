@@ -45,9 +45,11 @@ import type { Tool } from "./types.ts";
  * property.edit owners that are tracks of sound (PropertyOwner), and took 74 573 (2026-11-18);
  * 2026.20 gave the operations of effects tracks and the master, and property.edit the master, and
  * took 75 475 (2026-11-18); 2026.21 says in aq_edit that a track the batch leaves without clips goes
- * with it, and took 75 721 (2026-11-26). It is a ceiling, so that the list does not grow unnoticed.
+ * with it, and took 75 721 (2026-11-26); 2026.22 added aq_agents_list, aq_send and aq_agents_notify,
+ * for the other conversations of the project, and took 77 297 (2026-11-28). It is a ceiling, so that
+ * the list does not grow unnoticed.
  */
-const MOST_CHARACTERS = 75_750;
+const MOST_CHARACTERS = 77_350;
 
 const listOf = (tools: Iterable<Tool>) =>
   [...tools].map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
@@ -77,7 +79,7 @@ function resolve(root: unknown, ref: string): unknown {
 const plain = (text: string) => text.replace(/^rev [a-z0-9]+:/, "rev <epoch>:");
 
 describe("the toolset", () => {
-  it("is fourteen tools, in a fixed order", () => {
+  it("is seventeen tools, in a fixed order", () => {
     const { tools } = toolsOn();
     expect([...tools.keys()]).toEqual([
       "aq_project_status",
@@ -94,6 +96,9 @@ describe("the toolset", () => {
       "aq_render_frames",
       "aq_audio_analyze",
       "aq_check_run",
+      "aq_agents_list",
+      "aq_send",
+      "aq_agents_notify",
     ]);
   });
 

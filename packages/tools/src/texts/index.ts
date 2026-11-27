@@ -2,12 +2,12 @@ import { EDIT_TEXTS } from "./edit.ts";
 import { OPERATION_TEXTS } from "./operations.ts";
 import { PARAM_TEXTS } from "./params.ts";
 import { TYPE_TEXTS } from "./shared.ts";
-import { PICTURE_FACTS, SENT_FACT, SYSTEM_PARTS, SYSTEM_TEXTS } from "./system.ts";
+import { AGENTS_FACT, PICTURE_FACTS, SENT_FACT, SYSTEM_PARTS, SYSTEM_TEXTS } from "./system.ts";
 import { textIn, type TextTable } from "./table.ts";
 import { TOOL_TEXTS } from "./tools.ts";
 
 export * from "./table.ts";
-export { PICTURE_FACTS, SENT_FACT, SYSTEM_PARTS };
+export { AGENTS_FACT, PICTURE_FACTS, SENT_FACT, SYSTEM_PARTS };
 
 /** The words of the tools as AnimaQuill writes them, for every model: the default model pack. */
 export const DEFAULT_TEXTS: TextTable = {
@@ -46,6 +46,8 @@ export function systemPromptOf(options: {
    * (`SENT_FACT`): where it has the conversation, as the chat of the browser does.
    */
   readonly sent?: boolean;
+  /** Whether the place has other conversations to see and send to, said last (`AGENTS_FACT`). */
+  readonly agents?: boolean;
 }): string {
   const texts = options.texts ?? DEFAULT_TEXTS;
   let prompt = "";
@@ -64,6 +66,8 @@ export function systemPromptOf(options: {
       prompt += `${goesOn ? "\n" : "\n\n"}${text}`;
     }
   }
+  // A line of the list the last part ends in.
+  if (options.agents === true) prompt += `\n${AGENTS_FACT}`;
   return prompt;
 }
 

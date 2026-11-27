@@ -84,6 +84,11 @@ import type { FrameShot } from "../chat/attachments.ts";
 import { ChatPointing } from "../chat/pointing.ts";
 import { proposedIn } from "../chat/conversations.ts";
 import { placesOf, summaryOf } from "../chat/summary.ts";
+import { namesIn as chatNamesIn } from "../chat/names.ts";
+import type { Say } from "../chat/toolSummary.ts";
+import { phaseOf } from "../chat/turn/work.ts";
+import { livePhase } from "../chat/useLive.ts";
+import type { Conversation as ChatConversation } from "@animaquill/agent";
 import { TOOLSET_VERSION, createToolset, mcpListHash, parseAddress } from "@animaquill/tools";
 import { BridgeExecutor } from "../local-ai/bridge/executor.ts";
 import {
@@ -509,6 +514,8 @@ export class Workbench {
   #composers: Partial<ComposeHandlers>[] = [];
   /** The browser was asked in this page whether the chat may tell people. */
   #askedToNotify = false;
+  /** What runs the calls of AI tools on this computer, once there is one. */
+  #toolSessions: BridgeExecutor | undefined;
   /** The conversations of the online mode, which the backend has, see `AccountChats`. */
   readonly chatSync: AccountChats | undefined;
   /** Whether the settings are open in this window, and where in them, see `SettingsNav`. */
@@ -923,6 +930,13 @@ export class Workbench {
       takeBackMany: (tasks, direction, expected) =>
         this.undo.takeBackMany(tasks.map(aiTask), direction, expected),
       undoStateOf: (task) => this.undo.stateOf(aiTask(task)),
+      // AI tools on this computer, as others the conversations see and send to.
+      tools: {
+        cards: () => this.#toolSessions?.cards() ?? [],
+        deliver: (id, mail) => this.#toolSessions?.deliver(id, mail) ?? { refused: "unknown" },
+      },
+      // What a conversation does now, as the line of its work says it.
+      doing: (conversation) => this.#doingOf(conversation),
       // An AI tool on this computer, by its name, for what others changed.
       whoIs: (origin) => {
         const batch = this.tools.batchOf(origin);
@@ -1472,6 +1486,10 @@ export class Workbench {
       explorer: this.explorer,
       code: this.code,
       t,
+      agentHere: (id) =>
+        id.startsWith("mcp:") ||
+        this.chat.getSnapshot().saved.some((each) => each.id === id) ||
+        this.chat.conversationOf(id) !== undefined,
     });
     this.#keepTrail();
     this.#keepPropertyProblems();
@@ -3171,7 +3189,10 @@ export class Workbench {
         return { type: blob.type || "image/jpeg", data: btoa(text) };
       },
       wrote: (write) => this.tools.wrote(write),
+      // The conversations of the chat, as others it sees and sends to.
+      agents: (id, name) => this.chat.agentsFor(id, name),
     });
+    this.#toolSessions = executor;
     const page = (): BridgePage => {
       const { store, key } = this.session.getSnapshot();
       if (!store || key === undefined) return { project: undefined, eligible: false };
@@ -4489,6 +4510,11 @@ export class Workbench {
           address.path,
           address.from === undefined ? undefined : { line: address.from },
         );
+      case "agent":
+        // Another conversation: the chat shows it; an AI tool has nothing to show.
+        if (address.id.startsWith("mcp:")) return false;
+        this.#showChat(address.id);
+        return true;
     }
   }
 
@@ -4601,6 +4627,22 @@ export class Workbench {
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") this.attention.set(false);
     });
+  }
+
+  /** What a task of a conversation does now, as the line of its work says it. */
+  #doingOf(conversation: ChatConversation): string | undefined {
+    const running = conversation.getSnapshot().running;
+    if (!running) return undefined;
+    const live = conversation.live.getState();
+    return phaseOf(this.t as unknown as Say, {
+      running,
+      live: livePhase(live),
+      heardAt: live.heardAt,
+      look: this.looks.getSnapshot(),
+      approving: undefined,
+      now: Date.now(),
+      names: chatNamesIn(this.session.store?.getState()),
+    }).text;
   }
 
   /** Shows a conversation in the chat, with the chat open, at what waits for people in it. */

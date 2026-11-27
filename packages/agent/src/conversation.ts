@@ -20,6 +20,7 @@ import {
   type ToolEntry,
   type UserEntry,
 } from "./entries.ts";
+import type { Inbox, Mail } from "./inbox.ts";
 import { createLiveStore, type LiveStore } from "./live.ts";
 import type {
   AnswerStamp,
@@ -127,6 +128,8 @@ export interface TaskTarget {
    * of the earlier conversation by the same model. A request that did not fit makes room anyway.
    */
   readonly compact?: boolean;
+  /** Messages of others that the task reads as they come, see `RunOptions.inbox`. */
+  readonly inbox?: Inbox;
 }
 
 export interface ConversationOptions {
@@ -204,7 +207,7 @@ export class Conversation {
     target: TaskTarget,
     images: readonly AttachedImage[] = [],
     selection?: SelectionFacts,
-    marks: Pick<UserEntry, "plan" | "fromPlan" | "rewrites"> = {},
+    marks: Pick<UserEntry, "plan" | "fromPlan" | "rewrites" | "from"> = {},
   ): Promise<TaskOutcome | undefined> {
     if (this.running || (!text.trim() && images.length === 0)) return undefined;
     const now = this.#options.now ?? Date.now;
@@ -219,6 +222,7 @@ export class Conversation {
       ...(marks.plan && { plan: true as const }),
       ...(marks.fromPlan !== undefined && { fromPlan: marks.fromPlan }),
       ...(marks.rewrites !== undefined && { rewrites: marks.rewrites }),
+      ...(marks.from && { from: marks.from }),
     };
     const history = this.#snapshot.entries;
     this.#set({ entries: [...history, user] });
@@ -427,6 +431,8 @@ export class Conversation {
     let full = false;
     let overflowed: ((error: string, window?: number) => boolean) | undefined;
     const auto = target.compact === true;
+    /** Messages of others taken and not read, as each try ended first: they wait again. */
+    const unread: Mail[] = [];
     try {
       const pi = await import("./pi.ts");
       const { runTask } = pi;
@@ -457,7 +463,9 @@ export class Conversation {
             prompt: first.text,
             ...(first.images && { images: first.images }),
             ...(first.plan && { plan: true }),
+            ...(first.from && { from: first.from }),
           }),
+          ...(target.inbox && { inbox: target.inbox }),
           ...(target.pictures && { pictures: target.pictures }),
           signal: controller.signal,
           before: () => {
@@ -474,6 +482,7 @@ export class Conversation {
             }),
           onEvent,
         });
+        if (result.unread) unread.push(...result.unread);
         if (result.full && !controller.signal.aborted) {
           const made = await this.#makeRoom(target, "auto", controller.signal);
           if (made === "none") noRoom = true;
@@ -541,6 +550,7 @@ export class Conversation {
       outcome = { task, end: "failed", failure: failureOf(message), ...(relayed && { relayed }) };
     }
     if (this.#controller === controller) this.#controller = undefined;
+    if (unread.length > 0) target.inbox?.putBack(unread);
     this.live.dispatch({ type: "heard", at: now(), clear: true });
     this.#set({ running: undefined, last: outcome });
     return outcome;

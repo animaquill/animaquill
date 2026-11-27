@@ -170,10 +170,13 @@ import { CURRENT_FORMAT_VERSION } from "@animaquill/schema";
  * `limit.ceiling` (its safe limiter), which an older page reads as a project
  * that does not fit the format, and mixes effects of sound otherwise than the export; 0.3.120 has
  * the manifest take `defaultStorage`, which an older page reads as a
- * project that does not fit the format, refusing the commands of the project properties. Undefined:
- * every editor. An editor that is not a release ("dev") is as new as the code.
+ * project that does not fit the format, refusing the commands of the project properties; 0.3.143 keeps
+ * messages of other conversations in a conversation (a turn they start is a message of people
+ * marked `from`, one read in the middle of a task an entry of its own), which an older page takes
+ * for words of people, or drops. Undefined: every editor. An editor that is not a release ("dev")
+ * is as new as the code.
  */
-export const OLDEST_EDITOR: string | undefined = "0.3.120";
+export const OLDEST_EDITOR: string | undefined = "0.3.143";
 
 const VERSION = /^(\d{1,6})\.(\d{1,6})\.(\d{1,6})$/;
 

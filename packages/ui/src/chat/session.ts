@@ -20,6 +20,9 @@ import {
   type TaskOutcome,
   type TaskTarget,
   type UserEntry,
+  type Inbox,
+  type Mail,
+  type MessageFrom,
 } from "@animaquill/agent";
 import {
   aiTask,
@@ -53,6 +56,9 @@ import {
   type ApproveRequest,
   type SelectionFacts,
   type ToolHost,
+  type AgentCard,
+  type AgentDirectory,
+  type SendOutcome,
 } from "@animaquill/tools";
 import {
   ChatNewer,
@@ -88,6 +94,15 @@ import type { ModelPacks } from "./packs.ts";
 import type { AiSettingsStore } from "./settings.ts";
 import { clipsOf, placesOf, summaryOf, type TurnSummary } from "./summary.ts";
 import { groupsOf } from "./turns.ts";
+import {
+  MAX_ROUNDS,
+  MAX_WAITING,
+  REPEAT_MS,
+  WATCH_MS,
+  distinctNames,
+  lastAnswerOf,
+  roundsOf,
+} from "./relay.ts";
 
 /**
  * Why a message cannot go out yet, before any service is asked. Through the relay of the platform:
@@ -193,6 +208,16 @@ export interface ChatSnapshot {
    * it ran: that one is theirs now. Only for as long as the window has it.
    */
   readonly splitFrom: SplitFrom | undefined;
+  /**
+   * Messages of other conversations and AI tools that wait for people to let the conversation
+   * shown read them ("先问我"), oldest first.
+   */
+  readonly mail: readonly Mail[];
+  /**
+   * The conversation shown answered others so many turns in a row that it stopped: who it went on
+   * with, until people say something to it or let it go on ("接着说").
+   */
+  readonly paused: MessageFrom | undefined;
   /** The conversations the window has, as the list of conversations and the status bar show them. */
   readonly runs: readonly RunSummary[];
 }
@@ -303,6 +328,17 @@ export interface ChatSessionOptions {
    * tool on this computer: what the tools tell AI of what others changed names it.
    */
   readonly whoIs?: ToolHost["whoIs"];
+  /**
+   * AI tools on this computer that work on the project, as others the conversations see and send
+   * words to (docs/design/ai-teamwork.md of AnimaQuill Cloud, 3): each as a card, and how a message
+   * gets to one, which reads it with its next call.
+   */
+  readonly tools?: {
+    cards(): readonly AgentCard[];
+    deliver(id: string, mail: Mail): SendOutcome;
+  };
+  /** What a conversation does now, in the words of the chat, while a task of it runs. */
+  readonly doing?: (conversation: Conversation) => string | undefined;
   /** The memory of this window, where drafts and the conversation open are kept. */
   readonly memory?: WindowMemory;
   /** Where the pictures of conversations are kept; without it, for as long as the page. */
@@ -365,6 +401,8 @@ interface RunFields {
   readonly hold: ChatHold | undefined;
   readonly marked: ReadonlySet<string>;
   readonly splitFrom: SplitFrom | undefined;
+  readonly mail: readonly Mail[];
+  readonly paused: MessageFrom | undefined;
 }
 
 /**
@@ -395,6 +433,18 @@ interface Run {
   starting: number;
   /** The last write of it failed: what it has here is newer than what is kept. */
   unsaved: boolean;
+  /** Messages of others that wait for it to read them, oldest first, see `Inbox`. */
+  inbox: Mail[];
+  /** How many turns in a row of others people let it go on past, with "接着说". */
+  goOn: number;
+  /** Who asked to be told once it is next idle, by id, and until when. */
+  readonly watchers: Map<string, number>;
+  /** The words each one sent lately, and when, for the same words within a minute. */
+  readonly recent: Map<string, number>;
+  /** Whoever takes its messages as they come: the task that runs. */
+  readonly mailListeners: Set<() => void>;
+  /** What the task that runs reads messages from. */
+  mailbox: Inbox;
   /** When it was last shown, or last ran: the one longest ago goes first, see `KEPT_IDLE`. */
   used: number;
   readonly unwatch: () => void;
@@ -412,6 +462,8 @@ const NO_FIELDS: RunFields = {
   hold: undefined,
   marked: new Set(),
   splitFrom: undefined,
+  mail: [],
+  paused: undefined,
 };
 
 /**
@@ -509,6 +561,8 @@ export class ChatSession {
       run.conversation.running ||
       run.starting > 0 ||
       run.fields.queued.length > 0 ||
+      run.inbox.length > 0 ||
+      run.fields.mail.length > 0 ||
       this.#approvals.some((each) => each.chat === run.id)
     );
   }
@@ -523,7 +577,8 @@ export class ChatSession {
       const talk = run.conversation.getSnapshot();
       const waits =
         this.#approvals.some((each) => each.chat === run.id) ||
-        (!talk.running && askingIn(talk.entries));
+        run.fields.mail.length > 0 ||
+        (!talk.running && (askingIn(talk.entries) || run.fields.paused !== undefined));
       const state = waits ? "waiting" : talk.running ? "running" : "idle";
       const title =
         run.fields.titleBy !== undefined && run.fields.title
@@ -664,6 +719,7 @@ export class ChatSession {
         "title" | "titleBy" | "model" | "reasoning" | "forkedFrom" | "repick" | "planFirst"
       >
     > = {},
+    show = true,
   ): Run {
     const tools = caller === undefined ? new CallerState() : CallerState.from(caller);
     const conversation = new Conversation({
@@ -687,6 +743,8 @@ export class ChatSession {
         this.#took(run, now);
         this.#saveSoon(run);
         this.#mark(run, now);
+        const paused = this.#pausedOf(run);
+        if (paused?.id !== run.fields.paused?.id) this.#update(run, { paused });
       }
       if (running) run.used = ++this.#clock;
       // A task that ended has its last answer on the screen: people may leave right after reading
@@ -723,13 +781,22 @@ export class ChatSession {
       gone: false,
       starting: 0,
       unsaved: false,
+      inbox: [],
+      goOn: 0,
+      watchers: new Map(),
+      recent: new Map(),
+      mailListeners: new Set(),
+      mailbox: { take: () => [], subscribe: () => () => {}, putBack: () => {} },
       used: ++this.#clock,
       unwatch,
     };
+    run.mailbox = this.#mailboxOf(run);
     made = run;
     this.#runs.set(chatId, run);
     this.#mark(run, entries, false);
-    this.#show(run);
+    run.fields = { ...run.fields, paused: this.#pausedOf(run) };
+    if (show) this.#show(run);
+    else this.#refresh();
     return run;
   }
 
@@ -867,6 +934,7 @@ export class ChatSession {
         }),
         taskStart: () => this.#started.get(task),
         ...(listen && { listen: (request: ListenRequest) => listen(request, signal) }),
+        agents: this.#agentsOf(run),
         // Another conversation of the window by its name, or an AI tool on this computer.
         whoIs: (origin) => {
           const chat = origin.startsWith("ai:") ? this.chatOfTask(origin.slice(3)) : undefined;
@@ -1178,20 +1246,26 @@ export class ChatSession {
     this.#startSaved(id, saved);
   }
 
-  /** A conversation as it was kept, shown from now on. */
-  #startSaved(id: string, saved: SavedChat): void {
+  /** A conversation as it was kept, shown from now on unless `show` says not. */
+  #startSaved(id: string, saved: SavedChat, show = true): Run {
     // What this editor cannot read stays where it was, and goes back as it was.
     const entries = readEntries(saved.entries);
-    this.#start(entries, id, saved.caller, {
-      ...(saved.titleBy !== undefined && { title: saved.title, titleBy: saved.titleBy }),
-      ...(isModelRef(saved.model) && { model: saved.model }),
-      ...(typeof saved.reasoning === "string" && { reasoning: saved.reasoning }),
-      ...(isForkedFrom(saved.forkedFrom) && { forkedFrom: saved.forkedFrom }),
-      ...(Array.isArray(saved.repick) && {
-        repick: saved.repick.filter((model): model is string => typeof model === "string"),
-      }),
-      ...(saved.planFirst === true && { planFirst: true }),
-    });
+    return this.#start(
+      entries,
+      id,
+      saved.caller,
+      {
+        ...(saved.titleBy !== undefined && { title: saved.title, titleBy: saved.titleBy }),
+        ...(isModelRef(saved.model) && { model: saved.model }),
+        ...(typeof saved.reasoning === "string" && { reasoning: saved.reasoning }),
+        ...(isForkedFrom(saved.forkedFrom) && { forkedFrom: saved.forkedFrom }),
+        ...(Array.isArray(saved.repick) && {
+          repick: saved.repick.filter((model): model is string => typeof model === "string"),
+        }),
+        ...(saved.planFirst === true && { planFirst: true }),
+      },
+      show,
+    );
   }
 
   /** Saves what a conversation is now, such as its model, where it has words to keep. */
@@ -1424,9 +1498,16 @@ export class ChatSession {
     if (this.#runs.get(run.id) !== run || !outcome) return;
     void this.#title(run);
     const [next, ...rest] = run.fields.queued;
-    if (next === undefined || outcome.end !== "done") return;
-    this.#update(run, { queued: rest });
-    void this.#sendQueued(run, next);
+    if (next !== undefined && outcome.end === "done") {
+      this.#update(run, { queued: rest });
+      void this.#sendQueued(run, next);
+      return;
+    }
+    // What others sent meanwhile, then whoever waits for it to be idle.
+    this.#wake(run);
+    if (!run.conversation.running && run.inbox.length === 0 && run.starting === 0) {
+      void this.#toldIdle(run);
+    }
   }
 
   /**
@@ -1630,7 +1711,7 @@ export class ChatSession {
     text: string,
     images: readonly AttachedImage[] = [],
     selection?: SelectionFacts,
-    marks?: Pick<UserEntry, "plan" | "fromPlan" | "rewrites">,
+    marks?: Pick<UserEntry, "plan" | "fromPlan" | "rewrites" | "from">,
   ): Promise<TaskOutcome | undefined> {
     // Before anything waits: people may select something else meanwhile, or switch "先出方案".
     const shown = selection ?? this.#shownFacts();
@@ -1638,6 +1719,11 @@ export class ChatSession {
     const { conversation, id, project } = run;
     if (conversation.running || (!text.trim() && images.length === 0)) return undefined;
     const putBack = () => {
+      // Words of another wait where they waited: never in people's box.
+      if (marked.from) {
+        run.inbox = [{ id: newChatId(), from: marked.from, text, at: Date.now() }, ...run.inbox];
+        return;
+      }
       if (project === undefined) return;
       this.drafts.restore(project, id, text);
       this.attachments.restore(project, id, images);
@@ -1653,12 +1739,16 @@ export class ChatSession {
       putBack();
       return undefined;
     }
+    // People said something: the turns in a row that others started count from here.
+    if (!marked.from) run.goOn = 0;
     // The first message settles the model of the conversation: another default later is not it.
     if (!run.fields.model) {
       const now = this.#modelOf(run);
       if (now) this.#update(run, { model: now.ref });
     }
     const outcome = await conversation.send(text, target, images, shown, marked);
+    // It did not start, as another task started first: words of another wait again.
+    if (outcome === undefined && marked.from) putBack();
     if (outcome?.end === "failed" && project !== undefined) {
       const entries = conversation.getSnapshot().entries;
       const turn = entries.slice(entries.findLastIndex((entry) => entry.role === "user") + 1);
@@ -1816,6 +1906,7 @@ export class ChatSession {
       stamp: { toolset: TOOLSET_VERSION, texts: use.used, pack: note },
       // The earlier conversation is summed up once the context is 80 % full, unless people said not.
       compact: this.#options.ai.getSnapshot().autoCompact !== false,
+      inbox: run.mailbox,
     };
   }
 
@@ -1865,6 +1956,273 @@ export class ChatSession {
       this.attachments.restore(project, copy, last.images ?? []);
     }
     this.#keep(made);
+  }
+
+  /* Other conversations, and AI tools on this computer (docs/design/ai-teamwork.md of AnimaQuill
+   * Cloud, 2 and 3). */
+
+  /** What the task that runs of a conversation reads messages of others from. */
+  #mailboxOf(run: Run): Inbox {
+    return {
+      take: () => {
+        // Stopped after too many turns with others: nothing goes in until people speak.
+        if (run.fields.paused !== undefined || run.gone) return [];
+        const taken = run.inbox;
+        run.inbox = [];
+        if (taken.length > 0) this.#refresh();
+        return taken;
+      },
+      subscribe: (listener) => {
+        run.mailListeners.add(listener);
+        return () => run.mailListeners.delete(listener);
+      },
+      putBack: (mails) => {
+        run.inbox = [...mails, ...run.inbox];
+        // The task that did not get to read them is over: they start the next one.
+        queueMicrotask(() => this.#wake(run));
+      },
+    };
+  }
+
+  /** Who a conversation went on with, where it answered others so often in a row that it stops. */
+  #pausedOf(run: Run): MessageFrom | undefined {
+    const { rounds, with: last } = roundsOf(run.conversation.getSnapshot().entries);
+    return rounds - run.goOn >= MAX_ROUNDS ? last : undefined;
+  }
+
+  /** Whether nothing keeps a conversation from a turn that a message of another starts. */
+  #readyForMail(run: Run): boolean {
+    const talk = run.conversation.getSnapshot();
+    if (talk.running || run.starting > 0 || run.fields.queued.length > 0) return false;
+    if (this.#approvals.some((each) => each.chat === run.id)) return false;
+    // It asked people something, or stopped, failed or ran out of calls: people come first.
+    if (askingIn(talk.entries)) return false;
+    const end = talk.last?.end;
+    return end !== "stopped" && end !== "failed" && end !== "limit";
+  }
+
+  /**
+   * Gives a conversation what waits for it: to the task that runs, after its next call; else, where
+   * nothing keeps it, a turn with the first of them, which reads the others at once.
+   */
+  #wake(run: Run): void {
+    if (this.#runs.get(run.id) !== run || run.gone) return;
+    for (const listener of run.mailListeners) listener();
+    if (run.inbox.length === 0 || run.fields.paused !== undefined) return;
+    if (!this.#readyForMail(run)) return;
+    const [first, ...rest] = run.inbox;
+    if (!first) return;
+    run.inbox = rest;
+    void this.#send(run, first.text, [], WITHHELD, { from: first.from });
+  }
+
+  /**
+   * A message of another for a conversation of the window, and what came of it: read in the task
+   * that runs, a turn of its own, or it waits (for people to let it, for people to answer first).
+   */
+  #deliver(run: Run, mail: Mail): SendOutcome {
+    const now = Date.now();
+    for (const [key, at] of run.recent) if (now - at > REPEAT_MS) run.recent.delete(key);
+    const key = `${mail.from.id}\n${mail.text}`;
+    if (run.recent.has(key)) return { refused: "repeat" };
+    if (run.inbox.length + run.fields.mail.length >= MAX_WAITING) return { refused: "full" };
+    run.recent.set(key, now);
+    if (this.#options.ai.getSnapshot().fromAgents === "ask") {
+      if (run !== this.#shown) run.unseen = true;
+      this.#update(run, { mail: [...run.fields.mail, mail] });
+      return { sent: "waits", until: "asked" };
+    }
+    return this.#queueMail(run, mail);
+  }
+
+  /** A message a conversation may read now: what comes of it, see `#deliver`. */
+  #queueMail(run: Run, mail: Mail): SendOutcome {
+    run.inbox = [...run.inbox, mail];
+    const outcome: SendOutcome =
+      run.fields.paused !== undefined
+        ? { sent: "waits", until: "paused" }
+        : run.conversation.running
+          ? { sent: "read" }
+          : this.#readyForMail(run)
+            ? { sent: "turn" }
+            : { sent: "waits", until: "people" };
+    this.#wake(run);
+    this.#refresh();
+    return outcome;
+  }
+
+  /**
+   * People's answer to a message that waits for them ("先问我"), of the conversation shown or any:
+   * read it, or not.
+   */
+  answerMail(id: string, read: boolean): void {
+    for (const run of this.#runs.values()) {
+      const mail = run.fields.mail.find((each) => each.id === id);
+      if (!mail) continue;
+      this.#update(run, { mail: run.fields.mail.filter((each) => each !== mail) });
+      if (read) this.#queueMail(run, mail);
+      return;
+    }
+  }
+
+  /**
+   * "接着说": the conversation shown, which stopped after many turns with others, goes on, and
+   * reads what waits for it: as many again before it stops next.
+   */
+  goOn(): void {
+    const run = this.#shown;
+    if (!run || run.fields.paused === undefined) return;
+    run.goOn = roundsOf(run.conversation.getSnapshot().entries).rounds;
+    this.#update(run, { paused: undefined });
+    this.#wake(run);
+  }
+
+  /** Who a conversation is to others: its id, and its name as people see it. */
+  #fromOf(run: Run): MessageFrom {
+    const entries = run.conversation.getSnapshot().entries;
+    const name =
+      run.fields.titleBy !== undefined && run.fields.title
+        ? run.fields.title
+        : firstWords(entries, TITLE_LENGTH) || run.fields.title;
+    return { id: run.id, name, kind: "chat" };
+  }
+
+  /** How a conversation shows to others, see `AgentCard`. */
+  #cardOf(run: Run): AgentCard {
+    const talk = run.conversation.getSnapshot();
+    const waits =
+      this.#approvals.some((each) => each.chat === run.id) ||
+      run.fields.mail.length > 0 ||
+      run.fields.paused !== undefined ||
+      (!talk.running && askingIn(talk.entries));
+    const doing = talk.running ? this.#options.doing?.(run.conversation) : undefined;
+    // What its last turns changed, the latest first.
+    const starts = talk.entries.flatMap((entry, at) => (entry.role === "user" ? [at] : []));
+    const from = starts.at(-3) ?? 0;
+    const changed = summaryOf(talk.entries.slice(from))
+      .changes.toReversed()
+      .slice(0, 10)
+      .map(({ kind, id, name }) => `${kind} ${name ? JSON.stringify(name) : id}`);
+    return {
+      id: run.id,
+      kind: "chat",
+      name: this.#fromOf(run).name,
+      state: waits ? "waiting" : talk.running ? "running" : "idle",
+      ...(doing && { doing }),
+      changed,
+      accepts: this.#options.ai.getSnapshot().fromAgents ?? "yes",
+    };
+  }
+
+  /**
+   * What one of the project sees of the others and how it sends to them: a conversation of the
+   * window (`run`), or an AI tool on this computer by its id (`mcp:` and its session) and name.
+   */
+  agentsFor(me: string, name: () => string): AgentDirectory {
+    return this.#directory(
+      () => me,
+      () => ({ id: me, name: name(), kind: "tool" }),
+      undefined,
+    );
+  }
+
+  #agentsOf(run: Run): AgentDirectory {
+    return this.#directory(
+      () => run.id,
+      () => this.#fromOf(run),
+      run,
+    );
+  }
+
+  #directory(me: () => string, from: () => MessageFrom, sender: Run | undefined): AgentDirectory {
+    const accepts = () => this.#options.ai.getSnapshot().fromAgents ?? "yes";
+    return {
+      list: async () => {
+        const self = me();
+        const cards: AgentCard[] = [];
+        for (const run of this.#runs.values()) {
+          if (run.id === self || run.gone) continue;
+          if (run.conversation.getSnapshot().entries.length === 0) continue;
+          cards.push(this.#cardOf(run));
+        }
+        for (const saved of this.#snapshot.saved) {
+          if (saved.id === self || this.#runs.has(saved.id)) continue;
+          cards.push({
+            id: saved.id,
+            kind: "chat",
+            name: saved.title,
+            state: "closed",
+            changed: [],
+            accepts: accepts(),
+          });
+        }
+        for (const card of this.#options.tools?.cards() ?? []) {
+          if (card.id !== self) cards.push(card);
+        }
+        return distinctNames(cards);
+      },
+      send: async (to, text) => {
+        if (to === me()) return { refused: "self" };
+        // Too many turns in a row with others: people speak first.
+        if (sender?.fields.paused !== undefined) return { refused: "paused" };
+        const mail: Mail = { id: newChatId(), from: from(), text, at: Date.now() };
+        if (to.startsWith("mcp:"))
+          return this.#options.tools?.deliver(to, mail) ?? { refused: "unknown" };
+        if (accepts() === "no") return { refused: "declines" };
+        const run = this.#runs.get(to) ?? (await this.#host(to));
+        return run ? this.#deliver(run, mail) : { refused: "unknown" };
+      },
+      notifyWhenIdle: async (target) => {
+        if (target === me()) return { refused: "self" };
+        if (target.startsWith("mcp:")) return { refused: "cannotTell" };
+        const run = this.#runs.get(target) ?? (await this.#host(target));
+        if (!run) return { refused: "unknown" };
+        run.watchers.set(me(), Date.now() + WATCH_MS);
+        return { watching: true };
+      },
+    };
+  }
+
+  /**
+   * A conversation of the project the window does not have, read from where it is kept and kept by
+   * the window without being shown: for a message to it, or to be told when it is idle.
+   */
+  async #host(id: string): Promise<Run | undefined> {
+    const project = this.#project?.key;
+    if (project === undefined || !this.#snapshot.saved.some((each) => each.id === id)) {
+      return undefined;
+    }
+    const saved = await this.#chats.load(project, id).catch(() => undefined);
+    if (!saved || this.#project?.key !== project) return undefined;
+    // Another call read it meanwhile.
+    const had = this.#runs.get(id);
+    if (had) return had;
+    return this.#startSaved(id, saved, false);
+  }
+
+  /**
+   * Tells whoever asked that a conversation is idle now, with its last answer: each once, and only
+   * within the time they asked for.
+   */
+  async #toldIdle(run: Run): Promise<void> {
+    if (run.watchers.size === 0) return;
+    const now = Date.now();
+    const watchers = [...run.watchers].filter(([, until]) => until > now).map(([id]) => id);
+    run.watchers.clear();
+    const mail = (): Mail => ({
+      id: newChatId(),
+      from: { ...this.#fromOf(run), idle: true },
+      text: lastAnswerOf(run.conversation.getSnapshot().entries),
+      at: Date.now(),
+    });
+    for (const id of watchers) {
+      if (id.startsWith("mcp:")) {
+        this.#options.tools?.deliver(id, mail());
+        continue;
+      }
+      const watcher = this.#runs.get(id) ?? (await this.#host(id));
+      if (watcher) this.#queueMail(watcher, mail());
+    }
   }
 
   /** Stops the task of a conversation: the one shown without an id. */

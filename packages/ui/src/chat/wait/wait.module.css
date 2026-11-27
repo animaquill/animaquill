@@ -323,3 +323,33 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* The words of a message of another conversation, as it sent them. */
+.mailText {
+  max-height: 12em;
+  margin: 0;
+  overflow: auto;
+  color: var(--aq-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* "和「B」来回说了 5 轮，停下等你 · 接着说": a line, with the way on in it. */
+.paused {
+  margin: 0;
+  color: var(--aq-text-muted);
+}
+
+.paused button.inlineButton {
+  padding: 0;
+  color: var(--aq-link);
+  font: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.paused button.inlineButton:hover {
+  text-decoration: underline;
+  background: none;
+}

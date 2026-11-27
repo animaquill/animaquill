@@ -1,6 +1,7 @@
 import type {
   AssistantEntry,
   ChatEntry,
+  MessageFrom,
   ToolCallEntry,
   ToolEntry,
   UserEntry,
@@ -21,6 +22,13 @@ export type Step =
       readonly id: string;
       readonly call: ToolCallEntry;
       readonly result: ToolEntry | undefined;
+    }
+  /** A message of another conversation, or an AI tool, that the task read on its way. */
+  | {
+      readonly kind: "message";
+      readonly id: string;
+      readonly from: MessageFrom;
+      readonly text: string;
     };
 
 export interface Turn {
@@ -66,7 +74,19 @@ export function turnOf(user: UserEntry, entries: readonly ChatEntry[], running =
   let thoughts = 0;
   let tools = 0;
   let failed = 0;
-  answers.forEach((entry, index) => {
+  let index = -1;
+  entries.forEach((entry, at) => {
+    if (entry.role === "message") {
+      steps.push({
+        kind: "message",
+        id: `${user.task}/m${at}`,
+        from: entry.from,
+        text: entry.text,
+      });
+      return;
+    }
+    if (entry.role !== "assistant") return;
+    index += 1;
     if (!models.includes(entry.model)) models.push(entry.model);
     if (entry.thinking) {
       thoughts += 1;

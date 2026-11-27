@@ -246,6 +246,12 @@ export interface AiSettings {
    * 前先问我", S-D4): off unless people turned it on. Only people change it: no tool does.
    */
   readonly askBeforeEdit?: true;
+  /**
+   * What a conversation does with messages of other conversations and AI tools
+   * (docs/design/ai-teamwork.md of AnimaQuill Cloud, 3): takes them (without this), asks people
+   * first, or takes none.
+   */
+  readonly fromAgents?: "ask" | "no";
   readonly kept?: KeptSettings;
 }
 
@@ -349,6 +355,7 @@ const TOP_FIELDS = new Set([
   "lookWhilePlaying",
   "autoCompact",
   "askBeforeEdit",
+  "fromAgents",
 ]);
 const SERVICE_FIELDS = new Set([
   "id",
@@ -868,6 +875,9 @@ export function readAiSettings(value: unknown): AiSettingsReading {
     ...(value.lookWhilePlaying === true && { lookWhilePlaying: true as const }),
     ...(value.autoCompact === false && { autoCompact: false as const }),
     ...(value.askBeforeEdit === true && { askBeforeEdit: true as const }),
+    ...((value.fromAgents === "ask" || value.fromAgents === "no") && {
+      fromAgents: value.fromAgents,
+    }),
     ...(Object.keys(kept).length > 0 && { kept }),
   };
   // Set while the services were read, which control flow does not see.
@@ -1012,6 +1022,7 @@ export function writeAiSettings(settings: AiSettings): Record<string, unknown> {
     ...(settings.lookWhilePlaying && { lookWhilePlaying: true }),
     ...(settings.autoCompact === false && { autoCompact: false }),
     ...(settings.askBeforeEdit && { askBeforeEdit: true }),
+    ...(settings.fromAgents !== undefined && { fromAgents: settings.fromAgents }),
   };
 }
 
