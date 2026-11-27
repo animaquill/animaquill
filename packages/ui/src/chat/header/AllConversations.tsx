@@ -8,6 +8,7 @@ import { agoText } from "../../app/start-view.ts";
 import { useNow } from "../clock.ts";
 import { byDay } from "../conversations.ts";
 import styles from "./header.module.css";
+import { callsFor, useRuns } from "./runs.ts";
 import { useFound } from "./search.ts";
 import { titleOf } from "./title.ts";
 
@@ -27,7 +28,7 @@ export function AllConversations(props: {
   const { chat } = useWorkbench();
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
-  const running = snapshot.conversation?.running === true;
+  const runs = useRuns();
   const [query, setQuery] = useState("");
   const found = useFound(query);
   const [renaming, setRenaming] = useState<{ readonly id: string; readonly title: string }>();
@@ -66,7 +67,6 @@ export function AllConversations(props: {
   }, [busy, onClose]);
 
   const open = async (id: string, task?: string) => {
-    if (running && id !== snapshot.id) return;
     if (id !== snapshot.id) await chat.open(id);
     props.onClose();
     props.onFound(task, query.trim() || undefined);
@@ -135,7 +135,10 @@ export function AllConversations(props: {
         >
           <p className={styles.confirmText}>
             <strong>{t("chat.list.removeConfirm")}</strong>
-            <span>{t("chat.list.removeNote")}</span>
+            <span>
+              {runs.get(id)?.state === "running" && t("chat.list.removeRunning")}
+              {t("chat.list.removeNote")}
+            </span>
           </p>
           {/* Not deleting is where the focus starts: Enter there takes nothing away. */}
           {/* oxlint-disable-next-line jsx-a11y/no-autofocus -- the row it replaced had it */}
@@ -162,9 +165,11 @@ export function AllConversations(props: {
         </div>
       );
     }
-    const waits = chat_.asking === true || (current && snapshot.approvals.length > 0);
+    const run = runs.get(id);
+    const running = run?.state === "running";
+    const waits = run ? callsFor(run) : chat_.asking === true;
     const meta = [
-      current && running ? t("chat.switcher.running") : agoText(chat_.updatedAt, now, t),
+      running ? t("chat.switcher.running") : agoText(chat_.updatedAt, now, t),
       ...(waits
         ? [t("chat.list.asking")]
         : chat_.changes
@@ -172,7 +177,6 @@ export function AllConversations(props: {
           : []),
       ...(chat_.modelName ? [chat_.modelName] : []),
     ].join(" · ");
-    const off = running && !current;
     return (
       <div
         key={id}
@@ -186,13 +190,16 @@ export function AllConversations(props: {
           className={styles.rowOpen}
           data-role="open"
           aria-current={current}
-          disabled={off}
-          title={off ? t("chat.switcher.whenDone") : undefined}
+          data-state={run?.state}
           onClick={() => void open(id)}
         >
           <span className={styles.lead} aria-hidden>
-            {current && running ? (
-              <LoaderCircle size={12} className={styles.spin} />
+            {running ? (
+              <LoaderCircle
+                size={12}
+                className={styles.spin}
+                data-testid="chat-conversation-running"
+              />
             ) : waits ? (
               <span className={styles.dot} data-testid="chat-conversation-asking" />
             ) : null}
@@ -229,16 +236,12 @@ export function AllConversations(props: {
               <Pencil size={12} aria-hidden />
             </button>
           </Tip>
-          <Tip
-            name={current && running ? t("chat.switcher.whenDone") : t("chat.list.remove")}
-            usage=""
-          >
+          <Tip name={t("chat.list.remove")} usage="">
             <button
               type="button"
               className={styles.iconButton}
               aria-label={t("chat.list.removeLabel", { title })}
               data-role="remove"
-              disabled={current && running}
               onClick={() => setRemoving(id)}
             >
               <Trash2 size={12} aria-hidden />
@@ -286,10 +289,6 @@ export function AllConversations(props: {
                   type="button"
                   className={styles.rowOpen}
                   data-testid="chat-search-hit"
-                  disabled={running && hit.id !== snapshot.id}
-                  title={
-                    running && hit.id !== snapshot.id ? t("chat.switcher.whenDone") : undefined
-                  }
                   onClick={() => void open(hit.id, hit.task)}
                 >
                   <span className={styles.lead} aria-hidden />
@@ -311,7 +310,6 @@ export function AllConversations(props: {
           <p className={styles.none}>{t("chat.list.none")}</p>
         ) : (
           <>
-            {running && <p className={styles.why}>{t("chat.switcher.whenDone")}</p>}
             {byDay(snapshot.saved, now).map(({ day, chats }) => (
               <div key={day} role="group" aria-label={t(`chat.list.${day}`)}>
                 <div className={styles.group} aria-hidden>

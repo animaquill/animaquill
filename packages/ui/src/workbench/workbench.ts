@@ -83,6 +83,7 @@ import { ChatSession } from "../chat/session.ts";
 import type { FrameShot } from "../chat/attachments.ts";
 import { ChatPointing } from "../chat/pointing.ts";
 import { proposedIn } from "../chat/conversations.ts";
+import { placesOf, summaryOf } from "../chat/summary.ts";
 import { TOOLSET_VERSION, createToolset, mcpListHash, parseAddress } from "@animaquill/tools";
 import { BridgeExecutor } from "../local-ai/bridge/executor.ts";
 import {
@@ -108,7 +109,7 @@ import { BatchUndo } from "../cloud/batch-undo.ts";
 import { RepoMerges } from "../cloud/repo-merges.ts";
 import { objectOfConflict } from "../cloud/conflicts.ts";
 import { ProjectOpening, type OpeningTiming } from "./opening.ts";
-import { tellTakenBack } from "./undo-text.ts";
+import { keptByOf, tellTakenBack } from "./undo-text.ts";
 import { CodeDocuments, type CodePlace } from "../code/documents.ts";
 import { CodeDrafts } from "../code/drafts.ts";
 import { FileActions } from "../code/files.ts";
@@ -922,6 +923,11 @@ export class Workbench {
       takeBackMany: (tasks, direction, expected) =>
         this.undo.takeBackMany(tasks.map(aiTask), direction, expected),
       undoStateOf: (task) => this.undo.stateOf(aiTask(task)),
+      // An AI tool on this computer, by its name, for what others changed.
+      whoIs: (origin) => {
+        const batch = this.tools.batchOf(origin);
+        return batch && { id: origin, name: toolName(this.t, batch.client) };
+      },
       memory: host.windowMemory,
       // Pictures of the account's conversations come here as they are read.
       images:
@@ -965,9 +971,20 @@ export class Workbench {
     // What the last turn of AI changed shows on the timeline until the next one, and what the
     // latest batch of an AI tool on this computer changed.
     const mark = () => {
-      const chat = this.chat.getSnapshot().marked;
+      const { marks, runs } = this.chat.getSnapshot();
       const tools = this.tools.getSnapshot().marked;
-      this.timeline.setMarked(tools.size === 0 ? chat : new Set([...chat, ...tools]));
+      const by = new Map<string, string>();
+      for (const [clip, chat] of marks) {
+        const title = runs.find((run) => run.id === chat)?.title;
+        by.set(
+          clip,
+          title
+            ? this.t("chat.markedBy", { title, interpolation: { escapeValue: false } })
+            : this.t("chat.markedByAi"),
+        );
+      }
+      const chat = new Set(marks.keys());
+      this.timeline.setMarked(tools.size === 0 ? chat : new Set([...chat, ...tools]), by);
     };
     this.chat.subscribe(mark);
     this.tools.subscribe(mark);
@@ -2557,7 +2574,7 @@ export class Workbench {
       (this.cloud?.unusable !== undefined || this.cloud?.rebuilt === true);
     if (store && store.readOnly !== isReadOnly) store.readOnly = isReadOnly;
     this.projectFolders?.hold(isReadOnly);
-    if (isReadOnly && !this.readOnly.getSnapshot() && this.chat.running) this.chat.stop();
+    if (isReadOnly && !this.readOnly.getSnapshot()) this.chat.stopAll();
     this.readOnly.set(isReadOnly);
   }
 
@@ -3133,6 +3150,11 @@ export class Workbench {
           describe: (clip) => this.keyframes.describe(clip),
           registered: (revision) => this.registrations.problemsOf(revision),
         }),
+        // A conversation of the chat by its name, for what others changed.
+        whoIs: (origin) => {
+          const chat = origin.startsWith("ai:") ? this.chat.chatOfTask(origin.slice(3)) : undefined;
+          return chat && { id: chat.id, name: chat.title };
+        },
         look: (request, signal) => looks.look(request, true, signal),
         listen: (request, signal) => this.listens.listen(request, signal),
       },
@@ -4483,55 +4505,114 @@ export class Workbench {
   }
 
   /**
-   * Tells people when a task of the chat ends or AI asks them while the page is in the background:
-   * a notice of the browser where they allowed it, and "●" before the title of the tab until they
-   * come back.
+   * Tells people when a task of any conversation of the chat ends or AI asks them while the page is
+   * in the background: a notice of the browser where they allowed it, which says which
+   * conversation, and "●" before the title of the tab until they come back. While the page is in
+   * front, a conversation that is not shown and wants to change the project says so in the corner
+   * (docs/design/ai-teamwork.md of AnimaQuill Cloud, 1); the rest only shows as a dot in the chat.
    */
   #followChatForNotices(): void {
     if (typeof document === "undefined") return;
-    let watched: { conversation: unknown; stop: () => void } | undefined;
+    const watched = new Map<string, { conversation: unknown; stop: () => void }>();
+    const titleOf = (chat: string) =>
+      this.chat.getSnapshot().runs.find((run) => run.id === chat)?.title || this.t("chat.untitled");
     const follow = () => {
-      const { conversation } = this.chat.getSnapshot();
-      if (watched?.conversation === conversation) return;
-      watched?.stop();
-      if (!conversation) {
-        watched = undefined;
-        return;
+      const ids = new Set(this.chat.getSnapshot().runs.map((run) => run.id));
+      for (const [chat, { conversation, stop }] of watched) {
+        if (ids.has(chat) && this.chat.conversationOf(chat) === conversation) continue;
+        stop();
+        watched.delete(chat);
       }
-      let last = conversation.getSnapshot().last;
-      const stop = conversation.subscribe(() => {
-        const now = conversation.getSnapshot().last;
-        if (now === last) return;
-        last = now;
-        // People who stopped it know it is over.
-        if (!now || now.end === "stopped" || document.visibilityState !== "hidden") return;
-        const entries = conversation.getSnapshot().entries;
-        const handed = proposedIn(entries);
-        this.#notice(
-          handed === "plan" ? "plan" : handed ? "asking" : now.end === "failed" ? "failed" : "done",
-        );
-      });
-      watched = { conversation, stop };
+      for (const chat of ids) {
+        const conversation = this.chat.conversationOf(chat);
+        if (!conversation || watched.has(chat)) continue;
+        let last = conversation.getSnapshot().last;
+        const stop = conversation.subscribe(() => {
+          const now = conversation.getSnapshot().last;
+          if (now === last) return;
+          last = now;
+          // People who stopped it know it is over.
+          if (!now || now.end === "stopped" || document.visibilityState !== "hidden") return;
+          const entries = conversation.getSnapshot().entries;
+          const handed = proposedIn(entries);
+          this.#notice(
+            handed === "plan"
+              ? "plan"
+              : handed
+                ? "asking"
+                : now.end === "failed"
+                  ? "failed"
+                  : "done",
+            chat,
+          );
+        });
+        watched.set(chat, { conversation, stop });
+      }
     };
     this.chat.subscribe(follow);
     follow();
     // A change that waits for people to allow it (S-D4): each new one is told, as a question is.
-    let waiting = new Set(this.chat.getSnapshot().approvals.map(({ id }) => id));
+    let waiting = new Set(this.chat.getSnapshot().allApprovals.map(({ id }) => id));
     this.chat.subscribe(() => {
-      const now = this.chat.getSnapshot().approvals;
-      const added = now.some(({ id }) => !waiting.has(id));
+      const snapshot = this.chat.getSnapshot();
+      const now = snapshot.allApprovals;
+      const added = now.filter(({ id }) => !waiting.has(id));
       waiting = new Set(now.map(({ id }) => id));
-      if (added && document.visibilityState === "hidden") this.#notice("approve");
+      if (added.length === 0) return;
+      if (document.visibilityState === "hidden") {
+        this.#notice("approve", added[0]?.chat);
+        return;
+      }
+      for (const chat of new Set(added.map((each) => each.chat))) {
+        if (chat === snapshot.id) continue;
+        const changes = added
+          .filter((each) => each.chat === chat)
+          .flatMap((each) => each.request.changes);
+        const count = placesOf(
+          summaryOf([
+            {
+              role: "tool",
+              call: chat,
+              name: "aq_edit",
+              ok: true,
+              text: "",
+              at: 0,
+              data: { changes },
+            },
+          ]),
+        );
+        this.notifications.push(
+          this.t("chat.notify.approveIn", {
+            title: titleOf(chat),
+            count: Math.max(1, count),
+            interpolation: { escapeValue: false },
+          }),
+          {
+            actions: [
+              {
+                label: this.t("chat.notify.approveGo"),
+                run: () => this.#showChat(chat),
+              },
+            ],
+          },
+        );
+      }
     });
     document.addEventListener("visibilitychange", () => {
       if (document.visibilityState === "visible") this.attention.set(false);
     });
   }
 
+  /** Shows a conversation in the chat, with the chat open, at what waits for people in it. */
+  #showChat(chat: string): void {
+    this.layout.openPanel("chat");
+    void this.chat.open(chat);
+  }
+
   /** Whether the chat has something for people that they have not seen: "●" before the title. */
   readonly attention = new Flag();
 
-  #notice(what: "done" | "asking" | "plan" | "failed" | "approve"): void {
+  #notice(what: "done" | "asking" | "plan" | "failed" | "approve", chat?: string): void {
     this.attention.set(true);
     if (typeof Notification === "undefined" || Notification.permission === "denied") return;
     // The browser is asked the first time there is something to tell, not before.
@@ -4539,24 +4620,34 @@ export class Workbench {
       if (this.#askedToNotify) return;
       this.#askedToNotify = true;
       void Notification.requestPermission().then(
-        (answer) => answer === "granted" && this.#showNotice(what),
+        (answer) => answer === "granted" && this.#showNotice(what, chat),
         () => {},
       );
       return;
     }
-    this.#showNotice(what);
+    this.#showNotice(what, chat);
   }
 
-  #showNotice(what: "done" | "asking" | "plan" | "failed" | "approve"): void {
+  #showNotice(what: "done" | "asking" | "plan" | "failed" | "approve", chat?: string): void {
     const name = this.session.store?.getState().manifest.name ?? "AnimaQuill";
+    // Which conversation, where the window has more than one: the title of each says.
+    const runs = this.chat.getSnapshot().runs;
+    const title = runs.length > 1 ? runs.find((run) => run.id === chat)?.title : undefined;
     try {
       const notice = new Notification(this.t(`chat.notify.${what}`), {
-        body: name,
-        tag: "animaquill-chat",
+        body: title
+          ? this.t("chat.notify.in", {
+              title,
+              project: name,
+              interpolation: { escapeValue: false },
+            })
+          : name,
+        tag: chat === undefined ? "animaquill-chat" : `animaquill-chat-${chat}`,
       });
       notice.addEventListener("click", () => {
         window.focus();
-        this.layout.openPanel("chat");
+        if (chat === undefined) this.layout.openPanel("chat");
+        else this.#showChat(chat);
         notice.close();
       });
     } catch {
@@ -4909,10 +5000,9 @@ export class Workbench {
       title: (t) => t("chat.action.newConversation"),
       run: () => {
         this.layout.openPanel("chat");
-        // While a task runs the chat says why nothing happens, where ✎ is.
-        const running = this.chat.running;
+        // One that runs goes on where it is.
         this.chat.newConversation();
-        if (!running) requestAnimationFrame(() => this.#compose("focus")?.());
+        requestAnimationFrame(() => this.#compose("focus")?.());
       },
       // Ctrl+Alt+N, ⌘⌥N: not what AltGr types (`comboOf`).
       keys: ["mod+alt+n"],
@@ -5131,6 +5221,13 @@ export class Workbench {
         paths: result.patches.map(({ path }) => path),
         kept: result.kept,
         obstacle: result.obstacle,
+        keptBy: keptByOf(store.keptChanges(), origin, result.kept, (by) => {
+          if (!by.startsWith("ai:")) return undefined;
+          const batch = this.tools.batchOf(by);
+          if (batch) return toolName(this.t, batch.client);
+          const chat = this.chat.chatOfTask(by.slice("ai:".length));
+          return chat ? chat.title || this.t("chat.untitled") : undefined;
+        }),
       },
       () => void this.takeBackOrigin(origin, "redo"),
     );

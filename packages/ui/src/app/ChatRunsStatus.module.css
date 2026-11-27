@@ -1,0 +1,122 @@
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 240px;
+  padding: 0 6px;
+  margin-left: -6px;
+  color: var(--aq-text);
+  font: inherit;
+  white-space: nowrap;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.status:hover {
+  background: var(--aq-bg-hover);
+}
+
+.text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spin {
+  flex: none;
+  color: var(--aq-accent);
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+
+.list {
+  display: grid;
+  gap: 2px;
+  width: min(300px, calc(100vw - 32px));
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.go {
+  display: grid;
+  flex: 1;
+  gap: 1px;
+  min-width: 0;
+  padding: 5px 8px;
+  color: var(--aq-text);
+  font: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.go:hover {
+  background: var(--aq-bg-hover);
+}
+
+.title,
+.doing {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.title {
+  font-weight: 600;
+}
+
+.doing {
+  color: var(--aq-text-muted);
+}
+
+.stop {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: var(--aq-text-muted);
+  background: none;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.stop:hover {
+  color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.stopAll {
+  margin-top: 4px;
+  padding: 5px 8px;
+  color: var(--aq-text);
+  font: inherit;
+  text-align: center;
+  background: var(--aq-bg-input);
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.stopAll:hover {
+  background: var(--aq-bg-hover);
+}

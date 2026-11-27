@@ -730,6 +730,8 @@ export class TimelineEditor implements TouchTarget {
   #extras: RowExtras | undefined;
   #onClips: ClipExtras | undefined;
   #marked: ReadonlySet<string> = new Set();
+  /** Who changed the clips marked, for the pointer to show, by clip: "「剪开场」刚改过". */
+  #markedBy: ReadonlyMap<string, string> = new Map();
   #repoMarked: ReadonlySet<string> = new Set();
   #roomBelow = NO_ROOM_BELOW;
   #effectContext:
@@ -899,12 +901,21 @@ export class TimelineEditor implements TouchTarget {
     this.redraw();
   }
 
-  setMarked(clips: ReadonlySet<string>): void {
+  /** The clips to mark, and what the pointer says on those a conversation changed. */
+  setMarked(clips: ReadonlySet<string>, by: ReadonlyMap<string, string> = new Map()): void {
+    this.#markedBy = by;
     const same =
       clips.size === this.#marked.size && [...clips].every((clip) => this.#marked.has(clip));
     if (same) return;
     this.#marked = clips;
     this.redraw();
+  }
+
+  /** Who changed the marked clip under the pointer, as it is said, see `setMarked`. */
+  markedTextAt(pointer: Pointer): string | undefined {
+    if (pointer.y < RULER_HEIGHT || this.#markedBy.size === 0) return undefined;
+    const hit = this.hitAt(pointer);
+    return hit.kind === "clip" ? this.#markedBy.get(hit.box.id) : undefined;
   }
 
   /** What shows under the clips of tracks. */

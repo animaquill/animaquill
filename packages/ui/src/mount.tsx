@@ -251,7 +251,9 @@ export async function mountEditor(element: HTMLElement, options: EditorOptions) 
       moving ||
       workbench.uploading ||
       // Changes of the AI settings or keys that the backend does not have: nowhere else.
-      workbench.accountAi?.hasUnsent === true;
+      workbench.accountAi?.hasUnsent === true ||
+      // A task of AI stops, also one that runs in a conversation the chat does not show.
+      workbench.chat.runningCount > 0;
     if (atRisk || code.hasUnsaved) event.preventDefault();
   };
   window.addEventListener("beforeunload", onBeforeUnload);

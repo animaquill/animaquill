@@ -1039,6 +1039,14 @@ export class ProjectStore {
    * also those of other windows and the platform, which the history does not have. Undefined when
    * the record no longer goes back that far, so that nobody takes "nothing changed" from it.
    */
+  /**
+   * Every change the store still keeps a record of, oldest first: at most the last
+   * `MAX_HISTORY`, of whoever made them. For who changed a place last, see `changesSince`.
+   */
+  keptChanges(): readonly ChangeRecord[] {
+    return this.#changes;
+  }
+
   changesSince(revision: Revision): readonly ChangeRecord[] | undefined {
     const since = this.revisionOf(revision);
     if (since === undefined || since < this.#changesFrom) return undefined;

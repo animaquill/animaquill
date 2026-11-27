@@ -207,8 +207,18 @@ function OthersLine({
   const listed = (over.length > 0 && mine ? over : rows).slice(0, SHOWN_OTHERS);
   const list = listed.map((row) => otherText(say, row)).join("、");
   const more = rows.length > SHOWN_OTHERS ? "…" : "";
+  // All of it by one other conversation of the chat: that one, by its name.
+  const by = rows[0]?.change.by;
+  const oneBy = by !== undefined && rows.every((row) => row.change.by?.id === by.id);
   const line = !mine
-    ? t("chat.card.elsewhere", { count: rows.length, list: list + more })
+    ? oneBy
+      ? t("chat.card.elsewhereBy", {
+          count: rows.length,
+          list: list + more,
+          name: by.name,
+          interpolation: { escapeValue: false },
+        })
+      : t("chat.card.elsewhere", { count: rows.length, list: list + more })
     : over.length > 0
       ? t("chat.card.mineOverwritten", { count: rows.length, over: over.length, list: list + more })
       : t("chat.card.mine", { count: rows.length, list: list + more });

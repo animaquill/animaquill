@@ -34,6 +34,8 @@ export interface StageEditor extends TouchTarget {
   titleAt?(pointer: Pointer): string | undefined;
   /** What a marker under the pointer says, as it is, which goes before anything else. */
   markerTextAt?(pointer: Pointer): string | undefined;
+  /** Who changed the marked clip under the pointer, as it is said. */
+  markedTextAt?(pointer: Pointer): string | undefined;
   leave(): void;
   scrollDuringDrag(pointer: Pointer, dx: number, dy: number): void;
   setTouchInput(on: boolean): void;
@@ -275,7 +277,11 @@ export function useStage(
     const marker = editor.markerTextAt?.(pointer);
     currentTarget.title =
       marker ??
-      (pointer.y < RULER_HEIGHT ? t("timeline.timeFormat") : about ? t(about as never) : "");
+      (pointer.y < RULER_HEIGHT
+        ? t("timeline.timeFormat")
+        : about
+          ? t(about as never)
+          : (editor.markedTextAt?.(pointer) ?? ""));
     lastPointer.current = pointer;
     if (input.isTouch(event.pointerType)) {
       touch.current?.move(event.pointerId, pointer.x, pointer.y);

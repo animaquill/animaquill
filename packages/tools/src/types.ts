@@ -114,6 +114,13 @@ export interface ToolHost {
    */
   readonly approve?: ((request: ApproveRequest) => Promise<Approval>) | undefined;
   /**
+   * The conversation an origin of AI changes the project as, where the host knows it as one of
+   * those it runs besides the caller, such as another conversation of the same chat: what others
+   * changed then names it (docs/design/ai-teamwork.md of AnimaQuill Cloud, 2). Nothing for any
+   * other.
+   */
+  whoIs?(origin: Origin): { readonly id: string; readonly name: string } | undefined;
+  /**
    * Whether the task these calls are of stopped, as people stopping it: a change people allowed is
    * not written once it did, also where the stop came right after their answer.
    */

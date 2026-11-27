@@ -812,22 +812,31 @@ test("the head: the switcher, the page of all conversations, ⋯, an empty one, 
   await sceneBothThemes(page, "7-all", "5");
   await chat(page).getByTestId("chat-all-back").click();
 
-  // While a task runs: the others wait for it, which the switcher says.
+  // While a task runs: ✎ (and the key) opens another, and the one that runs goes on behind it.
   await box(page).fill("慢慢来");
   await box(page).press("Enter");
   await expect(chat(page).getByTestId("chat-send")).toHaveAttribute("data-state", "stop");
-  // ✎ waits for it, and says so where people asked, also from the key.
-  await expect(chat(page).getByTestId("chat-new")).toHaveAttribute("aria-disabled", "true");
-  // Playwright takes `aria-disabled` for a button it waits on: people can click it all the same.
-  await chat(page).getByTestId("chat-new").click({ force: true });
-  await expect(chat(page).getByTestId("chat-new-why")).toHaveText("这一轮做完后可以开新对话");
-  await expect(chat(page).getByTestId("chat-new-why")).toBeHidden({ timeout: 5000 });
+  await chat(page).getByTestId("chat-new").click();
+  await expect(chat(page).getByTestId("chat-task")).toHaveCount(0);
+  await expect(chat(page).getByTestId("chat-send")).not.toHaveAttribute("data-state", "stop");
+  await expect(page.getByTestId("status-runs")).toHaveText(/^「.+」在跑$/);
   await box(page).press("Control+Alt+n");
-  await expect(chat(page).getByTestId("chat-new-why")).toBeVisible();
-  await expect(chat(page).getByTestId("chat-task")).toHaveCount(2);
+  await expect(chat(page).getByTestId("chat-task")).toHaveCount(0);
   await sceneBothThemes(page, "8-switcher-running", "5", async () => {
     await title.click();
-    await expect(chat(page).getByTestId("chat-switcher")).toContainText("这一轮做完后可以切换");
+    await expect(
+      chat(page)
+        .getByTestId("chat-switcher-row")
+        .filter({ has: page.getByTestId("chat-conversation-running") }),
+    ).toHaveText(/在跑$/);
   });
+  // Back to it: it still runs, as it went on.
+  await title.click();
+  await chat(page)
+    .getByTestId("chat-switcher-row")
+    .filter({ has: page.getByTestId("chat-conversation-running") })
+    .click();
+  await expect(chat(page).getByTestId("chat-send")).toHaveAttribute("data-state", "stop");
+  await expect(chat(page).getByTestId("chat-task")).toHaveCount(2);
   for (const route of waiting) await route.abort().catch(() => {});
 });

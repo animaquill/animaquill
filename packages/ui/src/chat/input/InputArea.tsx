@@ -352,7 +352,6 @@ export const InputArea = forwardRef<
   /** Why a command cannot be used now, which the menu says at it. */
   function whyNot(which: SlashId): string | undefined {
     if (which === "frame" && !timelineView.model) return noTimeline;
-    if (which === "new" && running) return t("chat.switcher.newWhenDone");
     if (which === "compact" && !compactable) return t("chat.complete.cannotCompact");
     if (which === "rename" && !savedHere) return t("chat.complete.cannotRename");
     return undefined;

@@ -1,11 +1,12 @@
 import type { ChatEntry } from "@animaquill/agent";
 import { MoreHorizontal, SquarePen } from "lucide-react";
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../app/context.ts";
 import { Tip } from "../../app/Tip.tsx";
 import { formatCombo } from "../../workbench/keys.ts";
 import { markdownOf } from "../export.ts";
+import { sureToRemove } from "./remove.ts";
 import { useBoxMenu } from "../input/menu.ts";
 import { ContextPie, ConversationInfo } from "../model/ConversationInfo.tsx";
 import styles from "./header.module.css";
@@ -45,8 +46,6 @@ export function PanelHeader(props: {
     props.onRenaming(
       on && snapshot.id !== undefined ? { id: snapshot.id, back: "title" } : undefined,
     );
-  // A new conversation asked for while a task runs: why nothing happens, at ✎, for a moment.
-  const refused = useRefused(snapshot.refusedNew);
   const [infoOpen, setInfoOpen] = useState(false);
   const [head, setHead] = useState<HTMLDivElement | null>(null);
   const closeInfo = useCallback(
@@ -77,7 +76,7 @@ export function PanelHeader(props: {
       <ContextPie entries={props.entries} open={infoOpen} onOpen={() => setInfoOpen(!infoOpen)} />
       <span className={styles.newWrap}>
         <Tip
-          name={running ? t("chat.switcher.newWhenDone") : newName}
+          name={newName}
           usage=""
           shortcut={keys === undefined ? undefined : formatCombo(keys, keybindings.platform)}
         >
@@ -85,19 +84,12 @@ export function PanelHeader(props: {
             type="button"
             className={styles.iconButton}
             aria-label={newName}
-            // Still to be reached while a task runs: it says why it waits.
-            aria-disabled={running || undefined}
             data-testid="chat-new"
-            onClick={() => (running ? chat.newConversation() : props.onNew())}
+            onClick={props.onNew}
           >
             <SquarePen size={14} aria-hidden />
           </button>
         </Tip>
-        {refused && (
-          <span className={styles.note} role="status" data-testid="chat-new-why">
-            {t("chat.switcher.newWhenDone")}
-          </span>
-        )}
       </span>
       <MoreMenu
         title={props.title}
@@ -168,13 +160,7 @@ function MoreMenu(props: {
   );
   const remove = async () => {
     if (id === undefined) return;
-    const sure = await dialogs.confirm({
-      title: t("chat.list.removeConfirm"),
-      message: t("chat.list.removeNote"),
-      confirm: t("chat.list.remove"),
-      danger: true,
-    });
-    if (sure) await chat.remove(id);
+    if (await sureToRemove(dialogs, t, props.running)) await chat.remove(id);
   };
   const copy = () => {
     const text = markdownOf(t, props.title, props.entries);
@@ -232,29 +218,10 @@ function MoreMenu(props: {
           <div className={styles.menuLine} role="separator" />
           {item("chat-more-remove", t("chat.more.remove"), () => void remove(), {
             disabled: !saved,
-            waits: props.running ? t("chat.switcher.removeWhenDone") : undefined,
             danger: true,
           })}
         </div>
       )}
     </div>
   );
-}
-
-/** How long the word of why nothing happened stays. */
-const REFUSED_MS = 2500;
-
-/** Whether something people asked for just now was refused, as of `at`, for a moment. */
-function useRefused(at: number | undefined): boolean {
-  const [shown, setShown] = useState<number>();
-  useEffect(() => {
-    if (at === undefined) return;
-    const show = setTimeout(() => setShown(at), 0);
-    const hide = setTimeout(() => setShown((was) => (was === at ? undefined : was)), REFUSED_MS);
-    return () => {
-      clearTimeout(show);
-      clearTimeout(hide);
-    };
-  }, [at]);
-  return shown !== undefined && shown === at;
 }

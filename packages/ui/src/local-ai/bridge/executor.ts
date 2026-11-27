@@ -37,7 +37,7 @@ const KEPT_BYTES = 4 * 1024 * 1024;
 /** What the tools need of the editor, as the assistant in the browser has it too. */
 export type EditorToolParts = Pick<
   ToolHost,
-  "selection" | "problems" | "describe" | "problemInputs" | "ranNow"
+  "selection" | "problems" | "describe" | "problemInputs" | "ranNow" | "whoIs"
 > & {
   readonly look?: (request: LookRequest, signal: AbortSignal) => Promise<LookAnswer>;
   readonly listen?: (request: ListenRequest, signal: AbortSignal) => Promise<ListenAnswer>;
@@ -215,6 +215,7 @@ export class BridgeExecutor {
       ...(parts.describe && { describe: parts.describe }),
       ...(parts.problemInputs && { problemInputs: parts.problemInputs }),
       ...(parts.ranNow && { ranNow: parts.ranNow }),
+      ...(parts.whoIs && { whoIs: parts.whoIs }),
       ...(parts.look && {
         look: (request: LookRequest) =>
           parts.look?.(

@@ -41,6 +41,7 @@ import { FrameRateStatus, TimeStatus } from "../timeline/StatusItems.tsx";
 import { duration } from "../export/window.ts";
 import { useProject, useSession, useWorkbench } from "./context.ts";
 import { Bubble } from "./Bubble.tsx";
+import { ChatRunsStatus } from "./ChatRunsStatus.tsx";
 import { CloudPanelBody } from "./CloudPanel.tsx";
 import { UploadsSection, uploadTotals } from "../storage/UploadsSection.tsx";
 import { downloadTotals } from "../storage/downloads.ts";
@@ -900,6 +901,7 @@ export function StatusBar() {
       )}
       {project && <ProblemsStatus />}
       <span className={styles.spacer} />
+      {project && <ChatRunsStatus />}
       {project && <OperationStatus />}
       {project && <ProxyStatus />}
       <VideoExportStatus />

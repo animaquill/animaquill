@@ -16,7 +16,13 @@ import { createProject } from "@animaquill/schema";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SelectionFacts } from "@animaquill/tools";
 import { ModelPacks } from "./packs.ts";
-import { ChatSession, titlePrompt, WITHHELD, type ChatSessionOptions } from "./session.ts";
+import {
+  ChatSession,
+  KEPT_IDLE,
+  titlePrompt,
+  WITHHELD,
+  type ChatSessionOptions,
+} from "./session.ts";
 import { AiSettingsStore } from "./settings.ts";
 
 /** An account that is in whatever state a test says. */
@@ -1577,5 +1583,272 @@ describe("an entry of a kind this editor cannot read, as a newer one writes", ()
     expect(kept).toHaveLength(5);
     expect(kept[2]).toEqual(later);
     expect(kept[3]).toMatchObject({ role: "user", text: "再来" });
+  });
+});
+
+describe("several conversations at once (docs/design/ai-teamwork.md of AnimaQuill Cloud, 1)", () => {
+  /** Waits until a conversation of the window has a change waiting for people, and gives it. */
+  const waitsIn = async (chat: ChatSession, id: string) => {
+    let found: ReturnType<ChatSession["getSnapshot"]>["allApprovals"][number] | undefined;
+    await vi.waitFor(() => {
+      found = chat.getSnapshot().allApprovals.find((each) => each.chat === id);
+      expect(found).toBeDefined();
+    });
+    return found as NonNullable<typeof found>;
+  };
+  const users = (chat: ChatSession, id: string) =>
+    (chat.conversationOf(id)?.getSnapshot().entries ?? []).flatMap((entry) =>
+      entry.role === "user" ? [entry.text] : [],
+    );
+
+  it("goes on in the background while another is shown, and keeps both", async () => {
+    const { ai, chat, chats, fake, markers } = setup();
+    ai.setAskBeforeEdit(true);
+    fake({ fake: [{ calls: [addMarker("1")] }, { text: "A 好了" }] });
+    const sentA = chat.send("A 加标记");
+    const a = chat.getSnapshot().id as string;
+    const asked = await waitsIn(chat, a);
+    // Another conversation while A waits: A goes on where it is.
+    chat.newConversation();
+    const b = chat.getSnapshot().id as string;
+    expect(b).not.toBe(a);
+    expect(chat.running).toBe(false);
+    expect(chat.runningCount).toBe(1);
+    expect(chat.getSnapshot().approvals).toEqual([]);
+    expect(chat.getSnapshot().runs.find((run) => run.id === a)).toMatchObject({
+      state: "waiting",
+    });
+    fake({ fake: [{ calls: [addMarker("2")] }, { text: "B 好了" }] });
+    const sentB = chat.send("B 加标记");
+    // Both wait for people: the chat shows only the card of the one shown.
+    const askedB = await waitsIn(chat, b);
+    expect(chat.getSnapshot().approvals.map((each) => each.id)).toEqual([askedB.id]);
+    expect(chat.getSnapshot().allApprovals).toHaveLength(2);
+    expect(chat.declineWith("先别加")).toBe(true);
+    expect((await sentB)?.end).toBe("done");
+    expect(markers()).toHaveLength(0);
+    // A, in the background, is allowed and ends there.
+    chat.answerApproval(asked.id, "once");
+    expect((await sentA)?.end).toBe("done");
+    expect(markers()).toHaveLength(1);
+    expect(chat.getSnapshot().id).toBe(b);
+    expect(chat.getSnapshot().runs.find((run) => run.id === a)).toMatchObject({
+      state: "idle",
+      unseen: true,
+    });
+    await chat.flush();
+    expect((await chats.load("p1", a))?.entries.at(-1)).toMatchObject({ text: "A 好了" });
+    expect((await chats.load("p1", b))?.entries.at(-1)).toMatchObject({ text: "B 好了" });
+    // Shown again: seen, with all of it.
+    await chat.open(a);
+    expect(chat.getSnapshot().id).toBe(a);
+    expect(chat.getSnapshot().conversation?.getSnapshot().entries.at(-1)).toMatchObject({
+      text: "A 好了",
+    });
+    expect(chat.getSnapshot().runs.find((run) => run.id === a)?.unseen).toBe(false);
+  });
+
+  it("writes each conversation as it goes, also several at once", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const { chat, chats, fake } = setup();
+      fake({ fake: [{ text: "一" }], charactersPerSecond: 40 });
+      const sentA = chat.send("第一个对话");
+      const a = chat.getSnapshot().id as string;
+      chat.newConversation();
+      fake({ fake: [{ text: "二" }] });
+      await chat.send("第二个对话");
+      const b = chat.getSnapshot().id as string;
+      await vi.advanceTimersByTimeAsync(2000);
+      await sentA;
+      // Nothing waits: both are written as their tasks ended, neither instead of the other.
+      expect((await chats.load("p1", a))?.entries.at(-1)).toMatchObject({ text: "一" });
+      expect((await chats.load("p1", b))?.entries.at(-1)).toMatchObject({ text: "二" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("sends what is queued in a conversation and names it, while another is shown", async () => {
+    const { chat, chats, fake } = setup({
+      chats: memoryChats(),
+      ask: async () => ({ ok: true, text: "后台的对话" }),
+    });
+    fake({ fake: [{ text: "一" }, { text: "二" }], charactersPerSecond: 20 });
+    const sent = chat.send("第一句");
+    const a = chat.getSnapshot().id as string;
+    await vi.waitFor(() => expect(chat.running).toBe(true));
+    chat.queue("第二句");
+    chat.newConversation();
+    await sent;
+    await vi.waitFor(() => expect(users(chat, a)).toEqual(["第一句", "第二句"]));
+    await vi.waitFor(() => expect(chat.conversationOf(a)?.running).toBe(false));
+    await vi.waitFor(() =>
+      expect(chat.getSnapshot().runs.find((run) => run.id === a)?.title).toBe("后台的对话"),
+    );
+    // The one shown is the new one, with nothing of A.
+    expect(chat.getSnapshot().title).toBe("");
+    expect(chat.getSnapshot().queued).toEqual([]);
+    await chat.flush();
+    expect(await chats.load("p1", a)).toMatchObject({ title: "后台的对话", titleBy: "auto" });
+  });
+
+  it("keeps the model, the switch and what is queued of each conversation to itself", async () => {
+    const { chat, fake } = setup();
+    fake({ fake: [{ text: "好" }] });
+    await chat.send("A");
+    const a = chat.getSnapshot().id as string;
+    chat.chooseModel({ service: "s", model: "a-model" });
+    chat.newConversation();
+    expect(chat.getSnapshot().model).toBeUndefined();
+    chat.chooseModel({ service: "s", model: "b-model" });
+    chat.setPlanFirst(true);
+    await chat.open(a);
+    expect(chat.getSnapshot()).toMatchObject({
+      id: a,
+      model: { model: "a-model" },
+      planFirst: false,
+    });
+  });
+
+  const status = { name: "aq_project_status", args: {} };
+
+  it("takes back each conversation's own changes, and says who changed what stayed", async () => {
+    const { chat, fake, first } = setup();
+    fake({ fake: [{ calls: [status] }, { calls: [rename("甲"), addMarker("1")] }, { text: "A" }] });
+    const one = (await chat.send("A 改名并加标记"))?.task as string;
+    const a = chat.getSnapshot().id as string;
+    chat.newConversation();
+    fake({ fake: [{ calls: [status] }, { calls: [rename("乙"), addMarker("2")] }, { text: "B" }] });
+    const two = (await chat.send("B 改名并加标记"))?.task as string;
+    const b = chat.getSnapshot().id as string;
+    expect(first.getState().manifest.name).toBe("乙");
+    expect(chat.chatOfTask(one)?.id).toBe(a);
+    expect(chat.chatOfTask(two)?.id).toBe(b);
+    // A's own: its marker goes, the name B gave after stays, and who gave it is known.
+    await chat.undoTask(one);
+    const state = first.getState();
+    expect(state.manifest.name).toBe("乙");
+    expect(Object.values(state.timelines.main?.markers ?? {}).map(({ time }) => time)).toEqual([
+      "2",
+    ]);
+    expect(chat.undoState(two)).toBe("undo");
+    await chat.undoTask(two);
+    expect(Object.values(first.getState().timelines.main?.markers ?? {})).toEqual([]);
+    // What A wrote under B's name stayed when A went back: it is there again.
+    expect(first.getState().manifest.name).toBe("甲");
+  });
+
+  it("refuses a change of what another conversation changed since it read it, names that one, and goes on once read again", async () => {
+    const { chat, fake, first } = setup({
+      chats: memoryChats(),
+      ask: async () => ({ ok: true, text: "剪开场" }),
+    });
+    fake({ fake: [{ calls: [addMarker("1")] }, { text: "好" }] });
+    const opening = (await chat.send("剪开场"))?.task as string;
+    const a = chat.getSnapshot().id as string;
+    await vi.waitFor(() =>
+      expect(chat.getSnapshot().runs.find((run) => run.id === a)?.title).toBe("剪开场"),
+    );
+    chat.newConversation();
+    fake({
+      fake: [
+        { calls: [status] },
+        () => {
+          // A changes the project name after B read it.
+          first.execute(
+            { type: "project.rename", params: { name: "甲" } },
+            { origin: `ai:${opening}` },
+          );
+          return { calls: [rename("乙")] };
+        },
+        { calls: [status] },
+        { calls: [rename("乙")] },
+        { text: "好" },
+      ],
+    });
+    expect((await chat.send("配乐"))?.end).toBe("done");
+    const tools = (chat.getSnapshot().conversation?.getSnapshot().entries ?? []).flatMap((entry) =>
+      entry.role === "tool" ? [entry] : [],
+    );
+    expect(tools.map((entry) => entry.ok)).toEqual([true, false, true, true]);
+    expect(tools[1]?.text).toContain('the conversation "剪开场" changed');
+    expect(tools[1]?.data?.others).toMatchObject([{ by: { id: a, name: "剪开场" } }]);
+    expect(first.getState().manifest.name).toBe("乙");
+  });
+
+  it("deletes a conversation whose task runs: it stops first, and nothing of it is written after", async () => {
+    const { ai, chat, chats, fake } = setup();
+    ai.setAskBeforeEdit(true);
+    fake({ fake: [{ calls: [addMarker("1")] }, { text: "不会到" }] });
+    const sent = chat.send("A");
+    const a = chat.getSnapshot().id as string;
+    await waitsIn(chat, a);
+    await chat.flush();
+    chat.newConversation();
+    await chat.remove(a);
+    expect((await sent)?.end).toBe("stopped");
+    expect(chat.conversationOf(a)).toBeUndefined();
+    expect(chat.getSnapshot().allApprovals).toEqual([]);
+    await chat.flush();
+    expect(await chats.load("p1", a)).toBeUndefined();
+    expect(chat.getSnapshot().saved.some((each) => each.id === a)).toBe(false);
+  });
+
+  it("stops every conversation of the project when another opens, and writes them", async () => {
+    const { ai, chat, chats, fake, open } = setup();
+    ai.setAskBeforeEdit(true);
+    fake({ fake: [{ calls: [addMarker("1")] }, { text: "x" }] });
+    const sentA = chat.send("A");
+    const a = chat.getSnapshot().id as string;
+    await waitsIn(chat, a);
+    chat.newConversation();
+    fake({ fake: [{ calls: [addMarker("2")] }, { text: "y" }] });
+    const sentB = chat.send("B");
+    const b = chat.getSnapshot().id as string;
+    await waitsIn(chat, b);
+    expect(chat.runningCount).toBe(2);
+    open({ store: ProjectStore.create(createProject({ name: "第二个" })), key: "p2" });
+    expect((await sentA)?.end).toBe("stopped");
+    expect((await sentB)?.end).toBe("stopped");
+    expect(chat.runningCount).toBe(0);
+    await vi.waitFor(async () => {
+      expect((await chats.load("p1", a))?.entries[0]).toMatchObject({ text: "A" });
+      expect((await chats.load("p1", b))?.entries[0]).toMatchObject({ text: "B" });
+    });
+  });
+
+  it("stops all of them at once, and one alone", async () => {
+    const { ai, chat, fake } = setup();
+    ai.setAskBeforeEdit(true);
+    fake({ fake: [{ calls: [addMarker("1")] }, { text: "x" }] });
+    const sentA = chat.send("A");
+    const a = chat.getSnapshot().id as string;
+    await waitsIn(chat, a);
+    chat.newConversation();
+    fake({ fake: [{ calls: [addMarker("2")] }, { text: "y" }] });
+    const sentB = chat.send("B");
+    await waitsIn(chat, chat.getSnapshot().id as string);
+    chat.stop(a);
+    expect((await sentA)?.end).toBe("stopped");
+    expect(chat.runningCount).toBe(1);
+    chat.stopAll();
+    expect((await sentB)?.end).toBe("stopped");
+  });
+
+  it("keeps at most a few conversations with nothing going on", async () => {
+    const { chat, fake } = setup();
+    const ids: string[] = [];
+    for (let at = 0; at < KEPT_IDLE + 3; at += 1) {
+      if (at > 0) chat.newConversation();
+      fake({ fake: [{ text: "好" }] });
+      await chat.send(`第 ${at} 个`);
+      ids.push(chat.getSnapshot().id as string);
+    }
+    expect(chat.getSnapshot().runs).toHaveLength(KEPT_IDLE + 1);
+    expect(chat.conversationOf(ids[0] as string)).toBeUndefined();
+    // Opened again, it is read from where it is kept.
+    await chat.open(ids[0] as string);
+    expect(users(chat, ids[0] as string)).toEqual(["第 0 个"]);
   });
 });

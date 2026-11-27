@@ -478,6 +478,8 @@
       "undone": "撤销了 {{count}} 处",
       "kept": {
         "changed": "{{count}} 处你后来又改过，保留了你的。",
+        "changedByChat": "{{count}} 处后来被「{{title}}」改过，保留了它的改动。",
+        "changedLater": "{{count}} 处后来又被改过，保留了后来的改动。",
         "inUse": "{{count}} 处还被别的内容用着，没有撤。"
       },
       "showKept": "查看是哪 {{count}} 处",
@@ -3617,6 +3619,17 @@
     "newConversation": "新对话",
     "history": "以前的对话",
     "untitled": "（空对话）",
+    "markedBy": "「{{title}}」刚改过",
+    "runs": {
+      "one": "「{{title}}」在跑",
+      "many": "{{count}} 个对话在跑",
+      "title": "在跑的对话",
+      "usage": "点开看每个在做什么，可以切过去或停下",
+      "stop": "停止",
+      "stopOne": "停止“{{title}}”",
+      "stopAll": "全部停下"
+    },
+    "markedByAi": "AI 刚改过",
     "removeConversation": "删除这个对话",
     "placeholder": "给 AI 发消息，Enter 发送，Shift+Enter 换行",
     "send": "发送",
@@ -3754,6 +3767,7 @@
       "mine": "这期间你改了 {{count}} 处，AI 保留了你的：{{list}}",
       "mineOverwritten": "这期间你改了 {{count}} 处，其中 {{over}} 处 AI 之后又改了：{{list}}",
       "elsewhere": "这期间别处改了 {{count}} 处：{{list}}",
+      "elsewhereBy": "这期间「{{name}}」改了 {{count}} 处：{{list}}",
       "problems": "问题 −{{resolved}} +{{added}}",
       "checked": "检查：{{count}} 个问题",
       "checkedNone": "检查：没有问题",
@@ -3953,6 +3967,7 @@
       "removeLabel": "删除“{{title}}”",
       "removeConfirm": "删除这个对话？",
       "removeNote": "对话里 AI 做的改动不会撤销。",
+      "removeRunning": "它还在跑，删除会先停下它。",
       "cancel": "取消",
       "none": "还没有对话。",
       "noHits": "没有找到“{{query}}”。",
@@ -4159,7 +4174,10 @@
       "failed": "AI 的任务出错了",
       "look": "AI 要看画面，请回到 AnimaQuill",
       "plan": "AI 的方案好了",
-      "approve": "AI 要改项目，等你允许"
+      "approve": "AI 要改项目，等你允许",
+      "in": "「{{title}}」 · {{project}}",
+      "approveIn": "「{{title}}」要改 {{count}} 处，等你允许",
+      "approveGo": "去看看"
     },
     "action": {
       "insertTime": "AI 聊天：插入播放头的时间",
@@ -4361,14 +4379,12 @@
     "switcher": {
       "title": "对话",
       "search": "搜对话",
-      "whenDone": "这一轮做完后可以切换",
-      "newWhenDone": "这一轮做完后可以开新对话",
       "running": "在跑",
+      "othersCall": "{{count}} 个别的对话有事",
       "current": "当前",
       "all": "全部对话…",
       "allTitle": "全部对话",
-      "back": "返回",
-      "removeWhenDone": "这一轮做完后可以删除"
+      "back": "返回"
     },
     "suggest": {
       "moveSelected": "把选中的 {{count}} 个片段往后挪 1 秒",

@@ -15,6 +15,7 @@ import { useNow } from "../clock.ts";
 import { byDay } from "../conversations.ts";
 import { useChatUi } from "../ui.ts";
 import styles from "./header.module.css";
+import { callsFor, useRuns } from "./runs.ts";
 import { useFound } from "./search.ts";
 import { titleOf } from "./title.ts";
 
@@ -27,7 +28,8 @@ const SHOWN = 10;
  * it, Esc does not). The switcher does not cover the conversation: a search on top, which finds
  * what was said in any of them; the newest, today and earlier, each with when it changed, a
  * spinner for the one that runs, a dot for one that waits for people, a tick for this one; at its
- * foot the page of all of them. While a task runs no other conversation opens yet, which it says.
+ * foot the page of all of them. Any of them opens while others run: those go on where they are.
+ * A dot before the title says another conversation has something for people.
  */
 export function TitleSwitcher(props: {
   readonly title: string;
@@ -43,8 +45,12 @@ export function TitleSwitcher(props: {
   const { chat } = useWorkbench();
   const snapshot = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
   const ui = useChatUi();
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const button = useRef<HTMLButtonElement>(null);
+  const others = [...useRuns().values()].filter(
+    (run) => run.id !== snapshot.id && callsFor(run),
+  ).length;
   const saved = snapshot.saved.some((each) => each.id === snapshot.id);
   const close = (back: boolean) => {
     setOpen(false);
@@ -79,6 +85,14 @@ export function TitleSwitcher(props: {
           props.onRenaming(true);
         }}
       >
+        {others > 0 && (
+          <span
+            className={styles.dot}
+            role="img"
+            aria-label={t("chat.switcher.othersCall", { count: others })}
+            data-testid="chat-others-call"
+          />
+        )}
         <span className={styles.titleText}>{props.title}</span>
         <ChevronDown size={12} aria-hidden className={styles.titleChevron} />
       </button>
@@ -154,7 +168,7 @@ function Switcher(props: {
   const ui = useChatUi();
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(chat.subscribe, chat.getSnapshot);
-  const running = snapshot.conversation?.running === true;
+  const runs = useRuns();
   const [query, setQuery] = useState("");
   const found = useFound(query);
   const [active, setActive] = useState(0);
@@ -185,10 +199,7 @@ function Switcher(props: {
       }))
     : groups.flatMap(({ chats }) => chats.map((each) => ({ key: each.id, id: each.id })));
   const at = Math.min(active, Math.max(0, choices.length - 1));
-  // While a task runs, only the conversation it runs in.
-  const closed = (id: string) => running && id !== snapshot.id;
   const choose = async (choice: Choice) => {
-    if (closed(choice.id)) return;
     if (choice.id !== snapshot.id) await chat.open(choice.id);
     props.onClose(false);
     // Opened: where people go on, the box.
@@ -217,27 +228,31 @@ function Switcher(props: {
   const option = (chat_: SavedChatSummary) => {
     const mine = places.get(chat_.id) ?? -1;
     const current = chat_.id === snapshot.id;
-    const waits = chat_.asking === true || (current && snapshot.approvals.length > 0);
-    const off = closed(chat_.id);
+    const run = runs.get(chat_.id);
+    const running = run?.state === "running";
+    const waits = run ? callsFor(run) : chat_.asking === true;
     return (
       <div
         key={chat_.id}
         id={optionId(mine)}
         role="option"
         aria-selected={current}
-        aria-disabled={off || undefined}
         className={styles.option}
         data-testid="chat-switcher-row"
         data-active={mine === at || undefined}
         data-current={current || undefined}
-        title={off ? t("chat.switcher.whenDone") : undefined}
+        data-state={run?.state}
         onPointerMove={() => setActive(mine)}
         onPointerDown={(event) => event.preventDefault()}
         onClick={() => void choose({ key: chat_.id, id: chat_.id })}
       >
         <span className={styles.lead} aria-hidden>
-          {current && running ? (
-            <LoaderCircle size={12} className={styles.spin} />
+          {running ? (
+            <LoaderCircle
+              size={12}
+              className={styles.spin}
+              data-testid="chat-conversation-running"
+            />
           ) : waits ? (
             <span className={styles.dot} data-testid="chat-conversation-asking" />
           ) : current ? (
@@ -256,7 +271,7 @@ function Switcher(props: {
           </span>
         )}
         <span className={styles.ago}>
-          {current && running
+          {running
             ? t("chat.switcher.running")
             : waits
               ? t("chat.list.asking")
@@ -293,7 +308,6 @@ function Switcher(props: {
           onKeyDown={onKeyDown}
         />
       </label>
-      {running && <p className={styles.why}>{t("chat.switcher.whenDone")}</p>}
       <div
         className={styles.scroll}
         role="listbox"
@@ -306,7 +320,6 @@ function Switcher(props: {
           ) : (
             found.map((hit, hitIndex) => {
               const mine = places.get(`${hit.id}/${hitIndex}`) ?? -1;
-              const off = closed(hit.id);
               const summary = snapshot.saved.find((each) => each.id === hit.id) ?? hit;
               return (
                 <div
@@ -314,11 +327,9 @@ function Switcher(props: {
                   id={optionId(mine)}
                   role="option"
                   aria-selected={false}
-                  aria-disabled={off || undefined}
                   className={`${styles.option} ${styles.hit}`}
                   data-testid="chat-search-hit"
                   data-active={mine === at || undefined}
-                  title={off ? t("chat.switcher.whenDone") : undefined}
                   onPointerMove={() => setActive(mine)}
                   onPointerDown={(event) => event.preventDefault()}
                   onClick={() =>

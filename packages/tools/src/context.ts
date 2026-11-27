@@ -149,6 +149,8 @@ export interface OtherChange {
   readonly fields: readonly string[];
   /** It is not in the project any more. */
   readonly removed?: true;
+  /** The conversation that changed it, where the host knows it as one: by its id and name. */
+  readonly by?: { readonly id: string; readonly name: string };
 }
 
 /** How many objects changed by others a result keeps for people. */
@@ -194,18 +196,31 @@ export function othersOf(call: Call): {
   const own = isOwnOf(call);
   const byWho = new Map<
     string,
-    Map<string, { ref: ObjectRef; fields: Set<string>; code: OtherWho }>
+    Map<
+      string,
+      { ref: ObjectRef; fields: Set<string>; code: OtherWho; by: OtherChange["by"] | undefined }
+    >
   >();
   for (const change of changes) {
     const mine = own(change.origin);
     if (mine && change.takesBack === undefined) continue;
-    const who = whoMade(change, mine);
+    // Another conversation the host knows, by its name, rather than "another AI task".
+    const by =
+      change.takesBack === undefined && change.origin.startsWith("ai:")
+        ? call.host.whoIs?.(change.origin)
+        : undefined;
+    const who = by ? `the conversation ${JSON.stringify(by.name)} changed` : whoMade(change, mine);
     const objects = byWho.get(who) ?? new Map();
     byWho.set(who, objects);
     for (const path of change.paths) {
       const ref = objectOfPath(path);
       const key = objectKey(ref);
-      const known = objects.get(key) ?? { ref, fields: new Set<string>(), code: whoOf(change) };
+      const known = objects.get(key) ?? {
+        ref,
+        fields: new Set<string>(),
+        code: whoOf(change),
+        by,
+      };
       objects.set(key, known);
       const field = fieldOf(path, ref);
       if (field !== undefined && ref.kind !== "file") known.fields.add(field);
@@ -216,7 +231,7 @@ export function othersOf(call: Call): {
   let more = 0;
   const kept: OtherChange[] = [];
   const parts = [...byWho].map(([who, objects]) => {
-    const said = [...objects.values()].flatMap(({ ref, fields, code }) => {
+    const said = [...objects.values()].flatMap(({ ref, fields, code, by }) => {
       const there = existsIn(state, ref);
       if (kept.length < MAX_OTHERS_KEPT) {
         const name = nameOf(state, ref);
@@ -228,6 +243,7 @@ export function othersOf(call: Call): {
           ...(name !== undefined && name !== "" && { name }),
           fields: [...fields],
           ...(!there && { removed: true }),
+          ...(by && { by }),
         });
       }
       if (left <= 0) {

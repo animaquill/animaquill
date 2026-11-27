@@ -4,7 +4,6 @@ import type {
   ConversationSnapshot,
   SummaryEntry,
 } from "@animaquill/agent";
-import { entryOf, type ProjectState } from "@animaquill/core";
 import { DEFAULT_PACK } from "@animaquill/tools";
 import { ArrowDown, Quote } from "lucide-react";
 import {
@@ -34,7 +33,7 @@ import packStyles from "./ModelPacks.module.css";
 import { OpenPackView, PackViewer, type PackViewRequest } from "./PackViews.tsx";
 import { noteLabel, packLabel } from "./packText.ts";
 import { followsAfterScroll, showsToLatest } from "./scroll.ts";
-import type { Names } from "./toolSummary.ts";
+import { namesIn } from "./names.ts";
 import { groupsOf, turnOf } from "./turns.ts";
 import { TurnView } from "./TurnView.tsx";
 import { SummaryDivider } from "./SummaryDivider.tsx";
@@ -42,36 +41,6 @@ import { ChatUiContext, type ChatUi } from "./ui.ts";
 
 const NO_CONVERSATION: ConversationSnapshot = { entries: [], running: undefined, last: undefined };
 const noop = () => () => {};
-
-/** What the project calls its objects, for the lines of tools. */
-function namesIn(state: ProjectState | undefined): Names {
-  return {
-    timeline: (id) => {
-      const wanted = id ?? state?.manifest.timelines[0];
-      return wanted === undefined || !state ? undefined : entryOf(state.timelines, wanted)?.name;
-    },
-    object: (id, timeline) => {
-      if (!state) return undefined;
-      const timelines = timeline === undefined ? Object.keys(state.timelines) : [timeline];
-      for (const each of timelines) {
-        const found = entryOf(state.timelines, each);
-        if (!found) continue;
-        const named =
-          entryOf(found.clips, id) ??
-          entryOf(found.tracks, id) ??
-          entryOf(found.markers, id) ??
-          entryOf(found.sections, id);
-        if (named) return named.name;
-      }
-      return (
-        entryOf(state.timelines, id)?.name ??
-        entryOf(state.scenes, id)?.name ??
-        entryOf(state.sounds, id)?.name ??
-        entryOf(state.assets, id)?.name
-      );
-    },
-  };
-}
 
 /** The chat with AI in the browser, about the open project. */
 export function ChatPanel() {
