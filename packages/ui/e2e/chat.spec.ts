@@ -317,6 +317,8 @@ test("AI changes the timeline, and the whole task goes back in one step", async 
 
   await chat(page).getByRole("button", { name: "撤销这一轮", exact: true }).click();
   await expect(clips(page)).toHaveCount(0);
+  // Taken back, the card says so on its title.
+  await expect(chat(page).getByTestId("chat-card")).toContainText("撤销了 2 处");
   await expect(rows.first().getByRole("button", { name: "定位" })).toBeDisabled();
   await chat(page).getByRole("button", { name: "重做这一轮", exact: true }).click();
   await expect(clips(page)).toHaveCount(1);
@@ -608,11 +610,12 @@ test("says what to do when the service cannot be reached, or refuses the key", a
   // Each task keeps what went wrong in it: the newest is last.
   const failure = chat(page).getByTestId("chat-failure").last();
   await expect(failure).toHaveAttribute("data-kind", "network");
-  // This page has no relay: nothing to switch to, the address and the network said too.
+  // This page has no relay: nothing to switch to; another model is a way out.
   await expect(failure.locator("p").first()).toHaveText(
-    /^连不上 .+，可能是浏览器挡住了直连，也可能是地址或网络不对。$/u,
+    /^连不上 .+，可能断网了，也可能这家服务不让浏览器直接连。$/u,
   );
   await expect(failure.getByTestId("chat-failure-relay")).toHaveCount(0);
+  await expect(failure.getByTestId("chat-failure-model")).toHaveText("换个模型");
   await expect(failure.getByTestId("chat-failure-retry")).toBeVisible();
 
   refuse = true;

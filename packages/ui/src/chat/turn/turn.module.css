@@ -353,10 +353,26 @@
   opacity: 0.6;
 }
 
-.menuLine {
-  height: 1px;
-  margin: 4px 0;
-  background: var(--aq-border);
+.userWrap .menu button:has(.menuNote) {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  white-space: normal;
+}
+
+.menuName {
+  white-space: nowrap;
+}
+
+.menuNote {
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-11);
+}
+
+.editorNote {
+  margin: 0;
+  color: var(--aq-warning-text);
+  overflow-wrap: anywhere;
 }
 
 /* What AI got as it was, under the message. */
@@ -625,8 +641,19 @@ span.sentPicture {
 }
 
 .rewrittenText {
+  flex: 0 1 auto;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.rewrittenWords {
+  flex: 0 1 12em;
+  min-width: 2em;
+  overflow: hidden;
+  color: var(--aq-text-muted);
+  opacity: 0.8;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .rewrittenChevron {

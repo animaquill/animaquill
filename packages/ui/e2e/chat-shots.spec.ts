@@ -357,7 +357,7 @@ test("the card of changes, a message and its menu, editing it, a failure of each
   page,
   problems,
 }) => {
-  test.setTimeout(420_000);
+  test.setTimeout(480_000);
   await page.setViewportSize({ width: 1600, height: 1000 });
   /** What the model does with the next message: tools first, then its answer; or a failure. */
   let next: {
@@ -396,6 +396,8 @@ test("the card of changes, a message and its menu, editing it, a failure of each
     return fulfil(anthropicSays(next.answer ?? "好的。"));
   });
   await addAnthropic(page, KEY, "claude-test");
+  // A second model, so that the first can be turned off, at the end.
+  await addModel(page, "claude-eyes");
   await closeSettings(page);
   await showTab(page, "chat");
   const say = async (text: string) => {
@@ -502,8 +504,46 @@ test("the card of changes, a message and its menu, editing it, a failure of each
   await expect(chat(page).getByText("片头标记往后挪了一秒。")).toBeVisible({ timeout: 15_000 });
   // The turn before folds into one line, which says its changes are still there.
   const folded = chat(page).getByTestId("chat-rewritten");
-  await expect(folded).toHaveText("已改写重发 · 原来的一轮 · 改动还在（2 处）");
+  await expect(folded).toContainText("已改写重发 · 原来的一轮 · 改动还在（2 处）");
+  await expect(folded).toContainText("片头标记往后挪一点");
   await sceneBothThemes(page, "7-rewritten", "3b");
+
+  // A message with a picture, edited: the picture under the words, to take away; what is left goes.
+  await fresh();
+  next = { answer: "看到了。" };
+  await box(page).fill("看看这张图");
+  await box(page).evaluate((element) => {
+    const png =
+      "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAAFklEQVR42mP4z8BAEmIY1TCqYfhqAACQ+f8B8u7oVwAAAABJRU5ErkJggg==";
+    const bytes = Uint8Array.from(atob(png), (c) => c.charCodeAt(0));
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([bytes], "参考.png", { type: "image/png" }));
+    element.dispatchEvent(
+      new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }),
+    );
+  });
+  await expect(chat(page).getByTestId("chat-picture")).toHaveAttribute("data-state", "ready");
+  await box(page).press("Enter");
+  await expect(chat(page).getByText("看到了。")).toBeVisible({ timeout: 15_000 });
+  await expect(lastUser().getByTestId("chat-sent-picture")).toHaveCount(1);
+  await sceneBothThemes(page, "12-editing-picture", "3b", async () => {
+    await edit();
+    await expect(editor.getByTestId("chat-picture")).toHaveCount(1);
+  });
+  await edit();
+  await editor.getByTestId("chat-user-editor-input").fill("看看这张图的颜色");
+  await editor.getByTestId("chat-picture-remove").click();
+  // Another message goes from the box of the chat meanwhile: the edited one stays as it was.
+  next = { answer: "好的，记下了。" };
+  await say("顺便说一句");
+  await expect(chat(page).getByText("好的，记下了。")).toBeVisible({ timeout: 15_000 });
+  await expect(editor.getByTestId("chat-user-editor-input")).toHaveText("看看这张图的颜色");
+  await expect(editor.getByTestId("chat-picture")).toHaveCount(0);
+  next = { answer: "颜色偏暖。" };
+  await editor.getByTestId("chat-user-resend").click();
+  await expect(chat(page).getByText("颜色偏暖。")).toBeVisible({ timeout: 15_000 });
+  await expect(lastUser()).toHaveText("看看这张图的颜色");
+  await expect(lastUser().getByTestId("chat-sent-picture")).toHaveCount(0);
 
   // Failures, each kind its own sentence and way out.
   for (const [fail, name] of [
@@ -546,7 +586,26 @@ test("the card of changes, a message and its menu, editing it, a failure of each
   const asking = failure.getByTestId("chat-retry-confirm");
   await expect(asking.getByRole("button").first()).toHaveText("撤销 1 处再重试");
   await expect(asking.getByRole("button").first()).toBeFocused();
+  await expect(asking.getByRole("button").nth(1)).toHaveText("保留改动重试");
   await sceneBothThemes(page, "11-failure-retry", "3b");
+  // "算了": the buttons as they were, the focus back on "重试".
+  await asking.getByRole("button", { name: "算了" }).click();
+  await expect(failure.getByTestId("chat-failure-retry")).toBeFocused();
+
+  // What holds a message back is said in the box, and nothing of the turn is taken back.
+  await openSettingsPage(page, "AI 模型");
+  await settingsOf(page)
+    .getByTestId("ai-service")
+    .locator('[data-testid="ai-model"][data-model="claude-test"]')
+    .getByRole("switch")
+    .uncheck();
+  await closeSettings(page);
+  await showTab(page, "chat");
+  await edit();
+  await editor.getByTestId("chat-user-resend").first().click();
+  await expect(editor.getByTestId("chat-user-editor-held")).toHaveText("这个对话的模型停用了");
+  await expect(chat(page).getByTestId("chat-card").last()).toContainText("改了 1 处");
+  await sceneBothThemes(page, "13-editing-held", "3b", edit);
   // The browser says what it could not reach.
   problems.splice(
     0,

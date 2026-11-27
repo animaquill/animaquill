@@ -103,14 +103,21 @@ export function ChangeCard({
     store !== undefined && (store.canUndoOrigin(origin) || store.canRedoOrigin(origin));
   const comparable =
     summary.told && hasLog && summary.changes.some((change) => mayOpen(change) !== "never");
-  const [said, ...moreSaid] = summary.said;
+  // What AI said each batch does: the first under the title, the rest in "对比"; where nothing
+  // compares (no undo log here), up to three under the title as before, the rest below them.
+  const head = summary.said.slice(0, comparable ? 1 : SHOWN_SAID);
+  const moreSaid = summary.said.slice(head.length);
   const undoName = undo === "redo" ? t("chat.redoTask") : t("chat.undoTask");
   return (
     <div className={styles.card} data-testid="chat-card" data-undone={undo === "redo" || undefined}>
       <div className={styles.head}>
         <span className={styles.title}>
           <PenLine size={13} aria-hidden />
-          {count > 0 ? t("chat.changes", { count }) : t("chat.card.noChanges")}
+          {count === 0
+            ? t("chat.card.noChanges")
+            : undo === "redo"
+              ? t("chat.card.undone", { count })
+              : t("chat.changes", { count })}
         </span>
         {comparable && (
           <button
@@ -123,43 +130,39 @@ export function ChangeCard({
             {t("chat.card.compare")}
           </button>
         )}
-        {shown &&
-          (whyNot ? (
-            // What cannot go back here stays in its place, grey, and says why.
-            <Tip name={t(`chat.card.whyNot.${whyNot}`)} usage="">
-              <button
-                type="button"
-                className={styles.textButton}
-                aria-disabled="true"
-                // Those who listen hear why with it, which the pointer reads as a tip.
-                aria-label={`${undoName}：${t(`chat.card.whyNot.${whyNot}`)}`}
-                data-testid="chat-card-undo"
-              >
-                {undoName}
-              </button>
-            </Tip>
-          ) : (
-            <Tip name={undoName} usage={undo === "redo" ? "" : t("chat.card.undoTitle")}>
-              <button
-                type="button"
-                className={styles.textButton}
-                data-testid="chat-card-undo"
-                onClick={() => void (undo === "redo" ? chat.redoTask(task) : chat.undoTask(task))}
-              >
-                {undoName}
-              </button>
-            </Tip>
-          ))}
+        {shown && (
+          <Tip name={undoName} usage={undo === "redo" || whyNot ? "" : t("chat.card.undoTitle")}>
+            <button
+              type="button"
+              className={styles.textButton}
+              data-testid="chat-card-undo"
+              // What cannot go back here stays in its place, grey, its reason on a line of the card.
+              aria-disabled={whyNot ? "true" : undefined}
+              aria-describedby={whyNot ? `${task}-why-not` : undefined}
+              onClick={() => {
+                if (!whyNot) void (undo === "redo" ? chat.redoTask(task) : chat.undoTask(task));
+              }}
+            >
+              {undoName}
+            </button>
+          </Tip>
+        )}
       </div>
-      {summary.told && said !== undefined && (
-        <p className={styles.said} data-testid="chat-card-said">
-          {said}
+      {shown && whyNot && (
+        <p className={styles.whyNot} id={`${task}-why-not`} data-testid="chat-card-why-not">
+          {t(`chat.card.whyNot.${whyNot}`)}
         </p>
       )}
-      {summary.told && summary.changes.length + (compare ? moreSaid.length : 0) > 0 && (
+      {summary.told &&
+        head.map((sentence, index) => (
+          <p key={index} className={styles.said} data-testid="chat-card-said">
+            {sentence}
+          </p>
+        ))}
+      {summary.told && summary.changes.length + moreSaid.length > 0 && (
         <ChangesView
           task={task}
-          said={compare ? moreSaid : []}
+          said={compare || !comparable ? moreSaid : []}
           changes={summary.changes}
           allOpen={compare}
         />
@@ -368,7 +371,12 @@ function ChangeRow({
   const goName = opensCode ? t("chat.summary.open") : t("chat.summary.locate");
   return (
     <div className={styles.row} data-testid="chat-change">
-      <div className={styles.line} data-opens={opens || undefined}>
+      <div
+        className={styles.line}
+        data-opens={opens || undefined}
+        // Open, the values are in what opened: the row does not say them twice.
+        data-open={(open && opens && found !== undefined) || undefined}
+      >
         {opens ? (
           <button
             type="button"

@@ -1,6 +1,6 @@
 import type { TaskOutcome } from "@animaquill/agent";
 import { ChevronRight, CircleAlert } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../app/context.ts";
 import { failureText } from "../failure.ts";
@@ -33,122 +33,145 @@ export function FailureCard({
   const ui = useChatUi();
   const { t } = useTranslation();
   useSyncExternalStore(ai.subscribe, ai.getSnapshot);
-  const [asking, setAsking] = useState(false);
+  // Trying again after the task changed something asks first: take that back, or keep it. With
+  // the relay, the service goes through it only once people chose.
+  const [asking, setAsking] = useState<"retry" | "relay">();
   const first = useRef<HTMLButtonElement>(null);
+  const card = useRef<HTMLDivElement>(null);
+  const backToRetry = useRef(false);
   useEffect(() => {
     if (asking) first.current?.focus();
+    else if (backToRetry.current) {
+      backToRetry.current = false;
+      card.current?.querySelector<HTMLElement>('[data-testid="chat-failure-retry"]')?.focus();
+    }
   }, [asking]);
   const service = chat.modelNow()?.service;
-  const { advice, detail, relay } = failureText(t, outcome.failure, {
+  const { advice, detail, reason, refusal } = failureText(t, outcome.failure, {
     relayed: outcome.relayed === true,
     canRelay: ai.canRelay,
     service: service?.name,
   });
-  const kind = relay ? "relay" : (outcome.failure?.kind ?? "other");
-  const retry = () => {
-    if (changed > 0 && chat.undoState(task) === "undo") setAsking(true);
-    else void chat.retry();
+  const throughRelay = () => {
+    if (service) ai.update(service.id, { route: "relay" });
   };
+  const retry = (how: "retry" | "relay" = "retry") => {
+    if (changed > 0 && chat.undoState(task) === "undo") {
+      setAsking(how);
+      return;
+    }
+    if (how === "relay") throughRelay();
+    void chat.retry();
+  };
+  const settings = () =>
+    workbench.openSettings({ group: "models", depth: 2, service: service?.id });
   // Straight to a service the browser could not reach: through the relay of the platform instead.
   const canUseRelay =
-    kind === "network" &&
+    reason === "network" &&
     ai.canRelay &&
     outcome.relayed !== true &&
     service !== undefined &&
     service.route !== "relay";
-  const retryButton = (main: boolean) => (
+  const button = (id: string, label: string, run: () => void, main = false) => (
     <button
+      key={id}
       type="button"
       className={main ? styles.primary : undefined}
-      data-testid="chat-failure-retry"
-      onClick={retry}
+      data-testid={id}
+      onClick={run}
     >
-      {t("chat.failure.retry")}
+      {label}
     </button>
   );
-  const actions = () => {
-    switch (kind) {
+  const retryButton = (main: boolean) =>
+    button("chat-failure-retry", t("chat.failure.retry"), () => retry(), main);
+  const otherModel = (main: boolean) =>
+    button("chat-failure-model", t("chat.failure.otherModel"), () => ui.openModels(), main);
+  const actions = (): readonly ReactNode[] => {
+    switch (reason) {
       case "contextFull":
         // Too long for its model even with room made: a new conversation goes on from its summary.
-        return (
-          <button
-            type="button"
-            className={styles.primary}
-            data-testid="chat-fresh"
-            onClick={() => chat.continueFresh()}
-          >
-            {t("chat.failure.fresh")}
-          </button>
-        );
+        return [button("chat-fresh", t("chat.failure.fresh"), () => chat.continueFresh(), true)];
       case "key":
-        return (
-          <>
-            <button
-              type="button"
-              className={styles.primary}
-              data-testid="chat-failure-key"
-              onClick={() =>
-                workbench.openSettings({ group: "models", depth: 2, service: service?.id })
-              }
-            >
-              {t("chat.failure.key")}
-            </button>
-            {retryButton(false)}
-          </>
-        );
+        return [
+          button("chat-failure-key", t("chat.failure.key"), settings, true),
+          retryButton(false),
+        ];
       case "notFound":
-        return (
-          <>
-            <button
-              type="button"
-              className={styles.primary}
-              data-testid="chat-failure-model"
-              onClick={() => ui.openModels()}
-            >
-              {t("chat.failure.otherModel")}
-            </button>
-            {retryButton(false)}
-          </>
-        );
+      case "quota":
+        return [otherModel(true), retryButton(false)];
+      case "rate":
+      case "server":
+        return [retryButton(true), otherModel(false)];
       case "network":
-        return canUseRelay ? (
-          <>
-            <button
-              type="button"
-              className={styles.primary}
-              data-testid="chat-failure-relay"
-              onClick={() => {
-                ai.update(service.id, { route: "relay" });
+        return canUseRelay
+          ? [
+              button("chat-failure-relay", t("chat.failure.useRelay"), () => retry("relay"), true),
+              retryButton(false),
+            ]
+          : [retryButton(true), otherModel(false)];
+      case "relay":
+        // What the relay refused, and the one thing that helps, as the line over the box has it.
+        if (refusal === "signedOut" && workbench.account)
+          return [
+            button(
+              "chat-failure-sign-in",
+              t("chat.failure.signIn"),
+              () => void workbench.signIn(),
+              true,
+            ),
+            retryButton(false),
+          ];
+        if (
+          refusal === "badTarget" ||
+          refusal === "unreachable" ||
+          refusal === "redirect" ||
+          refusal === "blocked"
+        )
+          return [
+            button("chat-failure-address", t("chat.failure.checkAddress"), settings, true),
+            retryButton(false),
+          ];
+        if (refusal === "off" && service)
+          return [
+            button(
+              "chat-failure-direct",
+              t("chat.failure.useDirect"),
+              () => {
+                ai.update(service.id, { route: "direct" });
                 retry();
-              }}
-            >
-              {t("chat.failure.useRelay")}
-            </button>
-            {retryButton(false)}
-          </>
-        ) : (
-          retryButton(true)
-        );
+              },
+              true,
+            ),
+            retryButton(false),
+          ];
+        return [retryButton(true)];
       default:
-        return (
-          <>
-            {retryButton(true)}
-            {/* What a service says of pictures it does not take is no failure of its own kind. */}
-            {pictures && (kind === "other" || kind === "server") && (
-              <button
-                type="button"
-                data-testid="chat-resend-without-pictures"
-                onClick={() => void chat.resendWithoutPictures()}
-              >
-                {t("chat.failure.withoutPictures")}
-              </button>
-            )}
-          </>
-        );
+        return [
+          retryButton(true),
+          otherModel(false),
+          // What a service says of pictures it does not take is no failure of its own kind.
+          ...(pictures
+            ? [
+                button(
+                  "chat-resend-without-pictures",
+                  t("chat.failure.withoutPictures"),
+                  () => void chat.resendWithoutPictures(),
+                ),
+              ]
+            : []),
+        ];
     }
   };
   return (
-    <div className={styles.failure} role="alert" data-testid="chat-failure" data-kind={kind}>
+    <div
+      className={styles.failure}
+      role="alert"
+      data-testid="chat-failure"
+      ref={card}
+      data-kind={reason}
+      data-refusal={refusal}
+    >
       <p className={styles.failureText}>
         <CircleAlert size={14} aria-hidden className={styles.failureIcon} />
         <span>{advice}</span>
@@ -161,7 +184,8 @@ export function FailureCard({
               type="button"
               className={styles.primary}
               onClick={() => {
-                setAsking(false);
+                if (asking === "relay") throughRelay();
+                setAsking(undefined);
                 void chat.undoTask(task).then(() => chat.retry());
               }}
             >
@@ -170,13 +194,21 @@ export function FailureCard({
             <button
               type="button"
               onClick={() => {
-                setAsking(false);
+                if (asking === "relay") throughRelay();
+                setAsking(undefined);
                 void chat.retry();
               }}
             >
               {t("chat.failure.retryOn")}
             </button>
-            <button type="button" className={styles.ghost} onClick={() => setAsking(false)}>
+            <button
+              type="button"
+              className={styles.ghost}
+              onClick={() => {
+                backToRetry.current = true;
+                setAsking(undefined);
+              }}
+            >
               {t("chat.failure.cancel")}
             </button>
           </div>

@@ -38,7 +38,9 @@ test("a task of AI goes back from its card after a reload, and comes again", asy
   await shot(page, "card-after-reload");
   await card(page).getByRole("button", { name: "撤销这一轮" }).click();
   await expect.poll(() => markers(page)).toEqual({});
-  await expect(page.getByText("撤销了 2 处")).toBeVisible();
+  // The notice says so, and the title of the card.
+  await expect(page.getByText("撤销了 2 处")).toHaveCount(2);
+  await expect(card(page)).toContainText("撤销了 2 处");
   await expect(card(page).getByRole("button", { name: "重做这一轮" })).toBeVisible();
 
   // Taken back, and loaded again: it can be done again.
@@ -95,8 +97,10 @@ test("what people changed since stays, and says which; all of it changed, nothin
   // The second task: nothing of it is left to take back, which its button says.
   const blocked = card(page).getByRole("button", { name: "撤销这一轮" });
   await expect(blocked).toHaveAttribute("aria-disabled", "true");
-  await blocked.hover();
-  await expect(page.getByRole("tooltip")).toHaveText("这一轮改的地方后来都被改过了");
+  // Why, on a line of the card: in sight without hovering, as on a phone.
+  await expect(card(page).getByTestId("chat-card-why-not")).toHaveText(
+    "这一轮改的地方后来都被改过了",
+  );
   await shot(page, "blocked-hover");
   await blocked.click({ force: true });
   await expect.poll(() => markers(page)).toEqual({ m1: "一", m2: "我改的" });
@@ -177,8 +181,9 @@ test.describe("a project of the platform", () => {
     );
     const button = card(page).getByRole("button", { name: "撤销这一轮" });
     await expect(button).toHaveAttribute("aria-disabled", "true");
-    await button.hover();
-    await expect(page.getByRole("tooltip")).toHaveText("在做这次改动的那台电脑上能撤销");
+    await expect(card(page).getByTestId("chat-card-why-not")).toHaveText(
+      "在做这次改动的那台电脑上能撤销",
+    );
     await shot(page, "other-device");
   });
 });

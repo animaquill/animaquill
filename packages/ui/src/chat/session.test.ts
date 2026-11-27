@@ -1022,6 +1022,12 @@ describe("a conversation of its own", () => {
     await chat.resend({ text: "把标题挪下去" });
     expect(users()).toHaveLength(3);
     expect(users()[2]).not.toHaveProperty("rewrites");
+    // An earlier turn, by its task: a new turn at the end that rewrites that one.
+    fake({ fake: [{ text: "四" }] });
+    await chat.resend({ text: "把标题挪到中间" }, first?.task);
+    expect(users()[3]).toMatchObject({ text: "把标题挪到中间", rewrites: first?.task });
+    // Nothing holds a message without pictures back here; a missing project does.
+    expect(await chat.holdFor([])).toBeUndefined();
   });
 
   it("gets a short title from its model after the first turn, unless people named it", async () => {

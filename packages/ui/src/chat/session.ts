@@ -1174,21 +1174,43 @@ export class ChatSession {
   }
 
   /**
-   * The last turn once more, as a new turn: with the same words, or with the words people edited
-   * it to, which marks the new message as rewriting the old one (`UserEntry.rewrites`), so that the
-   * old turn folds away under it. Its pictures and what the editor showed go as they went; what it
-   * changed stays, unless people took it back first (`undoTask`). It asks for a plan first as it did.
+   * A turn once more, as a new turn at the end: the last one unless `task` says which. With the
+   * same words, or with the words (and pictures) people edited it to, which marks the new message
+   * as rewriting the old one (`UserEntry.rewrites`), so that the old turn folds away under it. What
+   * the editor showed goes as it went; what it changed stays, unless people took it back first
+   * (`undoTask`). It asks for a plan first as it did.
    */
-  async resend(edited?: { readonly text: string }): Promise<TaskOutcome | undefined> {
+  async resend(
+    edited?: { readonly text: string; readonly images?: readonly AttachedImage[] },
+    task?: string,
+  ): Promise<TaskOutcome | undefined> {
     const last = this.#snapshot.conversation
       ?.getSnapshot()
-      .entries.findLast((entry) => entry.role === "user");
+      .entries.findLast(
+        (entry) => entry.role === "user" && (task === undefined || entry.task === task),
+      );
     if (last?.role !== "user") return undefined;
-    const rewritten = edited !== undefined && edited.text !== last.text;
-    return this.send(rewritten ? edited.text : last.text, last.images, last.selection, {
+    const text = edited?.text ?? last.text;
+    const images = edited?.images ?? last.images ?? [];
+    const same = (a: readonly AttachedImage[], b: readonly AttachedImage[]) =>
+      a.length === b.length && a.every((image, index) => image.image === b[index]?.image);
+    const rewritten =
+      edited !== undefined && (text !== last.text || !same(images, last.images ?? []));
+    return this.send(text, images, last.selection, {
       ...(last.plan && { plan: true }),
       ...(rewritten && { rewrites: last.task }),
     });
+  }
+
+  /**
+   * Why a message with these pictures could not go now, as `send` would find before it goes; or
+   * nothing, where it would go. Nothing changes by asking.
+   */
+  async holdFor(images: readonly AttachedImage[]): Promise<ChatHold | undefined> {
+    if (images.length > 0 && this.seesPictures() === false) return "noPictures";
+    if (!this.#project) return "noProject";
+    const target = await this.#target();
+    return typeof target === "string" ? target : undefined;
   }
 
   /** The last turn once more without its pictures, where its model or service took none. */

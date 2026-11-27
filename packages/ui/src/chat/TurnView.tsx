@@ -10,6 +10,7 @@ import styles from "./ChatPanel.module.css";
 import { useOpened } from "./expanded.ts";
 import { planOf, plansIn } from "./plan.ts";
 import { PlanCard } from "./PlanCard.tsx";
+import { plainOf } from "./refs.ts";
 import { placesOf, summaryOf } from "./summary.ts";
 import type { Names } from "./toolSummary.ts";
 import type { Turn } from "./turns.ts";
@@ -84,6 +85,10 @@ function RewrittenLine(props: {
       <span className={turnStyles.rewrittenText}>
         {t("chat.user.rewritten")}
         {kept && ` · ${t("chat.user.rewrittenKept", { count: places })}`}
+      </span>
+      {/* Which message it was: its first words, the rest when it opens. */}
+      <span className={turnStyles.rewrittenWords} aria-hidden>
+        {plainOf(props.turn.user.text)}
       </span>
       <ChevronRight size={12} aria-hidden className={turnStyles.rewrittenChevron} />
     </button>

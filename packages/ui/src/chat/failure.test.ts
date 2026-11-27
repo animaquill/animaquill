@@ -2,7 +2,7 @@ import { failureOf } from "@animaquill/agent";
 import { relayRefusalBody } from "@animaquill/host/relay";
 import { describe, expect, it } from "vitest";
 import { createI18n } from "../i18n/i18n.ts";
-import { failureText } from "./failure.ts";
+import { failureText, firstSaid } from "./failure.ts";
 
 describe("what people read when a service cannot be talked to", () => {
   it("says it was the relay of the platform, and why, when it was", async () => {
@@ -10,7 +10,8 @@ describe("what people read when a service cannot be talked to", () => {
     const said = `401 ${JSON.stringify(relayRefusalBody("signedOut", "sign in to use the relay"))}`;
     const text = failureText(t, failureOf(said), { relayed: true, canRelay: true });
     expect(text.advice).toBe(t("chat.relay.signedOut"));
-    expect(text.relay).toBe(true);
+    expect(text.reason).toBe("relay");
+    expect(text.refusal).toBe("signedOut");
     expect(text.detail).toContain("服务器的说明");
     // Not that the service took the key for a wrong one, which a 401 alone would say.
     expect(failureOf(said).kind).toBe("key");
@@ -25,7 +26,7 @@ describe("what people read when a service cannot be talked to", () => {
       "连不上 Anthropic，可能是浏览器挡住了直连。",
     );
     expect(failureText(t, failure, { ...where, canRelay: false }).advice).toBe(
-      "连不上 Anthropic，可能是浏览器挡住了直连，也可能是地址或网络不对。",
+      "连不上 Anthropic，可能断网了，也可能这家服务不让浏览器直接连。",
     );
     expect(failureText(t, failure, { ...where, relayed: true }).advice).toBe(
       t("chat.failed.networkRelay"),
@@ -58,6 +59,19 @@ describe("what people read when a service cannot be talked to", () => {
     expect(sentences[0]).toContain("公司的 <DeepSeek>");
     expect(sentences[3]).toBe("公司的 <DeepSeek> 找不到这个模型。");
     expect(sentences[5]).toBe("上下文满了。");
+    // What the service said, where the failure has no kind of its own.
+    expect(sentences[6]).toBe("公司的 <DeepSeek> 说：something else");
+    // A quota used up is not too many requests: trying again soon does not help.
+    const quota = failureText(
+      t,
+      failureOf(
+        '429 {"error":{"message":"You exceeded your current quota, please check your plan"}}',
+      ),
+      where,
+    );
+    expect(quota.reason).toBe("quota");
+    expect(quota.advice).toBe("公司的 <DeepSeek> 的额度用完了。");
+    expect(failureText(t, failureOf("429 Too many requests"), where).reason).toBe("rate");
     // A service of no name known.
     expect(failureText(t, failureOf("401"), { relayed: false, canRelay: true }).advice).toBe(
       "服务的 key 不对。",
@@ -76,7 +90,16 @@ describe("what people read when a service cannot be talked to", () => {
     expect(t("chat.failed.relayUpload")).toContain("一分钟");
     // Straight to a service, a 408 is the service's.
     expect(failureText(t, slow, { relayed: false, canRelay: true }).advice).toBe(
-      t("chat.failed.other", { service: "服务" }),
+      "服务说：Request Timeout",
     );
+  });
+
+  it("takes the first sentence of what a service said, out of its JSON", () => {
+    expect(firstSaid('400 {"error":{"message":"Invalid image. Try another one."}}')).toBe(
+      "Invalid image.",
+    );
+    expect(firstSaid("500 upstream died\nstack trace")).toBe("upstream died");
+    expect(firstSaid("x".repeat(200))).toHaveLength(80);
+    expect(firstSaid("")).toBe("");
   });
 });

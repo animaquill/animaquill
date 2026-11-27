@@ -32,7 +32,15 @@ describe("a change in a row of the card, as its sentence says it", () => {
         { path: "duration", before: "5", after: "6" },
       ],
     });
-    expect(changeParts(t, more, undefined).what).toBe("开头等 2 项");
+    // Several fields: their names, the values left to the row opened.
+    expect(changeParts(t, more, undefined)).toEqual({ object: "片段「标题」", what: "开头、时长" });
+    const three = change({
+      fields: [...more.fields, { path: "note", before: "a", after: "b" }],
+    });
+    expect(changeParts(t, three, undefined)).toEqual({
+      object: "片段「标题」",
+      what: "开头、时长等 3 项",
+    });
     expect(changeLine(t, more, undefined)).toBe("把片段「标题」的开头从 1 改成 2等 2 项");
   });
 

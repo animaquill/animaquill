@@ -3726,11 +3726,12 @@
     },
     "card": {
       "noChanges": "没有改项目",
+      "undone": "撤销了 {{count}} 处",
       "compare": "对比",
       "row": {
         "code": "代码",
         "lines": "+{{added}} −{{removed}} 行",
-        "fieldsMore": "{{field}}等 {{count}} 项",
+        "fieldsMore": "{{fields}}等 {{count}} 项",
         "added": "新加了",
         "removed": "删了",
         "changed": "改了",
@@ -3766,10 +3767,13 @@
       "useRelay": "改用服务器转发",
       "details": "详情",
       "undoThenRetry": "撤销 {{count}} 处再重试",
-      "retryOn": "接着改",
+      "retryOn": "保留改动重试",
       "cancel": "算了",
       "withoutPictures": "去掉图片重发",
-      "fresh": "从这里开新对话"
+      "fresh": "从这里开新对话",
+      "signIn": "登录",
+      "checkAddress": "检查服务地址",
+      "useDirect": "改成直连"
     },
     "usage": {
       "detail": "输入 {{input}} · 输出 {{output}} · 缓存读 {{cacheRead}} · 缓存写 {{cacheWrite}}",
@@ -3803,13 +3807,15 @@
     "failed": {
       "someService": "服务",
       "network": "连不上 {{service}}，可能是浏览器挡住了直连。",
-      "networkLocal": "连不上 {{service}}，可能是浏览器挡住了直连，也可能是地址或网络不对。",
+      "networkLocal": "连不上 {{service}}，可能断网了，也可能这家服务不让浏览器直接连。",
       "networkRelay": "连不上服务器，请检查网络后再试。",
       "relayUpload": "请求没能及时传到服务器：通过服务器转发时，请求要在大约一分钟内传完（最多 20 MB）。网络慢时少带一些图片或内容再试。",
       "key": "{{service}} 的 key 不对。",
-      "rate": "{{service}} 说请求太多或额度用完了。",
+      "rate": "{{service}} 说请求太多，稍后再试。",
+      "quota": "{{service}} 的额度用完了。",
       "notFound": "{{service}} 找不到这个模型。",
       "server": "{{service}} 那边出了问题。",
+      "said": "{{service}} 说：{{said}}",
       "other": "出错了。",
       "contextFull": "上下文满了。"
     },
@@ -4020,7 +4026,7 @@
       "edit": "编辑后重发",
       "more": "更多",
       "back": "回到这一轮之前",
-      "fork": "从这里分出新对话",
+      "fork": "在新对话里重问这一句",
       "sent": "看 AI 收到的原文",
       "sentTitle": "AI 收到的原文",
       "close": "关闭",
@@ -4032,6 +4038,9 @@
       "keepResend": "保留改动重发",
       "resendWays": "别的重发方式",
       "rewritten": "已改写重发 · 原来的一轮",
+      "whenDone": "AI 做完后可以",
+      "backNone": "从这一轮起没有能撤的改动",
+      "waitRunning": "正在跑的一轮做完后才能重发",
       "rewrittenKept": "改动还在（{{count}} 处）"
     },
     "answer": {

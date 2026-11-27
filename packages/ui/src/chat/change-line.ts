@@ -111,8 +111,19 @@ export function changeParts(
     };
   if (said === "added" || said === "removed" || said === "changed")
     return { object, what: t(`${words}.${said}`) };
-  const what =
-    fields > 1 ? t("chat.card.row.fieldsMore", { field, count: fields, ...asText }) : (field ?? "");
+  if (fields > 1) {
+    // Several fields: their names, the values in the row opened, never one field's for all.
+    const names = change.fields.slice(0, 2).map(({ path }) => fieldName(t, path));
+    const listed = names.join("、");
+    return {
+      object,
+      what:
+        fields > 2
+          ? t("chat.card.row.fieldsMore", { fields: listed, count: fields, ...asText })
+          : listed,
+    };
+  }
+  const what = field ?? "";
   if (said === "cleared") return { object, what, after: t(`${words}.cleared`) };
   return {
     object,

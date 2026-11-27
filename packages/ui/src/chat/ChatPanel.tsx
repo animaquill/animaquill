@@ -27,6 +27,7 @@ import { EmptyStart, Onboarding } from "./ChatStart.tsx";
 import { ConversationList } from "./ConversationList.tsx";
 import { InputArea, type InputAreaHandle } from "./input/InputArea.tsx";
 import { firstWords } from "./conversations.ts";
+import { setOpened } from "./expanded.ts";
 import { plainOf } from "./refs.ts";
 import type { ModelPacksSnapshot } from "./packs.ts";
 import packStyles from "./ModelPacks.module.css";
@@ -190,8 +191,12 @@ export function ChatPanel() {
    * Goes to the turn a search found, once the conversation it is in shows: the words found light
    * up in it for a while, and the turn too.
    */
+  const [, opened] = useState(0);
   const showTurn = (task: string | undefined, query?: string) => {
     if (task === undefined) return;
+    // A turn sent again edited is folded: what was found in it opens it.
+    setOpened(`${task}/rewritten`, true);
+    opened((count) => count + 1);
     requestAnimationFrame(() => {
       const turn = listRef.current?.querySelector<HTMLElement>(`[data-task="${CSS.escape(task)}"]`);
       if (!turn) return;
