@@ -406,8 +406,7 @@ test("the card of changes, a message and its menu, editing it, a failure of each
     await box(page).press("Enter");
   };
   const fresh = async () => {
-    await chat(page).getByTestId("chat-more").click();
-    await chat(page).getByRole("menuitem", { name: "新对话" }).click();
+    await chat(page).getByTestId("chat-new").click();
   };
   const lastUser = () => chat(page).getByTestId("chat-user").last();
 
