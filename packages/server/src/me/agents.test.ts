@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { ANYONE } from "../access.ts";
 import { agentCards, agentHolds, agentMail, agentWatches, agentWindows } from "../schema.ts";
@@ -12,6 +12,8 @@ import {
   listenForAgents,
   MAIL_MS,
   MOST_WAITING,
+  MOST_MAIL_PER_PERSON,
+  MOST_TARGETS,
   MOST_WINDOWS,
   postMail,
   REPEAT_MS,
@@ -497,5 +499,127 @@ describe.skipIf(!TEST_DATABASE)("what the conversations of a project say to each
         .from(agentMail)
         .where(and(eq(agentMail.projectId, project.id), eq(agentMail.toAgent, "chat-c"))),
     ).toEqual([]);
+  });
+
+  test("NUL and halves of an emoji in what is sent: kept without them, nothing refused, the window stays", async () => {
+    const project = await newProject(w);
+    const named = { ...card("idle"), name: "a\u0000b\ud83d", changed: ["x\u0000"] };
+    const said = await serve(project.id, "w-1", ["chat-b"], [{ id: "chat-b", card: named }]);
+    expect(said.status).toBe(200);
+    expect(said.json.refused).toBeUndefined();
+    // Said again as the window does: also now.
+    expect(
+      (await serve(project.id, "w-1", ["chat-b"], [{ id: "chat-b", card: named }])).json.owned,
+    ).toEqual(["chat-b"]);
+    const roster = await ask(p, "GET", at(project.id, ""));
+    expect(roster.json.agents[0].card).toMatchObject({ name: "ab\ufffd", changed: ["x"] });
+    const text = "开场\u0000的配乐\ud83d";
+    const sent = await post(project.id, {
+      ...mail("chat-b", text),
+      mail: { ...mail("chat-b", text).mail, body: { text, from: { name: "A\u0000" } } },
+    });
+    expect(sent.json).toEqual({ result: "posted" });
+    const [taken] = (await claim(project.id, "w-1", "chat-b")).json.mail;
+    expect(taken.text).toBe("开场的配乐\ufffd");
+    expect(taken.body).toMatchObject({ text: "开场的配乐\ufffd", from: { name: "A" } });
+    const signal = await ask(p, "POST", at(project.id, "/signal"), {
+      window: "w-1",
+      kind: "answer",
+      mail: "m-1",
+      outcome: { said: "\u0000\udc00" },
+    });
+    expect(signal.status).toBe(204);
+  });
+
+  test("a leave of before the page came back, that comes late, does nothing; nor one of a window that never was", async () => {
+    const project = await newProject(w);
+    expect((await serve(project.id, "w-1", ["chat-b"])).json.owned).toEqual(["chat-b"]);
+    await serve(project.id, "w-2", ["chat-b"]);
+    // The page went (as its first time), and came back (its second) before its leave came.
+    const back = await ask(p, "PUT", at(project.id, "/windows/w-1"), {
+      serve: ["chat-b"],
+      again: true,
+      generation: 1,
+    });
+    expect(back.json.owned).toEqual(["chat-b"]);
+    const late = await ask(p, "POST", at(project.id, "/windows/w-1/leave"), {
+      keepCards: true,
+      generation: 0,
+    });
+    expect(late.status).toBe(204);
+    expect((await serve(project.id, "w-1", ["chat-b"])).json.owned).toEqual(["chat-b"]);
+    expect((await serve(project.id, "w-2", ["chat-b"])).json.waits).toEqual(["chat-b"]);
+    // Its leave of now goes as it should.
+    await ask(p, "POST", at(project.id, "/windows/w-1/leave"), { generation: 1 });
+    expect((await serve(project.id, "w-2", ["chat-b"])).json.owned).toEqual(["chat-b"]);
+    // A leave of no window keeps nothing of it.
+    await ask(p, "POST", at(project.id, "/windows/w-none/leave"), {});
+    const rows = await t.db
+      .select()
+      .from(agentWindows)
+      .where(and(eq(agentWindows.projectId, project.id), eq(agentWindows.windowId, "w-none")));
+    expect(rows).toEqual([]);
+  });
+
+  test("what a window took for one goes back as it lets go of it, gives it over, or is taken over: the next takes it at once; what it read goes", async () => {
+    const project = await newProject(w);
+    const texts = async (window: string) =>
+      (await claim(project.id, window, "chat-b")).json.mail.map((m: { text: string }) => m.text);
+    // Given over.
+    await serve(project.id, "w-1", ["chat-b"]);
+    await serve(project.id, "w-2", ["chat-b"]);
+    await post(project.id, mail("chat-b", "读过的", "m-read"));
+    await post(project.id, mail("chat-b", "没读的", "m-unread"));
+    expect(await texts("w-1")).toHaveLength(2);
+    expect(
+      (
+        await ask(p, "POST", at(project.id, "/windows/w-1/yield"), {
+          agent: "chat-b",
+          read: ["m-read"],
+        })
+      ).json,
+    ).toEqual({ owned: false });
+    expect((await serve(project.id, "w-2", ["chat-b"])).json).toMatchObject({
+      owned: ["chat-b"],
+      mail: ["chat-b"],
+    });
+    expect(await texts("w-2")).toEqual(["没读的"]);
+    // Let go of: the window that waits takes it.
+    await ask(p, "POST", at(project.id, "/windows/w-2/leave"), { keepCards: true });
+    await serve(project.id, "w-1", ["chat-b"]);
+    expect(await texts("w-1")).toEqual(["没读的"]);
+    await serve(project.id, "w-3", ["chat-b"]);
+    await serve(project.id, "w-1", []);
+    expect(await texts("w-3")).toEqual(["没读的"]);
+    // Taken over from a window that went quiet: also once that one comes back.
+    await serve(project.id, "w-4", ["chat-b"]);
+    time += WINDOW_MS + 1000;
+    await serve(project.id, "w-4", ["chat-b"]);
+    await serve(project.id, "w-3", []);
+    expect(await texts("w-4")).toEqual(["没读的"]);
+  });
+
+  test("so many waited on in a project at most, the first to end go; so many messages of a person in all at most", async () => {
+    const project = await newProject(w);
+    for (let index = 0; index <= MOST_TARGETS; index++)
+      await ask(p, "POST", at(project.id, "/watch"), {
+        target: `chat-${index}`,
+        watcher: "chat-a",
+        until: time + 1000 + index,
+      });
+    const targets = await t.db
+      .selectDistinct({ target: agentWatches.target })
+      .from(agentWatches)
+      .where(eq(agentWatches.projectId, project.id));
+    expect(targets).toHaveLength(MOST_TARGETS);
+    expect(targets.map((row) => row.target)).not.toContain("chat-0");
+    // Of another project of the person's, as many as all may have.
+    const other = await newProject(w);
+    await t.db.execute(sql`
+      insert into agent_mail (user_id, project_id, mail_id, to_agent, from_agent, text, body, "left", sent_at, created_at, expires_at)
+      select ${w.userId}, ${other.id}, 'm-' || n, 'chat-' || (n % 100), 'chat-a', 'x', '{}'::jsonb, false, 1,
+        ${new Date(time)}, ${new Date(time + MAIL_MS)}
+      from generate_series(1, ${MOST_MAIL_PER_PERSON}) as n`);
+    expect((await post(project.id, mail("chat-b", "再一封"))).json.result).toBe("full");
   });
 });

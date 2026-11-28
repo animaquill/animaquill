@@ -303,6 +303,11 @@ export interface ChatSessionOptions {
   readonly chats: ChatStore | undefined;
   /** Another device wrote a conversation, which shows as it has it now. */
   readonly chatReplaced?: () => void;
+  /**
+   * Online, another window or device has a conversation this window was not there for a while
+   * with (`AgentRoomEvents.lost`): by its title, and the copy what went on here went into, if any.
+   */
+  readonly takenElsewhere?: (title: string, copy: string | undefined) => void;
   readonly ai: AiSettingsStore;
   /** The model packs installed here; without them, those that come with AnimaQuill. */
   readonly packs?: ModelPacks;
@@ -394,6 +399,8 @@ const SAVE_DELAY_MS = 500;
 const CARDS_MS = 2_000;
 /** How long what changed waits to go to the other windows, with what changes meanwhile. */
 const PUBLISH_DELAY_MS = 300;
+/** The ids of messages of the other windows a window keeps, to read each once. */
+const TOOK_KEPT = 1000;
 /** How long a tab that deletes a conversation waits for the tab that has it to let go, at most. */
 const GONE_TRIES = 50;
 const GONE_WAIT_MS = 100;
@@ -600,6 +607,11 @@ export class ChatSession {
   #serving = false;
   /** Messages taken from the other tabs that a conversation of this one has, unread: see `claim`. */
   readonly #claimed = new Set<string>();
+  /**
+   * The messages of the other windows this window took lately, by id: one that comes again (a
+   * window the platform took for gone gave it back meanwhile) is read once.
+   */
+  readonly #taken = new Set<string>();
   #publishTimer: ReturnType<typeof setTimeout> | undefined;
   /** The words each one sent each conversation lately, and when: see `REPEAT_MS`. */
   readonly #recent = new Map<string, Map<string, number>>();
@@ -2635,6 +2647,7 @@ export class ChatSession {
       wanted: (id, take) => void this.#wanted(room, id, take),
       gone: (id) => this.#goneElsewhere(room, id),
       resumed: () => this.#resumed(room),
+      lost: (id) => this.#lost(room, id),
     });
     this.#room = room;
     // What a conversation does changes with each step, and AI tools come and go: said again as
@@ -2764,6 +2777,17 @@ export class ChatSession {
       return [];
     });
     for (const each of posted) {
+      // Taken here before: read once.
+      if (this.#taken.has(each.id)) {
+        void room.done([each.id]).catch(() => {});
+        room.answer(each.id, { sent: "read" });
+        continue;
+      }
+      this.#taken.add(each.id);
+      if (this.#taken.size > TOOK_KEPT) {
+        const [oldest] = this.#taken;
+        if (oldest !== undefined) this.#taken.delete(oldest);
+      }
       const mail = mailOf(each);
       if (!mail) {
         void room.done([each.id]).catch(() => {});
@@ -2790,6 +2814,8 @@ export class ChatSession {
     if (!run || run.gone || run.elsewhere || this.#room !== room) {
       // It went meanwhile: the message waits for whoever has it next, as it was kept.
       this.#claimed.delete(mail.id);
+      // Given back: this window may take it again, then as it is.
+      this.#taken.delete(mail.id);
       void room.back([mail.id]).catch(() => {});
       return { sent: "waits", until: "away" };
     }
@@ -2825,6 +2851,7 @@ export class ChatSession {
     const room = this.#room;
     if (!room || waiting.length === 0) return;
     const claimed = waiting.filter((mail) => this.#claimed.delete(mail.id));
+    for (const mail of claimed) this.#taken.delete(mail.id);
     if (claimed.length > 0) void room.back(claimed.map((mail) => mail.id)).catch(() => {});
     for (const mail of waiting) {
       if (claimed.includes(mail)) continue;
@@ -2930,7 +2957,10 @@ export class ChatSession {
       // Taken again in a moment: not as the same words again.
       const recent = this.#recent.get(run.id);
       for (const mail of [...run.inbox, ...run.fields.mail]) {
-        if (given(mail)) recent?.delete(`${mail.from.id}\n${mail.text}`);
+        if (!given(mail)) continue;
+        recent?.delete(`${mail.from.id}\n${mail.text}`);
+        // Given back as the page went: taken again in a moment, then as it is.
+        this.#taken.delete(mail.id);
       }
       run.inbox = run.inbox.filter((mail) => !given(mail));
       if (run.fields.mail.some(given)) {
@@ -2943,6 +2973,36 @@ export class ChatSession {
     if (read.length > 0) void room.done(read).catch(() => {});
     this.#serveSoon();
     for (const id of this.#runs.keys()) void this.#claimFor(room, id);
+    this.#refresh();
+  }
+
+  /**
+   * Online, the window was not there for a while, and another window has one it had: what goes on
+   * in it here stops, and is written to a copy of its own, never over what the other window does
+   * with it (as when another device wrote it, `#split`); one where nothing waited to be written is
+   * only to read here. People are told.
+   */
+  #lost(room: AgentRoom, id: string): void {
+    const run = this.#runs.get(id);
+    if (!run || run.gone || this.#room !== room) return;
+    const entries = run.conversation.getSnapshot().entries;
+    const title =
+      run.fields.titleBy !== undefined && run.fields.title
+        ? run.fields.title
+        : firstWords(entries, TITLE_LENGTH);
+    const working = this.#busy(run) || run.pending !== undefined || run.unsaved;
+    clearTimeout(run.saving);
+    run.pending = undefined;
+    if (working) {
+      run.conversation.stop();
+      const copy = { id: newChatId(), title: `《${title}》在这台设备上的副本` };
+      this.#split(run, copy, true);
+      this.#options.takenElsewhere?.(title, copy.title);
+    } else {
+      run.elsewhere = true;
+      if (run === this.#shown) this.#options.takenElsewhere?.(title, undefined);
+    }
+    this.#serveSoon();
     this.#refresh();
   }
 

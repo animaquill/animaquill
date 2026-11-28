@@ -1,5 +1,5 @@
 {
-  "id": "ae6d9018-0c03-4b8c-9880-c3f949f143f4",
+  "id": "69cf9d4f-a47c-47f7-9dc5-c2289966c538",
   "prevId": "fab0b5df-9804-4bff-b4bd-7f6560516a33",
   "version": "7",
   "dialect": "postgresql",
@@ -547,6 +547,13 @@
           "type": "timestamp with time zone",
           "primaryKey": false,
           "notNull": true
+        },
+        "generation": {
+          "name": "generation",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
         }
       },
       "indexes": {

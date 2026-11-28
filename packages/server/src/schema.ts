@@ -1381,6 +1381,11 @@ export const agentWindows = pgTable(
     windowId: text("window_id").notNull(),
     /** Gone after this, and what it held with it, unless it says it is there before. */
     liveUntil: moment("live_until").notNull(),
+    /**
+     * How many times its page came back after it went (`again`): a leave of before that, which
+     * came late, does nothing.
+     */
+    generation: integer("generation").notNull().default(0),
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.projectId, table.windowId] }),

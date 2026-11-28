@@ -69,11 +69,30 @@ export interface AccountAgentsOptions {
   readonly listenPageHide?: (listener: () => void) => () => void;
   /** Where the page comes back from the browser's cache, see `pageshow` and `persisted`. */
   readonly listenPageShow?: (listener: () => void) => () => void;
+  /**
+   * Where the page may come back from a while without its timers (shown again, the network back),
+   * see `visibilitychange` and `online`.
+   */
+  readonly listenWake?: (listener: () => void) => () => void;
 }
 
 /** What a request that outlives its page may carry, with room to spare, as `KEEPALIVE_BYTES`. */
 const KEEPALIVE_BYTES = 60_000;
 const fitsKeepalive = (body: string) => new TextEncoder().encode(body).byteLength < KEEPALIVE_BYTES;
+
+/**
+ * What goes to the platform, as it keeps it: without NUL, and with halves of UTF-16 pairs (as of an
+ * emoji cut in two) made the replacement character; also in the names of fields.
+ */
+const cleaned = (value: unknown): unknown => {
+  if (typeof value === "string") return value.replaceAll("\u0000", "").toWellFormed();
+  if (Array.isArray(value)) return value.map(cleaned);
+  if (typeof value === "object" && value !== null)
+    return Object.fromEntries(
+      Object.entries(value).map(([key, each]) => [cleaned(key) as string, cleaned(each)]),
+    );
+  return value;
+};
 
 /** The page's own events, where there is a page: also where this runs without one, as in tests. */
 interface PageEvents {
@@ -134,6 +153,17 @@ export function accountAgents(options: AccountAgentsOptions): AgentPost {
       page.addEventListener("pagehide", listener);
       return () => page.removeEventListener?.("pagehide", listener);
     });
+  const listenWake =
+    options.listenWake ??
+    ((listener) => {
+      if (!page.addEventListener) return () => {};
+      page.addEventListener("visibilitychange", listener);
+      page.addEventListener("online", listener);
+      return () => {
+        page.removeEventListener?.("visibilitychange", listener);
+        page.removeEventListener?.("online", listener);
+      };
+    });
   const listenPageShow =
     options.listenPageShow ??
     ((listener) => {
@@ -168,7 +198,7 @@ export function accountAgents(options: AccountAgentsOptions): AgentPost {
       ) =>
         withinTime(REQUEST_TIMEOUT_MS, async (signal) => {
           const at = `/me/projects/${encodeURIComponent(await placeOf())}/agents${path}`;
-          const text = body === undefined ? undefined : JSON.stringify(body);
+          const text = body === undefined ? undefined : JSON.stringify(cleaned(body));
           const response = await request(options.api(at), {
             cache: "no-store",
             method: how.method ?? (body === undefined ? "GET" : "POST"),
@@ -198,6 +228,8 @@ export function accountAgents(options: AccountAgentsOptions): AgentPost {
       let away = false;
       /** It came back since: the platform is told so, as it took it for gone. */
       let rejoin = false;
+      /** Which time of its page this is: one more each time it comes back, see `again`. */
+      let generation = 0;
       /** Those this window has or asks for, and when one taken with `tryServe` was. */
       const wanted = new Map<string, number | undefined>();
       const owned = new Set<string>();
@@ -294,7 +326,13 @@ export function accountAgents(options: AccountAgentsOptions): AgentPost {
           answer: reply,
         } = await ask(
           windowPath,
-          { serve, ...(sendCards && { cards: mine }), ...(coming && { again: true }) },
+          {
+            serve,
+            // What a conversation read of what it took goes, as it lets go of one.
+            read: [...readHere].slice(-200),
+            ...(sendCards && { cards: mine }),
+            ...(coming && { again: true, generation }),
+          },
           { method: "PUT" },
         );
         if (isOver || away) return;
@@ -327,7 +365,10 @@ export function accountAgents(options: AccountAgentsOptions): AgentPost {
         for (const id of Array.from(owned)) {
           if (nowOwned.has(id)) continue;
           owned.delete(id);
-          if (wanted.has(id)) lost.add(id);
+          if (!wanted.has(id)) continue;
+          lost.add(id);
+          // Another window has it now: what goes on in it here stops.
+          events.lost?.(id);
         }
         for (const id of nowWaits) {
           if (!wanted.has(id) || waits.has(id)) continue;
@@ -401,7 +442,21 @@ export function accountAgents(options: AccountAgentsOptions): AgentPost {
           },
           onAgents,
         ) ?? (() => {});
-      const beat = setInterval(() => void sync(), heartbeatMs);
+      // Said every while; where much more went by between two (asleep, its timers held back), the
+      // platform may have taken it for gone: what it has is asked at once, and so as the page is
+      // shown again or the network is back.
+      let beatAt = Date.now();
+      const beat = setInterval(() => {
+        beatAt = Date.now();
+        void sync();
+      }, heartbeatMs);
+      const unwake = listenWake(() => {
+        if (isOver || away) return;
+        if (Date.now() - beatAt > heartbeatMs) {
+          beatAt = Date.now();
+          void sync();
+        }
+      });
 
       /** As the page or the room goes: what a conversation read goes, the rest goes back. */
       const leave = (keepCards: boolean) => {
@@ -410,9 +465,11 @@ export function accountAgents(options: AccountAgentsOptions): AgentPost {
         readHere.clear();
         owned.clear();
         waits.clear();
-        return said(`${windowPath}/leave`, { read, keepCards }, { keepalive: true }).catch(
-          () => {},
-        );
+        return said(
+          `${windowPath}/leave`,
+          { read, keepCards, generation },
+          { keepalive: true },
+        ).catch(() => {});
       };
       const unhide = listenPageHide(() => {
         if (isOver || away) return;
@@ -426,6 +483,7 @@ export function accountAgents(options: AccountAgentsOptions): AgentPost {
         if (isOver || !away) return;
         away = false;
         rejoin = true;
+        generation += 1;
         events.resumed?.();
         void sync();
       });
@@ -566,7 +624,9 @@ export function accountAgents(options: AccountAgentsOptions): AgentPost {
         },
         yieldTo(id) {
           if (!owned.has(id)) return;
-          void inTurn(() => said(`${windowPath}/yield`, { agent: id }))
+          void inTurn(() =>
+            said(`${windowPath}/yield`, { agent: id, read: [...readHere].slice(-200) }),
+          )
             .then((answer) => {
               if (isOver || !wanted.has(id)) return;
               if (answer.owned === true) {
@@ -638,6 +698,7 @@ export function accountAgents(options: AccountAgentsOptions): AgentPost {
           unwatch();
           unhide();
           unshow();
+          unwake();
           for (const done of waiting.values()) done(undefined);
           // What this window took and kept waits for whoever has those next; what was read goes.
           if (!wasAway) void leave(false);

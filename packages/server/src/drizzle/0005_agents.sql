@@ -58,6 +58,7 @@ CREATE TABLE "agent_windows" (
 	"project_id" text NOT NULL,
 	"window_id" text NOT NULL,
 	"live_until" timestamp with time zone NOT NULL,
+	"generation" integer DEFAULT 0 NOT NULL,
 	CONSTRAINT "agent_windows_user_id_project_id_window_id_pk" PRIMARY KEY("user_id","project_id","window_id"),
 	CONSTRAINT "agent_windows_id" CHECK ("agent_windows"."window_id" ~ '^[A-Za-z0-9_-]{1,64}$')
 );

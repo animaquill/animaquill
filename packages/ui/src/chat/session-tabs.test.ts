@@ -745,4 +745,76 @@ describe("conversations in the person's windows anywhere, online (chat6 technica
       "the window it was open in was closed; a message waits until the user opens it again",
     );
   });
+
+  it("a window that lost one it ran, as another took it over: the turn stops, what went on here goes to a copy, never over the other's", async () => {
+    const browser = new Browser();
+    const chats = memoryChats();
+    const one = openTab(browser, 1, chats, "account");
+    await settle();
+    one.fake({ fake: [{ text: "开场先放慢" }] });
+    await one.chat.send("剪开场");
+    const id = one.chat.getSnapshot().id as string;
+    await settle();
+    one.fake({
+      fake: [{ text: "这一段会写很久很久很久很久很久很久很久很久很久" }],
+      charactersPerSecond: 5,
+    });
+    void one.chat.send("再改一版");
+    await vi.waitFor(() => expect(one.chat.conversationOf(id)?.running).toBe(true));
+    const kept = JSON.stringify((await chats.load("p1", id))?.entries);
+    // The platform took this window for gone; another has it now.
+    browser.rooms.get(1)?.events.lost?.(id);
+    await vi.waitFor(() => expect(one.chat.getSnapshot().id).not.toBe(id));
+    const copy = one.chat.getSnapshot().id as string;
+    await vi.waitFor(async () => {
+      const saved = await chats.load("p1", copy);
+      expect(saved?.title).toBe("《剪开场》在这台设备上的副本");
+      expect(JSON.stringify(saved?.entries)).toContain("再改一版");
+    });
+    expect(one.chat.conversationOf(copy)?.running).toBeFalsy();
+    // What the other window has is as it was: nothing of here was written over it.
+    await settle();
+    expect(JSON.stringify((await chats.load("p1", id))?.entries)).toBe(kept);
+  });
+
+  it("one with nothing to write is only to read once it is lost; a message that comes again is read once", async () => {
+    const browser = new Browser();
+    const chats = memoryChats();
+    const one = openTab(browser, 1, chats, "account");
+    await settle();
+    one.fake({ fake: [{ text: "好" }, { text: "收到" }, { text: "又收到" }] });
+    await one.chat.send("配乐");
+    const id = one.chat.getSnapshot().id as string;
+    await settle();
+    const mail = {
+      id: "m-again",
+      to: id,
+      from: "chat-x",
+      text: "配乐换吗",
+      at: Date.now(),
+      left: false,
+      body: {
+        id: "m-again",
+        from: { id: "chat-x", name: "X", kind: "chat" },
+        text: "配乐换吗",
+        at: Date.now(),
+      },
+    };
+    browser.mail.push(structuredClone(mail));
+    browser.rooms.get(1)?.events.mail(id);
+    await vi.waitFor(() =>
+      expect(entriesOf(one.chat, id).filter((entry) => entry.role === "user")).toHaveLength(2),
+    );
+    await vi.waitFor(() => expect(one.chat.conversationOf(id)?.running).toBeFalsy());
+    // The same message again, as a window the platform took for gone gave it back meanwhile.
+    browser.mail.push(structuredClone(mail));
+    browser.rooms.get(1)?.events.mail(id);
+    await settle();
+    await settle();
+    expect(entriesOf(one.chat, id).filter((entry) => entry.role === "user")).toHaveLength(2);
+    expect(browser.mail).toEqual([]);
+    browser.rooms.get(1)?.events.lost?.(id);
+    await vi.waitFor(() => expect(one.chat.getSnapshot().elsewhere).toBe(true));
+    expect(one.chat.getSnapshot().id).toBe(id);
+  });
 });

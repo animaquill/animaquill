@@ -44,29 +44,37 @@ import type { PersonEvents } from "./events.ts";
  *
  * Under `/api/me/projects/:project/agents`, JSON; changes only from pages of this site; errors
  * `{error}`: signedOut (401), forbidden (403), notFound (404, also for a project the person may
- * not read), invalid (400), tooLarge (413), busy (429), unavailable (503).
+ * not read), invalid (400), tooLarge (413), busy (429), unavailable (503). What is sent is kept
+ * without NUL and with halves of UTF-16 pairs made whole (`cleaned`), which PostgreSQL takes.
  *
- * - `PUT …/windows/:window` `{serve, cards?, again?}`: the window is there (for `WINDOW_MS`), has these
- *   (`serve`, at most `MOST_SERVED`), and says this of those it has (`cards`, `[{id, card}]`, each at
- *   most `CARD_BYTES`; left out: as before). 200 `{owned, waits, mail, budget}`: which it has now,
- *   which it waits for, which of those it has have messages nobody took, and the count of turns. 409
- *   `left` for one that went, unless it says it comes back (`again`).
- * - `POST …/windows/:window/leave` `{read?, keepCards?}`: it goes: what it had goes to whoever waits
- *   for it, the messages it took go back (those it `read` go), and what it said of them goes unless
- *   `keepCards` (a page that goes away, whose conversations are away then). 204.
+ * - `PUT …/windows/:window` `{serve, cards?, read?, again?, generation?}`: the window is there (for
+ *   `WINDOW_MS`), has these (`serve`, at most `MOST_SERVED`), and says this of those it has
+ *   (`cards`, `[{id, card}]`, each at most `CARD_BYTES`; left out: as before). 200 `{owned, waits,
+ *   mail, budget, refused?}`: which it has now, which it waits for, which of those it has have
+ *   messages nobody took, the count of turns, and the cards that could not be kept. What it lets go
+ *   of goes to whoever waits for it, with the messages it took for it but those it `read`. 409
+ *   `left` for one that went, unless it says it comes back (`again`, as which time of its page:
+ *   `generation`).
+ * - `POST …/windows/:window/leave` `{read?, keepCards?, generation?}`: it goes: what it had goes to
+ *   whoever waits for it, the messages it took go back (those it `read` go), and what it said of
+ *   them goes unless `keepCards` (a page that goes away, whose conversations are away then). 204;
+ *   nothing for a window that never was, or a leave of a time of its page before it came back.
  * - `POST …/windows/:window/hold` `{agent}`: has one right away where no window does. `{owned}`.
- * - `POST …/windows/:window/yield` `{agent}`: lets go of one for the window that waits for it, and
- *   waits for it after that one. `{owned}`: still its own where none waits.
+ * - `POST …/windows/:window/yield` `{agent, read?}`: lets go of one for the window that waits for
+ *   it, with the messages it took for it but those it read, and waits for it after that one.
+ *   `{owned}`: still its own where none waits.
  * - `POST …/windows/:window/claim` `{agent}`: takes the messages for one it has. `{mail}`.
  * - `POST …/windows/:window/done` `{ids}`, `…/back` `{ids}`: messages it took, gone or back. 204.
  * - `GET …/agents`: `{agents: [{id, card, live, at}], held}`, what the windows said of those they
  *   have or had within `AWAY_MS`, and which any window has now.
  * - `POST …/mail` `{mail, most, repeatMs}`: leaves a message. `{result: "posted" | "full" |
- *   "repeat"}`. `MOST_WAITING` for one at most, `MOST_MAIL` of a project, `SENDS_PER_MINUTE`.
+ *   "repeat"}`. `MOST_WAITING` for one at most, `MOST_MAIL` of a project, `MOST_MAIL_PER_PERSON`
+ *   of all, `SENDS_PER_MINUTE` (each process of the API on its own).
  * - `POST …/signal` `{window, kind: "want" | "gone" | "answer", …}`: tells the person's other
  *   windows.
  * - `POST …/watch` `{target, watcher, until}`, `POST …/watchers` `{target}`: who waits to be told
- *   that one is idle, and taking them. `POST …/forget` `{agent}`: one deleted.
+ *   that one is idle (`MOST_WATCHERS` each, `MOST_TARGETS` of a project), and taking them.
+ *   `POST …/forget` `{agent}`: one deleted.
  * - `POST …/budget` `{add}` or `{reset: true}`, and the window: `{count, at}`.
  */
 
@@ -96,9 +104,16 @@ export const MESSAGE_CHARS = 4000;
 export const MAIL_BYTES = 32 * 1024;
 /** How long the same words from the same one go once, at most. */
 export const REPEAT_MS = 60_000;
-/** Who waits to be told of one at most. */
+/** Who waits to be told of one at most, and those waited on of a person's project. */
 export const MOST_WATCHERS = 50;
-/** Messages one person sends in a minute at most. */
+export const MOST_TARGETS = 200;
+/** Messages that wait for all of a person's projects at most. */
+export const MOST_MAIL_PER_PERSON = 5000;
+/**
+ * Messages one person sends in a minute at most: counted by each process of the API on its own, so
+ * that with several, each takes as many (what waits is limited all the same, `MOST_WAITING`,
+ * `MOST_MAIL`, `MOST_MAIL_PER_PERSON`).
+ */
 export const SENDS_PER_MINUTE = 60;
 /** Bytes of what a window says came of a message at most. */
 const ANSWER_BYTES = 1024;
@@ -111,6 +126,21 @@ const AGENTS_LOCK = 0x61712d61; // "aq-a"
 export const WINDOW_ID = /^[A-Za-z0-9_-]{1,64}$/;
 /** A conversation's id, `mcp:` and a session for an AI tool, a message's id. */
 export const AGENT_ID = /^[\x21-\x7e]{1,200}$/;
+
+/**
+ * What a page sent, as PostgreSQL keeps it: without NUL, which neither `text` nor `jsonb` takes, and
+ * with a half of a pair of UTF-16 (as of an emoji cut in two) made the replacement character,
+ * which `jsonb` does not take either; in strings and in the names of fields, however deep.
+ */
+export const cleaned = (value: unknown): unknown => {
+  if (typeof value === "string") return value.replaceAll("\u0000", "").toWellFormed();
+  if (Array.isArray(value)) return value.map(cleaned);
+  if (typeof value === "object" && value !== null)
+    return Object.fromEntries(
+      Object.entries(value).map(([key, each]) => [cleaned(key) as string, cleaned(each)]),
+    );
+  return value;
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -246,7 +276,11 @@ const settle = async (
 ): Promise<string | undefined> => {
   const holder = rows.find((row) => row.holds);
   if (holder && live.has(holder.window)) return holder.window;
-  if (holder) await tx.delete(agentHolds).where(holdsWhere(place, agent, holder.window));
+  if (holder) {
+    // Its window went: what it took for it waits for whoever has it now, also if it comes back.
+    await tx.delete(agentHolds).where(holdsWhere(place, agent, holder.window));
+    await giveBackMail(tx, place, agent, holder.window, []);
+  }
   const next = rows.find((row) => !row.holds && live.has(row.window));
   if (!next) return undefined;
   await give(tx, place, agent, next.window, now);
@@ -263,9 +297,42 @@ const give = async (tx: Tx, place: Place, agent: string, window: string, now: Da
   await tell(tx, place.userId, place.project, { k: "cards" });
 };
 
-/** A window lets go of one it has: the first of those that wait and are there has it then. */
-const letGo = async (tx: Tx, place: Place, agent: string, window: string, now: Date) => {
+/**
+ * What a window took for one it does not have any more: what a conversation of it read there
+ * (`read`) goes, the rest waits again, left, for whoever has it next, who can take it at once.
+ */
+const giveBackMail = async (
+  tx: Tx,
+  place: Place,
+  agent: string,
+  window: string,
+  read: readonly string[],
+) => {
+  const claimed = and(
+    eq(agentMail.userId, place.userId),
+    eq(agentMail.projectId, place.project),
+    eq(agentMail.toAgent, agent),
+    eq(agentMail.claimedBy, window),
+  );
+  if (read.length > 0)
+    await tx.delete(agentMail).where(and(claimed, inArray(agentMail.mailId, [...read])));
+  await tx.update(agentMail).set({ claimedBy: null, claimedAt: null, left: true }).where(claimed);
+};
+
+/**
+ * A window lets go of one it has: the first of those that wait and are there has it then, with
+ * what the window took for it and did not read.
+ */
+const letGo = async (
+  tx: Tx,
+  place: Place,
+  agent: string,
+  window: string,
+  now: Date,
+  read: readonly string[] = [],
+) => {
   await tx.delete(agentHolds).where(holdsWhere(place, agent, window));
+  await giveBackMail(tx, place, agent, window, read);
   const live = await liveWindows(tx, place, now);
   const rows = await holdsOf(tx, place, [agent]);
   const next = rows.find((row) => !row.holds && live.has(row.window));
@@ -324,9 +391,16 @@ const LEFT = new Date(0);
  * where it went (`leaveWindow`) and does not say it comes back (`again`, as a page does that comes
  * back from the browser's cache): a request it sent before it went, that came after, does nothing.
  */
-const beThere = async (tx: Tx, place: Place, window: string, now: Date, again = false) => {
+const beThere = async (
+  tx: Tx,
+  place: Place,
+  window: string,
+  now: Date,
+  again = false,
+  generation?: number,
+) => {
   const [row] = await tx
-    .select({ liveUntil: agentWindows.liveUntil })
+    .select({ liveUntil: agentWindows.liveUntil, generation: agentWindows.generation })
     .from(agentWindows)
     .where(
       and(
@@ -338,6 +412,8 @@ const beThere = async (tx: Tx, place: Place, window: string, now: Date, again = 
   if (row?.liveUntil.getTime() === LEFT.getTime() && !again) return "left" as const;
   const live = await liveWindows(tx, place, now);
   if (!live.has(window) && live.size >= MOST_WINDOWS) return "busy" as const;
+  // Back as of this time of its page: what it said as it went before is of before.
+  const since = Math.max(row?.generation ?? 0, again ? (generation ?? 0) : 0);
   await tx
     .insert(agentWindows)
     .values({
@@ -345,10 +421,11 @@ const beThere = async (tx: Tx, place: Place, window: string, now: Date, again = 
       projectId: place.project,
       windowId: window,
       liveUntil: new Date(now.getTime() + WINDOW_MS),
+      generation: since,
     })
     .onConflictDoUpdate({
       target: [agentWindows.userId, agentWindows.projectId, agentWindows.windowId],
-      set: { liveUntil: new Date(now.getTime() + WINDOW_MS) },
+      set: { liveUntil: new Date(now.getTime() + WINDOW_MS), generation: since },
     });
   live.add(window);
   return live;
@@ -376,18 +453,26 @@ const free = (place: Place, window: string, live: ReadonlySet<string>) =>
 
 export interface WindowSay {
   readonly serve: readonly string[];
-  /** It went, and comes back: see `beThere`. */
+  /** It went, and comes back: see `beThere`; as which time of its page (`generation`). */
   readonly again?: boolean;
+  readonly generation?: number;
+  /** What a conversation read of what it took, which goes as it lets go of one. */
+  readonly read?: readonly string[];
   readonly cards?: readonly { readonly id: string; readonly card: Record<string, unknown> }[];
 }
 
-export const windowSayOf = (body: unknown): WindowSay | "tooLarge" | undefined => {
+export const windowSayOf = (sent: unknown): WindowSay | "tooLarge" | undefined => {
+  const body = cleaned(sent);
   if (!isRecord(body) || !Array.isArray(body.serve)) return undefined;
   if (body.serve.length > MOST_SERVED || !body.serve.every(isAgent)) return undefined;
   const serve = [...new Set(body.serve as string[])];
   if (body.again !== undefined && typeof body.again !== "boolean") return undefined;
   const again = body.again === true;
-  if (body.cards === undefined) return { serve, again };
+  const generation = generationOf(body.generation);
+  const read = body.read === undefined ? [] : idsOf(body.read);
+  if (generation === null || !read) return undefined;
+  const base = { serve, again, read, ...(generation !== undefined && { generation }) };
+  if (body.cards === undefined) return base;
   if (!Array.isArray(body.cards) || body.cards.length > MOST_SERVED) return undefined;
   const cards: { id: string; card: Record<string, unknown> }[] = [];
   for (const each of body.cards) {
@@ -395,8 +480,16 @@ export const windowSayOf = (body: unknown): WindowSay | "tooLarge" | undefined =
     if (bytesOf(each.card) > CARD_BYTES) return "tooLarge";
     cards.push({ id: each.id, card: each.card });
   }
-  return { serve, again, cards };
+  return { ...base, cards };
 };
+
+/** Which time of its page a window is, as it says: undefined where it says none, null where wrong. */
+const generationOf = (value: unknown) =>
+  value === undefined
+    ? undefined
+    : typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+      ? value
+      : null;
 
 /**
  * A window says it is there and has these: of those, which it has now, which it waits for in turn
@@ -404,7 +497,7 @@ export const windowSayOf = (body: unknown): WindowSay | "tooLarge" | undefined =
  */
 export const sayWindow = (db: Db, place: Place, window: string, say: WindowSay, now: Date) =>
   inProject(db, place.userId, place.project, async (tx) => {
-    const live = await beThere(tx, place, window, now, say.again === true);
+    const live = await beThere(tx, place, window, now, say.again === true, say.generation);
     if (live === "busy" || live === "left") return live;
     // Those it does not have any more go, to whoever waits for them.
     const mine = await tx
@@ -421,7 +514,7 @@ export const sayWindow = (db: Db, place: Place, window: string, say: WindowSay, 
     for (const row of mine) {
       if (wanted.has(row.agent)) continue;
       if (row.holds) {
-        await letGo(tx, place, row.agent, window, now);
+        await letGo(tx, place, row.agent, window, now, say.read ?? []);
         await dropCard(tx, place, row.agent, window);
       } else await tx.delete(agentHolds).where(holdsWhere(place, row.agent, window));
     }
@@ -441,7 +534,9 @@ export const sayWindow = (db: Db, place: Place, window: string, say: WindowSay, 
         waits.push(agent);
       }
     }
-    if (say.cards) await writeCards(tx, place, window, say.cards, new Set(owned), now);
+    const refused = say.cards
+      ? await writeCards(tx, place, window, say.cards, new Set(owned), now)
+      : [];
     const waiting =
       owned.length === 0
         ? []
@@ -460,6 +555,8 @@ export const sayWindow = (db: Db, place: Place, window: string, say: WindowSay, 
       waits,
       mail: waiting.map((row) => row.to),
       budget: await budgetOf(tx, place, now),
+      // What it said of these could not be kept: the rest was.
+      ...(refused.length > 0 && { refused }),
     };
   });
 
@@ -486,7 +583,8 @@ const writeCards = async (
   now: Date,
 ) => {
   const ours = cards.filter((each) => owned.has(each.id));
-  if (ours.length === 0) return;
+  const refused: string[] = [];
+  if (ours.length === 0) return refused;
   const before = await tx
     .select({ agent: agentCards.agentId, card: agentCards.card })
     .from(agentCards)
@@ -518,22 +616,30 @@ const writeCards = async (
   for (const { id, card } of ours) {
     const was = had.get(id);
     if (isRecord(was) && (was.state !== card.state || was.name !== card.name)) changed = true;
-    await tx
-      .insert(agentCards)
-      .values({
-        userId: place.userId,
-        projectId: place.project,
-        agentId: id,
-        windowId: window,
-        card,
-        updatedAt: now,
-      })
-      .onConflictDoUpdate({
-        target: [agentCards.userId, agentCards.projectId, agentCards.agentId],
-        set: { windowId: window, card, updatedAt: now },
+    // One that cannot be kept is left as it was, and the rest goes on.
+    try {
+      await tx.transaction(async (one) => {
+        await one
+          .insert(agentCards)
+          .values({
+            userId: place.userId,
+            projectId: place.project,
+            agentId: id,
+            windowId: window,
+            card,
+            updatedAt: now,
+          })
+          .onConflictDoUpdate({
+            target: [agentCards.userId, agentCards.projectId, agentCards.agentId],
+            set: { windowId: window, card, updatedAt: now },
+          });
       });
+    } catch {
+      refused.push(id);
+    }
   }
   if (changed) await tell(tx, place.userId, place.project, { k: "cards" });
+  return refused;
 };
 
 /**
@@ -544,10 +650,27 @@ export const leaveWindow = (
   db: Db,
   place: Place,
   window: string,
-  how: { readonly read: readonly string[]; readonly keepCards: boolean },
+  how: {
+    readonly read: readonly string[];
+    readonly keepCards: boolean;
+    /** Which time of its page went, see `beThere`. */
+    readonly generation?: number;
+  },
   now: Date,
 ) =>
   inProject(db, place.userId, place.project, async (tx) => {
+    const [there] = await tx
+      .select({ generation: agentWindows.generation })
+      .from(agentWindows)
+      .where(
+        and(
+          eq(agentWindows.userId, place.userId),
+          eq(agentWindows.projectId, place.project),
+          eq(agentWindows.windowId, window),
+        ),
+      );
+    // None that never was, nor a time of its page before it came back.
+    if (!there || (how.generation ?? 0) < there.generation) return;
     const mine = await tx
       .select({ agent: agentHolds.agentId, holds: agentHolds.holds })
       .from(agentHolds)
@@ -577,7 +700,7 @@ export const leaveWindow = (
           eq(agentHolds.holds, false),
         ),
       );
-    for (const row of mine) if (row.holds) await letGo(tx, place, row.agent, window, now);
+    for (const row of mine) if (row.holds) await letGo(tx, place, row.agent, window, now, how.read);
     const claimed = and(
       eq(agentMail.userId, place.userId),
       eq(agentMail.projectId, place.project),
@@ -627,7 +750,14 @@ export const holdNow = (db: Db, place: Place, window: string, agent: string, now
  * Lets go of one for the first window that waits for it, and waits for it after that one: whether
  * it still has it, as none waits.
  */
-export const yieldHold = (db: Db, place: Place, window: string, agent: string, now: Date) =>
+export const yieldHold = (
+  db: Db,
+  place: Place,
+  window: string,
+  agent: string,
+  now: Date,
+  read: readonly string[] = [],
+) =>
   inProject(db, place.userId, place.project, async (tx) => {
     const live = await liveWindows(tx, place, now);
     const rows = await holdsOf(tx, place, [agent]);
@@ -636,6 +766,7 @@ export const yieldHold = (db: Db, place: Place, window: string, agent: string, n
     const next = rows.find((row) => !row.holds && row.window !== window && live.has(row.window));
     if (!next) return true;
     await tx.delete(agentHolds).where(holdsWhere(place, agent, window));
+    await giveBackMail(tx, place, agent, window, read);
     await give(tx, place, agent, next.window, now);
     await waitFor(tx, place, agent, window, now);
     return false;
@@ -697,7 +828,8 @@ export interface MailPost {
   readonly repeatMs: number;
 }
 
-export const mailPostOf = (body: unknown): MailPost | "tooLarge" | undefined => {
+export const mailPostOf = (sent: unknown): MailPost | "tooLarge" | undefined => {
+  const body = cleaned(sent);
   if (!isRecord(body) || !isRecord(body.mail)) return undefined;
   const { mail, most, repeatMs } = body;
   const { id, to, from, text, at, left } = mail;
@@ -753,6 +885,12 @@ export const postMail = (db: Db, place: Place, mail: MailPost, now: Date) =>
       .from(agentMail)
       .where(and(mine, gt(agentMail.expiresAt, now)));
     if ((all?.n ?? 0) >= MOST_MAIL) return "full" as const;
+    // Of all the person's projects, as many as one person may have waiting.
+    const [person] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(agentMail)
+      .where(and(eq(agentMail.userId, place.userId), gt(agentMail.expiresAt, now)));
+    if ((person?.n ?? 0) >= MOST_MAIL_PER_PERSON) return "full" as const;
     const live = await liveWindows(tx, place, now);
     const holder = (await holdsOf(tx, place, [mail.to])).find(
       (row) => row.holds && live.has(row.window),
@@ -844,7 +982,8 @@ export const backMail = async (db: Db, place: Place, window: string, ids: readon
  * What one window tells the others, as it may: of a size, of an id, with the window it is of
  * (`w`), which does not hear it itself.
  */
-export const signalOf = (body: unknown): AgentsSaid | undefined => {
+export const signalOf = (sent: unknown): AgentsSaid | undefined => {
+  const body = cleaned(sent);
   if (!isRecord(body) || typeof body.window !== "string" || !WINDOW_ID.test(body.window))
     return undefined;
   const w = body.window;
@@ -890,6 +1029,29 @@ export const watch = (
           inArray(
             agentWatches.watcher,
             kept.slice(0, over).map((row) => row.watcher),
+          ),
+        ),
+      );
+    // Of the ones waited on in the project, as many at most: those whose time is up first go.
+    const mine = and(
+      eq(agentWatches.userId, place.userId),
+      eq(agentWatches.projectId, place.project),
+    );
+    await tx.delete(agentWatches).where(and(mine, lte(agentWatches.until, now)));
+    const targets = await tx
+      .select({ target: agentWatches.target, last: sql<Date>`max(${agentWatches.until})` })
+      .from(agentWatches)
+      .where(and(mine, ne(agentWatches.target, target)))
+      .groupBy(agentWatches.target)
+      .orderBy(sql`max(${agentWatches.until})`);
+    const beyond = targets.length + 1 - MOST_TARGETS;
+    if (beyond > 0)
+      await tx.delete(agentWatches).where(
+        and(
+          mine,
+          inArray(
+            agentWatches.target,
+            targets.slice(0, beyond).map((row) => row.target),
           ),
         ),
       );
@@ -1116,13 +1278,22 @@ export const agentsRoutes = async (app: FastifyInstance, options: AgentsRoutesOp
       const body = request.body ?? {};
       if (!isRecord(body)) return reply.code(400).send({ error: "invalid" });
       const read = body.read === undefined ? [] : idsOf(body.read);
-      if (!read || (body.keepCards !== undefined && typeof body.keepCards !== "boolean"))
+      const generation = generationOf(body.generation);
+      if (
+        !read ||
+        generation === null ||
+        (body.keepCards !== undefined && typeof body.keepCards !== "boolean")
+      )
         return reply.code(400).send({ error: "invalid" });
       await leaveWindow(
         asked.database,
         asked.place,
         asked.window,
-        { read, keepCards: body.keepCards === true },
+        {
+          read,
+          keepCards: body.keepCards === true,
+          ...(generation !== undefined && { generation }),
+        },
         new Date(now()),
       );
       return reply.code(204).send();
@@ -1154,14 +1325,23 @@ export const agentsRoutes = async (app: FastifyInstance, options: AgentsRoutesOp
 
   app.post<{ Params: WindowParams; Body: unknown }>(
     `${base}/windows/:window/yield`,
-    { config: access, preHandler: guard, bodyLimit: 4096 },
+    { config: access, preHandler: guard, bodyLimit: 64 * 1024 },
     async (request, reply) => {
       const asked = await who(request, reply);
       if (!asked) return reply;
       const agent = agentOf(request.body);
-      if (!agent) return reply.code(400).send({ error: "invalid" });
+      const body = request.body;
+      const read = isRecord(body) && body.read !== undefined ? idsOf(body.read) : [];
+      if (!agent || !read) return reply.code(400).send({ error: "invalid" });
       return {
-        owned: await yieldHold(asked.database, asked.place, asked.window, agent, new Date(now())),
+        owned: await yieldHold(
+          asked.database,
+          asked.place,
+          asked.window,
+          agent,
+          new Date(now()),
+          read,
+        ),
       };
     },
   );

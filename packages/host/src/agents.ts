@@ -43,6 +43,12 @@ export interface AgentRoomEvents {
    * gave back as it went.
    */
   readonly resumed?: () => void;
+  /**
+   * This window had one, and has it no more although it still wants it: it was not there for a
+   * while (asleep, or its timers held back), and another window has it now. What goes on in it here
+   * stops; online only.
+   */
+  readonly lost?: (id: string) => void;
 }
 
 /** One a window of the project has, as all windows see it, see `AgentRoom.roster`. */

@@ -937,6 +937,13 @@ export class Workbench {
       },
       // What a conversation does now, as the line of its work says it.
       doing: (conversation) => this.#doingOf(conversation),
+      // Online, another window or device took one over that this window was not there for.
+      takenElsewhere: (title, copy) =>
+        this.notifications.push(
+          copy === undefined
+            ? t("chat.elsewhere.taken", { title })
+            : t("chat.elsewhere.takenCopy", { title, copy }),
+        ),
       // Offline, the other tabs of this browser that have the project open; online, the person's
       // windows on any computer, through the platform.
       ...(host.mode === "offline"
