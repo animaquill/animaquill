@@ -23,6 +23,7 @@ import { browserLocalFolders } from "./local-folders.ts";
 import { browserCoverStore } from "./covers.ts";
 import { browserOrganizer, platformOrganizer } from "./organizer.ts";
 import { browserPresence } from "./presence.ts";
+import { browserAgents } from "./agents-browser.ts";
 import type {
   ChangeSource,
   Host,
@@ -1400,6 +1401,8 @@ export function createOfflineHost({ goOnline }: OfflineHostOptions = {}): Host {
   const { localFolders } = host;
   return {
     ...host,
+    // Online the backend will carry what the conversations say to each other.
+    agentPost: browserAgents(),
     ...(goOnline && { goOnline }),
     ...(localFolders && { handedOver: () => takeHandedOver(localFolders) }),
   };

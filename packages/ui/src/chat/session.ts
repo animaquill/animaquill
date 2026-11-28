@@ -65,6 +65,8 @@ import {
   ChatNewer,
   memoryChats,
   type AccountAccess,
+  type AgentPost,
+  type AgentRoom,
   type ChatImageStore,
   type ChatStore,
   type SavedChat,
@@ -107,6 +109,7 @@ import {
   lastAnswerOf,
   roundsOf,
 } from "./relay.ts";
+import { ANSWER_MS, FRESH_LEFT_MS, cardOf, mailOf, outcomeOf, postedOf } from "./tabs.ts";
 
 /**
  * Why a message cannot go out yet, before any service is asked. Through the relay of the platform:
@@ -348,6 +351,12 @@ export interface ChatSessionOptions {
   };
   /** What a conversation does now, in the words of the chat, while a task of it runs. */
   readonly doing?: (conversation: Conversation) => string | undefined;
+  /**
+   * Where the conversations of the project in the other windows of this browser are seen and get
+   * their messages (docs/design/ai-teamwork.md of AnimaQuill Cloud, 3; see `AgentPost`). Without it
+   * the window sees only its own, and those kept.
+   */
+  readonly post?: AgentPost;
   /** The memory of this window, where drafts and the conversation open are kept. */
   readonly memory?: WindowMemory;
   /** Where the pictures of conversations are kept; without it, for as long as the page. */
@@ -376,6 +385,10 @@ export interface ChatSessionOptions {
  * few writes. Once the task ends it is written right away.
  */
 const SAVE_DELAY_MS = 500;
+/** How often a window says again what its conversations do, for the other windows to see. */
+const CARDS_MS = 2_000;
+/** How long what changed waits to go to the other windows, with what changes meanwhile. */
+const PUBLISH_DELAY_MS = 300;
 const TITLE_LENGTH = 40;
 /** How many tasks keep the project as they started it, for AI to compare with. */
 const KEPT_STARTS = 10;
@@ -525,7 +538,24 @@ export class ChatSession {
    * Turns that messages of others started, and messages tasks read on their way, in all
    * conversations of the window since people last said something in any: see `MAX_UNATTENDED`.
    */
-  #unattended = 0;
+  readonly #ownBudget = {
+    count: 0,
+    get: () => this.#ownBudget.count,
+    add: (count: number) => {
+      this.#ownBudget.count = Math.max(0, this.#ownBudget.count + count);
+    },
+    reset: () => {
+      this.#ownBudget.count = 0;
+    },
+  };
+  /**
+   * The other windows of this browser that have the project open, as far as there is `post`: what
+   * they have, and the messages for those this window has.
+   */
+  #room: AgentRoom | undefined;
+  #roomTimer: ReturnType<typeof setInterval> | undefined;
+  #serving = false;
+  #publishTimer: ReturnType<typeof setTimeout> | undefined;
   /** The words each one sent each conversation lately, and when: see `REPEAT_MS`. */
   readonly #recent = new Map<string, Map<string, number>>();
   /**
@@ -552,7 +582,18 @@ export class ChatSession {
       maxBytes: () => this.imageBytes(),
     });
     options.subscribeProject(() => this.#follow());
+    // What the window has goes to the other windows as it changes, see `#serveSoon`.
+    this.#emitter.subscribe(() => this.#serveSoon());
     this.#follow();
+  }
+
+  /**
+   * Turns that messages of others started, and messages tasks read on their way, since people last
+   * said something: in all conversations of the window, or of all windows of the project in this
+   * browser where they share it (see `AgentRoom.budget`). See `MAX_UNATTENDED`.
+   */
+  get #budget(): { get(): number; add(count: number): void; reset(): void } {
+    return this.#room?.budget ?? this.#ownBudget;
   }
 
   subscribe = this.#emitter.subscribe;
@@ -676,10 +717,29 @@ export class ChatSession {
   #follow(): void {
     const project = this.#options.project();
     if (project?.store === this.#project?.store && project?.key === this.#project?.key) return;
+    // What waits in the conversations of the project before waits for whoever opens them next.
+    const room = this.#room;
+    const back: Promise<unknown>[] = [];
+    for (const run of this.#runs.values()) {
+      if (!room?.owns(run.id)) continue;
+      for (const mail of [...run.inbox, ...run.fields.mail]) {
+        back.push(
+          room
+            .post(postedOf(run.id, mail, true), { most: MAX_WAITING, repeatMs: 0 })
+            .catch(() => {}),
+        );
+      }
+    }
     // Deleting from a map while going through it is safe: each one comes once.
     for (const run of this.#runs.values()) this.#retire(run);
+    if (room) {
+      this.#room = undefined;
+      clearInterval(this.#roomTimer);
+      void Promise.all(back).finally(() => room.close());
+    }
     this.#shown = undefined;
     this.#project = project;
+    if (project && this.#options.post) this.#enter(this.#options.post, project.key);
     // A new conversation this window had open, with words in its input box, is that one again.
     const kept = project && this.#options.memory?.read(openKey(project.key));
     const draft = project && kept ? this.drafts.read(project.key, kept) : "";
@@ -1612,6 +1672,8 @@ export class ChatSession {
     // is what goes, and theirs stays.
     const gone = run?.id ?? id;
     this.drafts.clear(project, id);
+    // What other windows said of it, left for it, or wait for it to be idle for goes with it.
+    await this.#room?.forget(gone).catch(() => {});
     await this.#chats.remove(project, gone).catch((error: unknown) => {
       console.warn("A conversation could not be taken away", error);
     });
@@ -2033,7 +2095,7 @@ export class ChatSession {
         const { rounds } = roundsOf(run.conversation.getSnapshot().entries);
         let left = MAX_ROUNDS - (rounds - run.goOn) - run.steered;
         const taken: Mail[] = [];
-        while (left > 0 && this.#unattended < MAX_UNATTENDED) {
+        while (left > 0 && this.#budget.get() < MAX_UNATTENDED) {
           const [next] = run.inbox;
           if (!next) break;
           // So many words of others in one turn at most: the rest waits for the next.
@@ -2043,7 +2105,7 @@ export class ChatSession {
           taken.push(next);
           left -= 1;
           run.steered += 1;
-          this.#unattended += 1;
+          this.#budget.add(1);
         }
         if (taken.length > 0) this.#refresh();
         return taken;
@@ -2055,7 +2117,7 @@ export class ChatSession {
       putBack: (mails) => {
         run.inbox = [...mails, ...run.inbox];
         // Taken and not read: they did not count.
-        this.#unattended = Math.max(0, this.#unattended - mails.length);
+        this.#budget.add(-mails.length);
         run.steered = 0;
         // The task that did not get to read them is over: they start the next one.
         queueMicrotask(() => this.#wake(run));
@@ -2077,12 +2139,12 @@ export class ChatSession {
    * something: so many turns, and messages read on the way, since anyone last did.
    */
   #held(): boolean {
-    return this.#unattended >= MAX_UNATTENDED;
+    return this.#budget.get() >= MAX_UNATTENDED;
   }
 
   /** People said something, or let the others go on: what waits goes again. */
   #peopleSpoke(): void {
-    this.#unattended = 0;
+    this.#budget.reset();
     for (const run of this.#runs.values()) queueMicrotask(() => this.#wake(run));
     this.#refresh();
   }
@@ -2119,7 +2181,7 @@ export class ChatSession {
     const [first, ...rest] = run.inbox;
     if (!first) return;
     run.inbox = rest;
-    this.#unattended += 1;
+    this.#budget.add(1);
     void this.#send(run, first.text, [], WITHHELD, {
       from: first.from,
       seal: first.seal,
@@ -2131,9 +2193,14 @@ export class ChatSession {
    * A message of another for a conversation of the window, and what came of it: read in the task
    * that runs, a turn of its own, or it waits (for people to let it, for people to answer first).
    * One of an AI tool for a conversation it had to be opened for starts nothing: it waits for
-   * people, as a card (`opened`).
+   * people, as a card (`opened`). So does one that waited for its window to come again (`posted`),
+   * where an AI tool left it, or where it waited so long that people would not remember it.
    */
-  #deliver(run: Run, mail: Mail): SendOutcome {
+  #deliver(
+    run: Run,
+    mail: Mail,
+    posted?: { readonly left: boolean; readonly stale: boolean },
+  ): SendOutcome {
     const now = Date.now();
     const recent = this.#recent.get(run.id) ?? new Map<string, number>();
     this.#recent.set(run.id, recent);
@@ -2142,8 +2209,11 @@ export class ChatSession {
     if (recent.has(key)) return { refused: "repeat" };
     if (run.inbox.length + run.fields.mail.length >= MAX_WAITING) return { refused: "full" };
     recent.set(key, now);
-    // An AI tool wakes none that people have not opened since the window read it for it.
-    const left = mail.from.kind === "tool" && run.unopened;
+    // An AI tool wakes none that people have not opened since the window read it for it, nor one
+    // it left a message for while none had it open.
+    const left =
+      (mail.from.kind === "tool" && (run.unopened || posted?.left === true)) ||
+      posted?.stale === true;
     if (left || this.#options.ai.getSnapshot().fromAgents === "ask") {
       if (run !== this.#shown) run.unseen = true;
       this.#update(run, { mail: [...run.fields.mail, mail] });
@@ -2180,7 +2250,7 @@ export class ChatSession {
       if (!mail) continue;
       this.#update(run, { mail: run.fields.mail.filter((each) => each !== mail) });
       if (read) {
-        this.#unattended = 0;
+        this.#budget.reset();
         this.#queueMail(run, mail);
       }
       return;
@@ -2258,17 +2328,41 @@ export class ChatSession {
 
   #directory(me: () => string, from: () => MessageFrom, sender: Run | undefined): AgentDirectory {
     const accepts = () => this.#options.ai.getSnapshot().fromAgents ?? "yes";
+    const inRoom = () => this.#room !== undefined;
     return {
+      // Offline, a project is of this browser only: another browser that has the folder open is
+      // not seen.
+      get only() {
+        return inRoom() ? ("browser" as const) : undefined;
+      },
       list: async () => {
         const self = me();
         const cards: AgentCard[] = [];
+        const listed = new Set([self]);
         for (const run of this.#runs.values()) {
           if (run.id === self || run.gone) continue;
           if (run.conversation.getSnapshot().entries.length === 0) continue;
           cards.push(this.#cardOf(run));
+          listed.add(run.id);
+        }
+        // Those the other windows have, or had until they went away.
+        const room = this.#room;
+        const project = this.#project?.key;
+        if (room && project !== undefined) {
+          const roster = await room.roster().catch(() => []);
+          for (const entry of roster) {
+            if (listed.has(entry.id)) continue;
+            const card = cardOf(entry.id, entry.card, entry.live);
+            if (!card) continue;
+            cards.push(card);
+            listed.add(entry.id);
+          }
+          // Other windows make and name conversations too.
+          const saved = await this.#chats.list(project).catch(() => undefined);
+          if (saved && this.#project?.key === project) this.#set({ saved });
         }
         for (const saved of this.#snapshot.saved) {
-          if (saved.id === self || this.#runs.has(saved.id)) continue;
+          if (listed.has(saved.id)) continue;
           cards.push({
             id: saved.id,
             kind: "chat",
@@ -2279,7 +2373,7 @@ export class ChatSession {
           });
         }
         for (const card of this.#options.tools?.cards() ?? []) {
-          if (card.id !== self) cards.push(card);
+          if (!listed.has(card.id)) cards.push(card);
         }
         return distinctNames(cards);
       },
@@ -2296,17 +2390,23 @@ export class ChatSession {
           at: Date.now(),
           seal: newSeal(text),
         };
-        if (to.startsWith("mcp:")) {
-          return this.#options.tools?.deliver(to, mail) ?? { refused: "unknown" };
-        }
-        const run = this.#runs.get(to) ?? (await this.#host(to));
-        return run ? this.#deliver(run, mail) : { refused: "unknown" };
+        return this.#route(to, mail);
       },
       notifyWhenIdle: async (target) => {
         if (target === me()) return { refused: "self" };
         if (target.startsWith("mcp:")) return { refused: "cannotTell" };
         // Its last answer would come as a message: taking none is asking for none.
         if (accepts() === "no") return { refused: "declines" };
+        // One another window has, or had until it went away: whichever window has it when it is
+        // next idle tells.
+        const room = this.#room;
+        if (room) {
+          const where = await this.#whereIs(room, target);
+          if (where === "tab" || where === "away") {
+            await room.watch(target, me(), Date.now() + WATCH_MS);
+            return { watching: true };
+          }
+        }
         const run = this.#runs.get(target) ?? (await this.#host(target));
         if (!run) return { refused: "unknown" };
         const watchers = this.#watchers.get(run.id) ?? new Map<string, number>();
@@ -2315,6 +2415,211 @@ export class ChatSession {
         return { watching: true };
       },
     };
+  }
+
+  /**
+   * Where one of the project is for a message, as the windows of this browser have it: in this
+   * window ("here"); in another (also where this one has it too, and that one had it first); in
+   * none, as the window that had it went away lately ("away"), or as none had it lately ("none"),
+   * where this window takes it now that none can meanwhile, or another window just did ("tab").
+   */
+  async #whereIs(room: AgentRoom, id: string): Promise<"here" | "tab" | "away" | "none"> {
+    const had = this.#runs.get(id);
+    if (had && room.owns(id)) return "here";
+    if (await room.held(id).catch(() => false)) return "tab";
+    // Nobody has it yet: this window asked first.
+    if (had) return "here";
+    if (id.startsWith("mcp:")) return "none";
+    const roster = await room.roster().catch(() => []);
+    if (roster.some((entry) => entry.id === id && !entry.live)) return "away";
+    return (await room.tryServe(id)) ? "none" : "tab";
+  }
+
+  /**
+   * Gives a message to one of the project, wherever it is: in this window, in another of this
+   * browser, left for one whose window went away, or read here from where it is kept.
+   */
+  async #route(to: string, mail: Mail): Promise<SendOutcome> {
+    const tools = this.#options.tools;
+    const room = this.#room;
+    if (to.startsWith("mcp:")) {
+      if (!room || tools?.cards().some((card) => card.id === to)) {
+        return tools?.deliver(to, mail) ?? { refused: "unknown" };
+      }
+      const where = await this.#whereIs(room, to);
+      return where === "tab" ? this.#postTo(room, to, mail, false) : { refused: "unknown" };
+    }
+    if (room) {
+      const where = await this.#whereIs(room, to);
+      if (where === "tab") return this.#postTo(room, to, mail, false);
+      if (where === "away") return this.#postTo(room, to, mail, true);
+    }
+    const run = this.#runs.get(to) ?? (await this.#host(to));
+    if (!run) return { refused: "unknown" };
+    const outcome = this.#deliver(run, mail);
+    // What was left for it while none had it, now that this window has it.
+    if (room) void this.#claimFor(room, to);
+    return outcome;
+  }
+
+  /**
+   * Leaves a message for one of the project for the window that has it, and what that window said
+   * came of it; for one whose window went away (`left`), for whoever opens it next.
+   */
+  async #postTo(room: AgentRoom, to: string, mail: Mail, left: boolean): Promise<SendOutcome> {
+    const answer = left ? undefined : room.outcome(mail.id, ANSWER_MS);
+    const posted = await room
+      .post(postedOf(to, mail, left), { most: MAX_WAITING, repeatMs: REPEAT_MS })
+      .catch((error: unknown) => {
+        console.warn("A message for another window could not be left", error);
+        return undefined;
+      });
+    if (posted === "full" || posted === "repeat") return { refused: posted };
+    if (posted === undefined) return { refused: "unknown" };
+    if (!answer) return { sent: "waits", until: "away" };
+    return outcomeOf(await answer) ?? { sent: "waits", until: "tab" };
+  }
+
+  /** The window that has the project open in another window of this browser too, see `AgentPost`. */
+  #enter(post: AgentPost, project: string): void {
+    const room: AgentRoom = post.enter(project, {
+      owned: (id, waited) => void this.#owned(room, id, waited),
+      mail: (to) => void this.#claimFor(room, to),
+      budget: () => this.#budgetMoved(),
+    });
+    this.#room = room;
+    // What a conversation does changes with each step, and AI tools come and go: said again as
+    // it changes, at most every two seconds.
+    this.#roomTimer = setInterval(() => {
+      this.#serveSoon();
+      void this.#publish(room);
+      void this.#followOthers(room);
+    }, CARDS_MS);
+    this.#serveSoon();
+  }
+
+  /** The other windows hear which ones this window has, once what goes on now settled. */
+  #serveSoon(): void {
+    if (!this.#room || this.#serving) return;
+    this.#serving = true;
+    queueMicrotask(() => {
+      this.#serving = false;
+      const room = this.#room;
+      if (!room) return;
+      const ids = [...this.#runs.values()].filter((run) => !run.gone).map((run) => run.id);
+      for (const card of this.#options.tools?.cards() ?? []) ids.push(card.id);
+      room.serve(ids);
+      // What changed goes to the others soon, a few changes at once.
+      if (this.#publishTimer === undefined) {
+        this.#publishTimer = setTimeout(() => {
+          this.#publishTimer = undefined;
+          void this.#publish(room);
+        }, PUBLISH_DELAY_MS);
+      }
+    });
+  }
+
+  /**
+   * The list of conversations, where another window has one this window does not know of: one it
+   * made, or named for the first time.
+   */
+  async #followOthers(room: AgentRoom): Promise<void> {
+    const project = this.#project?.key;
+    if (this.#room !== room || project === undefined) return;
+    const roster = await room.roster().catch(() => []);
+    const known = new Set(this.#snapshot.saved.map((saved) => saved.id));
+    const fresh = roster.some(
+      (entry) =>
+        entry.live &&
+        !known.has(entry.id) &&
+        !entry.id.startsWith("mcp:") &&
+        !this.#runs.has(entry.id),
+    );
+    if (!fresh) return;
+    const saved = await this.#chats.list(project).catch(() => undefined);
+    if (saved && this.#room === room && this.#project?.key === project) this.#set({ saved });
+  }
+
+  /** What this window says of the conversations and AI tools it has, for the other windows. */
+  async #publish(room: AgentRoom): Promise<void> {
+    if (this.#room !== room) return;
+    const cards: { id: string; card: AgentCard }[] = [];
+    for (const run of this.#runs.values()) {
+      if (run.gone || run.conversation.getSnapshot().entries.length === 0) continue;
+      cards.push({ id: run.id, card: this.#cardOf(run) });
+    }
+    for (const card of this.#options.tools?.cards() ?? []) cards.push({ id: card.id, card });
+    await room.publish(cards).catch((error: unknown) => {
+      console.warn("The other windows could not be told what this one has", error);
+    });
+  }
+
+  /**
+   * This window has one for the others now. One it had while another window had it first is read
+   * again where nothing goes on in it here, as that window may have gone on with it: what this
+   * window has of it is older then, and would go over what that one wrote.
+   */
+  async #owned(room: AgentRoom, id: string, waited: boolean): Promise<void> {
+    const run = this.#runs.get(id);
+    const project = this.#project?.key;
+    if (waited && run && project !== undefined && !this.#busy(run) && !run.unsaved) {
+      await this.#flushRun(run);
+      const saved = await this.#chats.load(project, id).catch(() => undefined);
+      // Something started in it meanwhile, or it went: as it is, then.
+      if (
+        saved &&
+        this.#room === room &&
+        this.#runs.get(id) === run &&
+        !this.#busy(run) &&
+        run.pending === undefined
+      ) {
+        this.#startSaved(id, saved, run === this.#shown);
+      }
+    }
+    await this.#claimFor(room, id);
+  }
+
+  /** Takes what waits for one this window has, and gives it to it, telling who sent what came of it. */
+  async #claimFor(room: AgentRoom, to: string): Promise<void> {
+    if (this.#room !== room || !room.owns(to)) return;
+    const isTool = to.startsWith("mcp:");
+    if (
+      isTool ? !this.#options.tools?.cards().some((card) => card.id === to) : !this.#runs.has(to)
+    ) {
+      return;
+    }
+    const posted = await room.claim(to).catch((error: unknown) => {
+      console.warn("What waits for a conversation could not be taken", error);
+      return [];
+    });
+    for (const each of posted) {
+      const mail = mailOf(each);
+      room.answer(each.id, mail ? this.#take(room, to, mail, each.left) : { refused: "unknown" });
+    }
+  }
+
+  /** A message another window left for one this window has: what comes of it, see `#deliver`. */
+  #take(room: AgentRoom, to: string, mail: Mail, left: boolean): SendOutcome {
+    // Taking none is also of the other windows: what one sent before people set it stays unread.
+    if (this.#options.ai.getSnapshot().fromAgents === "no") return { refused: "declines" };
+    if (to.startsWith("mcp:"))
+      return this.#options.tools?.deliver(to, mail) ?? { refused: "unknown" };
+    const run = this.#runs.get(to);
+    if (!run || run.gone || this.#room !== room) {
+      // It went meanwhile: the message waits for whoever opens it next.
+      void room.post(postedOf(to, mail, true), { most: MAX_WAITING, repeatMs: 0 }).catch(() => {});
+      return { sent: "waits", until: "away" };
+    }
+    return this.#deliver(run, mail, { left, stale: Date.now() - mail.at > FRESH_LEFT_MS });
+  }
+
+  /**
+   * Another window counted a turn nobody was there for, or people said something there: what the
+   * window shows follows, and what waited goes where that is so.
+   */
+  #budgetMoved(): void {
+    if (!this.#held()) for (const run of this.#runs.values()) queueMicrotask(() => this.#wake(run));
+    this.#refresh();
   }
 
   /**
@@ -2342,11 +2647,18 @@ export class ChatSession {
    * how many wait).
    */
   async #toldIdle(run: Run): Promise<void> {
-    const waiting = this.#watchers.get(run.id);
-    if (!waiting || waiting.size === 0) return;
+    const waiting = new Map(this.#watchers.get(run.id) ?? []);
+    this.#watchers.delete(run.id);
+    // Who asked in another window of this browser, or in one that went away since.
+    const room = this.#room;
+    if (room?.owns(run.id)) {
+      for (const { watcher, until } of await room.watchers(run.id).catch(() => [])) {
+        waiting.set(watcher, Math.max(until, waiting.get(watcher) ?? 0));
+      }
+    }
+    if (waiting.size === 0) return;
     const now = Date.now();
     const watchers = [...waiting].filter(([, until]) => until > now).map(([id]) => id);
-    this.#watchers.delete(run.id);
     if (this.#options.ai.getSnapshot().fromAgents === "no") return;
     const mail = (): Mail => {
       const text = lastAnswerOf(run.conversation.getSnapshot().entries);
@@ -2358,14 +2670,7 @@ export class ChatSession {
         seal: newSeal(text),
       };
     };
-    for (const id of watchers) {
-      if (id.startsWith("mcp:")) {
-        this.#options.tools?.deliver(id, mail());
-        continue;
-      }
-      const watcher = this.#runs.get(id) ?? (await this.#host(id));
-      if (watcher) this.#deliver(watcher, mail());
-    }
+    for (const id of watchers) await this.#route(id, mail());
   }
 
   /** Stops the task of a conversation: the one shown without an id. */

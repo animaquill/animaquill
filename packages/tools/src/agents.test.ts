@@ -55,6 +55,26 @@ describe("the tools for the other conversations of the project", () => {
     expect(result.text).toContain('"配乐" (conversation) idle; it takes no messages');
   });
 
+  it("say which are in another tab, which tab went away, and that only this browser is seen", async () => {
+    const { agents } = directory([
+      card("c1", "剪开场", { where: "tab" }),
+      card("c2", "配乐", { state: "away", where: "tab" }),
+    ]);
+    const { call } = toolsOn({ ...testHost(), agents: { ...agents, only: "browser" } });
+    const result = await call("aq_agents_list");
+    expect(result.text).toContain('"剪开场" (conversation, in another tab) idle');
+    expect(result.text).toContain(
+      '"配乐" (conversation, in another tab) its tab was closed; a message waits until the user opens it again',
+    );
+    expect(result.text).toContain("only this browser is seen");
+    const left = directory([card("c2", "配乐")], { sent: "waits", until: "away" });
+    const sent = await toolsOn({ ...testHost(), agents: left.agents }).call("aq_send", {
+      to: "配乐",
+      message: "回来看看",
+    });
+    expect(sent.text).toContain("left as a message; its tab was closed");
+  });
+
   it("send by name, by id or by address, and by a name the last list gave after a rename", async () => {
     const { agents, sent, cards } = directory([card("c1", "剪开场")]);
     const { call } = toolsOn({ ...testHost(), agents });

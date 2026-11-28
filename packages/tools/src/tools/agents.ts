@@ -31,6 +31,7 @@ const STATE: Readonly<Record<AgentCard["state"], string>> = {
   waiting: "waiting for the user",
   idle: "idle",
   closed: "not open now; a message opens it",
+  away: "its tab was closed; a message waits until the user opens it again",
   tool: "an AI tool on this computer; it cannot be woken and reads messages with its next call",
 };
 
@@ -39,6 +40,9 @@ const ACCEPTS: Readonly<Record<AgentCard["accepts"], string>> = {
   ask: "; the user is asked before it reads a message",
   no: "; it takes no messages",
 };
+
+const ONLY_BROWSER =
+  "only this browser is seen: another browser that has the same folder open sees none of these, nor they it";
 
 const AgentsListParams = z.strictObject({});
 
@@ -54,7 +58,10 @@ export const agentsList: ToolDefinition<z.output<typeof AgentsListParams>> = {
     if (cards.length === 0) {
       return answer(
         call,
-        ["no other conversation of this project is open or kept, and no AI tool is connected"],
+        [
+          "no other conversation of this project is open or kept, and no AI tool is connected",
+          ...(agents.only === "browser" ? [ONLY_BROWSER] : []),
+        ],
         {
           agents: [],
         },
@@ -64,13 +71,15 @@ export const agentsList: ToolDefinition<z.output<typeof AgentsListParams>> = {
       const doing = card.doing ? `: ${card.doing}` : "";
       const changed =
         card.changed.length > 0 ? `; last changed ${card.changed.slice(0, 10).join(", ")}` : "";
-      return `${JSON.stringify(card.name)} (${card.kind === "chat" ? "conversation" : "tool"}) ${STATE[card.state]}${doing}${changed}${ACCEPTS[card.accepts]}`;
+      const where = card.kind === "chat" && card.where === "tab" ? ", in another tab" : "";
+      return `${JSON.stringify(card.name)} (${card.kind === "chat" ? "conversation" : "tool"}${where}) ${STATE[card.state]}${doing}${changed}${ACCEPTS[card.accepts]}`;
     });
     return answer(
       call,
       [
         `${cards.length} other${cards.length === 1 ? "" : "s"} of this project; aq_send takes the name in quotes:`,
         ...lines,
+        ...(agents.only === "browser" ? [ONLY_BROWSER] : []),
       ],
       { agents: cards.map(({ id, name, kind, state }) => ({ id, name, kind, state })) },
     );
@@ -91,6 +100,11 @@ const SENT: Readonly<Record<string, string>> = {
   "waits:asked": "sent; the user is asked whether it may read it",
   "waits:paused":
     "sent; it stopped after many rounds with others and reads it once the user says something to it",
+  "waits:left":
+    "left as a message; it is not open, and reads it once the user opens it and lets it",
+  "waits:away":
+    "left as a message; its tab was closed, and it gets it once the user opens it again",
+  "waits:tab": "sent to the tab it is open in, which did not say yet what came of it",
 };
 
 const REFUSED: Readonly<Record<string, string>> = {

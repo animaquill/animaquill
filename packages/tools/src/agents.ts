@@ -20,10 +20,14 @@ export interface AgentCard {
   readonly name: string;
   /**
    * A task of it runs; it waits for people (a change to allow, a question, a plan, or it stopped
-   * after too many rounds with others); nothing goes on in it; or it is not open in this window,
-   * and opens when it gets a message. An AI tool says none of these: nobody here can tell.
+   * after too many rounds with others); nothing goes on in it; it is not open in this window,
+   * and opens when it gets a message; or the window it was open in went away (people closed it), and
+   * a message waits for it until people open it again. An AI tool says none of these: nobody here
+   * can tell.
    */
-  readonly state: "running" | "waiting" | "idle" | "closed" | "tool";
+  readonly state: "running" | "waiting" | "idle" | "closed" | "away" | "tool";
+  /** It is open in another window of this browser, or was until that went away. */
+  readonly where?: "tab";
   /** What it does now, in the words of the chat, while a task runs. */
   readonly doing?: string;
   /** What it changed last, as results name objects. */
@@ -36,14 +40,15 @@ export interface AgentCard {
 export type SendOutcome =
   /** It reads it with its next call; or it started a turn with it. */
   | { readonly sent: "read" | "turn" }
-  /** It waits there: for people to answer it first, for its next call (an AI tool), for people to say something again. */
   /**
    * It waits there: for people to answer it first, for its next call (an AI tool), for people to
-   * let it, for people to say something again, or, left for one not open, for people to read it.
+   * let it, for people to say something again, or, left for one not open, for people to read it;
+   * left for one whose window went away, for people to open it again; or it went to another window,
+   * which did not say in time what came of it.
    */
   | {
       readonly sent: "waits";
-      readonly until: "people" | "tool" | "asked" | "paused" | "left";
+      readonly until: "people" | "tool" | "asked" | "paused" | "left" | "away" | "tab";
     }
   | {
       readonly refused:
@@ -69,6 +74,11 @@ export type NotifyOutcome =
  */
 export interface AgentDirectory {
   list(): Promise<readonly AgentCard[]>;
+  /**
+   * Only what this browser has: the windows of another browser, which can have the same folder
+   * open, are not seen. Missing where the list has all there is.
+   */
+  readonly only?: "browser" | undefined;
   /** Sends words to one of `list` by its id. */
   send(to: string, text: string): Promise<SendOutcome>;
   /** Asks to be told once, with a message, when that one is next idle: within 12 hours. */

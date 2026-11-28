@@ -937,6 +937,9 @@ export class Workbench {
       },
       // What a conversation does now, as the line of its work says it.
       doing: (conversation) => this.#doingOf(conversation),
+      // Offline, the other tabs of this browser that have the project open; online the backend
+      // will carry it.
+      ...(host.mode === "offline" && host.agentPost && { post: host.agentPost }),
       // An AI tool on this computer, by its name, for what others changed.
       whoIs: (origin) => {
         const batch = this.tools.batchOf(origin);
