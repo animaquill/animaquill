@@ -501,6 +501,36 @@ describe.skipIf(!TEST_DATABASE)("what the conversations of a project say to each
     ).toEqual([]);
   });
 
+  test("a card that cannot be kept is refused alone: the rest of what the window said is kept, and the window stays", async () => {
+    const project = await newProject(w);
+    // The database refuses this one only, as it would a card it cannot hold.
+    await t.db.execute(
+      sql`alter table ${agentCards} add constraint agent_cards_test_refuse check (agent_id <> 'chat-bad')`,
+    );
+    try {
+      const said = await serve(
+        project.id,
+        "w-1",
+        ["chat-a", "chat-bad", "chat-b"],
+        [
+          { id: "chat-a", card: card("idle") },
+          { id: "chat-bad", card: card("idle") },
+          { id: "chat-b", card: card("idle") },
+        ],
+      );
+      expect(said.status).toBe(200);
+      expect(said.json.refused).toEqual(["chat-bad"]);
+      expect(said.json.owned).toEqual(["chat-a", "chat-bad", "chat-b"]);
+      const kept = await t.db
+        .select({ agent: agentCards.agentId })
+        .from(agentCards)
+        .where(eq(agentCards.projectId, project.id));
+      expect(kept.map((row) => row.agent).toSorted()).toEqual(["chat-a", "chat-b"]);
+    } finally {
+      await t.db.execute(sql`alter table ${agentCards} drop constraint agent_cards_test_refuse`);
+    }
+  });
+
   test("NUL and halves of an emoji in what is sent: kept without them, nothing refused, the window stays", async () => {
     const project = await newProject(w);
     const named = { ...card("idle"), name: "a\u0000b\ud83d", changed: ["x\u0000"] };

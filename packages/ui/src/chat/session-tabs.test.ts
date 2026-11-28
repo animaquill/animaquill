@@ -777,6 +777,57 @@ describe("conversations in the person's windows anywhere, online (chat6 technica
     expect(JSON.stringify((await chats.load("p1", id))?.entries)).toBe(kept);
   });
 
+  it("a window that lost one it ran does not read the messages it had taken and not read: they went back to the one that has it now", async () => {
+    const browser = new Browser();
+    const chats = memoryChats();
+    const one = openTab(browser, 1, chats, "account");
+    await settle();
+    one.fake({ fake: [{ text: "开场先放慢" }] });
+    await one.chat.send("剪开场");
+    const id = one.chat.getSnapshot().id as string;
+    await settle();
+    one.fake({
+      fake: [{ text: "这一段会写很久很久很久很久很久很久很久很久很久" }, { text: "收到" }],
+      charactersPerSecond: 5,
+    });
+    void one.chat.send("再改一版");
+    await vi.waitFor(() => expect(one.chat.conversationOf(id)?.running).toBe(true));
+    const mail = {
+      id: "m-lost",
+      to: id,
+      from: "chat-x",
+      text: "配乐换吗",
+      at: Date.now(),
+      left: false,
+      body: {
+        id: "m-lost",
+        from: { id: "chat-x", name: "X", kind: "chat" },
+        text: "配乐换吗",
+        at: Date.now(),
+      },
+    };
+    browser.mail.push(structuredClone(mail));
+    browser.rooms.get(1)?.events.mail(id);
+    await settle();
+    // Taken, and waits for the turn to end.
+    expect(
+      entriesOf(one.chat, id).some((entry) => JSON.stringify(entry).includes("配乐换吗")),
+    ).toBe(false);
+    browser.rooms.get(1)?.events.lost?.(id);
+    await vi.waitFor(() => expect(one.chat.getSnapshot().id).not.toBe(id));
+    const copy = one.chat.getSnapshot().id as string;
+    await vi.waitFor(() => expect(one.chat.conversationOf(copy)?.running).toBeFalsy());
+    // The copy goes on: what it reads is what people say, and not what went back.
+    one.fake({ fake: [{ text: "好" }] });
+    await one.chat.send("继续");
+    await vi.waitFor(() => expect(one.chat.conversationOf(copy)?.running).toBeFalsy());
+    await settle();
+    await settle();
+    expect(
+      entriesOf(one.chat, copy).some((entry) => JSON.stringify(entry).includes("配乐换吗")),
+    ).toBe(false);
+  });
+
   it("one with nothing to write is only to read once it is lost; a message that comes again is read once", async () => {
     const browser = new Browser();
     const chats = memoryChats();

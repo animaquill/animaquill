@@ -519,6 +519,12 @@ interface Run {
    * task wrote is written, so that a tab that goes before loses none of them.
    */
   toSettle: string[];
+  /**
+   * Messages of the other windows this window had taken when it lost the conversation (see
+   * `#lost`): the platform gave them back to the window that has it now, so a task stopped before
+   * it read them does not keep them.
+   */
+  readonly sentBack: Set<string>;
   /** Whoever takes its messages as they come: the task that runs. */
   readonly mailListeners: Set<() => void>;
   /** What the task that runs reads messages from. */
@@ -952,6 +958,7 @@ export class ChatSession {
       elsewhere: false,
       handing: false,
       toSettle: [],
+      sentBack: new Set(),
       mailListeners: new Set(),
       mailbox: { take: () => [], subscribe: () => () => {}, putBack: () => {} },
       used: ++this.#clock,
@@ -2250,7 +2257,8 @@ export class ChatSession {
         run.mailListeners.add(listener);
         return () => run.mailListeners.delete(listener);
       },
-      putBack: (mails) => {
+      putBack: (all) => {
+        const mails = all.filter((mail) => !run.sentBack.has(mail.id));
         run.inbox = [...mails, ...run.inbox];
         // Not read after all: kept as taken, not done with.
         for (const mail of mails) {
@@ -2978,9 +2986,11 @@ export class ChatSession {
 
   /**
    * Online, the window was not there for a while, and another window has one it had: what goes on
-   * in it here stops, and is written to a copy of its own, never over what the other window does
-   * with it (as when another device wrote it, `#split`); one where nothing waited to be written is
-   * only to read here. People are told.
+   * in it here stops, and the conversation is written to a copy of its own, never over what the
+   * other window does with it (as when another device wrote it, `#split`); one where nothing waited
+   * to be written is only to read here. Only the conversation: the tool call already running
+   * still ends, and may change the project. Messages this window had taken and not read went back
+   * to the window that has it now, and are not read here. People are told.
    */
   #lost(room: AgentRoom, id: string): void {
     const run = this.#runs.get(id);
@@ -2990,9 +3000,32 @@ export class ChatSession {
       run.fields.titleBy !== undefined && run.fields.title
         ? run.fields.title
         : firstWords(entries, TITLE_LENGTH);
-    const working = this.#busy(run) || run.pending !== undefined || run.unsaved;
+    const pending = run.pending !== undefined;
     clearTimeout(run.saving);
     run.pending = undefined;
+    // Taken here and not read (or read by the task that stops now): the platform gave them back to
+    // the window that has it now, which reads them.
+    const back = new Set<string>(run.toSettle);
+    for (const mail of [...run.inbox, ...run.fields.mail]) {
+      if (this.#claimed.has(mail.id)) back.add(mail.id);
+    }
+    const given = (mail: Mail) => back.has(mail.id);
+    const recent = this.#recent.get(run.id);
+    for (const mail of [...run.inbox, ...run.fields.mail]) {
+      if (given(mail)) recent?.delete(`${mail.from.id}\n${mail.text}`);
+    }
+    for (const mailId of back) {
+      run.sentBack.add(mailId);
+      this.#claimed.delete(mailId);
+      this.#taken.delete(mailId);
+    }
+    run.toSettle = [];
+    run.inbox = run.inbox.filter((mail) => !given(mail));
+    if (run.fields.mail.some(given)) {
+      this.#update(run, { mail: run.fields.mail.filter((mail) => !given(mail)) });
+    }
+    // Messages given back above are not what keeps it going: they are the other window's now.
+    const working = this.#busy(run) || pending || run.unsaved;
     if (working) {
       run.conversation.stop();
       const copy = { id: newChatId(), title: `《${title}》在这台设备上的副本` };

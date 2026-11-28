@@ -46,7 +46,8 @@ export interface AgentRoomEvents {
   /**
    * This window had one, and has it no more although it still wants it: it was not there for a
    * while (asleep, or its timers held back), and another window has it now. What goes on in it here
-   * stops; online only.
+   * stops (the conversation is written to a copy; the tool call already running still ends and may
+   * change the project); online only.
    */
   readonly lost?: (id: string) => void;
 }
