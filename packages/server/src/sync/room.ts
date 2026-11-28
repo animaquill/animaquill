@@ -6,7 +6,7 @@ import { projectCovers, projects } from "../schema.ts";
 
 /**
  * What a person keeps on the platform, as the limits `storage.platform` and `projects.count` count
- * it (docs/design/online-offline.md 3.6): every project they own, drafts of AI too, and the bytes
+ * it: every project they own, drafts of AI too, and the bytes
  * of each (`projects.bytes`: its last snapshot and the updates after it, 0 for one let go of) with
  * its cover. Not counted: what is on GitHub and in the large file storage, the cloud space, the
  * pictures of conversations, the staging folder, the snapshots kept from before merges and what

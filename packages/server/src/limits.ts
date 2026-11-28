@@ -2,7 +2,7 @@ import type { Executor } from "./database.ts";
 
 /**
  * How much each person may have of what the server keeps or does for them: the registry of limits
- * (docs/design/online-offline.md 3.6). One key for each, asked of `PersonLimits` wherever the server
+ * of the server. One key for each, asked of `PersonLimits` wherever the server
  * checks, never as a number written there. `null` is no limit. Only what can differ from person to
  * person, or from plan to plan, is here: the limits of the engineering (the bytes of one project,
  * the conversations of one project, how often a request may come) stay constants where they are.
@@ -19,7 +19,8 @@ export interface LimitInfo {
   readonly what: string;
   /**
    * Where it is checked, each `<side>:<file>`: `server:` of this package (src/), `platform:` of
-   * the platform's API (apps/api/src/). A test of each side looks that each file names the key.
+   * the API of a platform built on this server (its own sources). A test of each side looks that each
+   * file names the key.
    */
   readonly checks: readonly string[];
 }
