@@ -179,7 +179,7 @@ test.describe("AI tools on this computer", () => {
         arguments: { operations: [{ op: "project.rename", name: "Codex 改的" }] },
       });
       expect(second.isError, textOf(second)).toBeFalsy();
-      expect(textOf(second)).toContain("It is not the user");
+      expect(textOf(second)).toContain("It is an AI conversation, not the user");
       expect(textOf(second)).toContain("我在改片段，别动它");
       // An AI tool cannot say when it is idle.
       const notify = await claude.callTool({

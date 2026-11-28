@@ -10,6 +10,8 @@ export interface Mail {
   readonly from: MessageFrom;
   readonly text: string;
   readonly at: number;
+  /** What its words go between to the model, made where it was sent: see `framedMessage`. */
+  readonly seal: string;
 }
 
 export interface Inbox {

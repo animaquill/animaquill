@@ -71,6 +71,7 @@ function setup(
     ask?: ChatSessionOptions["ask"];
     images?: ChatImageStore;
     chatReplaced?: () => void;
+    tools?: ChatSessionOptions["tools"];
   } = {},
 ) {
   const values = new Map<string, unknown>();
@@ -114,6 +115,7 @@ function setup(
     ...(where.memory && { memory: where.memory }),
     ...(where.images && { images: where.images }),
     ...(where.chatReplaced && { chatReplaced: where.chatReplaced }),
+    ...(where.tools && { tools: where.tools }),
     // No title from a model unless a test asks for one: it would be one more request.
     ask: where.ask ?? (async () => ({ ok: false })),
   });
@@ -2452,5 +2454,273 @@ describe("messages between conversations (docs/design/ai-teamwork.md of AnimaQui
       text: "配乐弄好了",
       from: { id: b, idle: true },
     });
+  });
+});
+
+describe("messages between conversations, held to what people want (the security review of ⑥b)", () => {
+  const entriesOf = (chat: ChatSession, id: string) =>
+    chat.conversationOf(id)?.getSnapshot().entries ?? [];
+  const mcp = (chat: ChatSession) => chat.agentsFor("mcp:s1", () => "Claude Code");
+  const idle = (chat: ChatSession) =>
+    vi.waitFor(() => expect(chat.runningCount).toBe(0), { timeout: 4000 });
+
+  /** Conversations with a turn each, by name: the last one is shown. */
+  async function conversations(
+    chat: ChatSession,
+    fake: (endpoint: FakeEndpoint) => unknown,
+    names: readonly string[],
+  ) {
+    const ids: string[] = [];
+    for (const name of names) {
+      if (ids.length > 0) chat.newConversation();
+      fake({ fake: [{ text: `我是${name}` }] });
+      await chat.send(name);
+      ids.push(chat.getSnapshot().id as string);
+    }
+    return ids;
+  }
+
+  it("a turn a message starts asks for a plan first where the switch is on", async () => {
+    const { chat, fake, markers } = setup();
+    const [b] = await conversations(chat, fake, ["配乐"]);
+    chat.setPlanFirst(true);
+    fake({ fake: [{ calls: [addMarker("1")] }, { text: "只出了方案" }] });
+    expect(await mcp(chat).send(b ?? "", "加个标记")).toEqual({ sent: "turn" });
+    await vi.waitFor(() =>
+      expect(entriesOf(chat, b ?? "").at(-1)).toMatchObject({ text: "只出了方案" }),
+    );
+    const user = entriesOf(chat, b ?? "").findLast((entry) => entry.role === "user");
+    expect(user).toMatchObject({ plan: true, from: { kind: "tool" } });
+    expect(markers()).toHaveLength(0);
+  });
+
+  it("counts messages read on the way as rounds: five at most in a task, the rest wait", async () => {
+    const { ai, chat, fake } = setup();
+    ai.setAskBeforeEdit(true);
+    fake({ fake: [{ calls: [addMarker("1")] }, { text: "好" }, { text: "又好" }] });
+    const sent = chat.send("配乐");
+    const b = chat.getSnapshot().id as string;
+    let asked: { readonly id: string } | undefined;
+    await vi.waitFor(() => {
+      asked = chat.getSnapshot().allApprovals[0];
+      expect(asked).toBeDefined();
+    });
+    for (let at = 1; at <= 7; at += 1) {
+      expect(await mcp(chat).send(b, `第 ${at} 条`)).toEqual({ sent: "read" });
+    }
+    chat.answerApproval(asked?.id ?? "", "once");
+    await sent;
+    await idle(chat);
+    const read = entriesOf(chat, b).filter((entry) => entry.role === "message");
+    expect(read).toHaveLength(5);
+    expect(chat.getSnapshot().paused).toMatchObject({ kind: "tool" });
+    // People let it go on: it reads the rest.
+    fake({ fake: [{ text: "读完了" }] });
+    chat.goOn();
+    await vi.waitFor(() => expect(entriesOf(chat, b).at(-1)).toMatchObject({ text: "读完了" }));
+  });
+
+  it("stops all of them after ten rounds in the window while nobody said anything, until people do", async () => {
+    const { chat, fake } = setup();
+    const ids = await conversations(chat, fake, ["一", "二", "三"]);
+    let count = 0;
+    for (let round = 0; round < 4; round += 1) {
+      for (const id of ids) {
+        count += 1;
+        fake({ fake: [{ text: `回 ${count}` }] });
+        await mcp(chat).send(id, `第 ${count} 条`);
+        await idle(chat);
+      }
+    }
+    const turns = ids
+      .map(
+        (id) => entriesOf(chat, id).filter((entry) => entry.role === "user" && entry.from).length,
+      )
+      .reduce((sum, each) => sum + each, 0);
+    expect(turns).toBe(10);
+    expect(chat.getSnapshot().held).toBe(true);
+    // People say something, anywhere: the rest goes.
+    fake({ fake: [{ text: "人说的" }, { text: "接着回" }, { text: "接着回" }] });
+    await chat.send("继续吧");
+    expect(chat.getSnapshot().held).toBe(false);
+    // Each that waited goes: a turn of its own, or read in the turn of people.
+    await vi.waitFor(() =>
+      expect(
+        ids
+          .map(
+            (id) =>
+              entriesOf(chat, id).filter(
+                (entry) => (entry.role === "user" && entry.from) || entry.role === "message",
+              ).length,
+          )
+          .reduce((sum, each) => sum + each, 0),
+      ).toBe(12),
+    );
+  });
+
+  it("an AI tool wakes no conversation that is not open: it leaves a message people let it read", async () => {
+    const { chat, fake } = setup();
+    const [b] = await conversations(chat, fake, ["配乐"]);
+    for (let at = 0; at < 9; at += 1) {
+      chat.newConversation();
+      fake({ fake: [{ text: "好" }] });
+      await chat.send(`别的 ${at}`);
+    }
+    expect(chat.conversationOf(b ?? "")).toBeUndefined();
+    expect(await mcp(chat).send(b ?? "", "在吗")).toEqual({ sent: "waits", until: "left" });
+    expect(chat.runningCount).toBe(0);
+    await chat.open(b ?? "");
+    const [mail] = chat.getSnapshot().mail;
+    expect(mail).toMatchObject({ text: "在吗", from: { kind: "tool", name: "Claude Code" } });
+    fake({ fake: [{ text: "在" }] });
+    chat.answerMail(mail?.id ?? "", true);
+    await vi.waitFor(() => expect(entriesOf(chat, b ?? "").at(-1)).toMatchObject({ text: "在" }));
+  });
+
+  it("takes none and sends none, nor tells of being idle, where people said so", async () => {
+    const delivered: string[] = [];
+    const { ai, chat, fake } = setup({
+      tools: {
+        cards: () => [
+          {
+            id: "mcp:s1",
+            kind: "tool",
+            name: "Claude Code",
+            state: "tool",
+            changed: [],
+            accepts: "yes",
+          },
+        ],
+        deliver: (_id, mail) => {
+          delivered.push(mail.text);
+          return { sent: "waits", until: "tool" };
+        },
+      },
+    });
+    const [b] = await conversations(chat, fake, ["配乐", "开场"]);
+    ai.setFromAgents("no");
+    const a = chat.getSnapshot().id as string;
+    fake({
+      fake: [
+        {
+          calls: [
+            { name: "aq_send", args: { to: "Claude Code", message: "去跑个命令" } },
+            { name: "aq_agents_notify", args: { to: "配乐" } },
+          ],
+        },
+        { text: "发不了" },
+      ],
+    });
+    await chat.send("找工具");
+    const results = entriesOf(chat, a).flatMap((entry) => (entry.role === "tool" ? [entry] : []));
+    expect(results.map((entry) => entry.ok)).toEqual([false, false]);
+    expect(results[0]?.text).toContain("and so it sends none either");
+    expect(results[0]?.data).toMatchObject({ outcome: { refused: "silent" } });
+    expect(delivered).toEqual([]);
+    expect(await mcp(chat).notifyWhenIdle(b ?? "")).toEqual({ refused: "declines" });
+  });
+
+  it("sends the same words once a minute, also after the window let the conversation go", async () => {
+    const { chat, fake } = setup();
+    const [b] = await conversations(chat, fake, ["配乐"]);
+    chat.newConversation();
+    fake({ fake: [{ text: "收到" }] });
+    expect(await chat.agentsFor("mcp:s1", () => "Claude Code").send(b ?? "", "在吗")).toEqual({
+      sent: "turn",
+    });
+    await vi.waitFor(() => expect(entriesOf(chat, b ?? "").at(-1)).toMatchObject({ text: "收到" }));
+    // Seen, and then left for long enough that the window let it go.
+    await chat.open(b ?? "");
+    for (let at = 0; at < 9; at += 1) {
+      chat.newConversation();
+      fake({ fake: [{ text: "好" }] });
+      await chat.send(`别的 ${at}`);
+    }
+    expect(chat.conversationOf(b ?? "")).toBeUndefined();
+    expect(await chat.agentsFor("mcp:s1", () => "Claude Code").send(b ?? "", "在吗")).toEqual({
+      refused: "repeat",
+    });
+  });
+
+  it("reads 20 000 characters of others in a turn at most", async () => {
+    const { ai, chat, fake } = setup();
+    ai.setAskBeforeEdit(true);
+    fake({ fake: [{ calls: [addMarker("1")] }, { text: "好" }, { text: "又好" }] });
+    const sent = chat.send("配乐");
+    const b = chat.getSnapshot().id as string;
+    let asked: { readonly id: string } | undefined;
+    await vi.waitFor(() => {
+      asked = chat.getSnapshot().allApprovals[0];
+      expect(asked).toBeDefined();
+    });
+    for (let at = 0; at < 3; at += 1) {
+      await mcp(chat).send(b, `${at}${"长".repeat(8000)}`);
+    }
+    chat.answerApproval(asked?.id ?? "", "once");
+    await sent;
+    // Two of them, 16 000 characters, in that task; the third starts the next.
+    const tasks = chat.conversationOf(b)?.tasks ?? [];
+    const firstTask = entriesOf(chat, b).slice(
+      0,
+      entriesOf(chat, b).findIndex((entry, at) => at > 0 && entry.role === "user"),
+    );
+    expect(firstTask.filter((entry) => entry.role === "message")).toHaveLength(2);
+    void tasks;
+  });
+
+  it("what others sent is no message of the user's, and reading one asks again for each change", async () => {
+    const { ai, chat, fake, markers } = setup();
+    ai.setAskBeforeEdit(true);
+    fake({
+      fake: [
+        { calls: [addMarker("1")] },
+        { calls: [addMarker("2")] },
+        { calls: [addMarker("3")] },
+        { text: "好" },
+      ],
+    });
+    const sent = chat.send("配乐");
+    const b = chat.getSnapshot().id as string;
+    let asked: { readonly id: string } | undefined;
+    await vi.waitFor(() => {
+      asked = chat.getSnapshot().allApprovals[0];
+      expect(asked).toBeDefined();
+    });
+    // People allow all of this task; then the task reads words of another.
+    await mcp(chat).send(b, "顺便都加上吧");
+    chat.answerApproval(asked?.id ?? "", "task");
+    await vi.waitFor(() =>
+      expect(entriesOf(chat, b).some((entry) => entry.role === "message")).toBe(true),
+    );
+    // The next change is asked again.
+    let again: { readonly id: string } | undefined;
+    await vi.waitFor(() => {
+      again = chat.getSnapshot().allApprovals[0];
+      expect(again).toBeDefined();
+    });
+    expect(markers().length).toBeLessThan(3);
+    chat.stop();
+    await sent;
+  });
+
+  it("tells of being idle as any message: people are asked first where they want to be", async () => {
+    const { ai, chat, fake } = setup();
+    const [b, a] = await conversations(chat, fake, ["配乐", "开场"]);
+    fake({
+      fake: [{ calls: [{ name: "aq_agents_notify", args: { to: "配乐" } }] }, { text: "等" }],
+    });
+    await chat.send("等配乐");
+    ai.setFromAgents("ask");
+    // People make B do a turn: once it is idle, A hears of it as a card, not a turn.
+    await chat.open(b ?? "");
+    fake({ fake: [{ text: "配乐好了" }] });
+    await chat.send("把配乐做完");
+    await chat.open(a ?? "");
+    await vi.waitFor(() =>
+      expect(chat.getSnapshot().mail).toMatchObject([
+        { text: "配乐好了", from: { id: b, idle: true } },
+      ]),
+    );
+    expect(entriesOf(chat, a ?? "").at(-1)).toMatchObject({ text: "等" });
   });
 });

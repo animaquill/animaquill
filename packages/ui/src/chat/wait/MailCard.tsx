@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../app/context.ts";
 import { MAX_ROUNDS } from "../relay.ts";
+import { useSenderName } from "../turn/AgentMessage.tsx";
 import { WaitCard } from "./WaitCard.tsx";
 import styles from "./wait.module.css";
 
@@ -47,10 +48,11 @@ const noop = () => () => {};
 function MailCard({ mail }: { readonly mail: Mail }) {
   const { chat } = useWorkbench();
   const { t } = useTranslation();
-  const title = t("chat.agents.mailTitle", {
-    name: mail.from.name,
-    interpolation: { escapeValue: false },
-  });
+  const name = useSenderName(mail.from);
+  const title =
+    mail.from.kind === "tool"
+      ? t("chat.agents.leftTool", { name: mail.from.name, interpolation: { escapeValue: false } })
+      : t("chat.agents.mailTitle", { name, interpolation: { escapeValue: false } });
   return (
     <WaitCard
       kind="question"

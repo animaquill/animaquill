@@ -37,6 +37,10 @@ describe("rounds with other conversations", () => {
       with: from,
     });
     expect(roundsOf([user("人说的")]).rounds).toBe(0);
+    // Messages read on the way count as rounds too.
+    const read: ChatEntry = { role: "message", from, text: "读到的", at: 0, seal: "aq-1" };
+    expect(roundsOf([user("人说的"), read, answer("好"), read, read]).rounds).toBe(3);
+    expect(roundsOf([read, user("人说的"), answer("好")]).rounds).toBe(0);
   });
 
   it("give the last words of an answer, and names that tell each one apart", () => {

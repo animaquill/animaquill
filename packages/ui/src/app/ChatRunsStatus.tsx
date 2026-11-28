@@ -28,9 +28,24 @@ export function ChatRunsStatus() {
   const { chat } = useWorkbench();
   const { t } = useTranslation();
   const runs = useSyncExternalStore(chat.subscribe, () => chat.getSnapshot().runs);
+  const held = useSyncExternalStore(chat.subscribe, () => chat.getSnapshot().held);
   const running = runs.filter((run) => run.state !== "idle" && run.startedAt !== undefined);
   const [anchor, setAnchor] = useState<DOMRect>();
-  if (running.length === 0) return null;
+  // Messages between conversations wait for people: what it is, and the way on.
+  const heldItem = held && (
+    <Tip name={t("chat.runs.heldTitle")} usage={t("chat.runs.heldUsage")}>
+      <button
+        type="button"
+        className={styles.status}
+        data-testid="status-agents-held"
+        onClick={() => chat.goOnAll()}
+      >
+        <span className={styles.dot} aria-hidden />
+        <span className={styles.text}>{t("chat.runs.held")}</span>
+      </button>
+    </Tip>
+  );
+  if (running.length === 0) return heldItem || null;
   // A task that waits for people to allow a change is still a task: it says so, without a spinner.
   const going = running.filter((run) => run.state === "running");
   const waiting = running.filter((run) => run.state === "waiting");
@@ -50,6 +65,7 @@ export function ChatRunsStatus() {
         : `${goingText} · ${t("chat.runs.andWaiting", { count: waiting.length })}`;
   return (
     <>
+      {heldItem}
       <Tip name={t("chat.runs.title")} usage={t("chat.runs.usage")}>
         <button
           type="button"

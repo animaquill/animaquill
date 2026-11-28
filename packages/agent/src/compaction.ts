@@ -49,7 +49,7 @@ export const COMPACT_PROMPT = [
 ].join("\n");
 
 /** How the summary goes to the model, in place of what it sums up. */
-export const summaryMessage = (entry: Pick<SummaryEntry, "text" | "asked">): string =>
+export const summaryMessage = (entry: Pick<SummaryEntry, "text" | "asked" | "askedFrom">): string =>
   [
     "[Summary of the earlier part of this conversation: the messages before this point were summed up to make room in the context, and the pictures in them left out; the messages after it follow as they were.]",
     "",
@@ -58,7 +58,9 @@ export const summaryMessage = (entry: Pick<SummaryEntry, "text" | "asked">): str
       ? []
       : [
           "",
-          "[The message of the user that started the current task, as they wrote it:]",
+          entry.askedFrom
+            ? "[The message of another conversation, not of the user, that started the current task, as it came:]"
+            : "[The message of the user that started the current task, as they wrote it:]",
           entry.asked,
         ]),
   ].join("\n");
@@ -109,6 +111,8 @@ export interface Cut {
   readonly through: number;
   /** The cut is in the turn that runs: what people asked in it goes with the summary as it was. */
   readonly asked?: string;
+  /** What started that turn was a message of another, not people's: `asked` is it as it came. */
+  readonly askedFrom?: true;
 }
 
 /**
@@ -133,7 +137,15 @@ export function cutOf(entries: readonly ChatEntry[]): Cut | undefined {
   if (answers.length <= KEPT_ANSWERS || byAnswers === undefined) return undefined;
   if (byAnswers <= done || !anything(byAnswers)) return undefined;
   const user = entries[last];
-  return { through: byAnswers, ...(user?.role === "user" && { asked: user.text }) };
+  if (user?.role !== "user") return { through: byAnswers };
+  // A message of another goes as it went to the model, sealed, and never as the user's words.
+  return user.from
+    ? {
+        through: byAnswers,
+        asked: framedMessage(user.from, user.text, user.seal),
+        askedFrom: true,
+      }
+    : { through: byAnswers, asked: user.text };
 }
 
 /**
@@ -175,12 +187,17 @@ export function transcriptOf(entries: readonly ChatEntry[], through: number): st
   for (const entry of entries.slice(from, through)) {
     switch (entry.role) {
       case "user":
+        // A message of another is no word of the user's, also to whoever sums it up.
         lines.push(
-          `User: ${promptOf({ text: entry.text, ...(entry.from && { from: entry.from }), images: (entry.images ?? []).map((image) => ({ ...image, note: pictureLine(image.note) })) })}`,
+          entry.from
+            ? `Another conversation (not the user): ${framedMessage(entry.from, entry.text, entry.seal)}`
+            : `User: ${promptOf({ text: entry.text, images: (entry.images ?? []).map((image) => ({ ...image, note: pictureLine(image.note) })) })}`,
         );
         break;
       case "message":
-        lines.push(`User: ${framedMessage(entry.from, entry.text)}`);
+        lines.push(
+          `Another conversation (not the user): ${framedMessage(entry.from, entry.text, entry.seal)}`,
+        );
         break;
       case "assistant":
         if (entry.text.trim() !== "") lines.push(`Assistant: ${entry.text}`);
@@ -242,7 +259,7 @@ export function estimateTokens(entries: readonly ChatEntry[], pictures = true): 
         characters += entry.text?.length ?? 0;
         break;
       case "message":
-        characters += framedMessage(entry.from, entry.text).length;
+        characters += framedMessage(entry.from, entry.text, entry.seal).length;
         break;
       case "other":
         break;

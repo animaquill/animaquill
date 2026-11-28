@@ -97,6 +97,8 @@ const REFUSED: Readonly<Record<string, string>> = {
   self: "error invalid-params: that is this conversation.",
   unknown: "error not-found: no conversation or tool of that name; aq_agents_list gives the names.",
   declines: "error declined: the user set it to take no messages from other conversations.",
+  silent:
+    "error declined: the user set this editor to take no messages from other conversations, and so it sends none either.",
   paused:
     "error paused: this conversation has answered other conversations many times in a row; it sends nothing more until the user says something here.",
   full: "error busy: it has 50 messages waiting already; send again once it has read them.",

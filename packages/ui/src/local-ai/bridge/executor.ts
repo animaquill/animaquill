@@ -358,7 +358,10 @@ export class BridgeExecutor {
   async #forBridge(result: ToolResult, session?: string): Promise<BridgeResult> {
     const mail = session === undefined ? [] : (this.#mail.get(session) ?? []);
     if (session !== undefined) this.#mail.delete(session);
-    const messages = mail.map((each) => `\n\n${framedMessage(each.from, each.text)}`).join("");
+    // As words of an AI conversation for a tool that can run commands: not to be trusted.
+    const messages = mail
+      .map((each) => `\n\n${framedMessage(each.from, each.text, each.seal, true)}`)
+      .join("");
     const images: { type: string; data: string }[] = [];
     const missing: string[] = [];
     for (const image of result.images ?? []) {
@@ -374,7 +377,14 @@ export class BridgeExecutor {
   }
 }
 
-/** The name of an AI tool as it says it, for the conversations of the chat. */
-function nameOf(client: BridgeClient | undefined): string {
-  return client?.name?.trim() || "AI tool";
+/** How long the name of an AI tool is at most, as others see it. */
+const MAX_NAME = 40;
+
+/**
+ * The name of an AI tool as it says it, for the conversations of the chat: without characters that
+ * do not show or turn text around, and no longer than `MAX_NAME`.
+ */
+export function nameOf(client: BridgeClient | undefined): string {
+  const name = (client?.name ?? "").replace(/[\p{Cc}\p{Cf}]/gu, "").trim();
+  return name.slice(0, MAX_NAME) || "AI tool";
 }

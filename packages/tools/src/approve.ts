@@ -62,6 +62,14 @@ export class Approvals {
     this.#all = true;
   }
 
+  /**
+   * What people allowed for all of the run is no more: the task read words of another
+   * conversation, which people did not know of as they allowed it. Each change is asked again.
+   */
+  revoke(): void {
+    this.#all = false;
+  }
+
   /** Runs after what was asked before it is done, whatever came of that. */
   inTurn<T>(run: () => Promise<T>): Promise<T> {
     const next = this.#queue.then(run, run);

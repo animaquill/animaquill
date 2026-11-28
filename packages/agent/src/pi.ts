@@ -282,6 +282,8 @@ export interface RunOptions {
   readonly plan?: true;
   /** The prompt is the message of another one, not people's: it goes marked as such. */
   readonly from?: MessageFrom;
+  /** What its words go between, see `framedMessage`. */
+  readonly seal?: string;
   /**
    * Messages of others for this conversation: the task reads those it may after each call of a
    * tool, and before its first request (`Agent.steer`). Each goes as an entry of its own.
@@ -654,7 +656,7 @@ function messagesOf(
       case "message":
         messages.push({
           role: "user",
-          content: framedMessage(entry.from, entry.text),
+          content: framedMessage(entry.from, entry.text, entry.seal),
           timestamp: entry.at,
         });
         break;
@@ -889,7 +891,7 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
             : undefined;
   /** What people said in a message, with the pictures that go, and the lines of those that do not. */
   const said = (
-    entry: Pick<UserEntry, "text" | "images" | "plan" | "from">,
+    entry: Pick<UserEntry, "text" | "images" | "plan" | "from" | "seal">,
     at: number,
   ): UserMessage["content"] => {
     const text = promptOf(entry, why(at));
@@ -1147,7 +1149,7 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
     for (const mail of options.inbox?.take() ?? []) {
       const message = {
         role: "user",
-        content: framedMessage(mail.from, mail.text),
+        content: framedMessage(mail.from, mail.text, mail.seal),
         timestamp: mail.at,
       };
       steered.set(message, mail);
@@ -1160,7 +1162,7 @@ export async function runTask(options: RunOptions): Promise<RunResult> {
     read.add(mail);
     onEvent({
       type: "entry",
-      entry: { role: "message", from: mail.from, text: mail.text, at: mail.at },
+      entry: { role: "message", from: mail.from, text: mail.text, at: mail.at, seal: mail.seal },
     });
   };
   const unsubscribe = options.inbox?.subscribe(pull);

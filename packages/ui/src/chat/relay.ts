@@ -9,6 +9,13 @@ import type { ChatEntry, MessageFrom } from "@animaquill/agent";
 
 /** Turns in a row that messages of others start, before people have to say something. */
 export const MAX_ROUNDS = 5;
+/**
+ * Turns that messages of others start, and messages tasks read on their way, in all conversations
+ * of a window together, before people have to say something in one of them.
+ */
+export const MAX_UNATTENDED = 10;
+/** Words of others one turn reads at most: the rest waits for the next. */
+export const MAX_TURN_CHARS = 20_000;
 /** Messages that wait for one conversation at most. */
 export const MAX_WAITING = 50;
 /** The same words from the same one within this long go once. */
@@ -19,8 +26,9 @@ export const WATCH_MS = 12 * 60 * 60 * 1000;
 export const IDLE_WORDS = 300;
 
 /**
- * The turns at the end of a conversation that messages of others started, since people last said
- * something in it, and who sent the last of them.
+ * The rounds at the end of a conversation with others, since people last said something in it:
+ * each turn a message of another started, and each message a task read on its way; and who sent
+ * the last of them.
  */
 export function roundsOf(entries: readonly ChatEntry[]): {
   readonly rounds: number;
@@ -30,6 +38,11 @@ export function roundsOf(entries: readonly ChatEntry[]): {
   let last: MessageFrom | undefined;
   for (let at = entries.length - 1; at >= 0; at -= 1) {
     const entry = entries[at];
+    if (entry?.role === "message") {
+      rounds += 1;
+      last ??= entry.from;
+      continue;
+    }
     if (entry?.role !== "user") continue;
     if (!entry.from) break;
     rounds += 1;

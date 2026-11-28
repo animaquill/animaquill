@@ -207,7 +207,7 @@ export class Conversation {
     target: TaskTarget,
     images: readonly AttachedImage[] = [],
     selection?: SelectionFacts,
-    marks: Pick<UserEntry, "plan" | "fromPlan" | "rewrites" | "from"> = {},
+    marks: Pick<UserEntry, "plan" | "fromPlan" | "rewrites" | "from" | "seal"> = {},
   ): Promise<TaskOutcome | undefined> {
     if (this.running || (!text.trim() && images.length === 0)) return undefined;
     const now = this.#options.now ?? Date.now;
@@ -223,6 +223,7 @@ export class Conversation {
       ...(marks.fromPlan !== undefined && { fromPlan: marks.fromPlan }),
       ...(marks.rewrites !== undefined && { rewrites: marks.rewrites }),
       ...(marks.from && { from: marks.from }),
+      ...(marks.from && marks.seal !== undefined && { seal: marks.seal }),
     };
     const history = this.#snapshot.entries;
     this.#set({ entries: [...history, user] });
@@ -320,6 +321,7 @@ export class Conversation {
             through: cut.through,
             text: answer.text,
             ...(cut.asked !== undefined && { asked: cut.asked }),
+            ...(cut.askedFrom && { askedFrom: true as const }),
             count: coveredBy(entries, cut.through),
             before,
             after,
@@ -464,6 +466,7 @@ export class Conversation {
             ...(first.images && { images: first.images }),
             ...(first.plan && { plan: true }),
             ...(first.from && { from: first.from }),
+            ...(first.seal !== undefined && { seal: first.seal }),
           }),
           ...(target.inbox && { inbox: target.inbox }),
           ...(target.pictures && { pictures: target.pictures }),

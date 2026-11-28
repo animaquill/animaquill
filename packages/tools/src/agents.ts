@@ -37,12 +37,21 @@ export type SendOutcome =
   /** It reads it with its next call; or it started a turn with it. */
   | { readonly sent: "read" | "turn" }
   /** It waits there: for people to answer it first, for its next call (an AI tool), for people to say something again. */
-  | { readonly sent: "waits"; readonly until: "people" | "tool" | "asked" | "paused" }
+  /**
+   * It waits there: for people to answer it first, for its next call (an AI tool), for people to
+   * let it, for people to say something again, or, left for one not open, for people to read it.
+   */
+  | {
+      readonly sent: "waits";
+      readonly until: "people" | "tool" | "asked" | "paused" | "left";
+    }
   | {
       readonly refused:
         | "self"
         | "unknown"
         | "declines"
+        /** People set this editor to take no messages of others, and so it sends none either. */
+        | "silent"
         /** The one that sends answered others too many times in a row: people have to speak first. */
         | "paused"
         | "full"
@@ -51,7 +60,8 @@ export type SendOutcome =
 
 /** What came of asking to be told once another is idle, see `AgentDirectory.notifyWhenIdle`. */
 export type NotifyOutcome =
-  { readonly watching: true } | { readonly refused: "self" | "unknown" | "cannotTell" };
+  | { readonly watching: true }
+  | { readonly refused: "self" | "unknown" | "cannotTell" | "declines" };
 
 /**
  * The others a caller can see and send to, for one caller: the host knows who calls. Only the

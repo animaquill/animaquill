@@ -25,6 +25,7 @@ export {
   PLAN_FIRST_LINE,
   entriesToKeep,
   framedMessage,
+  newSeal,
   latestSummary,
   readEntries,
   promptOf,

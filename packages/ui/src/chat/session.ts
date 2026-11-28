@@ -23,6 +23,7 @@ import {
   type Inbox,
   type Mail,
   type MessageFrom,
+  newSeal,
 } from "@animaquill/agent";
 import {
   aiTask,
@@ -96,6 +97,8 @@ import { clipsOf, placesOf, summaryOf, type TurnSummary } from "./summary.ts";
 import { groupsOf } from "./turns.ts";
 import {
   MAX_ROUNDS,
+  MAX_TURN_CHARS,
+  MAX_UNATTENDED,
   MAX_WAITING,
   REPEAT_MS,
   WATCH_MS,
@@ -220,6 +223,11 @@ export interface ChatSnapshot {
   readonly paused: MessageFrom | undefined;
   /** The conversations the window has, as the list of conversations and the status bar show them. */
   readonly runs: readonly RunSummary[];
+  /**
+   * Messages between the conversations of the window wait, as they went on so long while nobody
+   * said anything (`MAX_UNATTENDED`): until people say something, or let them go on (`goOnAll`).
+   */
+  readonly held: boolean;
 }
 
 /** The conversation another device wrote while this one ran, see `ChatSnapshot.splitFrom`. */
@@ -437,10 +445,12 @@ interface Run {
   inbox: Mail[];
   /** How many turns in a row of others people let it go on past, with "接着说". */
   goOn: number;
-  /** Who asked to be told once it is next idle, by id, and until when. */
-  readonly watchers: Map<string, number>;
-  /** The words each one sent lately, and when, for the same words within a minute. */
-  readonly recent: Map<string, number>;
+  /** How many words of others the task that runs read: see `MAX_TURN_CHARS`. */
+  turnChars: number;
+  /** Messages the task that runs took, and has not read into its entries yet. */
+  steered: number;
+  /** What people allowed in the task that runs, which a message of another takes back. */
+  approvals: Approvals | undefined;
   /** Whoever takes its messages as they come: the task that runs. */
   readonly mailListeners: Set<() => void>;
   /** What the task that runs reads messages from. */
@@ -486,6 +496,7 @@ export class ChatSession {
     approvals: [],
     allApprovals: [],
     runs: [],
+    held: false,
   };
   /** What people wrote and did not send yet, by conversation. */
   readonly drafts: Drafts;
@@ -504,6 +515,18 @@ export class ChatSession {
   /** How each change that waits for people is answered, by its id. */
   readonly #answers = new Map<string, (answer: Approval) => void>();
   #approvals: readonly PendingApproval[] = [];
+  /**
+   * Turns that messages of others started, and messages tasks read on their way, in all
+   * conversations of the window since people last said something in any: see `MAX_UNATTENDED`.
+   */
+  #unattended = 0;
+  /** The words each one sent each conversation lately, and when: see `REPEAT_MS`. */
+  readonly #recent = new Map<string, Map<string, number>>();
+  /**
+   * Who asked to be told once each conversation is next idle, and until when: by the conversation,
+   * so that it holds also where the window reads the conversation again.
+   */
+  readonly #watchers = new Map<string, Map<string, number>>();
   #askedCount = 0;
   #clock = 0;
 
@@ -571,13 +594,14 @@ export class ChatSession {
    * What the snapshot says of all conversations of the window: how each stands, what they marked,
    * what waits for people. The same objects where nothing changed, so that nothing renders again.
    */
-  #overview(): Pick<ChatSnapshot, "runs" | "marks" | "approvals" | "allApprovals"> {
+  #overview(): Pick<ChatSnapshot, "runs" | "marks" | "approvals" | "allApprovals" | "held"> {
     const runs: RunSummary[] = [];
     for (const run of this.#runs.values()) {
       const talk = run.conversation.getSnapshot();
       const waits =
         this.#approvals.some((each) => each.chat === run.id) ||
         run.fields.mail.length > 0 ||
+        (run.inbox.length > 0 && this.#held()) ||
         (!talk.running && (askingIn(talk.entries) || run.fields.paused !== undefined));
       const state = waits ? "waiting" : talk.running ? "running" : "idle";
       const title =
@@ -623,6 +647,7 @@ export class ChatSession {
       marks: sameMarks ? before.marks : marks,
       approvals: sameApprovals ? before.approvals : approvals,
       allApprovals: this.#approvals,
+      held: this.#held() && [...this.#runs.values()].some((run) => run.inbox.length > 0),
     };
   }
 
@@ -634,7 +659,8 @@ export class ChatSession {
       overview.runs === before.runs &&
       overview.marks === before.marks &&
       overview.approvals === before.approvals &&
-      overview.allApprovals === before.allApprovals
+      overview.allApprovals === before.allApprovals &&
+      overview.held === before.held
     )
       return;
     this.#set(overview);
@@ -743,6 +769,11 @@ export class ChatSession {
         this.#took(run, now);
         this.#saveSoon(run);
         this.#mark(run, now);
+        // Words of another read in the task: what people allowed for all of it is asked again.
+        if (now.at(-1)?.role === "message") {
+          run.approvals?.revoke();
+          run.steered = Math.max(0, run.steered - 1);
+        }
         const paused = this.#pausedOf(run);
         if (paused?.id !== run.fields.paused?.id) this.#update(run, { paused });
       }
@@ -783,8 +814,9 @@ export class ChatSession {
       unsaved: false,
       inbox: [],
       goOn: 0,
-      watchers: new Map(),
-      recent: new Map(),
+      turnChars: 0,
+      steered: 0,
+      approvals: undefined,
       mailListeners: new Set(),
       mailbox: { take: () => [], subscribe: () => () => {}, putBack: () => {} },
       used: ++this.#clock,
@@ -899,6 +931,7 @@ export class ChatSession {
       approvals = new Approvals();
       this.#allowed.set(signal, approvals);
     }
+    run.approvals = approvals;
     const sees = () => this.#seesPictures(run) !== false;
     const tools = createToolset(
       {
@@ -918,13 +951,12 @@ export class ChatSession {
         selection,
         // What the editor showed as each message of the conversation was sent, for "sent".
         sent: () =>
-          conversation
-            .getSnapshot()
-            .entries.flatMap((entry) =>
-              entry.role === "user"
-                ? [{ text: entry.text, ...(entry.selection && { selection: entry.selection }) }]
-                : [],
-            ),
+          conversation.getSnapshot().entries.flatMap((entry) =>
+            // What others sent is no message of the user's.
+            entry.role === "user" && !entry.from
+              ? [{ text: entry.text, ...(entry.selection && { selection: entry.selection }) }]
+              : [],
+          ),
         problems,
         ...(describe && { describe }),
         ...(problemInputs && { problemInputs }),
@@ -1094,6 +1126,14 @@ export class ChatSession {
         ? run.fields.title
         : firstWords(entries, TITLE_LENGTH);
     run.id = copy.id;
+    // What it heard lately, and who waits for it to be idle, go along.
+    for (const kept of [this.#recent, this.#watchers]) {
+      const had = kept.get(from);
+      if (had) {
+        kept.set(copy.id, had as never);
+        kept.delete(from);
+      }
+    }
     if (hosted) {
       this.#runs.delete(from);
       this.#runs.set(copy.id, run);
@@ -1711,7 +1751,7 @@ export class ChatSession {
     text: string,
     images: readonly AttachedImage[] = [],
     selection?: SelectionFacts,
-    marks?: Pick<UserEntry, "plan" | "fromPlan" | "rewrites" | "from">,
+    marks?: Pick<UserEntry, "plan" | "fromPlan" | "rewrites" | "from" | "seal">,
   ): Promise<TaskOutcome | undefined> {
     // Before anything waits: people may select something else meanwhile, or switch "先出方案".
     const shown = selection ?? this.#shownFacts();
@@ -1721,7 +1761,16 @@ export class ChatSession {
     const putBack = () => {
       // Words of another wait where they waited: never in people's box.
       if (marked.from) {
-        run.inbox = [{ id: newChatId(), from: marked.from, text, at: Date.now() }, ...run.inbox];
+        run.inbox = [
+          {
+            id: newChatId(),
+            from: marked.from,
+            text,
+            at: Date.now(),
+            seal: marked.seal ?? newSeal(text),
+          },
+          ...run.inbox,
+        ];
         return;
       }
       if (project === undefined) return;
@@ -1739,8 +1788,12 @@ export class ChatSession {
       putBack();
       return undefined;
     }
-    // People said something: the turns in a row that others started count from here.
-    if (!marked.from) run.goOn = 0;
+    // People said something: the turns in a row that others started count from here, in all.
+    if (!marked.from) {
+      run.goOn = 0;
+      this.#peopleSpoke();
+    }
+    run.turnChars = marked.from ? text.length : 0;
     // The first message settles the model of the conversation: another default later is not it.
     if (!run.fields.model) {
       const now = this.#modelOf(run);
@@ -1965,10 +2018,25 @@ export class ChatSession {
   #mailboxOf(run: Run): Inbox {
     return {
       take: () => {
-        // Stopped after too many turns with others: nothing goes in until people speak.
+        // Stopped after too many turns with others, or all of them while nobody said anything:
+        // nothing goes in until people speak.
         if (run.fields.paused !== undefined || run.gone) return [];
-        const taken = run.inbox;
-        run.inbox = [];
+        // Those taken before and not read yet count too.
+        const { rounds } = roundsOf(run.conversation.getSnapshot().entries);
+        let left = MAX_ROUNDS - (rounds - run.goOn) - run.steered;
+        const taken: Mail[] = [];
+        while (left > 0 && this.#unattended < MAX_UNATTENDED) {
+          const [next] = run.inbox;
+          if (!next) break;
+          // So many words of others in one turn at most: the rest waits for the next.
+          if (run.turnChars + next.text.length > MAX_TURN_CHARS && run.turnChars > 0) break;
+          run.inbox = run.inbox.slice(1);
+          run.turnChars += next.text.length;
+          taken.push(next);
+          left -= 1;
+          run.steered += 1;
+          this.#unattended += 1;
+        }
         if (taken.length > 0) this.#refresh();
         return taken;
       },
@@ -1978,16 +2046,45 @@ export class ChatSession {
       },
       putBack: (mails) => {
         run.inbox = [...mails, ...run.inbox];
+        // Taken and not read: they did not count.
+        this.#unattended = Math.max(0, this.#unattended - mails.length);
+        run.steered = 0;
         // The task that did not get to read them is over: they start the next one.
         queueMicrotask(() => this.#wake(run));
       },
     };
   }
 
-  /** Who a conversation went on with, where it answered others so often in a row that it stops. */
+  /**
+   * Who a conversation went on with, where it answered others so often in a row that it stops:
+   * the turns their messages started and those it read on its way, since people last spoke to it.
+   */
   #pausedOf(run: Run): MessageFrom | undefined {
     const { rounds, with: last } = roundsOf(run.conversation.getSnapshot().entries);
     return rounds - run.goOn >= MAX_ROUNDS ? last : undefined;
+  }
+
+  /**
+   * Whether the conversations of the window read nothing more of each other until people say
+   * something: so many turns, and messages read on the way, since anyone last did.
+   */
+  #held(): boolean {
+    return this.#unattended >= MAX_UNATTENDED;
+  }
+
+  /** People said something, or let the others go on: what waits goes again. */
+  #peopleSpoke(): void {
+    this.#unattended = 0;
+    for (const run of this.#runs.values()) queueMicrotask(() => this.#wake(run));
+    this.#refresh();
+  }
+
+  /**
+   * "继续": the conversations of the window, which stopped reading each other as nobody said
+   * anything for so long, go on with what waits for them, as if people had.
+   */
+  goOnAll(): void {
+    this.#peopleSpoke();
   }
 
   /** Whether nothing keeps a conversation from a turn that a message of another starts. */
@@ -2003,34 +2100,45 @@ export class ChatSession {
 
   /**
    * Gives a conversation what waits for it: to the task that runs, after its next call; else, where
-   * nothing keeps it, a turn with the first of them, which reads the others at once.
+   * nothing keeps it, a turn with the first of them, which reads the others at once. A turn of
+   * theirs asks for a plan first as one of people would, where the switch is on.
    */
   #wake(run: Run): void {
     if (this.#runs.get(run.id) !== run || run.gone) return;
     for (const listener of run.mailListeners) listener();
-    if (run.inbox.length === 0 || run.fields.paused !== undefined) return;
+    if (run.inbox.length === 0 || run.fields.paused !== undefined || this.#held()) return;
     if (!this.#readyForMail(run)) return;
     const [first, ...rest] = run.inbox;
     if (!first) return;
     run.inbox = rest;
-    void this.#send(run, first.text, [], WITHHELD, { from: first.from });
+    this.#unattended += 1;
+    void this.#send(run, first.text, [], WITHHELD, {
+      from: first.from,
+      seal: first.seal,
+      ...(run.fields.planFirst && { plan: true as const }),
+    });
   }
 
   /**
    * A message of another for a conversation of the window, and what came of it: read in the task
    * that runs, a turn of its own, or it waits (for people to let it, for people to answer first).
+   * One of an AI tool for a conversation it had to be opened for starts nothing: it waits for
+   * people, as a card (`opened`).
    */
-  #deliver(run: Run, mail: Mail): SendOutcome {
+  #deliver(run: Run, mail: Mail, opened = false): SendOutcome {
     const now = Date.now();
-    for (const [key, at] of run.recent) if (now - at > REPEAT_MS) run.recent.delete(key);
+    const recent = this.#recent.get(run.id) ?? new Map<string, number>();
+    this.#recent.set(run.id, recent);
+    for (const [key, at] of recent) if (now - at > REPEAT_MS) recent.delete(key);
     const key = `${mail.from.id}\n${mail.text}`;
-    if (run.recent.has(key)) return { refused: "repeat" };
+    if (recent.has(key)) return { refused: "repeat" };
     if (run.inbox.length + run.fields.mail.length >= MAX_WAITING) return { refused: "full" };
-    run.recent.set(key, now);
-    if (this.#options.ai.getSnapshot().fromAgents === "ask") {
+    recent.set(key, now);
+    const left = mail.from.kind === "tool" && opened;
+    if (left || this.#options.ai.getSnapshot().fromAgents === "ask") {
       if (run !== this.#shown) run.unseen = true;
       this.#update(run, { mail: [...run.fields.mail, mail] });
-      return { sent: "waits", until: "asked" };
+      return { sent: "waits", until: left ? "left" : "asked" };
     }
     return this.#queueMail(run, mail);
   }
@@ -2041,26 +2149,31 @@ export class ChatSession {
     const outcome: SendOutcome =
       run.fields.paused !== undefined
         ? { sent: "waits", until: "paused" }
-        : run.conversation.running
-          ? { sent: "read" }
-          : this.#readyForMail(run)
-            ? { sent: "turn" }
-            : { sent: "waits", until: "people" };
+        : this.#held()
+          ? { sent: "waits", until: "people" }
+          : run.conversation.running
+            ? { sent: "read" }
+            : this.#readyForMail(run)
+              ? { sent: "turn" }
+              : { sent: "waits", until: "people" };
     this.#wake(run);
     this.#refresh();
     return outcome;
   }
 
   /**
-   * People's answer to a message that waits for them ("先问我"), of the conversation shown or any:
-   * read it, or not.
+   * People's answer to a message that waits for them ("先问我", or one an AI tool left), of the
+   * conversation shown or any: read it, or not. Letting it is people's doing: what waited goes on.
    */
   answerMail(id: string, read: boolean): void {
     for (const run of this.#runs.values()) {
       const mail = run.fields.mail.find((each) => each.id === id);
       if (!mail) continue;
       this.#update(run, { mail: run.fields.mail.filter((each) => each !== mail) });
-      if (read) this.#queueMail(run, mail);
+      if (read) {
+        this.#unattended = 0;
+        this.#queueMail(run, mail);
+      }
       return;
     }
   }
@@ -2074,7 +2187,7 @@ export class ChatSession {
     if (!run || run.fields.paused === undefined) return;
     run.goOn = roundsOf(run.conversation.getSnapshot().entries).rounds;
     this.#update(run, { paused: undefined });
-    this.#wake(run);
+    this.#peopleSpoke();
   }
 
   /** Who a conversation is to others: its id, and its name as people see it. */
@@ -2115,8 +2228,8 @@ export class ChatSession {
   }
 
   /**
-   * What one of the project sees of the others and how it sends to them: a conversation of the
-   * window (`run`), or an AI tool on this computer by its id (`mcp:` and its session) and name.
+   * What one of the project sees of the others and how it sends to them: an AI tool on this
+   * computer by its id (`mcp:` and its session) and name.
    */
   agentsFor(me: string, name: () => string): AgentDirectory {
     return this.#directory(
@@ -2165,19 +2278,32 @@ export class ChatSession {
         if (to === me()) return { refused: "self" };
         // Too many turns in a row with others: people speak first.
         if (sender?.fields.paused !== undefined) return { refused: "paused" };
-        const mail: Mail = { id: newChatId(), from: from(), text, at: Date.now() };
-        if (to.startsWith("mcp:"))
+        // Taking none is sending none, also to AI tools on this computer.
+        if (accepts() === "no") return { refused: to.startsWith("mcp:") ? "silent" : "declines" };
+        const mail: Mail = {
+          id: newChatId(),
+          from: from(),
+          text,
+          at: Date.now(),
+          seal: newSeal(text),
+        };
+        if (to.startsWith("mcp:")) {
           return this.#options.tools?.deliver(to, mail) ?? { refused: "unknown" };
-        if (accepts() === "no") return { refused: "declines" };
-        const run = this.#runs.get(to) ?? (await this.#host(to));
-        return run ? this.#deliver(run, mail) : { refused: "unknown" };
+        }
+        const had = this.#runs.get(to);
+        const run = had ?? (await this.#host(to));
+        return run ? this.#deliver(run, mail, had === undefined) : { refused: "unknown" };
       },
       notifyWhenIdle: async (target) => {
         if (target === me()) return { refused: "self" };
         if (target.startsWith("mcp:")) return { refused: "cannotTell" };
+        // Its last answer would come as a message: taking none is asking for none.
+        if (accepts() === "no") return { refused: "declines" };
         const run = this.#runs.get(target) ?? (await this.#host(target));
         if (!run) return { refused: "unknown" };
-        run.watchers.set(me(), Date.now() + WATCH_MS);
+        const watchers = this.#watchers.get(run.id) ?? new Map<string, number>();
+        watchers.set(me(), Date.now() + WATCH_MS);
+        this.#watchers.set(run.id, watchers);
         return { watching: true };
       },
     };
@@ -2201,27 +2327,34 @@ export class ChatSession {
   }
 
   /**
-   * Tells whoever asked that a conversation is idle now, with its last answer: each once, and only
-   * within the time they asked for.
+   * Tells whoever asked that a conversation is idle now, with its last answer: each once, only
+   * within the time they asked for, and as any message to them is (the settings, the same words,
+   * how many wait).
    */
   async #toldIdle(run: Run): Promise<void> {
-    if (run.watchers.size === 0) return;
+    const waiting = this.#watchers.get(run.id);
+    if (!waiting || waiting.size === 0) return;
     const now = Date.now();
-    const watchers = [...run.watchers].filter(([, until]) => until > now).map(([id]) => id);
-    run.watchers.clear();
-    const mail = (): Mail => ({
-      id: newChatId(),
-      from: { ...this.#fromOf(run), idle: true },
-      text: lastAnswerOf(run.conversation.getSnapshot().entries),
-      at: Date.now(),
-    });
+    const watchers = [...waiting].filter(([, until]) => until > now).map(([id]) => id);
+    this.#watchers.delete(run.id);
+    if (this.#options.ai.getSnapshot().fromAgents === "no") return;
+    const mail = (): Mail => {
+      const text = lastAnswerOf(run.conversation.getSnapshot().entries);
+      return {
+        id: newChatId(),
+        from: { ...this.#fromOf(run), idle: true },
+        text,
+        at: Date.now(),
+        seal: newSeal(text),
+      };
+    };
     for (const id of watchers) {
       if (id.startsWith("mcp:")) {
         this.#options.tools?.deliver(id, mail());
         continue;
       }
       const watcher = this.#runs.get(id) ?? (await this.#host(id));
-      if (watcher) this.#queueMail(watcher, mail());
+      if (watcher) this.#deliver(watcher, mail());
     }
   }
 
