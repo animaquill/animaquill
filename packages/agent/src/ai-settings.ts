@@ -252,6 +252,12 @@ export interface AiSettings {
    * first, or takes none.
    */
   readonly fromAgents?: "ask" | "no";
+  /**
+   * A message to AI goes with what the editor shows (the clips selected and the playhead, which AI
+   * reads with `aq_selection_read`) unless people took that off (`false`) under the box of the
+   * chat, which stays so for their next messages.
+   */
+  readonly carrySelection?: false;
   readonly kept?: KeptSettings;
 }
 
@@ -356,6 +362,7 @@ const TOP_FIELDS = new Set([
   "autoCompact",
   "askBeforeEdit",
   "fromAgents",
+  "carrySelection",
 ]);
 const SERVICE_FIELDS = new Set([
   "id",
@@ -878,6 +885,7 @@ export function readAiSettings(value: unknown): AiSettingsReading {
     ...((value.fromAgents === "ask" || value.fromAgents === "no") && {
       fromAgents: value.fromAgents,
     }),
+    ...(value.carrySelection === false && { carrySelection: false as const }),
     ...(Object.keys(kept).length > 0 && { kept }),
   };
   // Set while the services were read, which control flow does not see.
@@ -1023,6 +1031,7 @@ export function writeAiSettings(settings: AiSettings): Record<string, unknown> {
     ...(settings.autoCompact === false && { autoCompact: false }),
     ...(settings.askBeforeEdit && { askBeforeEdit: true }),
     ...(settings.fromAgents !== undefined && { fromAgents: settings.fromAgents }),
+    ...(settings.carrySelection === false && { carrySelection: false }),
   };
 }
 

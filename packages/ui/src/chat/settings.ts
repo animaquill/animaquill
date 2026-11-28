@@ -606,6 +606,8 @@ export class AiSettingsStore {
       favorites: _favorites,
       packFor: _chosen,
       reasoningFor: _reasoning,
+      fromAgents: _agents,
+      carrySelection: _carry,
       kept: _kept,
       ...before
     } = this.#snapshot;
@@ -648,6 +650,8 @@ export class AiSettingsStore {
       lookWhilePlaying,
       autoCompact,
       askBeforeEdit,
+      fromAgents,
+      carrySelection,
       kept,
     } = this.#snapshot;
     return {
@@ -666,6 +670,8 @@ export class AiSettingsStore {
       ...(lookWhilePlaying && { lookWhilePlaying }),
       ...(autoCompact === false && { autoCompact }),
       ...(askBeforeEdit && { askBeforeEdit }),
+      ...(fromAgents !== undefined && { fromAgents }),
+      ...(carrySelection === false && { carrySelection }),
       ...(kept && { kept }),
     };
   }
@@ -1388,6 +1394,15 @@ export class AiSettingsStore {
   setShotSize(size: ShotSide): void {
     const { shotSize: _was, ...now } = this.#settingsNow();
     this.#save({ ...now, ...(size !== 1568 && { shotSize: size }) });
+  }
+
+  /**
+   * Whether a message to AI goes with what the editor shows, see `AiSettings.carrySelection`. False
+   * where the settings cannot be saved (`held`): nothing changed.
+   */
+  setCarrySelection(on: boolean): boolean {
+    const { carrySelection: _was, ...now } = this.#settingsNow();
+    return this.#save({ ...now, ...(!on && { carrySelection: false as const }) });
   }
 
   setSendWith(key: SendWith): void {

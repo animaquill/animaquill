@@ -959,6 +959,22 @@ describe("asking before a change of the project", () => {
   });
 });
 
+describe("what a message keeps of the editor", () => {
+  it("goes with it unless people took it off, which is what is kept", () => {
+    expect(writeAiSettings(EMPTY_AI_SETTINGS).carrySelection).toBeUndefined();
+    const off = writeAiSettings({ ...EMPTY_AI_SETTINGS, carrySelection: false });
+    expect(off.carrySelection).toBe(false);
+    expect(readAiSettings(off).settings.carrySelection).toBe(false);
+    expect(readAiSettings(off).settings.kept).toBeUndefined();
+    expect(
+      readAiSettings({ ...off, carrySelection: true }).settings.carrySelection,
+    ).toBeUndefined();
+    expect(
+      readAiSettings({ ...off, carrySelection: "no" }).settings.carrySelection,
+    ).toBeUndefined();
+  });
+});
+
 describe("favorite models", () => {
   const service = (enabled: string[]) => ({
     id: "a",

@@ -307,9 +307,13 @@
   display: block;
 }
 
+/*
+ * The line starts at the handle, in the lower part of the ruler (see `::before`): above it are the
+ * timecodes, which it would cross and stick out over.
+ */
 .playhead {
   position: absolute;
-  top: 0;
+  top: 16px;
   bottom: 0;
   left: 0;
   width: 1px;
@@ -337,7 +341,7 @@
  */
 .playhead::before {
   position: absolute;
-  top: 16px;
+  top: 0;
   left: -5px;
   width: 11px;
   height: 12px;

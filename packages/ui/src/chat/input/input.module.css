@@ -398,40 +398,92 @@
   align-self: flex-start;
 }
 
-/* "带上": what the message keeps of the editor, faint, under the card. */
+/*
+ * "带上": what the message keeps of the editor, a small tag at the top of the card, as the context
+ * of VS Code's chat. Taken off, it stays, slanted and struck through, and is a button to put it back.
+ */
 .carry {
-  display: flex;
-  gap: 4px;
+  display: inline-flex;
+  flex: none;
+  align-self: flex-start;
+  align-items: center;
+  max-width: 100%;
+  min-width: 0;
+  height: 20px;
+  color: var(--aq-text);
+  font-size: var(--aq-font-11);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  border: 1px solid var(--aq-border);
+  border-radius: 4px;
+}
+
+.carry[data-off] {
+  color: var(--aq-text-muted);
+  border-style: dashed;
+}
+
+.carry > .carryPart:first-child {
+  padding-left: 5px;
+}
+
+.carryPart {
+  display: inline-flex;
+  gap: 3px;
   align-items: center;
   min-width: 0;
-  padding: 0 2px 0 6px;
-  color: var(--aq-text-muted);
-  font-size: var(--aq-font-11);
+  padding-right: 6px;
+  cursor: default;
+}
+
+.carryPart + .carryPart {
+  flex: none;
 }
 
 .carryIcon {
   flex: none;
+  color: var(--aq-text-muted);
 }
 
-.carryText {
-  flex: 1;
+.carryName {
   min-width: 0;
   overflow: hidden;
-  white-space: nowrap;
   text-overflow: ellipsis;
-  font-variant-numeric: tabular-nums;
 }
 
-.carryPart {
-  cursor: default;
-}
-
-.carryPart:hover {
-  color: var(--aq-text-strong);
-}
-
-.carry[data-off] .carryText {
+.carry[data-off] .carryName {
   font-style: italic;
+  text-decoration: line-through;
+}
+
+.area .carryToggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch;
+  width: 18px;
+  padding: 0;
+  color: var(--aq-text-muted);
+  border-radius: 0 3px 3px 0;
+}
+
+/* Taken off: the whole tag puts it back. */
+.area .carryBack {
+  display: inline-flex;
+  align-items: center;
+  align-self: stretch;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0 0 0 5px;
+  color: inherit;
+  font: inherit;
+  border-radius: 3px;
+}
+
+.area .carryBack:hover,
+.area .carryBack:hover .carryName {
+  color: var(--aq-text-strong);
 }
 
 .narrowOnly {

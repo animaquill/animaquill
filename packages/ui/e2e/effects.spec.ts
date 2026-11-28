@@ -390,6 +390,57 @@ test.describe("in the properties tab", () => {
     await expect.poll(() => names(page)).toEqual(["亮度", "模糊", "裁切"]);
   });
 
+  test("fold up by their title, one that just went on too, and not with their switch or bin", async ({
+    page,
+  }) => {
+    await withThree(page);
+    // Its name, and "有关键帧" after it once it is folded with keys in it.
+    const heading = (name: string) =>
+      properties(page).getByRole("button", { name: new RegExp(`^${name}( 有关键帧)?$`) });
+    const brightness = effectsOn(page).nth(0).getByRole("group", { name: "亮度", exact: true });
+    await brightness.getByRole("button", { name: "添加关键帧" }).click();
+    await heading("亮度").click();
+    await expect(heading("亮度")).toHaveAttribute("aria-expanded", "false");
+    await expect(brightness).toHaveCount(0);
+    await expect(heading("亮度").getByRole("img", { name: "有关键帧" })).toBeVisible();
+    // The switch and the bin on the line of the title are their own.
+    await effectList(page).getByRole("checkbox", { name: "启用模糊" }).uncheck();
+    await expect(heading("模糊")).toHaveAttribute("aria-expanded", "true");
+    await effectList(page).getByRole("button", { name: "删除裁切" }).click();
+    await expect(effectsOn(page)).toHaveCount(2);
+    await expect(heading("模糊")).toHaveAttribute("aria-expanded", "true");
+    await expect(heading("亮度")).toHaveAttribute("aria-expanded", "false");
+    // Alt and a click: the groups of the clip with them, as in After Effects.
+    await heading("模糊").click({ modifiers: ["Alt"] });
+    for (const name of ["变换", "不透明度", "亮度", "模糊"]) {
+      await expect(heading(name)).toHaveAttribute("aria-expanded", "false");
+    }
+    await properties(page).screenshot(shot("effects-folded.png"));
+    await heading("模糊").click({ modifiers: ["Alt"] });
+    for (const name of ["变换", "不透明度", "亮度", "模糊"]) {
+      await expect(heading(name)).toHaveAttribute("aria-expanded", "true");
+    }
+
+    // One that just went on is open, and its title folds it up at once, while it stands out.
+    await showTab(page, "effects");
+    await item(page, "色温").click();
+    await expect(effectsOn(page)).toHaveCount(3);
+    await expect(effectsOn(page).nth(2)).toHaveAttribute("data-fresh", "true");
+    await heading("色温").click();
+    await expect(heading("色温")).toHaveAttribute("aria-expanded", "false", { timeout: 500 });
+    await expect(effectsOn(page).nth(2).getByRole("group", { name: "色温" })).toHaveCount(0);
+    // And stays so once it no longer stands out.
+    await expect(effectsOn(page).nth(2)).not.toHaveAttribute("data-fresh", "true");
+    await expect(heading("色温")).toHaveAttribute("aria-expanded", "false");
+    // Another of its kind going on opens them: what went on shows what it takes.
+    await item(page, "色温").click();
+    await expect(effectsOn(page)).toHaveCount(4);
+    await expect(heading("色温").first()).toHaveAttribute("aria-expanded", "true");
+    await heading("色温").last().click();
+    await expect(heading("色温").first()).toHaveAttribute("aria-expanded", "false");
+    await expect(heading("色温").last()).toHaveAttribute("aria-expanded", "false");
+  });
+
   test("have what they take as rows with keys, also in the tree of the keyframes", async ({
     page,
   }) => {

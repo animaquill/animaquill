@@ -177,8 +177,9 @@ test("the time and the objects selected go in as blocks, and AI gets them as lin
   await expect(objects).toHaveAttribute("title", "先在时间轴、预览或资源里选中");
   await expect(chat(page).getByTestId("chat-plus-time")).toHaveText(/^插入播放头时间 0:00\/00/);
   await page.keyboard.press("Escape");
-  // Nothing selected: no line of what goes with the message.
-  await expect(chat(page).getByTestId("chat-carry")).toHaveCount(0);
+  // Nothing selected: the playhead alone goes with the message.
+  await expect(chat(page).getByTestId("chat-carry")).toHaveAccessibleName("带上：播放头 0:00/00");
+  await expect(chat(page).getByTestId("chat-carry-clips")).toHaveCount(0);
   // All of the first track and the caption.
   await showTab(page, "timeline");
   await stage(page).focus();
@@ -187,7 +188,10 @@ test("the time and the objects selected go in as blocks, and AI gets them as lin
   await showTab(page, "chat");
   // "带上" says what the next message keeps of the editor; in full where the chat is not narrow.
   await widen(page, 440);
-  await expect(chat(page).getByTestId("chat-carry")).toHaveText(/选中 4 个片段 · 播放头 0:01\/00/, {
+  await expect(chat(page).getByTestId("chat-carry-clips")).toHaveText("选中的 4 个片段", {
+    useInnerText: true,
+  });
+  await expect(chat(page).getByTestId("chat-carry-playhead")).toHaveText("播放头 0:01/00", {
     useInnerText: true,
   });
   await chat(page).getByTestId("chat-plus").click();
@@ -331,10 +335,10 @@ test("AI reads what was selected as a message was sent, though people selected a
   await shoot(page, "SEL-calls", chat(page).getByTestId("chat"));
 });
 
-test('"带上" says what a message keeps of the editor; taken off, that message keeps nothing and AI is told so', async ({
+test('"带上" is a tag over the words; taken off, messages keep nothing, AI is told so, and it stays off', async ({
   page,
 }) => {
-  test.setTimeout(90_000);
+  test.setTimeout(120_000);
   const sent: Sent[] = [];
   await page.route(ANTHROPIC, async (route) => {
     if (isConnectionTest(route)) return answer(route, "OK");
@@ -353,31 +357,69 @@ test('"带上" says what a message keeps of the editor; taken off, that message 
   await showTab(page, "chat");
   await widen(page, 440);
   const carry = chat(page).getByTestId("chat-carry");
-  await expect(carry).toHaveText("带上：选中 1 个片段 · 播放头 0:01/00", { useInnerText: true });
+  const clipsTag = chat(page).getByTestId("chat-carry-clips");
+  const playheadTag = chat(page).getByTestId("chat-carry-playhead");
+  // On by default: in the card, over the words, an icon and a short name for each.
+  await expect(carry).toHaveAccessibleName("带上：选中的 1 个片段、播放头 0:01/00");
+  await expect(carry).toHaveAttribute("title", "带上：选中的 1 个片段、播放头 0:01/00");
+  await expect(clipsTag).toHaveText("选中的 1 个片段", { useInnerText: true });
+  await expect(playheadTag).toHaveText("播放头 0:01/00", { useInnerText: true });
+  await expect(clipsTag.locator("svg")).toHaveCount(1);
+  const card = await chat(page).getByTestId("chat-compose").boundingBox();
+  const tag = await carry.boundingBox();
+  const words = await box(page).boundingBox();
+  expect(tag && card && tag.y > card.y && tag.y + tag.height <= (words?.y ?? 0)).toBe(true);
   // Pointed at, the clips light up in the preview.
   const overlay = content(page, "preview").locator("[data-outlined]");
-  await chat(page).getByTestId("chat-carry-clips").hover();
+  await clipsTag.hover();
   await expect(overlay).toHaveAttribute("data-outlined", /clip_0/);
-  // Taken off: for this message only, and it can come back.
+  // × takes it off: the tag stays, slanted and struck through, and a click on it puts it back.
+  await chat(page).getByRole("button", { name: "不带", exact: true }).click();
+  await expect(carry).toHaveAttribute("data-off", "");
+  await expect(carry).toHaveAccessibleName("不带：选中的 1 个片段、播放头 0:01/00");
+  const name = clipsTag.locator("span:visible").first();
+  await expect(name).toHaveCSS("font-style", "italic");
+  await expect(name).toHaveCSS("text-decoration-line", "line-through");
+  await chat(page).screenshot({ path: test.info().outputPath("carry-off-440.png") });
+  await chat(page).getByRole("button", { name: "带上", exact: true }).click();
+  await expect(carry).not.toHaveAttribute("data-off");
+  await expect(name).toHaveCSS("font-style", "normal");
+  await chat(page).screenshot({ path: test.info().outputPath("carry-on-440.png") });
   await chat(page).getByTestId("chat-carry-off").click();
-  await expect(carry).toHaveText(/这一条不带选中和播放头/);
-  await chat(page).getByTestId("chat-carry-on").click();
-  await expect(carry).toHaveText(/选中 1 个片段/);
-  await chat(page).getByTestId("chat-carry-off").click();
+  // The words keep the keyboard.
   await box(page).fill("这个先别看");
   await box(page).press("Enter");
   await expect(chat(page).getByTestId("chat-answer")).toHaveText("看到了。");
   expect(toolResults(sent[1] as Sent)[0]).toContain("the user did not share the selection");
   expect(toolResults(sent[1] as Sent)[0]).not.toContain("clip_0");
-  // The next message keeps it again.
-  await expect(carry).toHaveText(/选中 1 个片段 · 播放头 0:01\/00/, { useInnerText: true });
+  // It stays off for the next message, in a new conversation, and after a reload.
+  await expect(carry).toHaveAttribute("data-off", "");
+  await chat(page).getByTestId("chat-new").click();
+  await expect(carry).toHaveAttribute("data-off", "");
+  await page.reload();
+  await showTab(page, "chat");
+  await expect(chat(page).getByTestId("chat-carry")).toHaveAttribute("data-off", "");
+  await clickClip(page, /^城市，/);
+  await goTo(page, "0:01/00");
+  await showTab(page, "chat");
+  await chat(page).getByTestId("chat-carry-on").click();
+  await expect(carry).not.toHaveAttribute("data-off");
   await box(page).fill("现在看");
   await box(page).press("Enter");
-  await expect(chat(page).getByTestId("chat-answer")).toHaveCount(2);
+  await expect.poll(() => sent.length).toBe(4);
   expect(toolResults(sent[3] as Sent)[0]).toContain("selected clips (1): clip_0");
-  // Narrow, it says less.
+  // Narrow, it says less, on one line in the card.
   await page.addStyleTag({ content: `[data-testid="chat"] { width: 320px !important; }` });
-  await expect(carry).toHaveText(/^1 个片段 · 0:01\/00$/, { useInnerText: true });
+  await expect(clipsTag).toHaveText("1 个片段", { useInnerText: true });
+  await expect(playheadTag).toHaveText("0:01/00", { useInnerText: true });
+  const narrow = await carry.boundingBox();
+  const narrowCard = await chat(page).getByTestId("chat-compose").boundingBox();
+  expect(narrow?.height).toBeLessThan(24);
+  expect((narrow?.x ?? 0) + (narrow?.width ?? 0)).toBeLessThanOrEqual(
+    (narrowCard?.x ?? 0) + (narrowCard?.width ?? 0),
+  );
+  await chat(page).getByTestId("chat-carry-off").click();
+  await chat(page).screenshot({ path: test.info().outputPath("carry-off-320.png") });
 });
 
 test("more than eight objects are the first three and one block for the rest", async ({ page }) => {

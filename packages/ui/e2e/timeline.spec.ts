@@ -1189,6 +1189,36 @@ test.describe("explaining itself", () => {
     await expect(clips(page)).toHaveCount(2);
   });
 
+  test("the line of the playhead starts at its handle, under the timecodes of the ruler", async ({
+    page,
+  }) => {
+    /** Where the line of the playhead of a view and its handle are, from the top of the view. */
+    const measure = async (where: Locator, name: string) => {
+      const area = await boxOf(where.getByRole("group", { name, exact: true }));
+      const line = where.getByRole("slider", { name: "播放头" });
+      const box = await boxOf(line);
+      const handle = await line.evaluate((element) => {
+        const style = getComputedStyle(element, "::before");
+        return { top: parseFloat(style.top), height: parseFloat(style.height) };
+      });
+      // The handle is in the lower part of the ruler, and the line goes down from it to the end.
+      expect(box.y - area.y).toBeCloseTo(16, 0);
+      expect(box.y + box.height).toBeCloseTo(area.y + area.height, 0);
+      expect(handle.top).toBe(0);
+      expect(16 + handle.height).toBeLessThanOrEqual(28);
+    };
+    await addColor(page);
+    await settle(page);
+    await stage(page).focus();
+    for (const key of ["", "=", "=", "-", "-", "-"]) {
+      if (key) await page.keyboard.press(key);
+      await measure(panel(page), "时间轴");
+    }
+    await panel(page).screenshot({ path: test.info().outputPath("playhead.png") });
+    await showTab(page, "keyframes");
+    await measure(content(page, "keyframes"), "关键帧");
+  });
+
   test("the playhead turns into the snap line when a clip sticks to it", async ({ page }) => {
     await addColor(page);
     await stage(page).focus();

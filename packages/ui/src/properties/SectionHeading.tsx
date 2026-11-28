@@ -1,6 +1,7 @@
 import { ChevronRight, Diamond } from "lucide-react";
 import {
   createContext,
+  useCallback,
   useContext,
   useMemo,
   useSyncExternalStore,
@@ -46,6 +47,13 @@ export function useFoldedOf(): (id: string) => boolean {
     propertySections.collapsedFor(kind),
   );
   return (id) => folded.includes(id);
+}
+
+/** Opens groups of what the tab shows now, for this kind of clip: what something just put there. */
+export function useUnfold(): (ids: readonly string[]) => void {
+  const { propertySections } = useWorkbench();
+  const { kind } = useContext(ScopeContext);
+  return useCallback((ids) => propertySections.set(kind, ids, false), [propertySections, kind]);
 }
 
 const noSubscription = () => () => {};

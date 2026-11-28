@@ -124,13 +124,14 @@
 }
 
 /*
- * The names come out over what is next to the strip when the mouse has stayed on it for a while,
- * as in Edge, and go back in at once when it leaves (the way back has no delay). The keyboard has
+ * The names come out over what is next to the strip when the mouse has stayed on it for a moment,
+ * as in Edge: long enough that passing over the strip on the way somewhere else leaves them in,
+ * short enough not to be waited on. They go back in at once when it leaves (no delay that way). The keyboard has
  * them at once: without the names it cannot tell the tabs apart. A screen without a mouse has no
  * hovering, and a tap would leave one behind that brings the names out a moment later.
  */
 :root {
-  --aq-strip-peek-delay: 2s;
+  --aq-strip-peek-delay: 0.5s;
 }
 
 @media (hover: hover) {

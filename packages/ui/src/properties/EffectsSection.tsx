@@ -9,6 +9,7 @@ import { parseTime, type ObjectDescriptor } from "@animaquill/schema";
 import { GripVertical, Trash2 } from "lucide-react";
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
@@ -30,7 +31,7 @@ import {
   ReverbPresets,
 } from "./sound-effects/SoundEffectViews.tsx";
 import { standsFor } from "../mixer/track-clip.ts";
-import { SectionHeading, useFoldedOf } from "./SectionHeading.tsx";
+import { SectionHeading, useFoldedOf, useUnfold } from "./SectionHeading.tsx";
 import { effectSectionId } from "./sections.ts";
 
 /** What a drag of an effect within its list carries: its id. */
@@ -158,7 +159,7 @@ function RangeRow(props: {
  * list goes to it. Only what went on a moment ago counts, also when the list comes after it, as it
  * does when a drop selects the clip.
  */
-function useFresh(clip: string): string | undefined {
+function useFresh(clip: string): { readonly id: string; readonly when: object } | undefined {
   const { timeline } = useWorkbench();
   const added = useSyncExternalStore(timeline.subscribeAdded, () => timeline.lastAdded);
   // Which of them no longer stands out: one from before the list came is over already.
@@ -171,8 +172,12 @@ function useFresh(clip: string): string | undefined {
     const timer = setTimeout(() => setOver(added.at), left);
     return () => clearTimeout(timer);
   }, [added]);
-  return added && over !== added.at ? added.effects.get(clip) : undefined;
+  const id = added && over !== added.at ? added.effects.get(clip) : undefined;
+  return id === undefined || !added ? undefined : { id, when: added };
 }
+
+/** What just went on that had its group opened already: once, also when the list comes again. */
+const opened = new WeakSet<object>();
 
 /**
  * The effects of a clip, in the order they work: each can be turned off, dragged to another place
@@ -192,9 +197,20 @@ export function EffectsSection({
   const list = effectsOf(clip);
   const [dragged, setDragged] = useState<string>();
   const [target, setTarget] = useState<number>();
-  const fresh = useFresh(clip.id);
+  const latest = useFresh(clip.id);
+  const fresh = latest?.id;
+  const when = latest?.when;
   const isFolded = useFoldedOf();
+  const unfold = useUnfold();
   const listRef = useRef<HTMLOListElement>(null);
+  // One that just went on shows what it takes, also where its kind was folded up: its group opens,
+  // before it is drawn, so that a click on its title folds it up at once, as any other.
+  const freshType = list.find((effect) => effect.id === fresh)?.type;
+  useLayoutEffect(() => {
+    if (!when || freshType === undefined || opened.has(when)) return;
+    opened.add(when);
+    unfold([effectSectionId(freshType)]);
+  }, [when, freshType, unfold]);
   useEffect(() => {
     if (fresh === undefined) return;
     const item = listRef.current?.querySelector(`[data-effect="${CSS.escape(fresh)}"]`);
@@ -242,8 +258,7 @@ export function EffectsSection({
           const on = enabled !== false;
           const known = object !== undefined && object.properties.length > 0;
           const fold = effectSectionId(type);
-          // One that just went on shows what it takes, also where its kind is folded up.
-          const folded = isFolded(fold) && fresh !== id;
+          const folded = isFolded(fold);
           const contentId = `effect-${clip.id}-${id}`;
           return (
             <li

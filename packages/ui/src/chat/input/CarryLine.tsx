@@ -1,5 +1,5 @@
 import { formatAddress } from "@animaquill/tools";
-import { Crosshair, X } from "lucide-react";
+import { Boxes, Clock, Plus, X } from "lucide-react";
 import { useRef, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../app/context.ts";
@@ -7,11 +7,16 @@ import { formatTimecode } from "../../timeline/frames.ts";
 import styles from "./input.module.css";
 
 /**
- * "带上" under the box (docs/design/chat-panel.md of AnimaQuill Cloud, 3.5): what a message sent
- * now keeps of the editor, which AI can read (`aq_selection_read`, decision of 2026-11-15) — the
- * clips selected and the playhead. Pointed at, the clips light up on the timeline. × leaves them out
- * of the next message only (and says so, to put them back). The playhead does not run along while playing: it says where it
- * stopped. Nothing shows where nothing is selected.
+ * "带上" at the top of the card, over the words, as the context of VS Code's chat is (docs/design/
+ * chat-panel.md of AnimaQuill Cloud, 3.5): what a message sent now keeps of the editor, which AI can
+ * read (`aq_selection_read`, decision of 2026-11-15) — the clips selected and the playhead, an icon
+ * and a short name each. Pointed at, the clips light up on the timeline.
+ *
+ * Both go with a message or neither does, as AI is told "the user did not share the selection" of
+ * all of it: so they are one tag, and its × takes them off. Off, the tag stays, slanted and struck
+ * through, and a click on it puts them back. People's choice stays for the messages after, and goes
+ * with their AI settings (`carrySelection`). The playhead does not run along while playing: it says
+ * where it stopped. With nothing selected it is the playhead alone.
  */
 export function CarryLine(props: { readonly on: boolean; readonly onToggle: () => void }) {
   const workbench = useWorkbench();
@@ -25,66 +30,88 @@ export function CarryLine(props: { readonly on: boolean; readonly onToggle: () =
     return rest.current;
   });
   const { model, selection } = view;
-  // Nothing selected: nothing to say. The playhead still goes with each message, as it always did.
-  if (!model || selection.size === 0) return null;
-  if (!props.on) {
-    return (
-      <div className={styles.carry} role="note" data-testid="chat-carry" data-off="">
-        <Crosshair size={11} aria-hidden className={styles.carryIcon} />
-        <span className={styles.carryText}>{t("chat.compose.carryOffNow")}</span>
-        <button
-          type="button"
-          className={styles.textButton}
-          data-testid="chat-carry-on"
-          onPointerDown={(event) => event.preventDefault()}
-          onClick={props.onToggle}
-        >
-          {t("chat.compose.carryOn")}
-        </button>
-      </div>
-    );
-  }
+  if (!model) return null;
+  const { on, onToggle } = props;
   const clips = [...selection];
   const time = formatTimecode(frame, model.rate);
-  const pointClips = (on: boolean) =>
+  const clipsName = t("chat.compose.carryClips", { count: clips.length });
+  const playheadName = t("chat.compose.carryPlayhead", { time });
+  const what =
+    clips.length === 0
+      ? playheadName
+      : t("chat.compose.carryBoth", { clips: clipsName, playhead: playheadName });
+  const label = t(on ? "chat.compose.carryWith" : "chat.compose.carryWithout", { what });
+  const pointClips = (pointing: boolean) =>
     workbench.pointAt(
-      on ? formatAddress({ kind: "objects", ids: clips, timeline: model.id }) : undefined,
+      pointing && clips.length > 0
+        ? formatAddress({ kind: "objects", ids: clips, timeline: model.id })
+        : undefined,
     );
-  return (
-    <div className={styles.carry} role="note" data-testid="chat-carry">
-      <Crosshair size={11} aria-hidden className={styles.carryIcon} />
-      <span className={styles.carryText}>
-        <span className={styles.wideOnly}>{t("chat.compose.carry")}</span>
+  const parts = (
+    <>
+      {clips.length > 0 && (
         <span
           className={styles.carryPart}
           onPointerEnter={() => pointClips(true)}
           onPointerLeave={() => pointClips(false)}
           data-testid="chat-carry-clips"
         >
-          <span className={styles.wideOnly}>
-            {t("chat.compose.carryClips", { count: clips.length })}
-          </span>
-          <span className={styles.narrowOnly}>
+          <Boxes size={12} aria-hidden className={styles.carryIcon} />
+          <span className={`${styles.carryName} ${styles.wideOnly}`}>{clipsName}</span>
+          <span className={`${styles.carryName} ${styles.narrowOnly}`}>
             {t("chat.compose.carryClipsShort", { count: clips.length })}
           </span>
         </span>
-        {" · "}
-        <span className={styles.carryPart} data-testid="chat-carry-playhead">
-          <span className={styles.wideOnly}>{t("chat.compose.carryPlayhead", { time })}</span>
-          <span className={styles.narrowOnly}>{time}</span>
-        </span>
+      )}
+      <span className={styles.carryPart} data-testid="chat-carry-playhead">
+        <Clock size={12} aria-hidden className={styles.carryIcon} />
+        <span className={`${styles.carryName} ${styles.wideOnly}`}>{playheadName}</span>
+        <span className={`${styles.carryName} ${styles.narrowOnly}`}>{time}</span>
       </span>
-      <button
-        type="button"
-        className={styles.iconButton}
-        aria-label={t("chat.compose.carryOff")}
-        title={t("chat.compose.carryOff")}
-        data-testid="chat-carry-off"
-        onPointerDown={(event) => event.preventDefault()}
-        onClick={props.onToggle}
-      >
-        <X size={11} aria-hidden />
-      </button>
+    </>
+  );
+  // A click on the tag leaves the words where they were being written.
+  const keepFocus = (event: { preventDefault(): void }) => event.preventDefault();
+  return (
+    <div
+      className={styles.carry}
+      role="group"
+      aria-label={label}
+      title={label}
+      data-testid="chat-carry"
+      data-off={on ? undefined : ""}
+    >
+      {on ? (
+        <>
+          {parts}
+          <button
+            type="button"
+            className={styles.carryToggle}
+            aria-label={t("chat.compose.carryOff")}
+            title={t("chat.compose.carryOff")}
+            data-testid="chat-carry-off"
+            onPointerDown={keepFocus}
+            onClick={onToggle}
+          >
+            <X size={11} aria-hidden />
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          className={styles.carryBack}
+          aria-label={t("chat.compose.carryOn")}
+          title={label}
+          data-testid="chat-carry-on"
+          onPointerDown={keepFocus}
+          onClick={onToggle}
+        >
+          {parts}
+          <span className={styles.carryToggle} aria-hidden>
+            <Plus size={11} />
+          </span>
+        </button>
+      )}
     </div>
   );
 }

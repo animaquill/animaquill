@@ -44,9 +44,9 @@ const COMMANDS = {
 
 /**
  * Where people write to AI (docs/design/chat-panel.md of AnimaQuill Cloud, 3): one rounded card
- * with the pictures at its top, the words, and a row of "+", the switch "先出方案" where it is on,
- * the model and one round button to send, stop or queue. Over the card what is queued and why a
- * message cannot go; under it what a message keeps of the editor ("带上").
+ * with what a message keeps of the editor ("带上") and the pictures at its top, the words, and a
+ * row of "+", the switch "先出方案" where it is on, the model and one round button to send, stop or
+ * queue. Over the card what is queued and why a message cannot go.
  *
  * The words: a box that grows with them (1 to about 10 lines), whose draft is kept for each
  * conversation in the memory of the window, with its pictures. Enter sends (or Ctrl+Enter, as
@@ -102,12 +102,11 @@ export const InputArea = forwardRef<
   const plus = useRef<PlusMenuHandle>(null);
   const tag = useRef<ModelTagHandle>(null);
   const card = useRef<HTMLDivElement>(null);
-  // "带上" taken off: for the next message of this conversation only.
-  const [carry, setCarry] = useState<{ readonly chat: string | undefined; readonly on: boolean }>({
-    chat: id,
-    on: true,
-  });
-  const carrying = carry.chat !== id || carry.on;
+  // "带上": on unless people took it off, which stays so, with their AI settings. Where those cannot
+  // be saved, the choice still holds in this window.
+  const [unsaved, setUnsaved] = useState<boolean>();
+  const carrying = unsaved ?? settings.carrySelection !== false;
+  const toggleCarry = () => setUnsaved(ai.setCarrySelection(!carrying) ? undefined : !carrying);
   // Pictures that stayed in the card as words went to AI with "not allowed".
   const [kept, setKept] = useState(false);
   // Pressing send while something holds the message back: that thing shakes.
@@ -232,7 +231,6 @@ export const InputArea = forwardRef<
     write("");
     chat.attachments.clear(project, id);
     history.current = undefined;
-    setCarry({ chat: id, on: true });
     props.onSent();
     if (running) chat.queue(text, images, selection);
     else void chat.send(text, images, selection);
@@ -427,6 +425,7 @@ export const InputArea = forwardRef<
         onDrop={(index) => chat.unqueue(index)}
       />
       <div className={styles.card} data-testid="chat-compose" ref={card}>
+        {project !== undefined && <CarryLine on={carrying} onToggle={toggleCarry} />}
         {project !== undefined && id !== undefined && pictures.length > 0 && (
           <Attachments
             project={project}
@@ -535,9 +534,6 @@ export const InputArea = forwardRef<
           />
         </div>
       </div>
-      {project !== undefined && (
-        <CarryLine on={carrying} onToggle={() => setCarry({ chat: id, on: !carrying })} />
-      )}
     </div>
   );
 });

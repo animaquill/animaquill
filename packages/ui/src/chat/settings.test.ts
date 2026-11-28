@@ -389,6 +389,31 @@ describe("two windows", () => {
     expect(one.getSnapshot().reasoningFor).toEqual({ "claude-opus-5-5": "low" });
   });
 
+  it("carry what a message keeps of the editor, or not, and keep each other's choices as they save", async () => {
+    const { open, values } = browser();
+    const one = await open();
+    const two = await open();
+    expect(one.getSnapshot().carrySelection).toBeUndefined();
+    expect(one.setCarrySelection(false)).toBe(true);
+    one.setFromAgents("ask");
+    await settle();
+    expect(two.getSnapshot().carrySelection).toBe(false);
+    expect(two.getSnapshot().fromAgents).toBe("ask");
+    // Another setting saved keeps both.
+    two.setAskBeforeEdit(true);
+    await settle();
+    expect(values.get("ai")).toMatchObject({ carrySelection: false, fromAgents: "ask" });
+    expect(one.getSnapshot()).toMatchObject({ carrySelection: false, fromAgents: "ask" });
+    // Back on, and "yes" again, in the other window too.
+    two.setCarrySelection(true);
+    two.setFromAgents("yes");
+    await settle();
+    expect(one.getSnapshot().carrySelection).toBeUndefined();
+    expect(one.getSnapshot().fromAgents).toBeUndefined();
+    const again = await open();
+    expect(again.getSnapshot().carrySelection).toBeUndefined();
+  });
+
   it("keep version 3 when a page of before writes version 1 over it, with what that page changed", async () => {
     const { values, open } = browser();
     const ai = await open();

@@ -176,6 +176,16 @@ test.describe("effects of sound", () => {
     await pass.click();
     await expect(pass).toHaveAttribute("data-on", "true");
     await properties(page).screenshot({ path: test.info().outputPath("eq-panel.png") });
+    // Its title folds it up, also right after a click on its slot in the mixer brought it here.
+    const title = effectList(page).getByRole("button", { name: "均衡", exact: true });
+    await title.click();
+    await expect(title).toHaveAttribute("aria-expanded", "false");
+    await expect(graph).toHaveCount(0);
+    await slotsOf(strip(page)).first().getByRole("button", { name: "均衡", exact: true }).click();
+    await expect(title).toHaveAttribute("aria-expanded", "true");
+    await title.click();
+    await expect(title).toHaveAttribute("aria-expanded", "false", { timeout: 500 });
+    await expect(graph).toHaveCount(0);
   });
 
   test("a compressor's knee sets its threshold, and a room of the reverb is one step", async ({

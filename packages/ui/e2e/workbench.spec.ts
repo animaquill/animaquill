@@ -1050,15 +1050,17 @@ test.describe("tabs down a side", () => {
     await expect(content(page, "assets")).toBeVisible();
   });
 
-  test("bring their names out only once the mouse stayed for two seconds, and in at once", async ({
+  test("bring their names out once the mouse stayed half a second, and in at once", async ({
     page,
   }) => {
     await away(page);
     const icon = await settledBox(tab(page, "assets"));
     await page.mouse.move(icon.x + icon.width / 2, icon.y + icon.height / 2);
-    await page.waitForTimeout(1200);
+    // Passing over on the way somewhere else leaves them in.
+    await page.waitForTimeout(250);
     expect(await widthOf(page, "assets")).toBeLessThan(50);
-    await expect.poll(() => widthOf(page, "assets"), { timeout: 4000 }).toBeGreaterThan(100);
+    // Then they are out without being waited on.
+    await expect.poll(() => widthOf(page, "assets"), { timeout: 1500 }).toBeGreaterThan(100);
     // Leaving takes them in right away: no waiting on the way back.
     await away(page);
     await page.waitForTimeout(250);

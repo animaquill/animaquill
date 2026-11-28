@@ -57,8 +57,9 @@ for (const theme of ["light", "dark"] as const) {
       // Still a button: those who listen hear why there is nothing to send.
       await expect(send).toHaveAttribute("aria-label", "发送，先写要说的话");
       await expect(send).toBeEnabled();
-      // Nothing selected: nothing to say of what goes with the message.
-      await expect(chat(page).getByTestId("chat-carry")).toHaveCount(0);
+      // Nothing selected: the playhead alone goes with the message, a tag over the words.
+      await expect(chat(page).getByTestId("chat-carry")).toHaveAccessibleName(/^带上：播放头 /);
+      await expect(chat(page).getByTestId("chat-carry-clips")).toHaveCount(0);
       await scene(page, theme, "1-empty");
 
       // Written, with "先出方案" on: the pill, and send lit.
