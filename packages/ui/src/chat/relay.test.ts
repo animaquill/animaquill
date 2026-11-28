@@ -1,6 +1,6 @@
 import type { ChatEntry } from "@animaquill/agent";
 import { describe, expect, it } from "vitest";
-import { MAX_ROUNDS, distinctNames, lastAnswerOf, roundsOf } from "./relay.ts";
+import { MAX_ROUNDS, cleanName, distinctNames, lastAnswerOf, roundsOf } from "./relay.ts";
 
 const from = { id: "c2", name: "配乐", kind: "chat" as const };
 const user = (text: string, by?: typeof from): ChatEntry => ({
@@ -51,5 +51,11 @@ describe("rounds with other conversations", () => {
       { name: "开场" },
       { name: "配乐（2）" },
     ]);
+  });
+
+  it("give names without characters that do not show, turn text around or break lines", () => {
+    expect(cleanName("剪\u202e开场\u2028第二行\u2029\u0007")).toBe("剪开场第二行");
+    expect(cleanName("  多个\n\t空白  ")).toBe("多个 空白");
+    expect(cleanName("长".repeat(100))).toHaveLength(80);
   });
 });

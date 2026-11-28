@@ -69,3 +69,16 @@ export function distinctNames<T extends { readonly name: string }>(items: readon
     return count === 1 ? item : { ...item, name: `${item.name}（${count}）` };
   });
 }
+
+/**
+ * A name as others see it, in the list and as who sent a message: without characters that do not
+ * show, turn text around or break lines, on one line, no longer than `most`.
+ */
+export function cleanName(name: string, most = 80): string {
+  return name
+    .replace(/[\t\n\r\f\v ]+/g, " ")
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, "")
+    .replace(/ +/g, " ")
+    .trim()
+    .slice(0, most);
+}

@@ -266,7 +266,8 @@ test("two that answer each other stop after five turns in a row, until people le
   await expect(chat(page).getByText("我是 A。")).toBeVisible({ timeout: 15_000 });
   await newConversation(page);
   await send(page, "B：和 A 来回说");
-  // One of them stops after five turns that the other started.
+  // One of them stops after five turns that the other started; then nothing runs.
+  await expect(page.getByTestId("status-runs")).toBeHidden({ timeout: 60_000 });
   const paused = chat(page).getByTestId("chat-relay-paused");
   await expect
     .poll(

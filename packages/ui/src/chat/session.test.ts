@@ -2568,13 +2568,25 @@ describe("messages between conversations, held to what people want (the security
     }
     expect(chat.conversationOf(b ?? "")).toBeUndefined();
     expect(await mcp(chat).send(b ?? "", "在吗")).toEqual({ sent: "waits", until: "left" });
+    // Read now for the first one, it is not open to people yet: the second only waits too.
+    expect(chat.conversationOf(b ?? "")).toBeDefined();
+    expect(await mcp(chat).send(b ?? "", "在吗？还在吗")).toEqual({
+      sent: "waits",
+      until: "left",
+    });
     expect(chat.runningCount).toBe(0);
+    expect(entriesOf(chat, b ?? "").filter((entry) => entry.role === "user")).toHaveLength(1);
     await chat.open(b ?? "");
     const [mail] = chat.getSnapshot().mail;
     expect(mail).toMatchObject({ text: "在吗", from: { kind: "tool", name: "Claude Code" } });
-    fake({ fake: [{ text: "在" }] });
+    fake({ fake: [{ text: "在" }, { text: "又在" }] });
     chat.answerMail(mail?.id ?? "", true);
     await vi.waitFor(() => expect(entriesOf(chat, b ?? "").at(-1)).toMatchObject({ text: "在" }));
+    chat.answerMail(chat.getSnapshot().mail[0]?.id ?? "", true);
+    await vi.waitFor(() => expect(entriesOf(chat, b ?? "").at(-1)).toMatchObject({ text: "又在" }));
+    // Opened by people, it takes the tool's words as any.
+    fake({ fake: [{ text: "直接回" }] });
+    expect(await mcp(chat).send(b ?? "", "现在呢")).toEqual({ sent: "turn" });
   });
 
   it("takes none and sends none, nor tells of being idle, where people said so", async () => {

@@ -1,4 +1,5 @@
 import { framedMessage, type Mail } from "@animaquill/agent";
+import { cleanName } from "../../chat/relay.ts";
 import { aiTask, type Origin, type ProjectState, type ProjectStore } from "@animaquill/core";
 import {
   CallerState,
@@ -385,6 +386,5 @@ const MAX_NAME = 40;
  * do not show or turn text around, and no longer than `MAX_NAME`.
  */
 export function nameOf(client: BridgeClient | undefined): string {
-  const name = (client?.name ?? "").replace(/[\p{Cc}\p{Cf}]/gu, "").trim();
-  return name.slice(0, MAX_NAME) || "AI tool";
+  return cleanName(client?.name ?? "", MAX_NAME) || "AI tool";
 }

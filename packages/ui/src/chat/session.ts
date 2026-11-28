@@ -102,6 +102,7 @@ import {
   MAX_WAITING,
   REPEAT_MS,
   WATCH_MS,
+  cleanName,
   distinctNames,
   lastAnswerOf,
   roundsOf,
@@ -449,6 +450,11 @@ interface Run {
   turnChars: number;
   /** Messages the task that runs took, and has not read into its entries yet. */
   steered: number;
+  /**
+   * The window read it for a message to it or to tell of it, and people have not opened it since:
+   * nothing an AI tool on this computer sends wakes it, see `#deliver`.
+   */
+  unopened: boolean;
   /** What people allowed in the task that runs, which a message of another takes back. */
   approvals: Approvals | undefined;
   /** Whoever takes its messages as they come: the task that runs. */
@@ -816,6 +822,7 @@ export class ChatSession {
       goOn: 0,
       turnChars: 0,
       steered: 0,
+      unopened: false,
       approvals: undefined,
       mailListeners: new Set(),
       mailbox: { take: () => [], subscribe: () => () => {}, putBack: () => {} },
@@ -840,6 +847,7 @@ export class ChatSession {
     const before = this.#shown;
     this.#shown = run;
     run.unseen = false;
+    run.unopened = false;
     run.used = ++this.#clock;
     if (
       before &&
@@ -2125,7 +2133,7 @@ export class ChatSession {
    * One of an AI tool for a conversation it had to be opened for starts nothing: it waits for
    * people, as a card (`opened`).
    */
-  #deliver(run: Run, mail: Mail, opened = false): SendOutcome {
+  #deliver(run: Run, mail: Mail): SendOutcome {
     const now = Date.now();
     const recent = this.#recent.get(run.id) ?? new Map<string, number>();
     this.#recent.set(run.id, recent);
@@ -2134,7 +2142,8 @@ export class ChatSession {
     if (recent.has(key)) return { refused: "repeat" };
     if (run.inbox.length + run.fields.mail.length >= MAX_WAITING) return { refused: "full" };
     recent.set(key, now);
-    const left = mail.from.kind === "tool" && opened;
+    // An AI tool wakes none that people have not opened since the window read it for it.
+    const left = mail.from.kind === "tool" && run.unopened;
     if (left || this.#options.ai.getSnapshot().fromAgents === "ask") {
       if (run !== this.#shown) run.unseen = true;
       this.#update(run, { mail: [...run.fields.mail, mail] });
@@ -2197,7 +2206,7 @@ export class ChatSession {
       run.fields.titleBy !== undefined && run.fields.title
         ? run.fields.title
         : firstWords(entries, TITLE_LENGTH) || run.fields.title;
-    return { id: run.id, name, kind: "chat" };
+    return { id: run.id, name: cleanName(name), kind: "chat" };
   }
 
   /** How a conversation shows to others, see `AgentCard`. */
@@ -2263,7 +2272,7 @@ export class ChatSession {
           cards.push({
             id: saved.id,
             kind: "chat",
-            name: saved.title,
+            name: cleanName(saved.title),
             state: "closed",
             changed: [],
             accepts: accepts(),
@@ -2290,9 +2299,8 @@ export class ChatSession {
         if (to.startsWith("mcp:")) {
           return this.#options.tools?.deliver(to, mail) ?? { refused: "unknown" };
         }
-        const had = this.#runs.get(to);
-        const run = had ?? (await this.#host(to));
-        return run ? this.#deliver(run, mail, had === undefined) : { refused: "unknown" };
+        const run = this.#runs.get(to) ?? (await this.#host(to));
+        return run ? this.#deliver(run, mail) : { refused: "unknown" };
       },
       notifyWhenIdle: async (target) => {
         if (target === me()) return { refused: "self" };
@@ -2323,7 +2331,9 @@ export class ChatSession {
     // Another call read it meanwhile.
     const had = this.#runs.get(id);
     if (had) return had;
-    return this.#startSaved(id, saved, false);
+    const run = this.#startSaved(id, saved, false);
+    run.unopened = true;
+    return run;
   }
 
   /**

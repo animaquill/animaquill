@@ -353,6 +353,7 @@ describe("messages of the conversations of the chat for AI tools (docs/design/ai
     expect(nameOf({ name: "Claude\u202eCode\u0000" })).toBe("ClaudeCode");
     expect(nameOf({ name: "x".repeat(100) })).toHaveLength(40);
     expect(nameOf({ name: "\u200b" })).toBe("AI tool");
+    expect(nameOf({ name: "Claude\u2028Code\u2029" })).toBe("ClaudeCode");
   });
 
   it("wait 50 at most", async () => {
