@@ -7,12 +7,11 @@ import { TEST_S3, testStorageConfig } from "../test/objects.ts";
 import { platform, type Platform } from "../test/platform-support.ts";
 import { LibraryStorage } from "../library/storage.ts";
 import { userChatImageRefs, userChatImages, users } from "../schema.ts";
-import { changeSetting } from "../settings.ts";
+import { changeableLimits } from "../test/limits-support.ts";
 import { SyncHub } from "../sync/hub.ts";
 import { CHATS_PER_PROJECT } from "./chats.ts";
 import {
   CHAT_IMAGES_PREFIX,
-  CHAT_IMAGES_SETTING,
   ChatImages,
   IMAGES_PER_CHAT,
   imageKey,
@@ -37,6 +36,8 @@ describe.skipIf(!TEST_DATABASE || !TEST_S3)(
     let images: ChatImages;
     /** What was left to settle once the addresses to put pictures expired, see `later`. */
     let later: { userId: string; hash?: string }[];
+    /** What a person may keep of pictures (`chat.images`): the platform's 500 MB unless a test says. */
+    const limits = changeableLimits();
     const imagesWith = (checksum: "sha256" | "none") =>
       new ChatImages({
         db: t.db,
@@ -44,6 +45,7 @@ describe.skipIf(!TEST_DATABASE || !TEST_S3)(
         mode: () => "on",
         checksum,
         minFreeBytes: 0,
+        limits,
         now: () => time,
         log: quiet,
         later: async (job) => void later.push(job),
@@ -64,6 +66,7 @@ describe.skipIf(!TEST_DATABASE || !TEST_S3)(
       hub = new SyncHub({ db: t.db, log: quiet });
       time = 1_800_000_000_000;
       later = [];
+      limits.set({ "chat.images": 500 * 1024 ** 2 });
       images = imagesWith("sha256");
       p = await platform(w, { hub, now: () => time, chatImages: images });
     });
@@ -207,7 +210,7 @@ describe.skipIf(!TEST_DATABASE || !TEST_S3)(
     });
 
     test("the room of a person, one picture and a conversation at most", async () => {
-      await changeSetting(t.db, CHAT_IMAGES_SETTING, { perUserMb: 1 }, { adminId: null });
+      limits.set({ "chat.images": 1024 ** 2 });
       const first = picture(600 * 1024);
       expect((await upload(first)).done?.json).toEqual({ state: "ready" });
       const second = picture(600 * 1024);
@@ -390,7 +393,7 @@ describe.skipIf(!TEST_DATABASE || !TEST_S3)(
 
     test("asked again for one begun before: its size is what counts now, within the room", async () => {
       // Review S-C2, 1: begun at 1 byte each, then said to be 1.5 MB, took no room at all.
-      await changeSetting(t.db, CHAT_IMAGES_SETTING, { perUserMb: 1 }, { adminId: null });
+      limits.set({ "chat.images": 1024 ** 2 });
       const hashes = [picture(), picture(), picture()].map((each) => each.hash);
       for (const hash of hashes)
         expect(

@@ -29,6 +29,7 @@ import {
 import { batchFromRow, writeMergeInput, type MergeInput } from "./batches.ts";
 import { SyncHub, type SyncLimits } from "./hub.ts";
 import { sweepProjects } from "./sweep.ts";
+import { changeableLimits } from "../test/limits-support.ts";
 
 /**
  * Changes on GitHub merged into the working copy of a project by the hub, and changes of editors
@@ -241,6 +242,28 @@ describe.skipIf(!TEST_DATABASE)("merging changes on GitHub, on a database", () =
   };
 
   const updatesOn = (peer: TestPeer) => peer.of("update");
+
+  test("a merge goes in whatever the person keeps: only new projects are turned away for that", async () => {
+    const limits = changeableLimits();
+    const hub = new SyncHub({
+      db: database.db,
+      log: quiet,
+      personLimits: limits,
+      merged: async () => {},
+    });
+    const { id, peer, repoId, repository } = await linked(hub);
+    limits.set({ "storage.platform": 1, "projects.count": 0 });
+    const next = commit(repository, repoId, [
+      { type: "project.rename", params: { name: "GitHub 上改的名字" } },
+    ]);
+    const merge = await mergeOf(id, repoId, repository, next);
+    expect(await hub.mergeRepo(merge)).toMatchObject({ kind: "applied", seq: 2 });
+    await peer.until(() => updatesOn(peer).length > 0, "the merge");
+    expect((await kept(id)).getState().manifest.name).toBe("GitHub 上改的名字");
+    // Not even asked.
+    expect(limits.asked.filter(([, key]) => key === "storage.platform")).toHaveLength(1);
+    hub.stop();
+  });
 
   test("a merge goes in once, as the platform, and windows hear of it once the database has it", async () => {
     const hub = hubOf();

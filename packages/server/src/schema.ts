@@ -228,7 +228,8 @@ export interface ReleasedFrom {
  * tried (`projects.copy_problem`), see archive/rebuild.ts: "unreadable", documents that do not read
  * as the format says (`files`); "notProject", no project at the top of the repository; "tooLarge",
  * larger than a project of the platform may be; "tooNew", of a newer format than the platform
- * knows; "identity", another project than the one it was; "quota", more than the person may keep;
+ * knows; "identity", another project than the one it was; "quota", more than the person may keep
+ * (only older versions wrote it: a copy is made again whatever the person keeps, sync/room.ts);
  * "unusable", the repository cannot be used (`reason`, as a pause says it); "unavailable", GitHub or
  * the platform failed, which is tried again. `at`: milliseconds since 1970.
  */

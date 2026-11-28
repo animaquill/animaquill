@@ -24,6 +24,8 @@ import { listProjects } from "../sync/list.ts";
 import { REBUILD_RETRY_MS, wakeCopy } from "../sync/wake.ts";
 import { ProjectExporter } from "./exporter.ts";
 import { Rebuilder } from "./rebuild.ts";
+import type { PersonLimits } from "../limits.ts";
+import { changeableLimits } from "../test/limits-support.ts";
 import { RepoHosts, type RepoHost } from "./repo-host.ts";
 
 /**
@@ -67,11 +69,12 @@ describe.skipIf(!TEST_DATABASE)(
       for (const hub of hubs.splice(0)) hub.stop();
     });
 
-    const hubOf = () => {
+    const hubOf = (personLimits?: PersonLimits) => {
       const hub = new SyncHub({
         db: t.db,
         log: quiet,
         now: () => w.time.now,
+        ...(personLimits && { personLimits }),
         holds: { busy: async (_tx, id) => held.has(id) },
         rebuild: async (id) => {
           asked.push(id);
@@ -283,6 +286,41 @@ describe.skipIf(!TEST_DATABASE)(
       expect((await hello(hub, project.id, { base: true })).closedWith?.code).toBe(
         SYNC_CLOSE.protocol,
       );
+    });
+
+    test("a copy let go of is made again, and changed, whatever its person keeps", async () => {
+      const { project } = await archived();
+      const limits = changeableLimits();
+      const hub = hubOf(limits);
+      expect((await hub.release(project.id)).kind).toBe("released");
+      // Nothing more may be kept, nor one more project: none of that is new.
+      limits.set({ "storage.platform": 1, "projects.count": 0 });
+      const first = await hello(hub, project.id, { after: 3, generation: 1 });
+      expect(first.closedWith).toEqual({ code: SYNC_CLOSE.unavailable, reason: "restoring" });
+      expect(await rebuilder().run(project.id)).toEqual({ kind: "rebuilt", seq: 4, generation: 2 });
+      const opened = await hello(hub, project.id);
+      expect(opened.closedWith).toBeUndefined();
+      const { store } = ProjectStore.fromUpdates(opened.of("update").map((each) => each.payload));
+      const made: Uint8Array[] = [];
+      store!.onLocalUpdate((update) => made.push(update));
+      expect(store!.execute(write("code/shared.js", "export const a = 9;\n")).ok).toBe(true);
+      store!.destroy();
+      opened.send({
+        t: "push",
+        id: 1,
+        kind: "user",
+        base: 4,
+        at: Date.now(),
+        window: "w1",
+        behind: false,
+        payload: made.length === 1 ? made[0]! : mergeUpdates(made),
+      });
+      await opened.until(() => opened.received.some((each) => "id" in each), "an answer");
+      expect(opened.received.find((each) => "id" in each)).toMatchObject({ t: "ack", seq: 5 });
+      expect(await hub.rename(project.id, w.userId, "满了也能改名")).toMatchObject({
+        kind: "renamed",
+      });
+      expect((await copyFiles(project.id)).get("code/shared.js")).toBe("export const a = 9;\n");
     });
 
     test("a copy made again goes on from its first update: changed, archived, let go of and made again", async () => {

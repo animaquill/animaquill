@@ -1,13 +1,21 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray, lt, or, sql } from "drizzle-orm";
 import { S3Error, type S3SignedRequest } from "@animaquill/host/s3";
-import { describeError, retryOnDeadlock, type Db, type Logger, type Tx } from "../database.ts";
+import {
+  describeError,
+  retryOnDeadlock,
+  type Db,
+  type Executor,
+  type Logger,
+  type Tx,
+} from "../database.ts";
 import type { Jobs } from "../jobs.ts";
 import { diskRoom, type DiskRoom } from "../library/disk.ts";
 import type { LibraryMode } from "../library/config.ts";
 import type { LibraryStorage } from "../library/storage.ts";
 import { projects, userChatImageRefs, userChatImages, userChats, users } from "../schema.ts";
-import { readSetting, type Setting, type Settings } from "../settings.ts";
+import { NO_LIMITS, type PersonLimits } from "../limits.ts";
+import type { Setting } from "../settings.ts";
 import { lockPrefs } from "./cloud.ts";
 
 /**
@@ -19,8 +27,9 @@ import { lockPrefs } from "./cloud.ts";
  *   minutes (`start`); the platform then reads it back and checks both (`done`): what is not what
  *   was said goes at once. Only then can a conversation refer to it, see `saveChat`.
  * - Only its person reads it: at an address signed for five minutes (`read`), never for another.
- * - At most `CHAT_IMAGE_BYTES` each, `IMAGES_PER_CHAT` a conversation, and `CHAT_IMAGES_SETTING`
- *   a person, which admins change (admin.ts `chat-images`).
+ * - At most `CHAT_IMAGE_BYTES` each, `IMAGES_PER_CHAT` a conversation, and `chat.images` of
+ *   limits.ts a person (on the platform, `CHAT_IMAGES_SETTING`, which admins change: admin.ts
+ *   `chat-images`; on a server of its own, AQ_LIMITS).
  * - A picture nothing refers to goes 24 hours after a conversation last began or stopped referring
  *   to it, as does one that never finished going up (`cleanUp`, every hour). Turning the
  *   conversations off takes everything of the person away at once (`purge`), and the hourly round
@@ -49,7 +58,10 @@ export const READ_SECONDS = 300;
 /** Where the pictures are in the bucket, each person's under `<user id>/`. */
 export const CHAT_IMAGES_PREFIX = "chat-images/u/";
 
-/** Megabytes (1024²) of pictures a person keeps at most; admins change it, see admin.ts. */
+/**
+ * Megabytes (1024²) of pictures a person keeps at most on the platform; admins change it, see
+ * admin.ts. Only the platform's limits read it (`chat.images`).
+ */
 export const CHAT_IMAGES_SETTING: Setting<{ readonly perUserMb: number }> = {
   key: "chat-images",
   fallback: { perUserMb: 500 },
@@ -62,7 +74,6 @@ export const CHAT_IMAGES_SETTING: Setting<{ readonly perUserMb: number }> = {
   },
 };
 
-const MB = 1024 ** 2;
 const HASH = /^[0-9a-f]{64}$/;
 const USER = /^[0-9a-f-]{36}$/;
 const REF = /^sha256:([0-9a-f]{64})$/;
@@ -132,7 +143,8 @@ export type DoneOutcome = "ready" | "mismatch" | "notUploaded" | "missing" | "un
 
 export interface ChatImageUsage {
   readonly used: number;
-  readonly limit: number;
+  /** Null: no limit. */
+  readonly limit: number | null;
   /** Each conversation that has pictures here, largest first. */
   readonly chats: readonly {
     readonly project: string;
@@ -154,8 +166,8 @@ export interface ChatImagesOptions {
   readonly checksum: "sha256" | "none";
   /** With less free on the disk, nothing new goes up, as for the cloud space (library/disk.ts). */
   readonly minFreeBytes: number;
-  /** What admins set; read from the database where not given. */
-  readonly settings?: () => Settings | undefined;
+  /** How much each person may have, see limits.ts (`chat.images`): nothing unless said. */
+  readonly limits?: PersonLimits | undefined;
   readonly now?: () => number;
   readonly log?: Logger;
   /** Only tests: how full the disk is. */
@@ -176,13 +188,9 @@ export class ChatImages {
     this.#now = options.now ?? Date.now;
   }
 
-  /** Bytes of pictures a person keeps at most, as admins set it. */
-  async limit(): Promise<number> {
-    const settings = this.#options.settings?.();
-    const { perUserMb } = settings
-      ? await settings.get(CHAT_IMAGES_SETTING)
-      : await readSetting(this.#options.db, CHAT_IMAGES_SETTING);
-    return perUserMb * MB;
+  /** Bytes of pictures a person keeps at most (`chat.images`): null for no limit. */
+  async limit(db: Executor, userId: string): Promise<number | null> {
+    return (this.#options.limits ?? NO_LIMITS).of(db, userId, "chat.images");
   }
 
   /**
@@ -221,7 +229,6 @@ export class ChatImages {
     if (image.bytes > CHAT_IMAGE_BYTES) return "tooLarge";
     const { storage } = this.#options;
     if (!storage || !(await this.#canPut())) return "unavailable";
-    const limit = await this.limit();
     const outcome = await retryOnDeadlock(() =>
       this.#options.db.transaction(async (tx): Promise<StartOutcome | "sign"> => {
         // For update: two pictures of one person begun at once do not both take the last room.
@@ -235,7 +242,8 @@ export class ChatImages {
         const at = new Date(this.#now());
         // What it takes of the room now, as one asked again (a page that went away) says it anew.
         const used = await this.#used(tx, userId);
-        if (used - (row?.bytes ?? 0) + image.bytes > limit)
+        const limit = await this.limit(tx, userId);
+        if (limit !== null && used - (row?.bytes ?? 0) + image.bytes > limit)
           return { full: { used: used - (row?.bytes ?? 0), limit } };
         if (row) {
           // What is said now is what is checked; it begins again, as the round sees it.
@@ -405,7 +413,7 @@ export class ChatImages {
   async usage(userId: string): Promise<ChatImageUsage> {
     const { db } = this.#options;
     const used = await this.#used(db, userId);
-    const limit = await this.limit();
+    const limit = await this.limit(db, userId);
     const rows = await db
       .select({
         project: userChatImageRefs.projectId,

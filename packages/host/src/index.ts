@@ -1117,9 +1117,9 @@ export interface ChatSyncAccess {
 
 /** The pictures of a person's conversations on a platform, see `ChatSyncAccess.imageUsage`. */
 export interface ChatImageUsage {
-  /** Bytes taken, and at most. */
+  /** Bytes taken, and at most: null for no limit, as on a server of its own. */
   readonly used: number;
-  readonly limit: number;
+  readonly limit: number | null;
   /** Each conversation that has pictures there, by its project of the platform, largest first. */
   readonly chats: readonly {
     readonly project: string;

@@ -51,6 +51,8 @@ import {
 } from "../archive/merging.ts";
 import { wakeCopy } from "./wake.ts";
 import { NO_HOLDS, type ProjectHolds } from "../holds.ts";
+import { NO_LIMITS, type PersonLimits } from "../limits.ts";
+import { roomFor } from "./room.ts";
 import { OWNER_ONLY, type AccessPolicy, type ProjectAction } from "../access.ts";
 import {
   deletedProjects,
@@ -304,8 +306,6 @@ export interface SyncLimits {
   readonly compactBytes: number;
   /** A project does not grow larger than this, as Yjs counts it. */
   readonly projectBytes: number;
-  /** Projects of one person. */
-  readonly projectsPerUser: number;
   /**
    * Ids a person has noted as taken away in a day (`deleted_projects`), after which no more ids
    * that never were a project are noted for them, see `remove`. A project that is taken away is
@@ -317,8 +317,6 @@ export interface SyncLimits {
    * is made under it: after that it counts for nothing, and goes with the hourly sweep.
    */
   readonly deletedKeptMs: number;
-  /** Bytes of all projects of one person. */
-  readonly bytesPerUser: number;
   /** A window further behind than this gets the whole project instead of the updates. */
   readonly catchUpUpdates: number;
   /** Updates read from the database at a time, while a window catches up. */
@@ -379,10 +377,8 @@ export const SYNC_HUB_LIMITS: SyncLimits = {
   compactUpdates: 500,
   compactBytes: 4 * 1024 * 1024,
   projectBytes: SYNC_LIMITS.state,
-  projectsPerUser: 200,
   notedIdsPerDay: 200,
   deletedKeptMs: 7 * 24 * 3600_000,
-  bytesPerUser: 256 * 1024 * 1024,
   catchUpUpdates: 2000,
   catchUpBatch: 200,
   beforeMerge: 20,
@@ -447,6 +443,11 @@ export interface SyncHubOptions {
   readonly log: Logger;
   readonly now?: () => Date;
   readonly limits?: Partial<SyncLimits>;
+  /**
+   * How much each person may have, see limits.ts: asked only as a project is made (`#create`,
+   * sync/room.ts), never of a change, a merge, renaming or a copy made again. Nothing unless said.
+   */
+  readonly personLimits?: PersonLimits | undefined;
   /** The oldest editor synced with, see `OLDEST_EDITOR`: none unless said, as in the tests. */
   readonly oldestEditor?: string | undefined;
   /** What else may change a project, which keeps its copy from being let go of: none unless said. */
@@ -563,11 +564,12 @@ export type RenameOutcome =
   /**
    * Not renamed: no name ("invalid"), the project is locked ("locked"), its repository cannot be
    * used ("unusable"), the working copy is not here but in the repository ("released", see
-   * wake.ts), more than the person may have ("quota"), or something else ("failed").
+   * wake.ts), or something else ("failed"). Never for what the person keeps: renaming a project
+   * that is there takes no room of a new one (sync/room.ts).
    */
   | {
       readonly kind: "refused";
-      readonly why: "invalid" | "locked" | "unusable" | "released" | "quota" | "failed";
+      readonly why: "invalid" | "locked" | "unusable" | "released" | "failed";
     };
 
 /** How many places `TakeBackOutcome` names at most, each way. */
@@ -944,8 +946,6 @@ export class SyncHub {
   /** What happens to each project, in order, by its id: also before it is in memory. */
   readonly #queues = new Map<string, Promise<void>>();
   readonly #connections = new Set<Connection>();
-  /** Bytes of all projects of a person, as last read, see `bytesPerUser`. */
-  readonly #userBytes = new Map<string, { bytes: number; at: number }>();
   /** Connections each person opened in the last minute, see `startsPerMinute`. */
   readonly #starts = new Map<string, { at: number; count: number }>();
   /** Bytes that wait to be taken in, see `queuedBytesPerUser`, of each person and of everyone. */
@@ -958,6 +958,7 @@ export class SyncHub {
   #stopped = false;
   readonly #oldestEditor: string | undefined;
   readonly #holds: ProjectHolds;
+  readonly #personLimits: PersonLimits;
   readonly #access: AccessPolicy;
   readonly #lookAgain: ((projectId: string) => Promise<void>) | undefined;
   readonly #linkLocal: boolean;
@@ -970,6 +971,7 @@ export class SyncHub {
     this.#now = now ?? (() => new Date());
     this.#oldestEditor = options.oldestEditor;
     this.#holds = options.holds ?? NO_HOLDS;
+    this.#personLimits = options.personLimits ?? NO_LIMITS;
     this.#access = options.access ?? OWNER_ONLY;
     this.#lookAgain = options.lookAgain;
     this.#rebuild = options.rebuild;
@@ -1934,8 +1936,6 @@ export class SyncHub {
           code: SYNC_CLOSE.deleted,
           reason: "the project was deleted",
         }));
-        // What the person keeps on the platform is less now: counted again the next time.
-        this.#userBytes.delete(userId);
         this.#blewUp.delete(id);
         this.#blewUp.delete(`create:${id}`);
         // Who took what away, and how much of it there was: nothing of what was in it.
@@ -2124,7 +2124,6 @@ export class SyncHub {
       );
       if (outcome.kind === "released") {
         await this.#letGo(id, () => ({ code: SYNC_CLOSE.unavailable, reason: "released" }));
-        this.#userBytes.clear();
         this.#blewUp.delete(id);
         this.#log.info({ project: id, ...outcome.from }, "a working copy was let go of");
       }
@@ -2254,13 +2253,6 @@ export class SyncHub {
       if (delta && !(await this.#fits(project, delta.length))) {
         await this.#copies.drop(project.id);
         return refuse("too-large", "the project");
-      }
-      if (
-        delta &&
-        (await this.#userTotal(project.ownerId)) + delta.length > this.#limits.bytesPerUser
-      ) {
-        await this.#copies.drop(project.id);
-        return refuse("quota");
       }
       const at = this.#now();
       const taking = platformChange(delta, { kind: "repo", base: oursSeq, at, by });
@@ -2477,13 +2469,6 @@ export class SyncHub {
       if (!(await this.#fits(project, done.delta.length))) {
         await this.#copies.drop(project.id);
         return { kind: "refused", why: "failed" };
-      }
-      if (
-        (await this.#userTotal(project.ownerId)) + done.delta.length >
-        this.#limits.bytesPerUser
-      ) {
-        await this.#copies.drop(project.id);
-        return { kind: "refused", why: "quota" };
       }
       const changes = platformChange(done.delta, { kind: "user", base, at, by });
       stored = await this.#store(project, changes, done.info, async (tx, kept) => {
@@ -3055,17 +3040,6 @@ export class SyncHub {
     return row?.bytes ?? 0;
   }
 
-  /** What a person has on the platform, in projects and bytes. */
-  async #holdings(userId: string): Promise<{ projects: number; bytes: number }> {
-    const [row] = await this.#db
-      .select({ projects: count(), bytes: sum(projects.bytes).mapWith(Number) })
-      .from(projects)
-      .where(eq(projects.ownerId, userId));
-    const bytes = row?.bytes ?? 0;
-    this.#userBytes.set(userId, { bytes, at: this.#now().getTime() });
-    return { projects: row?.projects ?? 0, bytes };
-  }
-
   /**
    * A new project, whose first version is what the window sent. Resolves to undefined when the id
    * is taken by now. None is made under the id of a project that was taken away in the last week,
@@ -3092,13 +3066,6 @@ export class SyncHub {
     // nothing this could go on with, and none is made for it.
     if (message.generation !== undefined && message.generation !== 1) {
       throw new Closed(SYNC_CLOSE.rebuilt, "another working copy of the project");
-    }
-    const holdings = await this.#holdings(connection.who.userId);
-    if (
-      holdings.projects >= this.#limits.projectsPerUser ||
-      holdings.bytes + state.length > this.#limits.bytesPerUser
-    ) {
-      throw new Closed(SYNC_CLOSE.quota, "quota");
     }
     let taken: Taken;
     try {
@@ -3136,6 +3103,12 @@ export class SyncHub {
     const digest = digestOf("", 1, state);
     try {
       await this.#db.transaction(async (tx) => {
+        // Room for it, of what the person may keep (`storage.platform`, `projects.count`): counted
+        // with the person held (before the id, as restoring holds them), so that of two new
+        // projects at once the second counts the first. Only here: a project that is there is
+        // never turned away for what is kept, see room.ts.
+        const full = await roomFor(tx, this.#personLimits, connection.who.userId, state.length);
+        if (full) throw new Closed(SYNC_CLOSE.quota, full.detail === "count" ? "count" : "quota");
         // The id is held from looking whether a project of it was taken away until the project is
         // made, as `remove` holds it: one that is being taken away now is seen as gone here.
         await lockProject(tx, message.project);
@@ -3338,10 +3311,6 @@ export class SyncHub {
         await this.#copies.drop(project.id);
         return reject("too-large", "the project");
       }
-      if ((await this.#userTotal(project.ownerId)) + added > this.#limits.bytesPerUser) {
-        await this.#copies.drop(project.id);
-        return reject("quota");
-      }
       await this.#keep(connection, project, message, delta, info, late);
     } catch (error) {
       await this.#copies.drop(project.id);
@@ -3374,13 +3343,6 @@ export class SyncHub {
     if (this.#blewUp.size > 1000) this.#blewUp.clear();
     this.#blewUp.set(key, digest);
     return false;
-  }
-
-  /** What a person keeps on the platform, as last read, read again after a minute. */
-  async #userTotal(userId: string): Promise<number> {
-    const known = this.#userBytes.get(userId);
-    if (known && this.#now().getTime() - known.at < 60_000) return known.bytes;
-    return (await this.#holdings(userId)).bytes;
   }
 
   /**
@@ -3581,8 +3543,6 @@ export class SyncHub {
       project.updatesSince += stored.length;
       project.bytesSince += bytes;
       project.bytes += bytes;
-      const known = this.#userBytes.get(project.ownerId);
-      if (known) known.bytes += bytes;
     }
     project.name = name;
     project.description = description;
@@ -3877,8 +3837,6 @@ export class SyncHub {
     if (previous !== undefined) project.oldest = previous + 1;
     project.updatesSince = 0;
     project.bytesSince = 0;
-    const known = this.#userBytes.get(project.ownerId);
-    if (known) known.bytes += state.length - project.bytes;
     project.bytes = state.length;
     this.#copies.resize(project.id, state.length);
   }

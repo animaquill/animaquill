@@ -9,6 +9,7 @@ import {
   loadLibraryConfig,
   type LibraryConfig,
 } from "./library/config.ts";
+import { parseLimits, type LimitKey } from "./limits.ts";
 import { parseNetwork } from "./relay/addresses.ts";
 import { MasterKeyError, parseMasterKeys, type MasterKey } from "./seal.ts";
 
@@ -76,6 +77,13 @@ export interface Config {
    * "off" never; unless said, they are kept only where it is not (see `localReposOn`).
    */
   readonly localRepos: "on" | "off" | undefined;
+  /**
+   * AQ_LIMITS: how much may be kept and done on this server, for all of it, see `parseLimits` of
+   * limits.ts (`{"storage.platform":"20GB"}`): what it leaves out is not limited. Read once, as the
+   * server starts; one written wrong stops it from starting. A deployment with limits of its own
+   * (`ServerParts.limits`, the platform's plans) does not go by it.
+   */
+  readonly limits: Readonly<Partial<Record<LimitKey, number | null>>>;
 }
 
 export interface RelayConfig {
@@ -407,6 +415,10 @@ export const loadConfig = (
   const dataDir = dataDirOf(env, problems);
   const stagingDir = stagingDirOf(env, problems, dataDir);
   const stagingFloorGb = stagingFloorOf(env, problems);
+  const limits = parseLimits(plain(env, "AQ_LIMITS"));
+  // Not left out with a word in the log, as other settings are: a server that should limit and
+  // does not, or limits what it should not, is worse than one that does not start.
+  if (limits.problems.length > 0) throw new ConfigError(limits.problems.join("; "));
   return {
     host: plain(env, "HOST") ?? "0.0.0.0",
     port: integer(env, "PORT", 8300),
@@ -431,6 +443,7 @@ export const loadConfig = (
     localLfs: localLfsOf(env, problems),
     dataDir,
     localRepos: localReposOf(env, problems),
+    limits: limits.values,
   };
 };
 
@@ -465,4 +478,5 @@ export const describeConfig = (config: Config) => ({
   localLfs: config.localLfs,
   dataDir: config.dataDir,
   localRepos: localReposOn(config),
+  ...(Object.keys(config.limits).length > 0 && { limits: config.limits }),
 });

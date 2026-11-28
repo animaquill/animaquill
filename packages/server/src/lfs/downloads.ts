@@ -15,7 +15,8 @@ import {
   type RepoRow,
 } from "../archive/repo-host.ts";
 import { OPEN_LFS_STATES, lfsObjects, lfsUploads, projects } from "../schema.ts";
-import { readSetting, type Setting, type Settings } from "../settings.ts";
+import { NO_LIMITS, type PersonLimits } from "../limits.ts";
+import type { Setting } from "../settings.ts";
 
 /**
  * Files of assets out of the large file storage (Git LFS) of a project's repository, for the editor
@@ -31,14 +32,13 @@ import { readSetting, type Setting, type Settings } from "../settings.ts";
  * - **What goes through** is what the storage says is the part of the object that was asked for, of
  *   its size: nothing else of it, not even its headers.
  * - **How much:** so many at once of one person and of everybody; a piece of at most `mostBytes`;
- *   and so many bytes a day of one person (`LFS_DOWNLOADS_SETTING`, which admins change), as the
- *   platform's own line pays for them. A piece that stops coming, or that the browser stops taking,
+ *   and so many bytes a day of one person (`lfs.downloads.daily` of limits.ts: on the platform,
+ *   as admins set it, as the platform's own line pays for them). A piece that stops coming, or that the browser stops taking,
  *   is let go of after `stallMs`, or once it comes slower than `pace`.
  */
 
 const KIB = 1024;
 const MIB = 1024 * KIB;
-const GIB = 1024 * MIB;
 const DAY_MS = 24 * 3600_000;
 
 export interface DownloadLimits {
@@ -54,8 +54,6 @@ export interface DownloadLimits {
   readonly bytesPerSecond: number;
   readonly graceMs: number;
   readonly checkMs: number;
-  /** What a GB of `LFS_DOWNLOADS_SETTING` is: a GiB, but in tests. */
-  readonly bytesPerGb: number;
 }
 
 export const DOWNLOAD_LIMITS: DownloadLimits = {
@@ -66,7 +64,6 @@ export const DOWNLOAD_LIMITS: DownloadLimits = {
   bytesPerSecond: 16 * KIB,
   graceMs: 10_000,
   checkMs: 1000,
-  bytesPerGb: GIB,
 };
 
 /** Objects one lookup asks about at most, as the batch API takes them. */
@@ -75,8 +72,8 @@ export const LOOKUP_MOST = 100;
 /**
  * How much one person may download through the platform a day, in GiB (2026-11-15, 20 until the
  * user says otherwise): admins change it on the admin site or with `admin.ts lfs downloads limit`.
- * The fallback is the platform's: a server of its own has no limit where nobody set one (O8b,
- * `DownloadsOptions.dailyGb`).
+ * Only the platform's limits read it (`lfs.downloads.daily`): a server of its own goes by AQ_LIMITS,
+ * no limit where that says nothing.
  */
 export const LFS_DOWNLOADS_SETTING: Setting<{ readonly dailyGb: number }> = {
   key: "lfsDownloads",
@@ -139,14 +136,9 @@ export interface DownloadsOptions {
   /** Undefined where there is no GitHub App: nothing can be downloaded. */
   readonly hosts: RepoHosts | undefined;
   readonly log: Logger;
-  /** What admins set, read every few seconds; undefined to read the database each time. */
-  readonly settings?: () => Settings | undefined;
   readonly limits?: Partial<DownloadLimits>;
-  /**
-   * GiB one person may download a day where admins set nothing (`LFS_DOWNLOADS_SETTING`): no limit
-   * unless said. The platform says 20.
-   */
-  readonly dailyGb?: number | undefined;
+  /** How much each person may have, see limits.ts (`lfs.downloads.daily`): none unless said. */
+  readonly personLimits?: PersonLimits | undefined;
   readonly now?: () => number;
 }
 
@@ -276,8 +268,6 @@ export class LfsDownloads {
   readonly #limits: DownloadLimits;
   readonly #now: () => number;
   readonly #places: Places;
-  /** `LFS_DOWNLOADS_SETTING`, with what it is where nobody set it here. */
-  readonly #daily: Setting<{ readonly dailyGb: number }>;
   /** Bytes each person downloaded on the day this counts, see `#counted`. */
   #day: number;
   #bytesOf = new Map<string, number>();
@@ -287,10 +277,6 @@ export class LfsDownloads {
     this.#limits = { ...DOWNLOAD_LIMITS, ...options.limits };
     this.#now = options.now ?? Date.now;
     this.#places = new Places(this.#limits.perPerson, this.#limits.atOnce);
-    this.#daily = {
-      ...LFS_DOWNLOADS_SETTING,
-      fallback: { dailyGb: options.dailyGb ?? Number.POSITIVE_INFINITY },
-    };
     this.#day = Math.floor(this.#now() / DAY_MS);
   }
 
@@ -458,14 +444,16 @@ export class LfsDownloads {
     });
   }
 
-  /** How many bytes a person may download today still, as admins set it. */
+  /** How many bytes a person may download today still (`lfs.downloads.daily`). */
   async #allowance(user: SignedIn): Promise<number> {
-    const settings = this.#options.settings?.();
-    const { dailyGb } = settings
-      ? await settings.get(this.#daily)
-      : await readSetting(this.#options.db, this.#daily);
+    const daily = await (this.#options.personLimits ?? NO_LIMITS).of(
+      this.#options.db,
+      user.userId,
+      "lfs.downloads.daily",
+    );
     this.#roll();
-    return dailyGb * this.#limits.bytesPerGb - (this.#bytesOf.get(user.userId) ?? 0);
+    if (daily === null) return Number.POSITIVE_INFINITY;
+    return daily - (this.#bytesOf.get(user.userId) ?? 0);
   }
 
   /** A new day: yesterday's bytes go to the log, all together, and counting starts again. */

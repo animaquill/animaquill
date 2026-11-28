@@ -3,6 +3,7 @@ import { quiet, world, type World } from "../test/archive-support.ts";
 import { createTestDatabase, TEST_DATABASE, type TestDatabase } from "../test/database.ts";
 import { platform } from "../test/platform-support.ts";
 import { SyncHub } from "../sync/hub.ts";
+import { fixedLimits } from "../limits.ts";
 
 /**
  * The cloud space of whoever is signed in (me/routes.ts, `GET /api/me/storage`), as `PersonLimits`
@@ -36,10 +37,12 @@ describe.skipIf(!TEST_DATABASE)("the cloud space of an account, as the limits sa
     const limited = await platform(w, {
       hub,
       limits: {
+        scope: "person",
         of: async (_db, userId, key) => {
           asked.push([userId, key]);
           return 5;
         },
+        all: async () => fixedLimits({}).all(t.db, w.userId),
       },
     });
     expect((await limited.send("GET", "/api/me/storage")).json).toEqual({
@@ -47,6 +50,6 @@ describe.skipIf(!TEST_DATABASE)("the cloud space of an account, as the limits sa
       limit: 5,
       used: 0,
     });
-    expect(asked).toEqual([[w.userId, "cloudSpace"]]);
+    expect(asked).toEqual([[w.userId, "storage.cloud"]]);
   });
 });

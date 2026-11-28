@@ -25,7 +25,9 @@ import {
   type ReleasedFrom,
   type RepoProvider,
 } from "../schema.ts";
-import { PROJECT_ID, SYNC_HUB_LIMITS, lockProject } from "../sync/hub.ts";
+import { PROJECT_ID, lockProject } from "../sync/hub.ts";
+import { NO_LIMITS, type PersonLimits } from "../limits.ts";
+import { roomFor } from "../sync/room.ts";
 import { GitHubPersonRepos, type PersonRepo } from "./github-host.ts";
 import {
   ARCHIVE_LOCK,
@@ -327,8 +329,11 @@ export interface RepositoryServiceOptions {
    * Undefined where nothing does: nothing is restored.
    */
   readonly rebuild?: ((projectId: string) => Promise<void>) | undefined;
-  /** Projects of one person: `SYNC_HUB_LIMITS.projectsPerUser` unless said. */
-  readonly projectsPerUser?: number;
+  /**
+   * How much each person may have, see limits.ts: a restore is a new project, which needs room of
+   * what they may keep (sync/room.ts). Nothing is limited unless said.
+   */
+  readonly limits?: PersonLimits | undefined;
   /** How long restoring waits for the worker before it answers that it goes on: about a minute. */
   readonly restoreWaitMs?: number;
   readonly now?: () => Date;
@@ -352,12 +357,6 @@ const RESTORE_WAIT_MS = 50_000;
 const RESTORE_LOOK_MS = 250;
 /** An animaquill.json larger than this is no manifest: it is not read into the API. */
 const MANIFEST_MOST_BYTES = 1024 * 1024;
-/**
- * The space of the locks on people, for counting their projects while one is made: two restores at
- * once do not both find room for one more.
- */
-const PERSON_LOCK = 0x61712d75; // "aq-u"
-
 /** Where a refusal of making a project from a repository is said to people, see `restore`. */
 const refusalOf = (problem: CopyProblem): RepositoryRefused => {
   switch (problem.code) {
@@ -1014,13 +1013,14 @@ export class RepositoryService {
    * may push to and that is not archived, a public one only where they said so, and none that a
    * project of the platform is saved to ("linkedElsewhere", with which, where it is theirs). It has
    * to have animaquill.json at its top ("noProject"), and the person room for another project
-   * ("quota").
+   * ("quota", with `used` and `limit`, and `detail: "count"` where it is the number of projects):
+   * as many as they may have, or as much kept as they may keep already, see sync/room.ts.
    *
    * A project is made for it, saved to it, without a working copy ("restoring"), and the worker
    * makes the copy from the last commit of its branch (archive/rebuild.ts), as it would one the
    * platform let go of: it is archived up to that commit. This waits for that, about a minute.
    * Where the repository does not make a project ("unreadable" with the documents that do not read,
-   * "noProject", "tooLarge", "tooNew", "quota"), or the work failed ("unavailable"), the project
+   * "noProject", "tooLarge", "tooNew"), or the work failed ("unavailable"), the project
    * goes again, and that is what is said. Where it takes longer, it goes on, and the answer says
    * so ("restoring"): the list says once it is there, or that it could not be made
    * (`copyProblem`).
@@ -1100,22 +1100,26 @@ export class RepositoryService {
   ): Promise<Restored> {
     const projectId = randomBytes(16).toString("base64url");
     const now = this.#now();
-    const most = this.#options.projectsPerUser ?? SYNC_HUB_LIMITS.projectsPerUser;
+    const limits = this.#options.limits ?? NO_LIMITS;
     const wait = this.#options.restoreWaitMs ?? RESTORE_WAIT_MS;
     // Held while this waits for the answer: a restore that fails meanwhile stays, for this to say
     // why, and goes once nothing waits for it (see `Rebuilder`).
     const until = new Date(now.getTime() + wait + 30_000);
     try {
       await this.#options.db.transaction(async (tx) => {
-        await tx.execute(
-          sql`select pg_advisory_xact_lock(${PERSON_LOCK}, hashtext(${user.userId}))`,
-        );
+        // Room for one more project (`projects.count`), and none over what they may keep already
+        // (`storage.platform`): how large it is, the worker finds out, and never turns it away for
+        // that. With the person held, so that two restores at once do not both find room.
+        const full = await roomFor(tx, limits, user.userId, 0);
+        if (full) {
+          const { detail, used, limit } = full;
+          throw new RepositoryRefused("quota", 409, "quota", {
+            ...(detail === "count" && { detail }),
+            used,
+            limit,
+          });
+        }
         await lockProject(tx, projectId);
-        const [held] = await tx
-          .select({ count: count() })
-          .from(projects)
-          .where(eq(projects.ownerId, user.userId));
-        if ((held?.count ?? 0) >= most) throw new RepositoryRefused("quota", 409);
         await tx.insert(projects).values({
           id: projectId,
           ownerId: user.userId,

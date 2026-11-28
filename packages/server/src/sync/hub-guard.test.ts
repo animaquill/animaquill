@@ -16,6 +16,7 @@ import type { Db } from "../database.ts";
 import { projectSnapshots, projects, projectUpdates } from "../schema.ts";
 import { weightOf } from "./copies.ts";
 import { SyncHub, type SyncLimits } from "./hub.ts";
+import { changeableLimits, seeded } from "../test/limits-support.ts";
 
 /**
  * What keeps the platform up and its projects whole when windows send what they should not, or
@@ -298,24 +299,90 @@ describe.skipIf(!TEST_DATABASE)("syncing, when windows send what they should not
     expect(await push(peer, added)).toMatchObject({ t: "ack", seq: 3 });
   });
 
-  test("a person has only so many projects, of only so many bytes", async () => {
+  test("only a new project is turned away for what a person keeps: their changes never are", async () => {
     const editor = new Editor();
     const size = editor.store.encodeState().length;
-    const hub = hubOf({ projectsPerUser: 1, bytesPerUser: size + 2000 });
+    const limits = changeableLimits();
+    const hub = new SyncHub({ db: database.db, log: quiet, personLimits: limits });
+    hubs.push(hub);
     const ada = await someone(database.db);
     const id = newId();
     const peer = await hello(hub, ada, id, { create: editor });
-    const second = await hello(hub, ada, newId(), { create: new Editor() });
-    expect(second.closedWith?.code).toBe(SYNC_CLOSE.quota);
-    // The first one does not grow past the bytes either.
+    expect(peer.closedWith).toBeUndefined();
+    // As many projects as they may have: the next one is not made, and nothing of it is kept.
+    limits.set({ "projects.count": 1 });
+    const second = newId();
+    const counted = await hello(hub, ada, second, { create: new Editor() });
+    expect(counted.closedWith).toEqual({ code: SYNC_CLOSE.quota, reason: "count" });
+    expect(await headOf(second)).toBeUndefined();
+    // As much as they may keep, with its cover: a project that would go past it is not made...
+    limits.set({ "storage.platform": size + 100 });
+    const third = newId();
+    const full = await hello(hub, ada, third, { create: new Editor() });
+    expect(full.closedWith).toEqual({ code: SYNC_CLOSE.quota, reason: "quota" });
+    expect(await headOf(third)).toBeUndefined();
+    // ...but the one there grows past it, as far as it likes: the person is never stopped.
+    limits.set({ "storage.platform": 1, "projects.count": 0 });
     const other = new Editor(editor.store.encodeState());
     expect(await push(peer, editor.change(write("code/big.js", "b".repeat(4000))))).toMatchObject({
-      t: "reject",
-      reason: "quota",
-      retry: false,
+      t: "ack",
+      seq: 2,
     });
-    expect(await headOf(id)).toBe(1);
-    expect(await push(peer, other.change(write("code/small.js", "s")))).toMatchObject({ t: "ack" });
+    expect(await push(peer, other.change(write("code/small.js", "s")), 2)).toMatchObject({
+      t: "ack",
+    });
+    expect(await hub.rename(id, ada.userId, "改了名字")).toMatchObject({ kind: "renamed" });
+    expect(await headOf(id)).toBe(4);
+    // Nothing is limited again: it is made.
+    limits.set({});
+    expect((await hello(hub, ada, third, { create: new Editor() })).closedWith).toBeUndefined();
+  });
+
+  test("of two new projects at once, where there is room for one, one is made", async () => {
+    // Two processes, as the platform runs them: the lock is in the database, not in a hub.
+    const limits = changeableLimits();
+    const two = [0, 1].map(() => {
+      const hub = new SyncHub({ db: database.db, log: quiet, personLimits: limits });
+      hubs.push(hub);
+      return hub;
+    });
+    const size = new Editor().store.encodeState().length;
+    const random = seeded(20261128);
+    for (let round = 0; round < 12; round++) {
+      const ada = await someone(database.db);
+      const held = Math.floor(random() * 3);
+      for (let index = 0; index < held; index++)
+        await hello(two[0]!, ada, newId(), { create: new Editor() });
+      // Room for one more: by number, or by bytes.
+      limits.set(
+        random() < 0.5
+          ? { "projects.count": held + 1 }
+          : { "storage.platform": (held + 1) * size + Math.floor(size / 2) },
+      );
+      const ids = [newId(), newId()];
+      const peers = ids.map((id) => {
+        const peer = new TestPeer(two[random() < 0.5 ? 0 : 1]!, ada);
+        return { id, peer };
+      });
+      const gap = Math.floor(random() * 3);
+      peers[0]!.peer.send(helloOf(ids[0]!, { create: new Editor() }));
+      if (gap > 0) await wait(gap);
+      peers[1]!.peer.send(helloOf(ids[1]!, { create: new Editor() }));
+      for (const { peer } of peers)
+        await peer.until(
+          () => peer.of("synced").length > 0 || peer.closedWith !== undefined,
+          "synced",
+        );
+      const made = peers.filter(({ peer }) => peer.closedWith === undefined);
+      const refused = peers.filter(({ peer }) => peer.closedWith?.code === SYNC_CLOSE.quota);
+      expect([made.length, refused.length], `round ${round}`).toEqual([1, 1]);
+      const theirs = await database.db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.ownerId, ada.userId));
+      expect(theirs.length, `round ${round}`).toBe(held + 1);
+      for (const { peer } of peers) peer.connection.close();
+    }
   });
 
   test(

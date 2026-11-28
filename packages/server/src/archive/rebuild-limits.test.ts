@@ -13,6 +13,9 @@ import {
 } from "../test/archive-support.ts";
 import { createTestDatabase, TEST_DATABASE, type TestDatabase } from "../test/database.ts";
 import { platform, type Platform } from "../test/platform-support.ts";
+import { changeableLimits } from "../test/limits-support.ts";
+import { fixedLimits } from "../limits.ts";
+import { platformHeld } from "../sync/room.ts";
 import { projectRepos, projects } from "../schema.ts";
 import { SyncHub } from "../sync/hub.ts";
 import { wakeCopy } from "../sync/wake.ts";
@@ -351,12 +354,48 @@ describe.skipIf(!TEST_DATABASE)("making working copies within bounds, on a datab
       hub,
       rebuild: async (id) => void rebuilder().run(id),
       restoreWaitMs: 60_000,
-      projectsPerUser: held + 1,
+      limits: fixedLimits({ "projects.count": held + 1 }),
     });
     const answers = await Promise.all(repos.map((repo) => restore(repo.id)));
     expect(answers.map((answer) => answer.status).toSorted()).toEqual([201, 409]);
+    expect(answers.find((answer) => answer.status === 409)?.json).toEqual({
+      error: "quota",
+      detail: "count",
+      used: held + 1,
+      limit: held + 1,
+    });
     expect((await t.db.select().from(projects).where(eq(projects.ownerId, w.userId))).length).toBe(
       held + 1,
     );
+  });
+
+  test("a restore is turned away where the person keeps more than they may already, and only then", async () => {
+    const { repo } = await leftBehind("over");
+    // A project they keep, which takes room.
+    const there = await newProject(w);
+    await edit(w, there, write("code/b.js", "export const b = 2;\n"));
+    const { bytes: used } = await platformHeld(t.db, w.userId, "person");
+    expect(used).toBeGreaterThan(0);
+    const limits = changeableLimits();
+    p = await platform(w, {
+      hub,
+      rebuild: async (id) => void rebuilder().run(id),
+      restoreWaitMs: 60_000,
+      limits,
+    });
+    limits.set({ "storage.platform": used - 1 });
+    expect(await restore(repo.id)).toMatchObject({
+      status: 409,
+      json: { error: "quota", used, limit: used - 1 },
+    });
+    // Nothing is left of it.
+    expect(await t.db.select().from(projectRepos).where(eq(projectRepos.repoId, repo.id))).toEqual(
+      [],
+    );
+    // As much as they may keep, but not more: it is made, however large it is once it is there.
+    limits.set({ "storage.platform": used });
+    const restored = await restore(repo.id);
+    expect(restored.status).toBe(201);
+    expect(await rowOf(restored.json.project.id)).toMatchObject({ copyState: "live" });
   });
 });

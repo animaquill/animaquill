@@ -63,11 +63,9 @@ export const platform = async (
     readonly rebuild?: (projectId: string) => Promise<void>;
     /** How long restoring waits for that, see `RepositoryService.restore`. */
     readonly restoreWaitMs?: number;
-    /** Projects of one person, as restoring counts them. */
-    readonly projectsPerUser?: number;
     /** Where the open catalog of models comes from, see src/ai/catalog.ts. */
     readonly modelCatalog?: { readonly fetch: typeof fetch };
-    /** How much each person may have, see limits.ts. */
+    /** How much each person may have, see limits.ts: for the routes and restoring. */
     readonly limits?: PersonLimits;
     /** Who may do what with which project, see access.ts: give the hub the same. */
     readonly access?: AccessPolicy;
@@ -122,7 +120,7 @@ export const platform = async (
     ...(options.switches && { deletesFrom: options.switches.deletesFrom }),
     ...(options.rebuild && { rebuild: options.rebuild }),
     ...(options.restoreWaitMs !== undefined && { restoreWaitMs: options.restoreWaitMs }),
-    ...(options.projectsPerUser !== undefined && { projectsPerUser: options.projectsPerUser }),
+    ...(options.limits && { limits: options.limits }),
     ...(options.access && { access: options.access }),
   });
   const app = buildApp(

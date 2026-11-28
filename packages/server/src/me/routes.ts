@@ -56,7 +56,7 @@ import type { SessionCredentials } from "../auth/credentials.ts";
  *   over the revision it
  *   was read at (`base`, null for a new one). 200 `{revision}`; 409 `{error: "newer", revision}`
  *   where another device wrote it since; 404 `notFound` for a project that is not the person's; 413
- *   `tooLarge` beyond `CHAT_BYTES`, or beyond `CHAT_BYTES_PER_USER` of all the person's. Fields of
+ *   `tooLarge` beyond `CHAT_BYTES`, or beyond `chat.history` of limits.ts of all the person's. Fields of
  *   the summary larger than `SUMMARY_FIELD_BYTES` go with the rest, not into the list. Only from pages of this site.
  * - `DELETE /api/me/chats/:project/:id`: 204, also where there was none. Only from pages of this
  *   site.
@@ -79,7 +79,7 @@ import type { SessionCredentials } from "../auth/credentials.ts";
  *   people take it away themselves.
  * - `GET /api/me/storage`: `{mode, limit, used}`, the person's cloud space for the settings: `mode`
  *   whether the platform keeps files at all now (`on`, `readonly`, `off`, see library/config.ts),
- *   `limit` the bytes they may keep there (`cloudSpace` of limits.ts; null for no limit), `used`
+ *   `limit` the bytes they may keep there (`storage.cloud` of limits.ts; null for no limit), `used`
  *   the bytes kept and on their way.
  * - `GET /api/me/lfs`: `{account, acknowledgedAt?, repositories}`, what the person has in the large
  *   file storage of GitHub through the platform (me/lfs.ts): `repositories` `[{repo, fullName, url,
@@ -242,7 +242,7 @@ export const meRoutes = async (app: FastifyInstance, options: MeRoutesOptions) =
       const user = await signedInHere(request, reply, limits.cloud);
       const database = db();
       if (!user || !database) return reply;
-      const limit = await (options.limits ?? NO_LIMITS).of(database, user.userId, "cloudSpace");
+      const limit = await (options.limits ?? NO_LIMITS).of(database, user.userId, "storage.cloud");
       const usage = (await usageOf(database, [user.userId])).get(user.userId) ?? NO_USAGE;
       reply.header("cache-control", "no-store");
       return {
@@ -364,6 +364,7 @@ export const meRoutes = async (app: FastifyInstance, options: MeRoutesOptions) =
         request.params.id,
         write,
         now(),
+        options.limits ?? NO_LIMITS,
       );
       if (outcome === "missing") return reply.code(404).send({ error: "notFound" });
       if (outcome === "tooLarge") return reply.code(413).send({ error: "tooLarge" });

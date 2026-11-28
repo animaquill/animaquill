@@ -35,7 +35,7 @@ import { Staging } from "./lfs/staging.ts";
 import { LfsUploads } from "./lfs/uploads.ts";
 import { libraryMode } from "./library/config.ts";
 import { LibraryStorage } from "./library/storage.ts";
-import type { PersonLimits } from "./limits.ts";
+import { fixedLimits, type PersonLimits } from "./limits.ts";
 import { ChatImages, scheduleChatImagesCleanup, settleLater } from "./me/chat-images.ts";
 import { listenForAgents, scheduleAgentsCleanup } from "./me/agents.ts";
 import { listenForPeople, PersonEvents } from "./me/events.ts";
@@ -67,7 +67,10 @@ export interface ServerParts {
   readonly access?: AccessPolicy;
   /** Who may get an account, see auth/people.ts: nobody new unless said. */
   readonly people?: PeoplePolicy;
-  /** How much each person may have, see limits.ts: nothing is limited unless said. */
+  /**
+   * How much each person may have, see limits.ts: unless said, what the settings say for the whole
+   * server (AQ_LIMITS, `Config.limits`), and nothing is limited where they say nothing.
+   */
   readonly limits?: PersonLimits;
   /** What else may change a project, see holds.ts: nothing unless said. */
   readonly holds?: ProjectHolds;
@@ -95,11 +98,6 @@ export interface ServerParts {
    */
   readonly local?: LocalGitRepoHost | undefined;
   /**
-   * GiB one person may download a day through the server where admins set nothing (lfs/downloads.ts):
-   * no limit unless said.
-   */
-  readonly lfsDailyGb?: number | undefined;
-  /**
    * Accounts also without the GitHub App, see `setUpAccounts`: for the person of this machine, as
    * the backend of `npx animaquill` has them.
    */
@@ -126,6 +124,7 @@ export interface Server {
 
 export const startServer = (config: Config, parts: ServerParts = {}): Server => {
   const access = parts.access ?? OWNER_ONLY;
+  const limits = parts.limits ?? fixedLimits(config.limits, "server");
   const switches = parts.switches;
   let ready = false;
   let madeReady: () => void = () => {};
@@ -174,7 +173,7 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
     chatImages: () => chatImages,
     settings: () => settings,
     rebuild,
-    ...(parts.limits && { limits: parts.limits }),
+    limits,
     ...(switches && { switches }),
   });
   const log: Logger = app.log;
@@ -239,6 +238,7 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
       log,
       app: githubApp,
       deletesFrom: switches?.deletesFrom,
+      limits,
     });
   };
 
@@ -294,6 +294,7 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
           log,
           ...(parts.holds && { holds: parts.holds }),
           access,
+          personLimits: limits,
           oldestEditor: switches?.oldestEditor,
           // A repository nobody looked at for an hour, when a window opens its project.
           lookAgain: (project) => enqueue({ project, kind: "check" }),
@@ -327,8 +328,7 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
                 db: database.db,
                 hosts,
                 log,
-                settings: () => settings,
-                dailyGb: parts.lfsDailyGb,
+                personLimits: limits,
               });
         // Files that were all there when the API stopped, before they were read through.
         void lfs?.settleWaiting().catch((error: unknown) => {
@@ -344,7 +344,7 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
           mode: () => libraryMode(config.library),
           checksum: config.library.checksum,
           minFreeBytes: config.library.minFreeBytes,
-          settings: () => settings,
+          limits,
           log,
           ...(storage && jobs && { later: (job) => settleLater(queue, job) }),
         });

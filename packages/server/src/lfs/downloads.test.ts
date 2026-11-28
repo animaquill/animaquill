@@ -6,8 +6,7 @@ import { lfsWorld, oidOf, type LfsWorld } from "../test/lfs-support.ts";
 import { logged } from "../app.ts";
 import type { SignedIn } from "../auth/accounts.ts";
 import { lfsObjects } from "../schema.ts";
-import { changeSetting } from "../settings.ts";
-import { LFS_DOWNLOADS_SETTING } from "./downloads.ts";
+import { fixedLimits, type PersonLimits } from "../limits.ts";
 
 /**
  * Files of assets out of Git LFS as the editor of another computer gets them: through the HTTP API,
@@ -26,6 +25,13 @@ describe.skipIf(!TEST_DATABASE)("downloads out of Git LFS through the API, on a 
   let l: LfsWorld;
   /** What the downloads logged. */
   let lines: string[];
+  /** What a person may download a day (`lfs.downloads.daily`), as the limits say it now. */
+  let daily: number;
+  const limits: PersonLimits = {
+    scope: "person",
+    of: async (_db, _userId, key) => (key === "lfs.downloads.daily" ? daily : null),
+    all: async () => fixedLimits({ "lfs.downloads.daily": daily }).all(t.db, ""),
+  };
   beforeAll(async () => {
     t = await createTestDatabase();
   });
@@ -35,10 +41,12 @@ describe.skipIf(!TEST_DATABASE)("downloads out of Git LFS through the API, on a 
   beforeEach(async () => {
     w = await world(t.db);
     lines = [];
+    daily = 200 * CHUNK;
     const note = (...args: unknown[]) => void lines.push(JSON.stringify(args));
     l = await lfsWorld(w, {
       limits: { chunkBytes: CHUNK, fileBytes: 64 * CHUNK },
-      downloadLimits: { mostBytes: 4 * CHUNK, bytesPerGb: 10 * CHUNK },
+      downloadLimits: { mostBytes: 4 * CHUNK },
+      personLimits: limits,
       downloadLog: { info: note, warn: note, error: note },
     });
   });
@@ -293,8 +301,8 @@ describe.skipIf(!TEST_DATABASE)("downloads out of Git LFS through the API, on a 
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(l.downloads.passing).toBe(0);
 
-    // A "GB" of these tests is 10 KiB: a day gives 1 of them, which 40 bytes leave unused.
-    await changeSetting(t.db, LFS_DOWNLOADS_SETTING, { dailyGb: 1 }, { adminId: null });
+    // A day gives 10 KiB, which 40 bytes leave unused; asked again for each piece.
+    daily = 10 * CHUNK;
     expect((await all(project.id, data)).equals(data)).toBe(true);
     expect((await all(project.id, data)).equals(data)).toBe(true);
     let refused;

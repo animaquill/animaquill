@@ -6,6 +6,7 @@ import { platform, type Platform } from "../test/platform-support.ts";
 import { userChats } from "../schema.ts";
 import { SyncHub } from "../sync/hub.ts";
 import { CHAT_BYTES_PER_USER, CHATS_PER_PROJECT } from "./chats.ts";
+import { fixedLimits } from "../limits.ts";
 
 /**
  * Conversations about projects of the platform that go with the account (me/chats.ts): written
@@ -29,7 +30,12 @@ describe.skipIf(!TEST_DATABASE)("conversations that go with an account, on a dat
     w = await world(t.db);
     hub = new SyncHub({ db: t.db, log: quiet });
     time = 1_800_000_000_000;
-    p = await platform(w, { hub, now: () => time });
+    // As the platform has it: a server of its own has no limit unless its settings say one.
+    p = await platform(w, {
+      hub,
+      now: () => time,
+      limits: fixedLimits({ "chat.history": CHAT_BYTES_PER_USER }),
+    });
   });
   afterEach(() => hub.stop());
 
@@ -233,6 +239,9 @@ describe.skipIf(!TEST_DATABASE)("conversations that go with an account, on a dat
       updatedAt: new Date(time - 1000),
     });
     expect((await put(project.id, { base: null, chat: chat("c1", "x") })).status).toBe(413);
+    // Without that limit, it goes.
+    const open = await platform(w, { hub, now: () => time });
+    expect((await put(project.id, { base: null, chat: chat("c1", "x") }, open)).status).toBe(200);
   });
 
   test("not what it should be, or too large", async () => {

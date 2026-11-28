@@ -126,7 +126,7 @@ export interface ProjectSummary {
 export const STALE_MS = 24 * 3600_000;
 /** Repositories of one list that are looked at again at most. */
 export const STALE_MOST = 5;
-/** Projects in a list at most: more than anyone may have, see `projectsPerUser`. */
+/** Projects in a list at most: as many as the platform lets anyone have, see `projects.count` of limits.ts. */
 const MOST = 500;
 
 /**

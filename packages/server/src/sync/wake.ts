@@ -95,7 +95,9 @@ export const wakeCopy = async (
       if (!link) return { copy: "released", why: "noRepository" };
       if (link.unusableSince !== null) return { copy: "released", why: "unusable" };
       const retryAt = problem ? Math.max(problem.retryAt ?? 0, problem.at + REBUILD_RETRY_MS) : 0;
-      if (problem && !fromBranch && now.getTime() < retryAt)
+      // "quota" was a copy turned away for what the person kept, which nothing does any more
+      // (sync/room.ts): made again at once.
+      if (problem && problem.code !== "quota" && !fromBranch && now.getTime() < retryAt)
         return { copy: "released", why: "later", problem, retryAt };
       await tx
         .update(projects)

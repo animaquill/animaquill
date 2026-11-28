@@ -92,7 +92,7 @@ import type { SessionCredentials } from "../auth/credentials.ts";
  *   whose repository cannot be used; 409 `{error: "waking", copy: "restoring"}` where its working
  *   copy was let go of and is being made again now, as `POST .../wake` does: ask again once the
  *   list says it is "live"; 409 `{error: "noRepository" | ..., copy: "released"}` and 429 `busy` as
- *   `wake` says them where it cannot be made; 413 `{error: "quota"}`; 404 `notFound`. Only for
+ *   `wake` says them where it cannot be made; 404 `notFound`. Only for
  *   who may manage the project, and only from pages of this site.
  * - `GET /api/projects/:id/cover`: the picture, with its `ETag` (what the list says), which only the
  *   browser keeps (`private`) and asks about again each time (`If-None-Match`, 304). 404
@@ -176,7 +176,7 @@ export const NAME_BODY_BYTES = 4096;
  * How many changes of how projects are organised a person gives in ten minutes at most: a whole
  * batch of each kind takes the database most of a second, and one person's work is a few at a time.
  * Once, as people sign in first, what a browser kept before goes, as many as they have projects
- * (`projectsPerUser`) and groups (`GROUPS_PER_USER`).
+ * (`projects.count` of limits.ts) and groups (`GROUPS_PER_USER`).
  */
 export const ORGANIZER_CHANGES = 3000;
 
@@ -210,7 +210,7 @@ export const projectRoutes = async (app: FastifyInstance, options: ProjectRoutes
     change: new Limits({ perClient: 60, perOwn: 30, ceiling: 600 }, TEN_MINUTES, now),
     /**
      * Covers, which a start page on a new computer fetches all at once: as many as a person may
-     * have projects (`projectsPerUser`), a few times over.
+     * have projects (`projects.count` of limits.ts), a few times over.
      */
     covers: new Limits({ perClient: 1200, perOwn: 600, ceiling: 12000 }, TEN_MINUTES, now),
     /**
@@ -430,7 +430,6 @@ export const projectRoutes = async (app: FastifyInstance, options: ProjectRoutes
           break;
       }
       if (said.why === "invalid") return reply.code(400).send({ error: "invalid" });
-      if (said.why === "quota") return reply.code(413).send({ error: "quota" });
       if (said.why === "locked" || said.why === "unusable")
         return reply.code(409).send({ error: said.why });
       if (said.why === "failed") return reply.code(503).send({ error: "unavailable" });

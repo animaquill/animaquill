@@ -392,7 +392,11 @@ export function browserChatSyncAccess(options: BrowserAiSyncOptions): ChatSyncAc
       withinTime(timeout, async (signal) => {
         const { response, answer } = await ask("/me/chat-images", {}, signal);
         const used = isObject(answer) ? count(answer.used) : undefined;
-        const limit = isObject(answer) ? count(answer.limit) : undefined;
+        const limit = !isObject(answer)
+          ? undefined
+          : answer.limit === null
+            ? null
+            : count(answer.limit);
         if (!response.ok || !isObject(answer) || used === undefined || limit === undefined)
           throw new Error(`The platform answered ${response.status}`);
         const chats: ChatImageUsage["chats"][number][] = [];

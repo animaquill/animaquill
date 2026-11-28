@@ -487,10 +487,12 @@ function ChatImagesRow() {
         <span data-testid="chat-images-usage">
           {usage === "failed"
             ? t("cloudSync.chatImages.failed")
-            : t("cloudSync.chatImages.usage", {
-                used: roomText(usage.used),
-                limit: roomText(usage.limit),
-              })}
+            : usage.limit === null
+              ? t("cloudSync.chatImages.usageNoLimit", { used: roomText(usage.used) })
+              : t("cloudSync.chatImages.usage", {
+                  used: roomText(usage.used),
+                  limit: roomText(usage.limit),
+                })}
         </span>
       }
       wide={open}

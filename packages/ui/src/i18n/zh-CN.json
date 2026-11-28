@@ -5774,6 +5774,7 @@
     "retry": "重试",
     "chatImages": {
       "usage": "对话里的图片 {{used}} / {{limit}}",
+      "usageNoLimit": "对话里的图片 {{used}}",
       "manage": "管理",
       "hide": "收起",
       "row": "{{project}} · {{count}} 张 · {{size}}",

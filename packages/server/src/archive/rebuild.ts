@@ -1,7 +1,7 @@
 import { MAX_SOURCE_BYTES, isDocument, isProjectFile, isProjectFolder } from "@animaquill/core";
 import { SYNC_LIMITS } from "@animaquill/host/sync";
 import { LFS_POINTER_MAX_BYTES, readLfsPointer } from "@animaquill/schema";
-import { and, count, eq, inArray, isNull, lt, or, sql, sum } from "drizzle-orm";
+import { and, count, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { describeError, withLock, type Db, type Logger, type Tx } from "../database.ts";
 import type { Jobs } from "../jobs.ts";
 import {
@@ -14,7 +14,7 @@ import {
   type CopyProblem,
   type ReleasedFrom,
 } from "../schema.ts";
-import { SYNC_HUB_LIMITS, digestOf, lockProject } from "../sync/hub.ts";
+import { digestOf, lockProject } from "../sync/hub.ts";
 import type { BuiltProject } from "./export-worker.ts";
 import type { ProjectExporter } from "./exporter.ts";
 import { ARCHIVE_LOCK, linkOf, type Link } from "./links.ts";
@@ -202,8 +202,6 @@ export interface RebuilderOptions {
   readonly log: Logger;
   /** Has the repository looked at once the copy is here again, see above. */
   readonly lookAgain?: ((projectId: string) => Promise<void>) | undefined;
-  /** Bytes of all projects of one person: `SYNC_HUB_LIMITS.bytesPerUser` unless said. */
-  readonly bytesPerUser?: number;
   /** How long a try may take: `REBUILD_DEADLINE_MS` unless said. */
   readonly deadlineMs?: number;
   readonly now?: () => Date;
@@ -215,7 +213,6 @@ export class Rebuilder {
   readonly #exporter: ProjectExporter;
   readonly #log: Logger;
   readonly #lookAgain: ((projectId: string) => Promise<void>) | undefined;
-  readonly #bytesPerUser: number;
   readonly #deadlineMs: number;
   readonly #now: () => Date;
 
@@ -226,7 +223,6 @@ export class Rebuilder {
     this.#exporter = options.exporter;
     this.#log = options.log;
     this.#lookAgain = options.lookAgain;
-    this.#bytesPerUser = options.bytesPerUser ?? SYNC_HUB_LIMITS.bytesPerUser;
     this.#now = options.now ?? (() => new Date());
   }
 
@@ -529,19 +525,9 @@ export class Rebuilder {
           await this.#noteFailed(tx, began.id, problem);
           return { kind: "failed", problem };
         }
-        // Within what the person may keep.
-        const [held] = await tx
-          .select({ bytes: sum(projects.bytes).mapWith(Number) })
-          .from(projects)
-          .where(eq(projects.ownerId, began.ownerId));
-        if ((held?.bytes ?? 0) + state.length > this.#bytesPerUser) {
-          const problem: CopyProblem = {
-            code: "quota",
-            at: at.getTime(),
-            retryAt: at.getTime() + retryDelayMs("quota", began.attempt),
-          };
-          return this.#failedIn(tx, began.id, began.attempt, problem);
-        }
+        // Never turned away for what the person keeps (`storage.platform`, sync/room.ts): a project
+        // that is there is made again whatever they have, as one they let go of is opened. Only a
+        // new one is, as restoring asks before this runs.
         const seq = began.head + 1;
         const digest = digestOf(began.digest, seq, state);
         const generation = isRestore ? began.generation : began.generation + 1;

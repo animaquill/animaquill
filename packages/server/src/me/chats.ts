@@ -2,6 +2,7 @@ import { and, asc, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { retryOnDeadlock, type Db, type Tx } from "../database.ts";
 import { projects, userChatImageRefs, userChatImages, userChats } from "../schema.ts";
 import { IMAGES_PER_CHAT, imagesOf, NAMED_PER_CHAT } from "./chat-images.ts";
+import { NO_LIMITS, type PersonLimits } from "../limits.ts";
 
 /**
  * Conversations of a person with AI about their projects on the platform, see `ChatSyncAccess` of
@@ -14,7 +15,10 @@ import { IMAGES_PER_CHAT, imagesOf, NAMED_PER_CHAT } from "./chat-images.ts";
 export const CHAT_BYTES = 4 * 1024 * 1024;
 /** Conversations of a person about one project: the ones written last stay, as on a device. */
 export const CHATS_PER_PROJECT = 50;
-/** All conversations of a person together, at most: one beyond stays on its device. */
+/**
+ * All conversations of a person together, at most, on the platform: one beyond stays on its device.
+ * What its limits say for `chat.history` (limits.ts); a server of its own goes by AQ_LIMITS.
+ */
 export const CHAT_BYTES_PER_USER = 256 * 1024 * 1024;
 /**
  * A field of the summary that the list of conversations shows, as JSON, at most: one larger goes
@@ -126,6 +130,8 @@ export const saveChat = (
   id: string,
   write: ChatWrite,
   now: number,
+  /** How much each person may have, see limits.ts (`chat.history`): nothing unless said. */
+  limits: PersonLimits = NO_LIMITS,
 ): Promise<
   | { revision: number }
   | { newer: number }
@@ -175,18 +181,21 @@ export const saveChat = (
       const there = new Set(ready.map((each) => each.hash));
       const missingImages = named.filter((hash) => !held.has(hash) && !there.has(hash));
       if (missingImages.length > 0) return { missingImages };
-      const [{ total } = { total: 0 }] = await tx
-        .select({
-          total: sql<number>`coalesce(sum(${userChats.size}), 0)::bigint`,
-        })
-        .from(userChats)
-        .where(
-          and(
-            eq(userChats.userId, userId),
-            sql`not (${userChats.projectId} = ${project} and ${userChats.chatId} = ${id})`,
-          ),
-        );
-      if (Number(total) + write.size > CHAT_BYTES_PER_USER) return "tooLarge" as const;
+      const most = await limits.of(tx, userId, "chat.history");
+      if (most !== null) {
+        const [{ total } = { total: 0 }] = await tx
+          .select({
+            total: sql<number>`coalesce(sum(${userChats.size}), 0)::bigint`,
+          })
+          .from(userChats)
+          .where(
+            and(
+              eq(userChats.userId, userId),
+              sql`not (${userChats.projectId} = ${project} and ${userChats.chatId} = ${id})`,
+            ),
+          );
+        if (Number(total) + write.size > most) return "tooLarge" as const;
+      }
       const revision = (row?.revision ?? 0) + 1;
       const values = {
         revision,

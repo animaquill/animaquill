@@ -27,6 +27,7 @@ import { verifyDue } from "./checks.ts";
 import { LocalGitRepoHost } from "./host.ts";
 import { lfsPathOf } from "./lfs.ts";
 import { linkLocal } from "./links.ts";
+import { NO_LIMITS } from "../../limits.ts";
 
 /**
  * Files of assets in the large file storage of the server's own repositories, on a database, as
@@ -93,9 +94,8 @@ describe.skipIf(!TEST_DATABASE)("large files of repositories here, on a database
       local,
       // Nobody said yes to GitHub's terms: nothing of GitHub is in this.
       acknowledged: false,
-      // A server of its own: no limit a day where nobody set one. A "GB" is a byte here.
-      dailyGb: undefined,
-      downloadLimits: { bytesPerGb: 1 },
+      // A server of its own: no limit a day where nobody set one.
+      personLimits: NO_LIMITS,
     });
   });
   afterEach(async () => {

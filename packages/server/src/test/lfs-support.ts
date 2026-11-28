@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { STORAGE } from "@animaquill/core";
 import { eq } from "drizzle-orm";
 import { LFS_DOWNLOADS_SETTING, LfsDownloads, type DownloadLimits } from "../lfs/downloads.ts";
+import { fixedLimits, type PersonLimits } from "../limits.ts";
 import { LfsPusher } from "../lfs/push.ts";
 import { Staging } from "../lfs/staging.ts";
 import { LfsSweeper } from "../lfs/sweep.ts";
@@ -55,8 +56,11 @@ export const lfsWorld = async (
     readonly hosts?: RepoHosts;
     /** The large file storage of the server's own repositories, where `hosts` has them. */
     readonly local?: LocalLfs;
-    /** What a person may download a day where admins set nothing: the platform's 20 unless said. */
-    readonly dailyGb?: number | undefined;
+    /**
+     * How much each person may have (limits.ts): the platform's 20 GiB of downloads a day unless
+     * said (`lfs.downloads.daily`).
+     */
+    readonly personLimits?: PersonLimits;
   } = {},
 ) => {
   const hosts = options.hosts ?? RepoHosts.github(w.host);
@@ -89,7 +93,11 @@ export const lfsWorld = async (
     hosts,
     log: options.downloadLog ?? quiet,
     // As the platform has it, unless a test is about a server of its own.
-    dailyGb: "dailyGb" in options ? options.dailyGb : LFS_DOWNLOADS_SETTING.fallback.dailyGb,
+    personLimits:
+      options.personLimits ??
+      fixedLimits({
+        "lfs.downloads.daily": LFS_DOWNLOADS_SETTING.fallback.dailyGb * 1024 ** 3,
+      }),
     now: () => w.time.now.getTime(),
     ...(options.downloadLimits && { limits: options.downloadLimits }),
   });
