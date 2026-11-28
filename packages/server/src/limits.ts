@@ -138,8 +138,14 @@ const BYTE_UNITS: Readonly<Record<string, number>> = {
 const notBytes = (key: LimitKey) => `${key} has to be bytes, like 20GB, 500MB or 1048576`;
 const notWhole = (key: LimitKey) => `${key} has to be a whole number, 0 or more`;
 
-/** A value as AQ_LIMITS writes it, or why it is not one. */
-const valueOf = (key: LimitKey, value: unknown): number | null | { readonly problem: string } => {
+/**
+ * A value as AQ_LIMITS writes it, or why it is not one: a whole number, bytes with a unit for a key
+ * of bytes, or null for no limit. Also for what a platform takes on its command line.
+ */
+export const readLimitValue = (
+  key: LimitKey,
+  value: unknown,
+): number | null | { readonly problem: string } => {
   if (value === null) return null;
   const bytes = LIMIT_KEYS[key].unit === "bytes";
   if (typeof value === "number")
@@ -183,7 +189,7 @@ export const parseLimits = (
       problems.push(`AQ_LIMITS: ${key.slice(0, 60)} is no limit (${LIMIT_KEY_LIST.join(", ")})`);
       continue;
     }
-    const parsed = valueOf(key, value);
+    const parsed = readLimitValue(key, value);
     if (typeof parsed === "object" && parsed !== null)
       problems.push(`AQ_LIMITS: ${parsed.problem}`);
     else values[key] = parsed;
