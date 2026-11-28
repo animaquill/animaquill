@@ -29,7 +29,7 @@ import { SyncHub } from "./hub.ts";
 
 /**
  * People letting go of the working copy of a project of theirs, to have room on the platform
- * (`POST /api/projects/:id/release`, docs/design/online-offline.md of AnimaQuill Cloud, 3.6), and
+ * (`POST /api/projects/:id/release`), and
  * what they keep there as the storage page lists it (`platform` of `GET /api/me/storage`): only
  * who may manage a project lets go of it or deletes it, never of what the repository does not
  * have, never where the repository cannot give back the last archive right now, and each time with

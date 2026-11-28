@@ -73,7 +73,7 @@ import type { SessionCredentials } from "../auth/credentials.ts";
  *   editor makes. 204, also where there was none; 404 `notFound`; 429 `busy` as for chosen ones.
  *   Only from pages of this site.
  * - `POST /api/projects/:id/release`: lets go of the working copy of the project on the platform,
- *   as people do to have room there (docs/design/online-offline.md of AnimaQuill Cloud, 3.6): it
+ *   as people do to have room there: it
  *   stays in the list, and is made again from its repository as it is opened, see
  *   `SyncHub.release`. Its repository is looked at first (`lookBeforeRelease`): it has to give back
  *   the last archive. Never what the repository does not have. 200 `{copy: "released"}`; 409

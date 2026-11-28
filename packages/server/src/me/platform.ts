@@ -16,7 +16,7 @@ import { platformHeld } from "../sync/room.ts";
 
 /**
  * What a person keeps on the platform, for the storage page of the start page and the dialog that
- * says it is full (docs/design/online-offline.md of AnimaQuill Cloud, 3.6): the bytes and the
+ * says it is full: the bytes and the
  * projects it counts against `storage.platform` and `projects.count` (sync/room.ts), and each of
  * their own projects, the largest first, with whether its working copy can be let go of now
  * (`releasable`), or why not (`why`, see `ReleaseBlock`). What is said of that is as the rows are
