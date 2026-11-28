@@ -29,7 +29,7 @@ class Browser {
   readonly holders = new Map<string, number>();
   readonly queues = new Map<string, number[]>();
   readonly cards = new Map<string, { tab: number; card: unknown; at: number }>();
-  mail: PostedMail[] = [];
+  mail: (PostedMail & { claimedBy?: number | undefined })[] = [];
   watches: { target: string; watcher: string; until: number }[] = [];
   budget = 0;
   readonly rooms = new Map<number, { events: AgentRoomEvents; open: boolean }>();
@@ -83,7 +83,15 @@ class Browser {
             const queue = this.queues.get(id) ?? [];
             if (!queue.includes(tab)) queue.push(tab);
             this.queues.set(id, queue);
+            queueMicrotask(() => room.open && events.queued?.(id));
           }
+        };
+        const giveBack = async (ids: readonly string[]) => {
+          this.mail = this.mail.map((each) =>
+            ids.includes(each.id) && each.claimedBy === tab
+              ? { ...each, claimedBy: undefined, left: true }
+              : each,
+          );
         };
         return {
           serve: (ids) => {
@@ -133,9 +141,34 @@ class Browser {
             return "posted";
           },
           claim: async (to) => {
-            const taken = this.mail.filter((each) => each.to === to);
-            this.mail = this.mail.filter((each) => each.to !== to);
-            return taken;
+            const free = (each: { claimedBy?: number | undefined }) =>
+              each.claimedBy === undefined ||
+              (each.claimedBy !== tab && this.rooms.get(each.claimedBy)?.open !== true);
+            const taken = this.mail.filter((each) => each.to === to && free(each));
+            this.mail = this.mail.map((each) =>
+              taken.includes(each) ? { ...each, claimedBy: tab } : each,
+            );
+            return taken.map(({ claimedBy: _claimedBy, ...each }) => each);
+          },
+          done: async (ids) => {
+            this.mail = this.mail.filter((each) => !ids.includes(each.id));
+          },
+          back: giveBack,
+          want: (id, asked) => {
+            const holder = this.rooms.get(this.holders.get(id) ?? -1);
+            if (holder?.open && this.holders.get(id) !== tab) {
+              queueMicrotask(() => holder.events.wanted?.(id, asked));
+            }
+          },
+          yieldTo: (id) => {
+            if (this.holders.get(id) !== tab) return;
+            this.#release(id, tab);
+            take(id);
+          },
+          gone: (id) => {
+            for (const [other, each] of this.rooms) {
+              if (other !== tab && each.open) queueMicrotask(() => each.events.gone?.(id));
+            }
           },
           answer: (mail, outcome) => {
             const done = this.waiting.get(mail);
@@ -175,6 +208,9 @@ class Browser {
           },
           close: () => {
             for (const id of Array.from(mine)) this.#release(id, tab);
+            void giveBack(
+              this.mail.filter((each) => each.claimedBy === tab).map((each) => each.id),
+            );
             room.open = false;
           },
         };
@@ -416,5 +452,88 @@ describe("conversations in several tabs of a browser (chat6 technical design, 6.
     await two.chat.remove(b);
     expect(browser.mail).toEqual([]);
     expect(browser.cards.has(b)).toBe(false);
+  });
+
+  it("keeps a message a tab took and did not get to: once that tab crashes, the next one gets it", async () => {
+    const { browser, chats, one, two, b } = await twoTabs();
+    two.ai.setFromAgents("ask");
+    const tool = one.chat.agentsFor("mcp:s", () => "Claude Code");
+    expect(await tool.send(b, "在吗")).toMatchObject({ sent: "waits" });
+    await vi.waitFor(() => expect(two.chat.getSnapshot().mail).toHaveLength(1));
+    // Still kept, as taken by the second tab, which waits for people.
+    expect(browser.mail).toHaveLength(1);
+    browser.crash(2);
+    const three = openTab(browser, 3, chats);
+    three.ai.setFromAgents("ask");
+    await three.chat.open(b);
+
+    await vi.waitFor(() =>
+      expect(three.chat.getSnapshot().mail).toEqual([expect.objectContaining({ text: "在吗" })]),
+    );
+    // Answered: it goes.
+    three.chat.answerMail(three.chat.getSnapshot().mail[0]?.id ?? "", false);
+    await vi.waitFor(() => expect(browser.mail).toEqual([]));
+  });
+
+  it("one tab at a time has a conversation: another that opens it reads it, and takes it here when asked", async () => {
+    const { browser, one, two, b } = await twoTabs();
+    await one.chat.open(b);
+    await vi.waitFor(() => expect(one.chat.getSnapshot().elsewhere).toBe(true));
+    // Nothing goes on in it here.
+    expect(await one.chat.send("这里能说吗")).toBeUndefined();
+    expect(entriesOf(one.chat, b).filter((entry) => entry.role === "user")).toHaveLength(1);
+    // The second tab shows it: it lets go only where people here ask for it.
+    await settle();
+    expect(browser.holders.get(b)).toBe(2);
+    one.chat.takeHere();
+    await vi.waitFor(() => expect(browser.holders.get(b)).toBe(1));
+    await vi.waitFor(() => expect(one.chat.getSnapshot().elsewhere).toBe(false));
+    expect(two.chat.getSnapshot().elsewhere).toBe(true);
+    one.fake({ fake: [{ text: "这边接着" }] });
+    await one.chat.send("这里接着");
+    expect(entriesOf(one.chat, b).at(-1)).toMatchObject({ text: "这边接着" });
+    expect(await two.chat.send("那边还能说吗")).toBeUndefined();
+  });
+
+  it("a tab that keeps one only for messages lets go of it for a tab that opens it", async () => {
+    const { browser, one, two, b } = await twoTabs();
+    // B is no longer shown in the second tab, which keeps it.
+    two.chat.newConversation();
+    await settle();
+    expect(browser.holders.get(b)).toBe(2);
+    await one.chat.open(b);
+    await vi.waitFor(() => expect(browser.holders.get(b)).toBe(1));
+    await vi.waitFor(() => expect(one.chat.getSnapshot().elsewhere).toBe(false));
+    expect(two.chat.conversationOf(b)).toBeUndefined();
+  });
+
+  it("writes nothing of a conversation another tab has: taking it over loses nothing of that tab", async () => {
+    const { browser, chats, one, two, b } = await twoTabs();
+    await one.chat.open(b);
+    await vi.waitFor(() => expect(one.chat.getSnapshot().elsewhere).toBe(true));
+    // People change something of it here meanwhile: it is not written over the other tab's.
+    one.chat.setPlanFirst(true);
+    two.fake({ fake: [{ text: "那边又说了一轮" }] });
+    await two.chat.send("再来");
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    const kept = await chats.load("p1", b);
+    expect(kept?.entries.at(-1)).toMatchObject({ text: "那边又说了一轮" });
+    browser.crash(2);
+    await vi.waitFor(() => expect(one.chat.getSnapshot().elsewhere).toBe(false));
+    await vi.waitFor(() =>
+      expect(entriesOf(one.chat, b).at(-1)).toMatchObject({ text: "那边又说了一轮" }),
+    );
+  });
+
+  it("deleted in one tab: the tab that has it stops and lets go, and does not write it again", async () => {
+    const { chats, one, two, b } = await twoTabs();
+    await one.chat.remove(b);
+    await vi.waitFor(() => expect(two.chat.conversationOf(b)).toBeUndefined());
+    expect(two.chat.getSnapshot().id).not.toBe(b);
+    two.fake({ fake: [{ text: "新的" }] });
+    await two.chat.send("新对话");
+    await two.chat.flush();
+    expect((await chats.list("p1")).map((each) => each.id)).not.toContain(b);
   });
 });

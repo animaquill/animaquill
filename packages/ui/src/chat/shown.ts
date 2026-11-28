@@ -17,6 +17,8 @@ export interface ShownChat {
   readonly queued: ChatSnapshot["queued"];
   readonly planFirst: boolean;
   readonly hold: ChatSnapshot["hold"];
+  /** It is open in another tab of this browser, which has it: here it is only to read. */
+  readonly elsewhere: boolean;
 }
 
 const NO_CONVERSATION: ConversationSnapshot = { entries: [], running: undefined, last: undefined };
@@ -39,5 +41,6 @@ export function useShownChat(): ShownChat {
     queued: snapshot.queued,
     planFirst: snapshot.planFirst,
     hold: snapshot.hold,
+    elsewhere: snapshot.elsewhere,
   };
 }

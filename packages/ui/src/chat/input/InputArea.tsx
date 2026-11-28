@@ -9,7 +9,7 @@ import {
   useSyncExternalStore,
   type KeyboardEvent,
 } from "react";
-import { ImageOff, ListChecks, X } from "lucide-react";
+import { AppWindow, ImageOff, ListChecks, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../app/context.ts";
 import { formatCombo } from "../../workbench/keys.ts";
@@ -380,6 +380,26 @@ export const InputArea = forwardRef<
     text: () => (project === undefined || id === undefined ? "" : chat.drafts.read(project, id)),
   });
   const menu = completion.view;
+
+  // Another tab of this browser has the conversation: here it is to read, until people take it.
+  if (shown.elsewhere) {
+    return (
+      <div className={styles.area}>
+        <div className={styles.elsewhere} role="status" data-testid="chat-elsewhere">
+          <AppWindow size={14} aria-hidden className={styles.elsewhereIcon} />
+          <span className={styles.elsewhereText}>{t("chat.elsewhere.text")}</span>
+          <button
+            type="button"
+            className={styles.elsewhereTake}
+            data-testid="chat-take-here"
+            onClick={() => chat.takeHere()}
+          >
+            {t("chat.elsewhere.take")}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={styles.area}>

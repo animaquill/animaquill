@@ -83,6 +83,20 @@ async function anotherTab(page: Page): Promise<Page> {
   return other;
 }
 
+/** What in the chat scrolls sideways: nothing should. */
+const sideways = (page: Page) =>
+  chat(page).evaluate((panel) =>
+    [panel, ...panel.querySelectorAll("*")]
+      .filter((each) => {
+        const { overflowX } = getComputedStyle(each);
+        return (
+          (overflowX === "auto" || overflowX === "scroll") &&
+          each.scrollWidth > each.clientWidth + 1
+        );
+      })
+      .map((each) => each.getAttribute("data-testid") ?? each.className),
+  );
+
 async function send(page: Page, text: string) {
   await box(page).fill(text);
   await box(page).press("Enter");
@@ -143,6 +157,12 @@ test("to one in another tab: it answers there; once that tab is closed, a messag
   await expect(chat(page).getByText("留了言。")).toBeVisible({ timeout: 15_000 });
   await openWork(chat(page));
   await expect(chat(page).getByTestId("chat-tool").last()).toContainText("给「B：配乐」留了言");
+  // A long step is one line that ends in "…", and says all of itself on hover: nothing scrolls
+  // sideways.
+  await expect(
+    chat(page).getByTestId("chat-tool").last().locator("[title]").first(),
+  ).toHaveAttribute("title", /给「B：配乐」留了言/);
+  expect(await sideways(page)).toEqual([]);
   await shot(page, "2-left-for-closed-tab");
 
   // A tab opens it again: it gets the message, and answers.
@@ -180,6 +200,11 @@ test("of two tabs that have it open, only the first takes a message; the other t
   // The first tab has it open too.
   await openRow(page, "B：配乐");
   await expect(chat(page).getByText("配乐交给我。")).toBeVisible();
+  // The second tab has it: here it is only to read.
+  await expect(chat(page).getByTestId("chat-elsewhere")).toContainText(
+    "这个对话在另一个标签页里开着",
+  );
+  await expect(chat(page).getByTestId("chat-input")).toHaveCount(0);
   await newConversation(page);
   await send(page, "A：问问 B");
   await expect(chat(page).getByText("发了。")).toBeVisible({ timeout: 15_000 });
@@ -206,5 +231,29 @@ test("of two tabs that have it open, only the first takes a message; the other t
     "那边没了，你在这边接着。",
   );
   await shot(page, "5-took-over");
+  await second.close();
+});
+
+test("one tab at a time has a conversation: another reads it, and takes it there when people ask", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await setUp(page);
+  await pretend(page, { B: ["这边接着说。"] });
+  const second = await anotherTab(page);
+  await pretend(second, { B: ["配乐交给我。"] });
+  await send(second, "B：配乐");
+  await expect(chat(second).getByText("配乐交给我。")).toBeVisible({ timeout: 15_000 });
+  await openRow(page, "B：配乐");
+  const elsewhere = chat(page).getByTestId("chat-elsewhere");
+  await expect(elsewhere).toBeVisible();
+  await shot(page, "6-open-in-another-tab");
+  await elsewhere.getByRole("button", { name: "在这里接着" }).click();
+  // Here now; there only to read.
+  await expect(chat(page).getByTestId("chat-elsewhere")).toHaveCount(0, { timeout: 15_000 });
+  await expect(chat(second).getByTestId("chat-elsewhere")).toBeVisible();
+  await send(page, "接着");
+  await expect(chat(page).getByText("这边接着说。")).toBeVisible({ timeout: 15_000 });
+  await shot(second, "7-taken-to-the-other-tab");
   await second.close();
 });

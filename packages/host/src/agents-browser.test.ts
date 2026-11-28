@@ -1,6 +1,6 @@
 import { IDBFactory } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
-import { AWAY_MS, browserAgents } from "./agents-browser.ts";
+import { AWAY_MS, MAX_WATCHERS, browserAgents } from "./agents-browser.ts";
 import type { AgentRoomEvents, PostedMail } from "./index.ts";
 
 /**
@@ -126,27 +126,41 @@ function browser() {
   const locks = new Locks();
   const channels = new Channels();
   const storage = new Storage();
-  const window = (number: number) =>
+  const hides = new Map<number, () => void>();
+  const window = (number: number, store: { storage?: () => globalThis.Storage | undefined } = {}) =>
     browserAgents({
       database: () => factory,
       locks: () => locks.forWindow(number),
       channel: channels.forWindow(number),
       ...storage.forWindow(number),
+      ...store,
+      listenPageHide: (listener) => {
+        hides.set(number, listener);
+        return () => hides.delete(number);
+      },
     });
-  return { locks, window };
+  /** The page of a window goes away, as people close it: it gets to say so first. */
+  const hide = (number: number) => hides.get(number)?.();
+  return { locks, window, hide, storage };
 }
 
 function events() {
   const owned: string[] = [];
   const waited: string[] = [];
   const mail: string[] = [];
+  const queued: string[] = [];
+  const wanted: string[] = [];
+  const gone: string[] = [];
   let budget = 0;
   const said: AgentRoomEvents = {
     owned: (id, after) => void (after ? waited : owned).push(id),
     mail: (to) => void mail.push(to),
     budget: () => void (budget += 1),
+    queued: (id) => void queued.push(id),
+    wanted: (id, take) => void wanted.push(`${id}${take ? ":take" : ""}`),
+    gone: (id) => void gone.push(id),
   };
-  return { said, owned, waited, mail, budget: () => budget };
+  return { said, owned, waited, mail, queued, wanted, gone, budget: () => budget };
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
@@ -291,14 +305,15 @@ describe("the conversations of a project in the windows of a browser", () => {
     const { window } = browser();
     const a = window(1).enter("p", events().said);
     const b = window(2).enter("p", events().said);
-    await a.watch("chat-x", "chat-a", 123);
-    await a.watch("chat-x", "mcp:s", 456);
+    const later = Date.now() + 60_000;
+    await a.watch("chat-x", "chat-a", later);
+    await a.watch("chat-x", "mcp:s", later + 1);
     expect(await b.watchers("chat-x")).toEqual([
-      { watcher: "chat-a", until: 123 },
-      { watcher: "mcp:s", until: 456 },
+      { watcher: "chat-a", until: later },
+      { watcher: "mcp:s", until: later + 1 },
     ]);
     expect(await a.watchers("chat-x")).toEqual([]);
-    await a.watch("chat-x", "chat-a", 1);
+    await a.watch("chat-x", "chat-a", later);
     await a.post(mailTo("chat-x", "for one deleted"), LIMITS);
     await b.forget("chat-x");
     expect(await a.watchers("chat-x")).toEqual([]);
@@ -332,5 +347,115 @@ describe("the conversations of a project in the windows of a browser", () => {
     await settle();
     expect(second.waited).toEqual(["chat-x"]);
     expect(await b.held("chat-y")).toBe(false);
+  });
+
+  it("keeps a message one window took until it is done with it: a window that goes loses none", async () => {
+    const { locks, window, hide } = browser();
+    const a = window(1).enter("p", events().said);
+    const b = window(2).enter("p", events().said);
+    await settle();
+    await b.post(mailTo("chat-x", "one"), LIMITS);
+    await b.post(mailTo("chat-x", "two"), LIMITS);
+    expect((await a.claim("chat-x")).map((each) => each.text)).toEqual(["one", "two"]);
+    // Taken: nobody else gets them while the window that took them is there, nor it again.
+    expect(await b.claim("chat-x")).toEqual([]);
+    expect(await a.claim("chat-x")).toEqual([]);
+    // The window crashes: what it took is free again, for whoever has it next.
+    locks.drop(1);
+    await settle();
+    expect((await b.claim("chat-x")).map((each) => each.text)).toEqual(["one", "two"]);
+    // A window closed gives back what it took as it goes, as left for whoever opens it.
+    const c = window(3).enter("p", events().said);
+    await settle();
+    expect(await c.claim("chat-x")).toEqual([]);
+    hide(2);
+    await settle();
+    const again = await c.claim("chat-x");
+    expect(again.map((each) => [each.text, each.left])).toEqual([
+      ["one", true],
+      ["two", true],
+    ]);
+    // Done with one: it goes; one given back waits again.
+    await c.done([again[0]?.id ?? ""]);
+    await c.back([again[1]?.id ?? ""]);
+    expect((await c.claim("chat-x")).map((each) => each.text)).toEqual(["two"]);
+  });
+
+  it("asks the window that has one to let go of it, which waits for it again after", async () => {
+    const { window } = browser();
+    const first = events();
+    const second = events();
+    const a = window(1).enter("p", first.said);
+    const b = window(2).enter("p", second.said);
+    a.serve(["chat-x"]);
+    await settle();
+    b.serve(["chat-x"]);
+    await settle();
+    expect(second.queued).toEqual(["chat-x"]);
+    b.want("chat-x", true);
+    await settle();
+    expect(first.wanted).toEqual(["chat-x:take"]);
+    a.yieldTo("chat-x");
+    await settle();
+    expect(b.owns("chat-x")).toBe(true);
+    expect(second.waited).toEqual(["chat-x"]);
+    expect(a.owns("chat-x")).toBe(false);
+    expect(first.queued).toEqual(["chat-x"]);
+    // Deleted in one window: those that have it hear it.
+    a.gone("chat-x");
+    await settle();
+    expect(second.gone).toEqual(["chat-x"]);
+  });
+
+  it("counts on where the storage cannot be written, or there is none: the count never goes down for that", async () => {
+    const { window } = browser();
+    const full = {
+      storage: () =>
+        ({
+          getItem: () => null,
+          setItem: () => {
+            throw new DOMException("full", "QuotaExceededError");
+          },
+        }) as unknown as globalThis.Storage,
+    };
+    const a = window(1, full).enter("p", events().said);
+    for (let at = 0; at < 12; at += 1) a.budget.add(1);
+    expect(a.budget.get()).toBe(12);
+    a.budget.reset();
+    expect(a.budget.get()).toBe(0);
+    const none = window(2, { storage: () => undefined }).enter("q", events().said);
+    for (let at = 0; at < 11; at += 1) none.budget.add(1);
+    expect(none.budget.get()).toBe(11);
+    const unreadable = {
+      storage: () =>
+        ({
+          getItem: () => {
+            throw new DOMException("denied", "SecurityError");
+          },
+          setItem: () => {
+            throw new DOMException("denied", "SecurityError");
+          },
+        }) as unknown as globalThis.Storage,
+    };
+    const c = window(3, unreadable).enter("r", events().said);
+    c.budget.add(10);
+    expect(c.budget.get()).toBe(10);
+  });
+
+  it("keeps who waits on one for as long as asked, and so many at most", async () => {
+    const { window } = browser();
+    const a = window(1).enter("p", events().said);
+    const now = Date.now();
+    await a.watch("chat-x", "old", now - 1);
+    for (let at = 0; at < MAX_WATCHERS + 5; at += 1)
+      await a.watch("chat-x", `w${at}`, now + 1000 + at);
+    const all = await a.watchers("chat-x");
+    expect(all).toHaveLength(MAX_WATCHERS);
+    expect(all.some((each) => each.watcher === "old")).toBe(false);
+    expect(all.some((each) => each.watcher === `w${MAX_WATCHERS + 4}`)).toBe(true);
+    // One deleted waits on none any more.
+    await a.watch("chat-y", "chat-x", now + 1000);
+    await a.forget("chat-x");
+    expect(await a.watchers("chat-y")).toEqual([]);
   });
 });

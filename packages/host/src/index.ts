@@ -2424,6 +2424,15 @@ export interface AgentRoomEvents {
   readonly mail: (to: string) => void;
   /** Another window changed how many turns went on with nobody there, see `AgentRoom.budget`. */
   readonly budget: () => void;
+  /** Another window has one this one has too: this one waits for it, see `AgentRoom.want`. */
+  readonly queued?: (id: string) => void;
+  /**
+   * Another window wants one this window holds, see `AgentRoom.want`: where this window only keeps
+   * it for messages, or `take` (people there asked for it), it lets go of it once nothing runs in it.
+   */
+  readonly wanted?: (id: string, take: boolean) => void;
+  /** Another window deleted one: this one lets go of it, and keeps nothing more of it. */
+  readonly gone?: (id: string) => void;
 }
 
 /** One a window of the project has, as all windows see it, see `AgentRoom.roster`. */
@@ -2476,8 +2485,28 @@ export interface AgentRoom {
     mail: PostedMail,
     limits: { readonly most: number; readonly repeatMs: number },
   ): Promise<"posted" | "full" | "repeat">;
-  /** Takes the messages that wait for one: from then on they are this window's only. */
+  /**
+   * Takes the messages that wait for one, and those another window took and went away with: from
+   * then on they are this window's, until it says they are `done` with or gives them `back`. They
+   * stay kept meanwhile, so that a window that goes away with them loses none.
+   */
   claim(to: string): Promise<readonly PostedMail[]>;
+  /** Messages this window took that are read now, or answered: they go. */
+  done(ids: readonly string[]): Promise<void>;
+  /** Messages this window took and does not keep after all: they wait again, for whoever opens it. */
+  back(ids: readonly string[]): Promise<void>;
+  /**
+   * Asks the window that holds one to let go of it: the window that keeps it for messages only
+   * does, and the one that shows it only where people here asked (`take`).
+   */
+  want(id: string, take: boolean): void;
+  /**
+   * Lets go of one this window keeps showing, for the window that wants it (`want`): it waits for
+   * it again after that one.
+   */
+  yieldTo(id: string): void;
+  /** Tells the other windows that one was deleted, see `AgentRoomEvents.gone`. */
+  gone(id: string): void;
   /** Tells the window that sent a message what came of it. */
   answer(mail: string, outcome: unknown): void;
   /** What came of a message this window sends, where the window that took it said within `ms`. */

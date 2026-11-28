@@ -126,7 +126,9 @@ export function ToolRow({
             <LoaderCircle size={12} className={styles.spin} aria-label={t("chat.running")} />
           )}
         </span>
-        <span className={styles.toolName}>{label}</span>
+        <span className={styles.toolName} title={label}>
+          {label}
+        </span>
         <span className={styles.toolArgs} data-testid="chat-tool-summary" title={summary}>
           {summary}
         </span>

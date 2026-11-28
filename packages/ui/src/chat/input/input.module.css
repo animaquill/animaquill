@@ -43,6 +43,38 @@
   flex: 1;
 }
 
+/* Another tab has the conversation: where the card would be, why, and taking it here. */
+.elsewhere {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 6px 6px 12px;
+  color: var(--aq-text-muted);
+  background: var(--aq-bg-input);
+  border: 1px dashed var(--aq-border);
+  border-radius: 10px;
+}
+
+.elsewhereIcon {
+  flex: none;
+}
+
+.elsewhereText {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.area .elsewhereTake {
+  flex: none;
+  padding: 4px 10px;
+  color: var(--aq-text-strong);
+  border: 1px solid var(--aq-border);
+}
+
 /* The card: pictures, the words, the row of buttons. */
 .card {
   position: relative;

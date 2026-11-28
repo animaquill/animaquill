@@ -82,6 +82,10 @@ export function MessageStep({
   const name = useSenderName(from);
   const [open, setOpen] = useOpened(id, false);
   const first = text.split("\n").find((line) => line.trim() !== "") ?? "";
+  const said = t(from.idle ? "chat.agents.readIdle" : "chat.agents.read", {
+    name,
+    interpolation: { escapeValue: false },
+  });
   return (
     <div className={styles.step} data-testid="chat-message-step">
       <button
@@ -91,11 +95,8 @@ export function MessageStep({
         onClick={() => setOpen(!open)}
       >
         <MessageSquareShare size={12} aria-hidden className={styles.stepIcon} />
-        <span className={styles.stepName}>
-          {t(from.idle ? "chat.agents.readIdle" : "chat.agents.read", {
-            name,
-            interpolation: { escapeValue: false },
-          })}
+        <span className={styles.stepName} title={said}>
+          {said}
         </span>
         {!open && <span className={styles.stepSummary}>{first}</span>}
       </button>

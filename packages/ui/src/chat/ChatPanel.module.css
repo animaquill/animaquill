@@ -196,13 +196,18 @@
   color: var(--aq-link);
 }
 
+/* One line: a long one ends in "…", and says all of itself on hover. */
 .toolName {
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
   color: var(--aq-text-strong);
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .toolArgs {
-  flex: 1;
+  flex: 1 1 0;
   min-width: 0;
   overflow: hidden;
   color: var(--aq-text-muted);

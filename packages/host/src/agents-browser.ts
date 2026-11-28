@@ -17,13 +17,18 @@ import type {
  */
 
 const DATABASE = "animaquill-agents";
-const VERSION = 1;
+const VERSION = 2;
 const CARDS = "cards";
 const MAIL = "mail";
 const WATCHES = "watches";
 const BY_PROJECT = "project";
 const BY_TO = "to";
 const BY_TARGET = "target";
+const BY_ID = "id";
+/** One exclusive lock for each window for as long as it takes part: what it took goes with it. */
+const WINDOW_LOCK = "animaquill.agents.window.";
+/** Who waits to be told of one at most. */
+export const MAX_WATCHERS = 50;
 /** One exclusive lock for each one a window has, see `presence.ts` for the shared ones. */
 const LOCK = "animaquill.agent.";
 const CHANNEL = "animaquill-agents";
@@ -49,6 +54,8 @@ interface CardRecord {
 
 interface MailRecord extends PostedMail {
   readonly project: string;
+  /** The window that took it, and has it until it is done with it or gives it back. */
+  readonly claimedBy?: string;
 }
 
 interface WatchRecord {
@@ -65,7 +72,9 @@ type Signal =
       readonly kind: "answer";
       readonly mail: string;
       readonly outcome: unknown;
-    };
+    }
+  | { readonly project: string; readonly kind: "want"; readonly id: string; readonly take: boolean }
+  | { readonly project: string; readonly kind: "gone"; readonly id: string };
 
 /** One this window has, and how it stands with its lock. */
 interface Held {
@@ -74,6 +83,26 @@ interface Held {
   owned: boolean;
   /** Taken with `tryServe`, and when: `serve` lets go of it only after `PINNED_MS`. */
   pinned: number | undefined;
+}
+
+/** How many turns went on with nobody there, and when that was written. */
+interface Count {
+  readonly n: number;
+  readonly at: number;
+}
+
+/** A count as the storage keeps it; undefined where there is none, or it cannot be read. */
+function budgetOf(text: string | null | undefined): Count | undefined {
+  if (!text) return undefined;
+  try {
+    const found = JSON.parse(text) as { n?: unknown; at?: unknown };
+    return {
+      n: typeof found.n === "number" && found.n > 0 ? found.n : 0,
+      at: typeof found.at === "number" ? found.at : 0,
+    };
+  } catch {
+    return undefined;
+  }
 }
 
 const newWindowId = () =>
@@ -86,6 +115,8 @@ export interface BrowserAgentsOptions {
   readonly storage?: () => Storage | undefined;
   /** Where the storage of another window changes, see `StorageEvent`. */
   readonly listenStorage?: (listener: (event: StorageEvent) => void) => () => void;
+  /** Where the page goes away, see `pagehide`. */
+  readonly listenPageHide?: (listener: () => void) => () => void;
 }
 
 export function browserAgents({
@@ -99,24 +130,44 @@ export function browserAgents({
     addEventListener("storage", listener);
     return () => removeEventListener("storage", listener);
   },
+  listenPageHide = (listener) => {
+    if (typeof addEventListener === "undefined") return () => {};
+    addEventListener("pagehide", listener);
+    return () => removeEventListener("pagehide", listener);
+  },
 }: BrowserAgentsOptions = {}): AgentPost {
   const database = connector(() => {
     const request = factory().open(scoped(DATABASE), VERSION);
-    request.addEventListener("upgradeneeded", () => {
+    request.addEventListener("upgradeneeded", (event) => {
       const made = request.result;
-      const cards = made.createObjectStore(CARDS, { keyPath: [BY_PROJECT, "id"] });
-      cards.createIndex(BY_PROJECT, BY_PROJECT);
-      const mail = made.createObjectStore(MAIL, { keyPath: "seq", autoIncrement: true });
-      mail.createIndex(BY_TO, [BY_PROJECT, "to"]);
-      const watches = made.createObjectStore(WATCHES, {
-        keyPath: [BY_PROJECT, "target", "watcher"],
-      });
-      watches.createIndex(BY_TARGET, [BY_PROJECT, "target"]);
+      if (event.oldVersion < 1) {
+        const cards = made.createObjectStore(CARDS, { keyPath: [BY_PROJECT, "id"] });
+        cards.createIndex(BY_PROJECT, BY_PROJECT);
+        const mail = made.createObjectStore(MAIL, { keyPath: "seq", autoIncrement: true });
+        mail.createIndex(BY_TO, [BY_PROJECT, "to"]);
+        const watches = made.createObjectStore(WATCHES, {
+          keyPath: [BY_PROJECT, "target", "watcher"],
+        });
+        watches.createIndex(BY_TARGET, [BY_PROJECT, "target"]);
+      }
+      // Messages by their id, for the window that took them to say it is done with them.
+      if (event.oldVersion < 2) {
+        request.transaction?.objectStore(MAIL).createIndex(BY_ID, [BY_PROJECT, "id"]);
+      }
     });
     return resultOf(request);
   });
   const lockName = (project: string, id: string) => scoped(`${LOCK}${project}.${id}`);
   const budgetKey = (project: string) => scoped(`${BUDGET}${project}`);
+  const windowLock = (window: string) => scoped(`${WINDOW_LOCK}${window}`);
+  /** The locks the windows of the browser hold now; none where nobody can tell. */
+  const heldNow = async (): Promise<Set<string> | undefined> => {
+    const manager = locks();
+    if (!manager) return undefined;
+    return new Set(
+      ((await manager.query()).held ?? []).flatMap(({ name }) => (name ? [name] : [])),
+    );
+  };
 
   return {
     enter(project, events: AgentRoomEvents): AgentRoom {
@@ -135,6 +186,10 @@ export function browserAgents({
           if (held.get(signal.to)?.owned) events.mail(signal.to);
         } else if (signal.kind === "answer" && typeof signal.mail === "string") {
           waiting.get(signal.mail)?.(signal.outcome);
+        } else if (signal.kind === "want" && typeof signal.id === "string") {
+          if (held.get(signal.id)?.owned) events.wanted?.(signal.id, signal.take === true);
+        } else if (signal.kind === "gone" && typeof signal.id === "string") {
+          if (held.has(signal.id)) events.gone?.(signal.id);
         }
       };
       wire?.addEventListener("message", onSignal as EventListener);
@@ -147,14 +202,61 @@ export function browserAgents({
         }
       };
       const unlisten = listenStorage((event) => {
-        if (!isOver && event.key === budgetKey(project)) events.budget();
+        if (isOver || event.key !== budgetKey(project)) return;
+        // What all windows say goes: also people saying something there, which this window
+        // counted otherwise.
+        const written = budgetOf(event.newValue);
+        if (written) {
+          stored = written;
+          own = written;
+        }
+        events.budget();
+      });
+      /** The messages this window took and has, until it is done with them or gives them back. */
+      const taken = new Set<string>();
+      // The lock of this window, which says to the others that what it took is still taken.
+      let leave = () => {};
+      locks()
+        ?.request(windowLock(window), { mode: "exclusive" }, () => {
+          if (isOver) return undefined;
+          return new Promise<void>((resolve) => {
+            leave = resolve;
+          });
+        })
+        .catch(() => {});
+      const giveBack = async (ids: readonly string[]) => {
+        if (ids.length === 0) return;
+        const transaction = (await database()).transaction(MAIL, "readwrite");
+        const store = transaction.objectStore(MAIL);
+        const index = store.index(BY_ID);
+        for (const id of ids) {
+          taken.delete(id);
+          const key = await resultOf(index.getKey([project, id]));
+          if (key === undefined) continue;
+          const found = (await resultOf(store.get(key))) as MailRecord | undefined;
+          if (!found || found.claimedBy !== window) continue;
+          const { claimedBy: _claimedBy, ...rest } = found;
+          store.put({ ...rest, left: true });
+        }
+        await committed(transaction);
+      };
+      // A page that goes gives back what it took, where it gets to; where it does not, its lock
+      // goes with it and the others take them all the same.
+      const unhide = listenPageHide(() => {
+        void giveBack([...taken]).catch(() => {});
       });
 
       /** Asks for the lock of one; `now` only where no window has it, and says whether it got it. */
       const hold = (id: string, now: boolean): Promise<boolean> => {
         const manager = locks();
         const stop = new AbortController();
-        const entry: Held = { stop, release: undefined, owned: false, pinned: undefined };
+        // One taken right away stays held a while, before `serve` says it has it.
+        const entry: Held = {
+          stop,
+          release: undefined,
+          owned: false,
+          pinned: now ? Date.now() : undefined,
+        };
         held.set(id, entry);
         if (!manager) {
           // Nobody can tell: this window is alone, and has all it has.
@@ -187,6 +289,7 @@ export function browserAgents({
                 if (now) gone();
                 return undefined;
               }
+              events.queued?.(id);
               manager
                 .request(name, { mode: "exclusive", signal: stop.signal }, (later) => {
                   const keeping = keep(true)(later);
@@ -221,26 +324,25 @@ export function browserAgents({
         }
       };
 
-      const readBudget = (): number => {
+      // What the windows wrote last, as this one read it; and what this window counted itself,
+      // which counts all the same where the storage cannot be read or written: the count never
+      // goes down for that, only for people.
+      let stored: Count = { n: 0, at: 0 };
+      try {
+        stored = budgetOf(storage()?.getItem(budgetKey(project))) ?? stored;
+      } catch {
+        // Unreadable: this window counts on its own.
+      }
+      let own: Count = stored;
+      const counting = (count: Count) => (Date.now() - count.at > AWAY_MS ? 0 : count.n);
+      const readBudget = () => Math.max(counting(stored), counting(own));
+      const writeBudget = (n: number) => {
+        own = { n: Math.max(0, n), at: Date.now() };
         try {
-          const text = storage()?.getItem(budgetKey(project));
-          if (!text) return 0;
-          const found = JSON.parse(text) as { n?: unknown; at?: unknown };
-          const count = typeof found.n === "number" && found.n > 0 ? found.n : 0;
-          const at = typeof found.at === "number" ? found.at : 0;
-          return Date.now() - at > AWAY_MS ? 0 : count;
-        } catch {
-          return memoryBudget;
-        }
-      };
-      let memoryBudget = 0;
-      const writeBudget = (count: number) => {
-        memoryBudget = Math.max(0, count);
-        try {
-          storage()?.setItem(
-            budgetKey(project),
-            JSON.stringify({ n: memoryBudget, at: Date.now() }),
-          );
+          const place = storage();
+          if (!place) return;
+          place.setItem(budgetKey(project), JSON.stringify(own));
+          stored = own;
         } catch {
           // Where the storage takes nothing, this window counts on its own.
         }
@@ -265,10 +367,7 @@ export function browserAgents({
           if (isOver) return false;
           const had = held.get(id);
           if (had) return had.owned;
-          const got = await hold(id, true);
-          const entry = held.get(id);
-          if (got && entry) entry.pinned = Date.now();
-          return got;
+          return hold(id, true);
         },
         owns: (id) => held.get(id)?.owned === true,
         async held(id) {
@@ -354,20 +453,61 @@ export function browserAgents({
           return result;
         },
         async claim(to) {
-          // Taken and taken away in one transaction: another window that claims the same waits for
-          // this one, and finds nothing.
+          if (isOver) return [];
+          // Which windows are there still: what one that went away took is free again.
+          const names = await heldNow();
+          const free = (record: MailRecord) =>
+            record.claimedBy === undefined ||
+            (record.claimedBy !== window && !names?.has(windowLock(record.claimedBy)));
+          // Taken in one transaction: another window that claims the same waits for this one, and
+          // finds them taken.
           const transaction = (await database()).transaction(MAIL, "readwrite");
           const store = transaction.objectStore(MAIL);
           const index = store.index(BY_TO);
           const keys = await resultOf(index.getAllKeys([project, to]));
           const all = (await resultOf(index.getAll([project, to]))) as MailRecord[];
-          for (const key of keys) store.delete(key);
-          await committed(transaction);
           const now = Date.now();
-          return all
-            .filter((each) => now - each.at <= MAIL_MS)
-            .map(({ project: _project, ...mail }) => mail)
-            .toSorted((a, b) => a.at - b.at);
+          const found: PostedMail[] = [];
+          all.forEach((record, at) => {
+            const key = keys[at];
+            if (key === undefined) return;
+            if (now - record.at > MAIL_MS) {
+              store.delete(key);
+              return;
+            }
+            if (!free(record)) return;
+            store.put({ ...record, claimedBy: window } satisfies MailRecord);
+            const { project: _project, claimedBy: _claimedBy, ...mail } = record;
+            found.push(mail);
+          });
+          await committed(transaction);
+          for (const mail of found) taken.add(mail.id);
+          return found.toSorted((a, b) => a.at - b.at);
+        },
+        async done(ids) {
+          if (ids.length === 0) return;
+          const transaction = (await database()).transaction(MAIL, "readwrite");
+          const store = transaction.objectStore(MAIL);
+          const index = store.index(BY_ID);
+          for (const id of ids) {
+            taken.delete(id);
+            const key = await resultOf(index.getKey([project, id]));
+            if (key !== undefined) store.delete(key);
+          }
+          await committed(transaction);
+        },
+        back: giveBack,
+        want(id, take) {
+          tell({ project, kind: "want", id, take });
+        },
+        yieldTo(id) {
+          if (!held.get(id)?.owned) return;
+          letGo(id);
+          // In turn after the window that wants it.
+          void hold(id, false);
+        },
+        gone(id) {
+          tell({ project, kind: "gone", id });
         },
         answer(mail, outcome) {
           tell({ project, kind: "answer", mail, outcome });
@@ -385,9 +525,26 @@ export function browserAgents({
         },
         async watch(target, watcher, until) {
           const transaction = (await database()).transaction(WATCHES, "readwrite");
-          transaction
-            .objectStore(WATCHES)
-            .put({ project, target, watcher, until } satisfies WatchRecord);
+          const store = transaction.objectStore(WATCHES);
+          const index = store.index(BY_TARGET);
+          const keys = await resultOf(index.getAllKeys([project, target]));
+          const all = (await resultOf(index.getAll([project, target]))) as WatchRecord[];
+          const now = Date.now();
+          // Those past their time go; of the rest, the newest so many, this one among them.
+          const kept: { key: IDBValidKey; until: number }[] = [];
+          all.forEach((record, at) => {
+            const key = keys[at];
+            if (key === undefined) return;
+            if (record.until <= now || record.watcher === watcher) store.delete(key);
+            else kept.push({ key, until: record.until });
+          });
+          const over = kept.length + 1 - MAX_WATCHERS;
+          if (over > 0) {
+            for (const { key } of kept.toSorted((a, b) => a.until - b.until).slice(0, over)) {
+              store.delete(key);
+            }
+          }
+          store.put({ project, target, watcher, until } satisfies WatchRecord);
           await committed(transaction);
         },
         async watchers(target) {
@@ -411,21 +568,38 @@ export function browserAgents({
           for (const key of await resultOf(watches.index(BY_TARGET).getAllKeys([project, id]))) {
             watches.delete(key);
           }
+          // Nor does it wait to be told of any other.
+          const mine = (await resultOf(watches.getAll())) as WatchRecord[];
+          for (const record of mine) {
+            if (record.project === project && record.watcher === id) {
+              watches.delete([project, record.target, record.watcher]);
+            }
+          }
           await committed(transaction);
         },
         budget: {
           get: readBudget,
           add: (count) => writeBudget(readBudget() + count),
-          reset: () => writeBudget(0),
+          // People said something: also where the storage takes nothing, this window goes on.
+          reset: () => {
+            stored = { n: 0, at: Date.now() };
+            writeBudget(0);
+          },
         },
         close() {
           if (isOver) return;
           for (const id of Array.from(held.keys())) letGo(id);
+          // What this window took and kept waits for whoever has those next.
+          const keeping = [...taken];
           isOver = true;
           for (const done of waiting.values()) done(undefined);
           wire?.removeEventListener("message", onSignal as EventListener);
           wire?.close();
           unlisten();
+          unhide();
+          void giveBack(keeping)
+            .catch(() => {})
+            .finally(() => leave());
         },
       };
     },

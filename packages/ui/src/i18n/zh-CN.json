@@ -3630,6 +3630,10 @@
     "history": "以前的对话",
     "untitled": "（空对话）",
     "markedBy": "「{{title}}」刚改过",
+    "elsewhere": {
+      "text": "这个对话在另一个标签页里开着",
+      "take": "在这里接着"
+    },
     "agents": {
       "from": "来自「{{name}}」",
       "fromTool": "来自 {{name}}（电脑上的工具）",
