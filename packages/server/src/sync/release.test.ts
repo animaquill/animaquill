@@ -337,6 +337,8 @@ describe.skipIf(!TEST_DATABASE)("people letting go of working copies", () => {
     const open = await platform(w, { hub: hubOf(), limits });
     const small = await archived();
     const large = await archived(`export const a = "${"x".repeat(4000)}";\n`);
+    // As the hub notes it once it compacts: larger than the others, with no tie to order by.
+    await t.db.update(projects).set({ bytes: 50_000 }).where(eq(projects.id, large.id));
     await t.db.insert(projectCovers).values({
       projectId: small.id,
       type: "image/webp",
