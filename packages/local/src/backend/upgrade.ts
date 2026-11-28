@@ -1,4 +1,4 @@
-import { lstat, readdir, readFile, rename, rm, rmdir, statfs } from "node:fs/promises";
+import { lstat, readdir, readFile, rename, rm, rmdir, statfs, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Client } from "pg";
 import {
@@ -44,6 +44,11 @@ export const UPGRADE_DIR = "upgrade";
 export const upgradingOf = (major: number) => `${folderOf(major)}.upgrading`;
 /** What the folder of a version before becomes once its data is in the new one. */
 export const OLD = ".old";
+/**
+ * The mark in the folder of the new version that it has all the data of the one before, compared
+ * table by table: only beside a folder with it is the one before named as old.
+ */
+export const UPGRADED = "animaquill-upgraded.json";
 
 /** Folders of PostgreSQL made whole: `pg<major>/` with its `PG_VERSION`, by major version. */
 export async function madeFolders(dataDir: string): Promise<number[]> {
@@ -238,7 +243,13 @@ export async function upgradePostgres(options: UpgradeOptions): Promise<UpgradeO
       `the data could not be taken out of PostgreSQL ${from.major}: ${messageOf(error)}`,
     );
   }
-  await old.stop(4000);
+  try {
+    await old.stop(4000);
+  } catch (error) {
+    await rm(exportDir, { recursive: true, force: true });
+    await rmdir(join(dataDir, UPGRADE_DIR)).catch(() => {});
+    return failed(`PostgreSQL ${from.major} did not stop: ${messageOf(error)}`);
+  }
 
   // 2. Into the new one, beside, and every table compared.
   try {
@@ -256,6 +267,12 @@ export async function upgradePostgres(options: UpgradeOptions): Promise<UpgradeO
         if (differences.length > 0)
           throw new DataRefused(`not what was exported: ${differences.join("; ")}`);
         if (fault === "verify") throw new Error("a test said the upgrade fails after the check");
+        // What says this folder has all the data of the one before, compared table by table.
+        await writeFile(
+          join(staging.folder, UPGRADED),
+          `${JSON.stringify({ from: from.major, to: toMajor, tables, rows, at: new Date().toISOString() })}\n`,
+          { mode: 0o600 },
+        );
       } finally {
         await client.end().catch(() => {});
       }
@@ -309,14 +326,24 @@ export async function settleFolders(
   dataDir: string,
   staging: Postgres,
   log: Logger,
-): Promise<string | undefined> {
+): Promise<{ readonly named?: string; readonly kept: readonly number[] }> {
   const made = await madeFolders(dataDir);
-  if (!made.includes(MAJOR)) return undefined;
+  if (!made.includes(MAJOR)) return { kept: [] };
   await clearLeftOver(dataDir, staging, join(dataDir, UPGRADE_DIR)).catch((error: unknown) =>
     log.warn({ err: messageOf(error) }, "what an upgrade before left stays for now"),
   );
+  const before = made.filter((each) => each < MAJOR);
+  // A folder of this version that no upgrade made whole (as one a version without upgrades made
+  // beside the one before): the one before is left exactly as it is, and said.
+  if (
+    before.length > 0 &&
+    !(await lstat(join(dataDir, folderOf(MAJOR), UPGRADED)).catch(() => undefined))
+  ) {
+    log.warn({ kept: before }, "a folder of a version before stays beside one no upgrade made");
+    return { kept: before };
+  }
   let named: string | undefined;
-  for (const major of made.filter((each) => each < MAJOR)) {
+  for (const major of before) {
     const name = await oldName(dataDir, major);
     await rename(join(dataDir, folderOf(major)), join(dataDir, name)).then(
       () => {
@@ -327,7 +354,7 @@ export async function settleFolders(
         log.warn({ err: messageOf(error) }, "the folder of the version before stays"),
     );
   }
-  return named;
+  return { ...(named !== undefined && { named }), kept: [] };
 }
 
 /** What stops the start whichever version it went on with. */

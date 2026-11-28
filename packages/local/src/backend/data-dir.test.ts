@@ -2,6 +2,8 @@ import {
   chmodSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -11,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  BrokenFile,
   DataDirRefused,
   isInside,
   restrictOnWindows,
@@ -108,6 +111,20 @@ describe("its secrets", () => {
     expect(await masterKeyOf(dir, true)).toMatchObject({ made: false, lost: false });
     rmSync(first.path);
     expect(await masterKeyOf(dir, true)).toMatchObject({ made: true, lost: true });
+  });
+
+  test("a master key that is empty or cut short is never taken away nor written over", async () => {
+    for (const broken of ["", "1:c2hvcnQ=\n"]) {
+      const dir = folder();
+      writeFileSync(join(dir, "master.key"), broken, { mode: 0o600 });
+      await expect(masterKeyOf(dir, true)).rejects.toBeInstanceOf(BrokenFile);
+      expect(readFileSync(join(dir, "master.key"), "utf8")).toBe(broken);
+      // Nothing of the write that was not taken is left beside it.
+      expect(readdirSync(dir)).toEqual(["master.key"]);
+    }
+    const dir = folder();
+    writeFileSync(join(dir, "pg18.password"), "\n", { mode: 0o600 });
+    await expect(passwordOf(dir)).rejects.toBeInstanceOf(BrokenFile);
   });
 
   test("the password of the database is made once, and files are written whole, 600", async () => {

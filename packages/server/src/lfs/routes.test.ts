@@ -25,6 +25,7 @@ const CHUNK = 1024;
 
 const person = (login: string): SignedIn => ({
   userId: randomUUID(),
+  kind: "github",
   githubId: 1,
   login,
   avatarUrl: null,

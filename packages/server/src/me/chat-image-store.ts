@@ -6,6 +6,7 @@ import { REQUEST_HEADER } from "../auth/guard.ts";
 import { diskRoom, type DiskRoom } from "../library/disk.ts";
 import type { LibraryMode } from "../library/config.ts";
 import type { LibraryStorage } from "../library/storage.ts";
+import type { Logger } from "../database.ts";
 
 /**
  * Where the pictures of conversations are kept (me/chat-images.ts), by their keys
@@ -36,6 +37,11 @@ export interface ChatImageStore {
    * is then not read (it is no picture of ours).
    */
   read(key: string, most: number): Promise<Buffer | undefined>;
+  /**
+   * Whether something is kept at `key`: only a store that can say so cheaply (`folder`) has it; the
+   * object storage is taken to have what the platform checked once.
+   */
+  has?(key: string): Promise<boolean>;
   /** Takes away what is at `key`, if anything. */
   remove(key: string): Promise<void>;
   /** A page of the keys under `prefix`, and where the next page starts. */
@@ -48,6 +54,11 @@ export interface ChatImageStore {
    * store that pages put into through the server (`folder`) has it.
    */
   write?(key: string, bytes: Buffer): Promise<void>;
+  /**
+   * Takes away what writes that stopped halfway left, as of a crash: only a store that writes
+   * itself (`folder`) has it. Resolves to how many went.
+   */
+  tidy?(): Promise<number>;
 }
 
 /** The object storage of the cloud space, as the platform has the pictures. */
@@ -108,6 +119,8 @@ const KEY = /^chat-images\/u\/[0-9a-f-]{36}\/[0-9a-f]{64}$/;
 const PREFIX = /^chat-images\/u\/(?:[0-9a-f-]{36}\/)?$/;
 /** Where pictures are written first, inside the folder, so that a rename puts them in place. */
 const WRITING = ".writing";
+/** How long a picture being written takes at most: one older is what a crash left. */
+const WRITING_KEEP_MS = 60 * 60_000;
 
 /**
  * A folder of the server's own: `<folder>/chat-images/u/<user id>/<SHA-256>`, every file only the
@@ -124,6 +137,10 @@ export const folderImageStore = (options: {
   readonly minFreeBytes: number;
   /** Only tests: how full the disk is. */
   readonly disk?: () => Promise<DiskRoom>;
+  /** Where what is found that is no picture is said. */
+  readonly log?: Logger | undefined;
+  /** Only tests: the time now. */
+  readonly now?: () => number;
 }): ChatImageStore => {
   const { folder, origin } = options;
   const pathOf = (key: string) => {
@@ -160,6 +177,7 @@ export const folderImageStore = (options: {
         throw error;
       }
     },
+    has: async (key) => (await stat(pathOf(key)).catch(() => undefined))?.isFile() === true,
     remove: (key) => rm(pathOf(key), { force: true }),
     async list(prefix) {
       if (!PREFIX.test(prefix)) throw new RangeError("not a prefix of pictures");
@@ -176,11 +194,25 @@ export const folderImageStore = (options: {
           if (entry.name === WRITING) continue;
           const key = `${under}${entry.name}`;
           if (entry.isDirectory()) await walk(join(path, entry.name), `${key}/`);
-          else if (entry.isFile()) keys.push(key);
+          else if (entry.isFile() && KEY.test(key)) keys.push(key);
+          // Something else people put there, as `.DS_Store`: left alone, and said.
+          else if (entry.isFile()) options.log?.info({ key }, "not a picture, left as it is");
         }
       };
       await walk(join(folder, ...prefix.split("/").filter(Boolean)), prefix);
       return { keys: keys.toSorted() };
+    },
+    async tidy() {
+      const writing = join(folder, "chat-images", WRITING);
+      const before = (options.now ?? Date.now)() - WRITING_KEEP_MS;
+      let removed = 0;
+      for (const name of await readdir(writing).catch(() => [])) {
+        const found = await stat(join(writing, name)).catch(() => undefined);
+        if (!found?.isFile() || found.mtimeMs >= before) continue;
+        await rm(join(writing, name), { force: true });
+        removed += 1;
+      }
+      return removed;
     },
     async write(key, bytes) {
       const path = pathOf(key);

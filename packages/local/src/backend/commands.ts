@@ -63,7 +63,9 @@ async function exportThrough(
   dataDir: string,
   say: (line: string) => void,
 ): Promise<number> {
-  say("AnimaQuill 正在运行：导出时同步会停几秒，编辑器之后自己接上。");
+  say(
+    "AnimaQuill 正在运行：导出期间编辑器连不上服务器、同步暂停，按项目多少可能要几分钟；导完自动恢复，这期间没传上去的改动重连后会补上。",
+  );
   const answer = await adminRequest(backend, "POST", "export", 6 * 3600_000, { dir });
   if (answer === "refused" || answer.status === 0) {
     say("AnimaQuill 没有回应，什么都没导出。");

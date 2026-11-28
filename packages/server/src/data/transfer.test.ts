@@ -461,6 +461,33 @@ describe.skipIf(!TEST_DATABASE)("the data of the server, out and in again", () =
     await expect(exportRepos(dataDir, dir)).rejects.toThrow(/repos\/p1\.git \(main b+\)/);
   });
 
+  test("an export that fails leaves nothing of it; a folder with something in it is refused as it is", async () => {
+    const { dataDir, repos } = await withRepository();
+    writeFileSync(join(repos, "p1.git", "refs", "heads", "main"), `${"c".repeat(40)}\n`);
+    const parent = mkdtempSync(join(tmpdir(), "aq-data-"));
+    const dir = join(parent, "export");
+    const client = await connection(from);
+    try {
+      await expect(exportData(client, dir, { server: "test", dataDir })).rejects.toThrow(
+        /export again/,
+      );
+      expect(existsSync(dir)).toBe(false);
+      // There already, empty: emptied again.
+      mkdirSync(dir, { mode: 0o700 });
+      await expect(exportData(client, dir, { server: "test", dataDir })).rejects.toThrow();
+      expect(readdirSync(dir)).toEqual([]);
+      // Something of people's in it: refused, and its mode as it was.
+      const theirs = join(parent, "theirs");
+      mkdirSync(theirs, { mode: 0o755 });
+      writeFileSync(join(theirs, "note.txt"), "mine");
+      await expect(exportData(client, theirs, { server: "test" })).rejects.toThrow(/not empty/);
+      if (process.platform !== "win32") expect(statSync(theirs).mode & 0o777).toBe(0o755);
+      expect(readdirSync(theirs)).toEqual(["note.txt"]);
+    } finally {
+      await client.end();
+    }
+  });
+
   test("an import refused for anything about the database leaves no repositories behind", async () => {
     const { dataDir } = await withRepository();
     const dir = tempDir();

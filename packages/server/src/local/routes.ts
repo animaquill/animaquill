@@ -194,7 +194,9 @@ export const localRoutes =
     const ofThisMachine = async (request: FastifyRequest, reply: FastifyReply) => {
       const user = await signedIn(request, reply, limit);
       if (!user) return undefined;
-      if (user.githubId !== null) {
+      // By who they are, not by whether GitHub is connected: the person of this machine keeps
+      // this once their account of GitHub is connected too.
+      if (user.kind !== "local") {
         await reply.code(403).send({ error: "forbidden" });
         return undefined;
       }

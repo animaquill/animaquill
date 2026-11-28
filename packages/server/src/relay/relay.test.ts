@@ -58,6 +58,7 @@ const network = (): RelayNetwork => ({
 
 const signedIn = (userId: string) => ({
   userId,
+  kind: "github" as const,
   githubId: 1,
   login: userId,
   avatarUrl: null,

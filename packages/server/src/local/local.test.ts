@@ -11,6 +11,8 @@ import {
   localCredentials,
 } from "../auth/local-credentials.ts";
 import { setUpAccounts } from "../auth/setup.ts";
+import { sessions, users } from "../schema.ts";
+import { hashOf } from "../seal.ts";
 import { loadConfig } from "../config.ts";
 import type { SyncHub } from "../sync/hub.ts";
 import { createTestDatabase, TEST_DATABASE, type TestDatabase } from "../test/database.ts";
@@ -166,6 +168,17 @@ describe.skipIf(!TEST_DATABASE)("the routes of this machine", () => {
           adminKey: ADMIN,
           instance: "the-instance",
           version: "test",
+          server: {
+            state: async () => ({
+              version: "test",
+              dataDir: "/d",
+              database: { kind: "given" },
+              old: [],
+            }),
+            keySaved: async () => true,
+            masterKey: async () => "1:key\n",
+            removeOld: async () => "notFound",
+          },
         }),
       },
       false,
@@ -190,6 +203,34 @@ describe.skipIf(!TEST_DATABASE)("the routes of this machine", () => {
     const cookie = String(answer.headers["set-cookie"]).split(";")[0]!;
     return { cookie, binding: (answer.json() as { binding: string }).binding };
   };
+
+  test("the state of the server is the person of this machine's, by who they are, and nobody else's", async () => {
+    const { cookie, binding } = await signIn();
+    const state = (headers: Record<string, string>) =>
+      app.inject({ method: "GET", url: "/api/local/server", headers: { host: HOST, ...headers } });
+    expect((await state({ cookie, [BINDING_HEADER]: binding })).statusCode).toBe(200);
+    // Somebody who came through GitHub, as one of a list of people will (O4e), with a session of
+    // their own: not this.
+    const [person] = await t.db
+      .insert(users)
+      .values({ kind: "github", githubId: 91_000_001, login: "someone" })
+      .returning({ id: users.id });
+    const theirs = "a-session-of-someone-through-github-0123";
+    await t.db.insert(sessions).values({
+      idHash: hashOf(theirs),
+      userId: person!.id,
+      expiresAt: new Date(Date.now() + 3_600_000),
+    });
+    const other = { cookie: `aq_local=${theirs}`, [BINDING_HEADER]: bindingOf(SECRET, theirs) };
+    expect((await state(other)).statusCode).toBe(403);
+    const key = await app.inject({
+      method: "POST",
+      url: "/api/local/server/master-key",
+      headers: { ...fromPage, ...other },
+    });
+    expect(key.statusCode).toBe(403);
+    expect(key.body).not.toContain("1:key");
+  });
 
   test("a token gives a session once, for the person of this machine", async () => {
     const token = tokens.issue();

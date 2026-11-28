@@ -397,12 +397,27 @@ export const writePrivate = (path: string, text: string) => {
   chmodSync(path, 0o600);
 };
 
-/** Makes `dir` the empty folder of an export, only its owner's. */
-export const startExport = (dir: string) => {
+/**
+ * Makes `dir` the empty folder of an export, only its owner's: a folder that has anything in it is
+ * refused as it is, its mode untouched. Resolves to whether it made the folder, see `undoExport`.
+ */
+export const startExport = (dir: string): boolean => {
+  const made = !existsSync(dir);
+  if (!made && readdirSync(dir).length > 0) throw new DataRefused(`${dir} is not empty`);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   chmodSync(dir, 0o700);
-  if (readdirSync(dir).length > 0) throw new DataRefused(`${dir} is not empty`);
   mkdirSync(join(dir, "tables"), { mode: 0o700 });
+  return made;
+};
+
+/**
+ * Takes away what an export that failed wrote, and nothing else: the folder where it made it, what
+ * is in it where it was there empty before.
+ */
+export const undoExport = (dir: string, made: boolean) => {
+  if (made) rmSync(dir, { recursive: true, force: true });
+  else
+    for (const name of readdirSync(dir)) rmSync(join(dir, name), { recursive: true, force: true });
 };
 
 /** Writes the rows of one table into its chunks, and says what the manifest has of it. */
@@ -512,7 +527,24 @@ export const exportData = async (
 ): Promise<Manifest> => {
   const scope = options.scope ?? SERVER_SCOPE;
   await sameMigrations(client, scope, options.migrations);
-  startExport(dir);
+  const made = startExport(dir);
+  try {
+    return await exportInto(client, dir, scope, options);
+  } catch (error) {
+    // Half an export is no export, and would be in the way of the next one.
+    try {
+      undoExport(dir, made);
+    } catch {}
+    throw error;
+  }
+};
+
+const exportInto = async (
+  client: pg.ClientBase,
+  dir: string,
+  scope: DataScope,
+  options: Parameters<typeof exportData>[2],
+): Promise<Manifest> => {
   await client.query("begin isolation level repeatable read read only");
   let of: Parameters<typeof finishExport>[1];
   try {

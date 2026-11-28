@@ -462,9 +462,13 @@ async function ownPostgres(
       password: await passwordOf(dataDir),
       logFile,
     });
-    const named = await settleFolders(dataDir, staging, log);
+    const { named, kept } = await settleFolders(dataDir, staging, log);
     if (named)
       say(`旧版本的数据库留在数据目录的 ${named} 里，确认一切正常后可以在“设置 › 服务器”里删掉。`);
+    for (const major of kept)
+      say(
+        `数据目录里除了 ${folderOf(MAJOR)}/ 还有 ${folderOf(major)}/（PostgreSQL ${major}），它不是这一版升级过来的，AnimaQuill 没有动它，用的是 ${folderOf(MAJOR)}/。要用 ${folderOf(major)}/ 里的数据，先把 ${folderOf(MAJOR)}/ 挪走再启动，会从它升级。`,
+      );
     return { postgres: await ours() };
   }
   const newer = made.filter((major) => major > MAJOR);

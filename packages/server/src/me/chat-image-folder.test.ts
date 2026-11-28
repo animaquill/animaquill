@@ -1,5 +1,14 @@
 import { createHash, randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "vitest";
@@ -201,5 +210,44 @@ describe.skipIf(!TEST_DATABASE)("pictures of conversations in a folder, on a dat
     expect(done).toEqual({ expired: 1, leftOver: 1 });
     expect(existsSync(fileOf(w.userId, image.hash))).toBe(false);
     expect(existsSync(fileOf(w.userId, stray.hash))).toBe(false);
+  });
+
+  test("a picture kept whose file is gone goes up again, and only as what its name says", async () => {
+    const image = picture();
+    const { url } = (await begin(image)).json.upload;
+    await putBytes(url, image.bytes);
+    await p.send("POST", `/api/me/chat-images/${image.hash}/done`);
+    expect((await begin(image)).json).toEqual({ have: true });
+    rmSync(fileOf(w.userId, image.hash));
+    expect((await p.sendRaw("GET", new URL(url).pathname)).status).toBe(404);
+    // Asked again: an address to put it at, not "have".
+    const again = await begin(image);
+    expect(again.json.upload.url).toBe(url);
+    expect((await putBytes(url, randomBytes(image.bytes.length))).status).toBe(422);
+    expect(existsSync(fileOf(w.userId, image.hash))).toBe(false);
+    expect((await putBytes(url, image.bytes)).status).toBe(204);
+    expect((await p.send("POST", `/api/me/chat-images/${image.hash}/done`)).json).toEqual({
+      state: "ready",
+    });
+    expect((await p.sendRaw("GET", new URL(url).pathname)).body).toEqual(image.bytes);
+  });
+
+  test("the hourly round goes past what is no picture, and takes away what a crash left half written", async () => {
+    const image = picture();
+    const { url } = (await begin(image)).json.upload;
+    await putBytes(url, image.bytes);
+    await p.send("POST", `/api/me/chat-images/${image.hash}/done`);
+    writeFileSync(join(dir, "chat-images", "u", ".DS_Store"), "x");
+    writeFileSync(join(dir, "chat-images", "u", w.userId, ".DS_Store"), "x");
+    const writing = join(dir, "chat-images", ".writing");
+    writeFileSync(join(writing, "old.tmp"), "half");
+    writeFileSync(join(writing, "new.tmp"), "half");
+    const hourAgo = (Date.now() - 2 * 3600_000) / 1000;
+    utimesSync(join(writing, "old.tmp"), hourAgo, hourAgo);
+    time += UNREFERENCED_KEEP_MS + 1;
+    expect(await images.cleanUp()).toEqual({ expired: 1, leftOver: 0 });
+    expect(existsSync(fileOf(w.userId, image.hash))).toBe(false);
+    expect(readdirSync(writing)).toEqual(["new.tmp"]);
+    expect(existsSync(join(dir, "chat-images", "u", w.userId, ".DS_Store"))).toBe(true);
   });
 });

@@ -418,6 +418,31 @@ describe.skipIf(!runs)("PostgreSQL 17 to 18", () => {
   }, 300_000);
 });
 
+describe.skipIf(!runs)("a folder of 18 that no upgrade made", () => {
+  test("beside one of 17 with data: the one of 17 is left as it is, and that is said", async () => {
+    const { dataDir, tables } = await dataFolderOf17();
+    mkdirSync(join(dataDir, "pg18"));
+    writeFileSync(join(dataDir, "pg18", "PG_VERSION"), "18\n");
+    const said: string[] = [];
+    await expect(startOn(dataDir, said, port())).rejects.toThrow();
+    expect(
+      said.some((line) => line.includes("pg17/（PostgreSQL 17），它不是这一版升级过来的")),
+    ).toBe(true);
+    const names = readdirSync(dataDir);
+    expect(names).toContain("pg17");
+    expect(names).not.toContain("pg17.old");
+    expect(await running(dataDir, FROM, tablesOf)).toEqual(tables);
+    // Taken away, the start after upgrades from it.
+    rmSync(join(dataDir, "pg18"), { recursive: true });
+    said.length = 0;
+    const backend = await startOn(dataDir, said, port());
+    if (backend.kind !== "started") throw new Error("not started");
+    await backend.stop();
+    expect(existsSync(join(dataDir, "pg18", "animaquill-upgraded.json"))).toBe(true);
+    expect(readdirSync(dataDir)).toContain("pg17.old");
+  }, 300_000);
+});
+
 describe.skipIf(!runs)("the backup of the server", () => {
   test("exported while it runs, with a picture of a conversation, and into an empty data folder with its master key", async () => {
     const dataDir = folder();

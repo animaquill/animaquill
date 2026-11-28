@@ -89,6 +89,7 @@ describe("a deployment with credentials of its own", () => {
   const make = () => {
     const signedIn: SignedIn = {
       userId: "0190a000-0000-7000-8000-000000000001",
+      kind: "local",
       githubId: null,
       login: "本机",
       avatarUrl: null,

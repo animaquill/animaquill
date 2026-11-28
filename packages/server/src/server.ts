@@ -357,6 +357,7 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
                 origin: config.publicOrigin,
                 // A computer of people's own, as for its files of assets (LFS_MIN_FREE_GB).
                 minFreeBytes: (config.stagingFloorGb ?? 2) * 1024 ** 3,
+                log,
               })
             : objects &&
               objectImageStore({

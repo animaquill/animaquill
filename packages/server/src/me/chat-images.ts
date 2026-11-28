@@ -229,7 +229,13 @@ export class ChatImages {
           .from(userChatImages)
           .where(and(eq(userChatImages.userId, userId), eq(userChatImages.hash, image.hash)))
           .for("update");
-        if (row?.state === "ready") return { have: true };
+        // Kept, unless its file is gone from a folder (taken away by hand, or as an export copied
+        // it): then it goes up again, under its row as it is.
+        if (row?.state === "ready") {
+          if ((await storage.has?.(imageKey(userId, image.hash))) !== false) return { have: true };
+          if (row.bytes !== image.bytes) return { have: true };
+          return "sign";
+        }
         const at = new Date(this.#now());
         // What it takes of the room now, as one asked again (a page that went away) says it anew.
         const used = await this.#used(tx, userId);
@@ -403,10 +409,12 @@ export class ChatImages {
           .where(and(eq(userChatImages.userId, userId), eq(userChatImages.hash, hash)))
           .for("share");
         if (!row) return "missing" as const;
-        // Kept already, and checked: it stays as it is.
-        if (row.state === "ready") return "kept" as const;
         if (bytes.length !== row.bytes || createHash("sha256").update(bytes).digest("hex") !== hash)
           return "mismatch" as const;
+        // One that is kept and there stays as it is; one whose file is gone is put back, as what its
+        // name says it is.
+        if (row.state === "ready" && (await storage.has?.(imageKey(userId, hash))) === true)
+          return "kept" as const;
         await write(imageKey(userId, hash), bytes);
         return "kept" as const;
       }),
@@ -552,6 +560,14 @@ export class ChatImages {
   }> {
     const { storage, db } = this.#options;
     if (!storage) return { expired: 0, leftOver: 0 };
+    await storage
+      .tidy?.()
+      .catch((error: unknown) =>
+        this.#options.log?.warn(
+          { err: describeError(error) },
+          "half-written pictures stay for now",
+        ),
+      );
     const cutoff = new Date(this.#now() - UNREFERENCED_KEEP_MS);
     const due = (tx: Db | Tx, userId?: string) =>
       and(

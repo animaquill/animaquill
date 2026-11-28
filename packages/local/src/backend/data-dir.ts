@@ -1,9 +1,10 @@
 import { randomBytes } from "node:crypto";
 import { constants } from "node:fs";
-import { chmod, lstat, mkdir, open, readdir, readFile, rename, rm } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, open, readdir, readFile, rename, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { dirname, join, resolve, win32 } from "node:path";
+import { parseMasterKeys } from "@animaquill/server/seal.ts";
 import { MAJOR } from "./postgres.ts";
 
 /**
@@ -187,8 +188,45 @@ export async function writePrivate(path: string, text: string): Promise<void> {
   }
 }
 
-/** Writes a file that only this user may read, where there is none yet: false where there is. */
+/**
+ * Writes a file that only this user may read, where there is none yet: false where there is. Whole
+ * or not at all: written into a file of its own and synced first, then linked to its name, which
+ * fails where there is one; a disk without links (FAT) gets it made with `wx` instead.
+ */
 export async function writeNew(path: string, text: string): Promise<boolean> {
+  const temporary = `${path}.${randomBytes(6).toString("hex")}.tmp`;
+  const made = await open(temporary, "wx", 0o600);
+  try {
+    await made.writeFile(text, "utf8");
+    await made.sync();
+  } finally {
+    await made.close();
+  }
+  try {
+    await link(temporary, path);
+    await syncFolder(dirname(path));
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EEXIST") return false;
+    if (code !== "EPERM" && code !== "ENOTSUP" && code !== "EXDEV" && code !== "ENOSYS")
+      throw error;
+  } finally {
+    await rm(temporary, { force: true });
+  }
+  return writeExclusive(path, text);
+}
+
+/** The folder synced, so that a name made in it survives a crash of the machine (not on Windows). */
+async function syncFolder(dir: string): Promise<void> {
+  if (!posix) return;
+  const folder = await open(dir, "r").catch(() => undefined);
+  await folder?.sync().catch(() => {});
+  await folder?.close().catch(() => {});
+}
+
+/** `writeNew` where there are no links. */
+async function writeExclusive(path: string, text: string): Promise<boolean> {
   let file;
   try {
     file = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL, 0o600);
@@ -208,6 +246,22 @@ export async function writeNew(path: string, text: string): Promise<boolean> {
 export const MASTER_KEY_FILE = "master.key";
 
 /**
+ * A file of the data folder that is there and is not what it should be (empty, or cut short, as by
+ * a crash of a version before): never taken away or written over, as it may be all there is of a
+ * key; people are told what to do.
+ */
+export class BrokenFile extends Error {
+  override name = "BrokenFile";
+  readonly path: string;
+  readonly what: "masterKey" | "password";
+  constructor(what: BrokenFile["what"], path: string) {
+    super(`${path} is not what it should be`);
+    this.what = what;
+    this.path = path;
+  }
+}
+
+/**
  * The master key, which seals what the server keeps (seal.ts of `@animaquill/server`): made the
  * first time. Resolves to `made` where it was made now, and `lost` where it was made now though
  * the database was there already: what was sealed with the one before cannot be opened.
@@ -218,6 +272,13 @@ export async function masterKeyOf(
 ): Promise<{ readonly path: string; readonly made: boolean; readonly lost: boolean }> {
   const path = join(dir, MASTER_KEY_FILE);
   const made = await writeNew(path, `1:${randomBytes(32).toString("base64")}\n`);
+  if (!made) {
+    try {
+      parseMasterKeys((await readFile(path, "utf8")).trim());
+    } catch {
+      throw new BrokenFile("masterKey", path);
+    }
+  }
   return { path, made, lost: made && databaseThere };
 }
 
@@ -228,5 +289,7 @@ export async function masterKeyOf(
 export async function passwordOf(dir: string, major = MAJOR): Promise<string> {
   const path = join(dir, `pg${major}.password`);
   await writeNew(path, `${randomBytes(24).toString("base64url")}\n`);
-  return (await readFile(path, "utf8")).trim();
+  const password = (await readFile(path, "utf8")).trim();
+  if (password === "") throw new BrokenFile("password", path);
+  return password;
 }

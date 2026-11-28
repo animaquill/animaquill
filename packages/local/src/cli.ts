@@ -6,7 +6,7 @@ import { LOCAL_PORT, localSites } from "@animaquill/web/sites";
 import { openBrowser } from "./open-browser.ts";
 import { NewerDatabase } from "@animaquill/server/database.ts";
 import { PortInUse, startLocalServer } from "./server.ts";
-import { DataDirRefused, defaultDataDir } from "./backend/data-dir.ts";
+import { BrokenFile, DataDirRefused, defaultDataDir } from "./backend/data-dir.ts";
 import { adminRequest, LockHeld, readBackend } from "./backend/lock.ts";
 import { databaseFrom } from "./database-option.ts";
 import { checkedOpening, type Opening } from "./backend/open-page.ts";
@@ -57,7 +57,7 @@ const HELP = `用法：animaquill [选项]
   open             在浏览器里打开已经在运行的 AnimaQuill（带一次性的登录）
   server export <文件夹>
                    把在线模式的数据（账号、设置和 key、对话和图片、项目清单和本机仓库）导出到一个文件夹，
-                   正在运行时也可以（同步会停几秒）。主密钥 master.key 不在里面，要另存
+                   正在运行时也可以（导出期间编辑器连不上，导完自动恢复）。主密钥 master.key 不在里面，要另存
   server import <文件夹>
                    把导出的数据导入到一个空的数据目录；--master-key 给原来的 master.key，存的 AI key 才打得开
   mcp              给电脑上的 AI 工具（Claude Code、Codex 等）用的 MCP 服务器（stdio）：
@@ -224,6 +224,14 @@ function sayRefused(error: unknown, logFile: string | undefined, offerOffline = 
   } else if (error instanceof NewerDatabase) {
     console.error(
       `这个数据目录被更新版本的 AnimaQuill 用过，这个版本（${version}）打不开它。请运行 npx animaquill@latest。`,
+    );
+    return;
+  } else if (error instanceof BrokenFile) {
+    console.error(
+      error.what === "masterKey"
+        ? `主密钥 ${error.path} 是空的或不完整（可能上次写到一半时断电了），AnimaQuill 没有动它。` +
+            `有另存的主密钥就把它放回这个位置再启动；没有的话，把这个文件挪走再启动，会生成新的，之前存的 AI key 要在设置里重新填。`
+        : `数据库的密码文件 ${error.path} 是空的，AnimaQuill 没有动它。从备份放回它再启动；没有备份时，只能用 server export 之前的备份导入到新的数据目录。`,
     );
     return;
   } else if (error instanceof NewerPostgres) {
@@ -409,7 +417,14 @@ async function serverCommand(argv: readonly string[]): Promise<number> {
       console.error(`没${what === "export" ? "导出" : "导入"}：${error.message}`);
       return 1;
     }
-    const known = [DataDirRefused, LockHeld, LeftOverRunning, PostgresFailed, NewerDatabase];
+    const known = [
+      DataDirRefused,
+      LockHeld,
+      LeftOverRunning,
+      PostgresFailed,
+      NewerDatabase,
+      BrokenFile,
+    ];
     if (known.some((kind) => error instanceof kind)) sayRefused(error, undefined, false);
     else console.error(`没做完：${(error as Error)?.message ?? String(error)}`);
     return 1;

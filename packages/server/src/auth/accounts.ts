@@ -16,6 +16,7 @@ import {
   signups,
   users,
   webhookDeliveries,
+  type UserKind,
 } from "../schema.ts";
 import { hashOf, randomToken, SealError, type Sealer } from "../seal.ts";
 import { isInstalledFor, syncOwnInstallations } from "./installations.ts";
@@ -71,6 +72,8 @@ export interface AccountsOptions {
 /** Who is signed in, as the editor sees it. */
 export interface SignedIn {
   readonly userId: string;
+  /** Who they are: through GitHub, or the person of this machine (`UserKind`). */
+  readonly kind: UserKind;
   /** Null for the person of this machine (`UserKind` "local"), who has no account of GitHub here. */
   readonly githubId: number | null;
   readonly login: string;
@@ -363,6 +366,7 @@ export const createAccounts = ({
       const [row] = await db
         .select({
           userId: users.id,
+          kind: users.kind,
           githubId: users.githubId,
           login: users.login,
           avatarUrl: users.avatarUrl,
@@ -396,6 +400,7 @@ export const createAccounts = ({
       }
       return {
         userId: row.userId,
+        kind: row.kind,
         githubId: row.githubId,
         login: row.login,
         avatarUrl: row.avatarUrl,
