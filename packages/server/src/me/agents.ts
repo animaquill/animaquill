@@ -28,7 +28,7 @@ import type { PersonEvents } from "./events.ts";
 
 /**
  * What the conversations and AI tools of a person's project, in their windows on any computer, say
- * to each other (docs/design/ai-teamwork.md of AnimaQuill Cloud, 3; chat6 technical design, 6.3):
+ * to each other:
  * the online `AgentPost` of the editor's host (agents-account.ts there), as the browser's
  * (agents-browser.ts) is for the windows of one browser. The same rules, kept here: one window at a
  * time has a conversation (`holds`), and the others wait for it in turn; a message waits until the

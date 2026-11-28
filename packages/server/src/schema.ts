@@ -1362,7 +1362,7 @@ export const userPrefs = pgTable("user_prefs", {
 
 /**
  * What the conversations and AI tools of a person's project, in their windows anywhere, say to each
- * other (docs/design/ai-teamwork.md of AnimaQuill Cloud, 3; chat6 technical design, 6.3), see
+ * other, see
  * me/agents.ts: each row of one person, about one project of theirs, and nobody else's ever. All of
  * it lasts a while only: messages a week, what a window said of what it has 12 hours, and a window
  * as long as it says it is there. Not in an export of the data (data/transfer.ts).
