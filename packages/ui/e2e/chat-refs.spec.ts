@@ -374,14 +374,25 @@ test('"带上" is a tag over the words; taken off, messages keep nothing, AI is 
   await clipsTag.hover();
   await expect(overlay).toHaveAttribute("data-outlined", /clip_0/);
   // × takes it off: the tag stays, slanted and struck through, and a click on it puts it back.
-  await chat(page).getByRole("button", { name: "不带", exact: true }).click();
+  // Lit as a whole under the pointer, with a line between its two parts: the × is for all of it.
+  const off = chat(page).getByRole("button", { name: "不带选中和播放头", exact: true });
+  await expect(off).toHaveAttribute("title", "不带选中和播放头");
+  await expect(playheadTag).not.toHaveCSS("border-left-width", "0px");
+  await page.mouse.move(0, 0);
+  await expect(carry).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  const quiet = await carry.evaluate((element) => getComputedStyle(element).backgroundColor);
+  await off.hover();
+  await expect(carry).not.toHaveCSS("background-color", quiet);
+  await off.click();
   await expect(carry).toHaveAttribute("data-off", "");
   await expect(carry).toHaveAccessibleName("不带：选中的 1 个片段、播放头 0:01/00");
   const name = clipsTag.locator("span:visible").first();
   await expect(name).toHaveCSS("font-style", "italic");
   await expect(name).toHaveCSS("text-decoration-line", "line-through");
   await chat(page).screenshot({ path: test.info().outputPath("carry-off-440.png") });
-  await chat(page).getByRole("button", { name: "带上", exact: true }).click();
+  await chat(page)
+    .getByRole("button", { name: "带上：选中的 1 个片段、播放头 0:01/00", exact: true })
+    .click();
   await expect(carry).not.toHaveAttribute("data-off");
   await expect(name).toHaveCSS("font-style", "normal");
   await chat(page).screenshot({ path: test.info().outputPath("carry-on-440.png") });
@@ -418,8 +429,19 @@ test('"带上" is a tag over the words; taken off, messages keep nothing, AI is 
   expect((narrow?.x ?? 0) + (narrow?.width ?? 0)).toBeLessThanOrEqual(
     (narrowCard?.x ?? 0) + (narrowCard?.width ?? 0),
   );
+  await page.mouse.move(0, 0);
+  await chat(page)
+    .getByTestId("chat-compose")
+    .screenshot({
+      path: test.info().outputPath("carry-on-320.png"),
+    });
   await chat(page).getByTestId("chat-carry-off").click();
-  await chat(page).screenshot({ path: test.info().outputPath("carry-off-320.png") });
+  await page.mouse.move(0, 0);
+  await chat(page)
+    .getByTestId("chat-compose")
+    .screenshot({
+      path: test.info().outputPath("carry-off-320.png"),
+    });
 });
 
 test("more than eight objects are the first three and one block for the rest", async ({ page }) => {

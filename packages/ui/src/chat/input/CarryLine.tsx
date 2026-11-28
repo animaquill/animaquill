@@ -40,7 +40,9 @@ export function CarryLine(props: { readonly on: boolean; readonly onToggle: () =
     clips.length === 0
       ? playheadName
       : t("chat.compose.carryBoth", { clips: clipsName, playhead: playheadName });
-  const label = t(on ? "chat.compose.carryWith" : "chat.compose.carryWithout", { what });
+  const withIt = t("chat.compose.carryWith", { what });
+  const label = on ? withIt : t("chat.compose.carryWithout", { what });
+  const off = t(clips.length === 0 ? "chat.compose.carryOffPlayhead" : "chat.compose.carryOff");
   const pointClips = (pointing: boolean) =>
     workbench.pointAt(
       pointing && clips.length > 0
@@ -87,8 +89,8 @@ export function CarryLine(props: { readonly on: boolean; readonly onToggle: () =
           <button
             type="button"
             className={styles.carryToggle}
-            aria-label={t("chat.compose.carryOff")}
-            title={t("chat.compose.carryOff")}
+            aria-label={off}
+            title={off}
             data-testid="chat-carry-off"
             onPointerDown={keepFocus}
             onClick={onToggle}
@@ -100,7 +102,7 @@ export function CarryLine(props: { readonly on: boolean; readonly onToggle: () =
         <button
           type="button"
           className={styles.carryBack}
-          aria-label={t("chat.compose.carryOn")}
+          aria-label={withIt}
           title={label}
           data-testid="chat-carry-on"
           onPointerDown={keepFocus}

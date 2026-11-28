@@ -436,8 +436,11 @@
   cursor: default;
 }
 
+/* A thin line between the clips and the playhead: two things, one tag. */
 .carryPart + .carryPart {
   flex: none;
+  padding-left: 6px;
+  border-left: 1px solid var(--aq-border);
 }
 
 .carryIcon {
@@ -463,6 +466,7 @@
   justify-content: center;
   align-self: stretch;
   width: 18px;
+  margin-left: 2px;
   padding: 0;
   color: var(--aq-text-muted);
   border-radius: 0 3px 3px 0;
@@ -481,9 +485,16 @@
   border-radius: 3px;
 }
 
-.area .carryBack:hover,
-.area .carryBack:hover .carryName {
+/* The pointer over any of it lights the whole tag: the × and the click are for all of it. */
+.carry:hover {
   color: var(--aq-text-strong);
+  background: var(--aq-bg-hover);
+}
+
+.area .carry:hover .carryToggle,
+.area .carry:hover .carryBack {
+  color: var(--aq-text-strong);
+  background: transparent;
 }
 
 .narrowOnly {
