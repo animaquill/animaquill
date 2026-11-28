@@ -21,6 +21,11 @@ import {
 import { platform, type Platform } from "../test/platform-support.ts";
 import { TestPeer } from "../test/sync-support.ts";
 import {
+  agentBudgets,
+  agentCards,
+  agentMail,
+  agentWatches,
+  agentWindows,
   archives,
   deletedProjects,
   lfsUploads,
@@ -495,6 +500,31 @@ describe.skipIf(!TEST_DATABASE)(
           size: 10,
           updatedAt: new Date(),
         });
+        // What its conversations say to each other (me/agents.ts).
+        const at = new Date();
+        const of = { userId: w.userId, projectId: id };
+        await t.db.insert(agentWindows).values({ ...of, windowId: "w-1", liveUntil: at });
+        await t.db.insert(agentCards).values({
+          ...of,
+          agentId: "c1",
+          windowId: "w-1",
+          card: {},
+          updatedAt: at,
+        });
+        await t.db.insert(agentMail).values({
+          ...of,
+          mailId: "m-1",
+          toAgent: "c1",
+          fromAgent: "c2",
+          text: "x",
+          body: {},
+          left: false,
+          sentAt: 1,
+          createdAt: at,
+          expiresAt: at,
+        });
+        await t.db.insert(agentWatches).values({ ...of, target: "c1", watcher: "c2", until: at });
+        await t.db.insert(agentBudgets).values({ ...of, count: 1, at });
       }
       expect(
         await t.db.select().from(archives).where(eq(archives.projectId, project.id)),
@@ -525,6 +555,11 @@ describe.skipIf(!TEST_DATABASE)(
           "repo_conflicts",
           "repo_merges",
           "user_chats",
+          "agent_windows",
+          "agent_cards",
+          "agent_mail",
+          "agent_watches",
+          "agent_budgets",
         ]),
       );
       // Each goes with its project ("c": on delete cascade).
