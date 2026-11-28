@@ -20,7 +20,7 @@ interface Lab {
     limits: { storage: number | null; count: number | null };
     padding: Map<string, number>;
     bytesOf(id: string): number;
-    space(user: string): { used: number };
+    space(user: string): { used: number; count: { used: number } };
     repositories: Map<
       string,
       { id: number; owner: string; name: string; state?: string; reason?: string }
@@ -139,6 +139,9 @@ test.describe("what people keep on the platform", () => {
     await expect(lone.getByRole("button", { name: "保存到文件夹…" })).toBeVisible();
     const paused = row(page, ids.paused);
     await expect(paused.getByRole("button", { name: "去处理" })).toBeVisible();
+    // Why, in a few words, without hovering; all of it on hovering.
+    await expect(lone).toContainText("没有仓库");
+    await expect(paused).toContainText("存进 GitHub 停了");
     await paused.getByRole("button", { name: "释放" }).hover();
     await expect(page.getByRole("tooltip")).toContainText("存进 GitHub 停了：");
     await expect(page.getByRole("tooltip")).not.toContainText("?");
@@ -153,9 +156,13 @@ test.describe("what people keep on the platform", () => {
     await asked.getByRole("button", { name: "释放", exact: true }).click();
     await expect(row(page, ids.film)).toHaveAttribute("data-platform-state", "released");
     await expect(row(page, ids.film)).toContainText("已释放 · 打开时从 GitHub 取回");
+    // Nothing to count against it: no "0 B".
+    await expect(row(page, ids.film).locator("td").nth(1)).toHaveText("—");
     await expect(row(page, ids.film).getByRole("button", { name: "释放" })).toHaveCount(0);
     await expect(part).toContainText(/1\.\d GB \/ 5 GB/);
-    await expect(page.getByText(/已释放“宣传片 v2”，空出 1\.6 GB/)).toBeVisible();
+    await expect(
+      page.getByText(/已释放“宣传片 v2”，空出 1\.6 GB。打开时从 GitHub 取回。/),
+    ).toBeVisible();
     await shots(page, "storage-page");
     // The card says so too, as the list does.
     await onlineProjects(page);
@@ -221,6 +228,14 @@ test.describe("what people keep on the platform", () => {
     const lone = full.locator(`[data-platform-project="${ids.lone}"]`);
     await expect(lone.getByRole("button", { name: "释放" })).toBeDisabled();
     await expect(lone).toContainText("这个项目没有仓库");
+    // What "释放" is, once, where people choose it.
+    await expect(full).toContainText(
+      "释放：只清掉平台上的这份，项目还在列表里，下次打开时从 GitHub 取回（慢几秒）。",
+    );
+    // What keeps one, seen to in the project.
+    const paused = full.locator(`[data-platform-project="${ids.paused}"]`);
+    await expect(paused.getByRole("button", { name: "去处理" })).toBeVisible();
+    await expect(lone.getByRole("button", { name: "去处理" })).toHaveCount(0);
     await expect(lone.getByRole("button", { name: "保存到文件夹…" })).toBeVisible();
     await expect(lone.getByRole("button", { name: "删除" })).toBeVisible();
     await shots(page, "full-storage");
@@ -240,9 +255,48 @@ test.describe("what people keep on the platform", () => {
     await create.getByRole("button", { name: /^(关闭|完成)$/ }).click();
     await expect(tab(page, "preview")).toBeVisible();
     await expect(page).toHaveTitle("新片子 - AnimaQuill");
+
+    // More than may be kept, while editing: nothing stops, the status of syncing says so quietly.
+    await withLab(page, (lab) => {
+      lab.platform.limits.storage = 1;
+    });
+    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    const sync = page.locator('[data-save-status="sync"]');
+    await expect(sync.locator('[data-storage-dot="over"]')).toBeVisible();
+    await sync.hover();
+    await expect(page.getByRole("tooltip")).toContainText(
+      "平台存储已超出配额，新建项目前要先释放别的项目。",
+    );
+    await shots(page, "status-over", { narrow: false });
     expect(await withLab(page, (lab, wedding) => lab.platform.bytesOf(wedding), ids.wedding)).toBe(
       0,
     );
+  });
+
+  test("full: seeing to what keeps a project gives up the new one and opens that project", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await arrive(page);
+    const ids = await seedProjects(page, null);
+    await withLab(page, (lab) => {
+      lab.platform.limits.storage = lab.platform.space("octo").used;
+    });
+    await onlineProjects(page);
+    await page.getByRole("button", { name: "新建项目" }).first().click();
+    const create = page.locator("dialog[data-create-phase]");
+    await create.getByRole("textbox", { name: "项目名称" }).fill("新片子");
+    await create.getByRole("button", { name: "新建", exact: true }).click();
+    const full = fullDialog(page);
+    await full
+      .locator(`[data-platform-project="${ids.paused}"]`)
+      .getByRole("button", { name: "去处理" })
+      .click();
+    await expect(full).toHaveCount(0);
+    await expect(page).toHaveTitle("年会开场 - AnimaQuill");
+    await expect(create).toHaveCount(0);
+    // Nothing of the new one was made.
+    expect(await withLab(page, (lab) => lab.platform.space("octo").count.used)).toBe(4);
   });
 
   test("full of projects: says so apart, lists those changed longest ago, to delete", async ({
@@ -265,6 +319,8 @@ test.describe("what people keep on the platform", () => {
     const first = full.locator("[data-platform-project]").first();
     await expect(first).toHaveAttribute("data-platform-project", ids.paused);
     await expect(first.getByRole("button", { name: "删除" })).toBeVisible();
+    // When each last changed, to choose by.
+    await expect(first).toContainText(/改动/);
     await shots(page, "full-count");
     // Closed: the dialog of the new project says why it stopped, and nothing was made.
     await full.getByRole("button", { name: "关闭" }).click();

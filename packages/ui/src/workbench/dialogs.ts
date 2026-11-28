@@ -243,7 +243,12 @@ export interface PlatformFullOptions {
 /** What people chose in `PlatformFullOptions`: room was made, or what to do with a project. */
 export type PlatformFullAnswer =
   | { readonly kind: "freed" }
-  | { readonly kind: "saveToFolder" | "delete"; readonly project: string; readonly name: string };
+  | {
+      /** "open": what keeps it is seen to in the project, and what was asked is given up. */
+      readonly kind: "saveToFolder" | "delete" | "open";
+      readonly project: string;
+      readonly name: string;
+    };
 
 export type DialogRequest =
   | ({ readonly kind: "prompt"; readonly id: number } & PromptOptions)

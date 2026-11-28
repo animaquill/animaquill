@@ -37,6 +37,12 @@ export interface ReleaseFacts {
   /** Conflicts with GitHub that wait for people (`repo_conflicts`, "open"). */
   readonly conflictsOpen: number;
   /**
+   * Files of its assets still on their way into the large file storage (`lfs_uploads` of
+   * `OPEN_LFS_STATES`): an archive writes the pointer of each only once the storage has it, so the
+   * repository has nothing of them yet, and the copy is where they are said to be.
+   */
+  readonly uploading: number;
+  /**
    * Something else may change it yet: an archive of it runs (its lock is taken), or an AI task of
    * it has not ended. Not known to the list, which takes it for no.
    */
@@ -54,6 +60,7 @@ export type NotReleasable =
   | { readonly kind: "notLive" | "noRepository" | "busy" | "transient" }
   | { readonly kind: "unusable"; readonly reason?: PauseReason }
   | { readonly kind: "conflicts"; readonly count: number }
+  | { readonly kind: "uploading"; readonly uploads: number }
   | {
       readonly kind: "notArchived";
       readonly head: number;
@@ -91,6 +98,9 @@ export const whyNotReleasable = (
   if ((facts.linkingUntil !== null && facts.linkingUntil > now) || link.pendingSha !== null)
     return { kind: "busy" };
   if (facts.held) return { kind: "busy" };
+  // Never, also where people said to let go of what the repository does not have: the files are
+  // on the platform's disk or in the browser, and the copy is what says where they go.
+  if (facts.uploading > 0) return { kind: "uploading", uploads: facts.uploading };
   const waiting = facts.dirtySince !== null || link.archivedSeq < facts.head;
   // Changes that wait for GitHub or the platform, or for their first try: never let go of.
   if (waiting && link.state === "ready" && (link.transientSince !== null || link.failures === 0))
@@ -127,6 +137,7 @@ export const whyNotReleasable = (
  * - "noRepository": nothing to make it again from;
  * - "unusable" (`reason`): its repository cannot be used;
  * - "conflicts" (`count`): changes of GitHub clash with the project's, and wait for people;
+ * - "uploading" (`count`): files of its assets are still on their way into the large file storage;
  * - "paused" (`reason`, `detail?`): archiving into the repository paused;
  * - "failing" (`failures`, `detail?`): archives fail;
  * - "neverArchived": the repository has nothing of it yet;
@@ -135,18 +146,21 @@ export const whyNotReleasable = (
  * - "connected": a window has it open;
  * - "repository" (`reason`): the repository was looked at just now and could not give it back:
  *   "gone" (deleted, or the App may not touch it), "unauthorized", "transferred", "missing" (it
- *   does not have the last archive), "unreachable" (it could not be asked).
+ *   does not have the last archive), "rewritten" (the history of its branch was written over, and
+ *   the last archive is not on it any more), "unreachable" (it could not be asked).
  */
 export type ReleaseBlock =
   | { readonly code: "noRepository" | "neverArchived" | "pending" | "busy" | "connected" }
   | { readonly code: "unusable"; readonly reason?: string }
   | { readonly code: "conflicts"; readonly count: number }
+  | { readonly code: "uploading"; readonly count: number }
   | { readonly code: "paused"; readonly reason?: string; readonly detail?: string }
   | { readonly code: "failing"; readonly failures: number; readonly detail?: string }
   | { readonly code: "repository"; readonly reason: RepositoryLook };
 
 /** What looking at the repository right before letting go of a copy found, see `ReleaseBlock`. */
-export type RepositoryLook = "gone" | "unauthorized" | "transferred" | "missing" | "unreachable";
+export type RepositoryLook =
+  "gone" | "unauthorized" | "transferred" | "missing" | "rewritten" | "unreachable";
 
 /** Shorter than this, what archiving said goes with why: longer is the platform's to read. */
 const DETAIL_MOST = 200;
@@ -171,6 +185,8 @@ export const blockOf = (
       return { code: "unusable", ...(refusal.reason !== undefined && { reason: refusal.reason }) };
     case "conflicts":
       return { code: "conflicts", count: refusal.count };
+    case "uploading":
+      return { code: "uploading", count: refusal.uploads };
     case "notArchived":
       if (refusal.state === "paused")
         return {

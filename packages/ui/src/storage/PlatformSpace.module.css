@@ -53,6 +53,13 @@
   width: min(600px, calc(100vw - 32px));
 }
 
+/* What "释放" is, once, where people choose it. */
+.full .note {
+  margin: 0 0 6px;
+  color: var(--aq-text-muted);
+  font-size: var(--aq-font-12);
+}
+
 .listTitle {
   margin: 0 0 4px;
   color: var(--aq-text-muted);
@@ -148,6 +155,19 @@
 .actions .danger,
 .cell .danger {
   color: var(--aq-danger-text);
+}
+
+/* A way out that is not the first one: a link more than a button. */
+.actions .quiet {
+  color: var(--aq-text-muted);
+  background: none;
+  border-color: transparent;
+}
+
+.actions .quiet:hover:not(:disabled) {
+  color: var(--aq-danger-text);
+  background: none;
+  text-decoration: underline;
 }
 
 .actions button:disabled,

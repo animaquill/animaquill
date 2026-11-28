@@ -188,6 +188,7 @@ const SHORT = new Set([
   "busy",
   "connected",
   "conflicts",
+  "uploading",
   "unusable",
   "paused",
   "failing",
@@ -208,7 +209,14 @@ export const releaseBlockShort = (why: ReleaseBlock, t: TFunction): string =>
  */
 export type ReleaseFix = "open" | "saveToFolder" | undefined;
 
-const REPOSITORY_LOOKS = new Set(["gone", "unauthorized", "transferred", "missing", "unreachable"]);
+const REPOSITORY_LOOKS = new Set([
+  "gone",
+  "unauthorized",
+  "transferred",
+  "missing",
+  "rewritten",
+  "unreachable",
+]);
 
 /** Why a copy is not let go of, in people's words, and what helps, see `ReleaseBlock`. */
 export function releaseBlockText(
@@ -223,6 +231,7 @@ export function releaseBlockText(
     case "pending":
     case "busy":
     case "connected":
+    case "uploading":
       return { text: t(`storage.platform.why.${why.code as "pending"}`), fix: undefined };
     case "conflicts":
       return {

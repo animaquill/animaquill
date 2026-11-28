@@ -1,7 +1,9 @@
-import { count, desc, eq, sql } from "drizzle-orm";
+import { count, desc, eq, inArray, sql } from "drizzle-orm";
 import type { Executor } from "../database.ts";
 import type { PersonLimits } from "../limits.ts";
 import {
+  OPEN_LFS_STATES,
+  lfsUploads,
   projectCovers,
   projectRepos,
   projects,
@@ -65,6 +67,12 @@ export const platformKept = async (
     .where(eq(repoConflicts.state, "open"))
     .groupBy(repoConflicts.projectId)
     .as("conflicts");
+  const uploads = db
+    .select({ projectId: lfsUploads.projectId, count: count().as("uploads") })
+    .from(lfsUploads)
+    .where(inArray(lfsUploads.state, [...OPEN_LFS_STATES]))
+    .groupBy(lfsUploads.projectId)
+    .as("uploads");
   const rows = await db
     .select({
       id: projects.id,
@@ -92,12 +100,14 @@ export const platformKept = async (
       },
       merges: sql<number>`coalesce(${merges.count}, 0)`.mapWith(Number),
       conflicts: sql<number>`coalesce(${conflicts.count}, 0)`.mapWith(Number),
+      uploads: sql<number>`coalesce(${uploads.count}, 0)`.mapWith(Number),
     })
     .from(projects)
     .leftJoin(projectCovers, eq(projectCovers.projectId, projects.id))
     .leftJoin(projectRepos, eq(projectRepos.projectId, projects.id))
     .leftJoin(merges, eq(merges.projectId, projects.id))
     .leftJoin(conflicts, eq(conflicts.projectId, projects.id))
+    .leftJoin(uploads, eq(uploads.projectId, projects.id))
     // Only their own, whatever else they may see: it is theirs that counts, and theirs to let go.
     .where(eq(projects.ownerId, userId))
     .orderBy(desc(bytes), desc(projects.updatedAt))
@@ -119,6 +129,7 @@ export const platformKept = async (
           link: link?.projectId == null ? undefined : link,
           mergesReady: row.merges,
           conflictsOpen: row.conflicts,
+          uploading: row.uploads,
           held: false,
         },
         now,

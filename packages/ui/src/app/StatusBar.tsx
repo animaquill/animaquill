@@ -641,7 +641,14 @@ function SaveStatuses({
   const kept = useSyncExternalStore(platformSpace.subscribe, platformSpace.getSnapshot).space;
   const linkedNow = outer.kind === "linked";
   useEffect(() => {
-    if (linkedNow) void platformSpace.refresh({ fresh: true });
+    if (!linkedNow) return;
+    void platformSpace.refresh({ fresh: true });
+    // ...and as people come back to the window: another one may have made or let go of projects.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void platformSpace.refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, [platformSpace, linkedNow]);
   const overLine = isOver(kept) ? t("storage.platform.over") : undefined;
   // Failing for long is looked at again every minute, and whenever the platform says something.
@@ -747,6 +754,7 @@ function SaveStatuses({
               className={`${styles.name} ${styles.save} ${panel.level === "attention" ? styles.failed : ""}`}
               aria-haspopup="dialog"
               aria-label={label("sync", panel.bar)}
+              {...(overLine && { "aria-description": overLine })}
               data-save-status="sync"
               onClick={() => openAt("sync")}
             >
@@ -760,6 +768,9 @@ function SaveStatuses({
               >
                 {panel.bar}
               </span>
+              {overLine && (
+                <span className={styles.overDot} data-storage-dot="over" aria-hidden="true" />
+              )}
             </button>
           </Tip>
           {github && githubWord && (

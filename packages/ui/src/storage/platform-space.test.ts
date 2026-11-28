@@ -12,6 +12,7 @@ import {
   hasRoom,
   isNearlyFull,
   isOver,
+  releaseBlockShort,
   releaseBlockText,
 } from "./platform-space.ts";
 
@@ -81,6 +82,17 @@ describe("what is kept on the platform", () => {
     expect(releaseBlockText({ code: "paused", reason: "archived" }, t).text).toMatch(
       /^存进 GitHub 停了：/,
     );
+    expect(releaseBlockText({ code: "uploading", count: 2 }, t)).toEqual({
+      text: "还有素材在上传，传完才能释放。",
+      fix: undefined,
+    });
+    expect(releaseBlockText({ code: "repository", reason: "rewritten" }, t)).toMatchObject({
+      text: expect.stringContaining("历史被改过"),
+      fix: "open",
+    });
+    expect(releaseBlockShort({ code: "uploading", count: 2 }, t)).toBe("还有素材在上传");
+    expect(releaseBlockShort({ code: "conflicts", count: 2 }, t)).toBe("有 2 处冲突没处理");
+    expect(releaseBlockShort({ code: "later" }, t)).toBe("现在不能释放");
     // Of a newer platform: said as it is.
     expect(releaseBlockText({ code: "later" }, t).text).toBe("现在不能释放（later）。");
   });

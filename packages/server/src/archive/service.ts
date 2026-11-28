@@ -1985,7 +1985,8 @@ export class RepositoryService {
    * Looks at the repository of a project right before its working copy is let go of, as people ask
    * for it (`POST /api/projects/:id/release`): whether it is there to the platform, on the account
    * it was linked on, and gives back what the copy would be made again from, the commit of the last
-   * archive (`head_sha`), and its branch. `sha`: that commit, which the hub lets go of the copy
+   * archive (`head_sha`), on the history of its branch (the branch is that commit or goes on from
+   * it: after a history written over, it may be one nothing reaches, which goes some day). `sha`: that commit, which the hub lets go of the copy
    * against, see `SyncHub.release`; `refused`: why not, see `RepositoryLook`, where an archive
    * that only looks is queued too, so that the platform notes what it is. Undefined for a project
    * that has no repository or no archive yet: the hub says why then. Nothing else changes.
@@ -2004,9 +2005,19 @@ export class RepositoryService {
     try {
       session = hosts.open(placeOf(link), { signal });
       const info = await session.info();
-      if (link.provider === "github" && info.ownerId !== link.ownerId) found = "transferred";
-      else if ((await session.tip(info.branch)) === undefined) found = "missing";
-      else if ((await session.commit(sha)) === undefined) found = "missing";
+      const tip =
+        link.provider === "github" && info.ownerId !== link.ownerId
+          ? "transferred"
+          : await session.tip(info.branch);
+      if (tip === "transferred") found = "transferred";
+      else if (tip === undefined || (await session.commit(sha)) === undefined) found = "missing";
+      else {
+        // On the branch's history, not a commit left over from a history written over: one that
+        // nothing reaches goes some day, and the copy with it.
+        const comparison = await session.compare(sha, tip);
+        if (comparison?.status !== "ahead" && comparison?.status !== "identical")
+          found = "rewritten";
+      }
     } catch (error) {
       found =
         error instanceof RepoPaused

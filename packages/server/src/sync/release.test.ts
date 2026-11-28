@@ -16,6 +16,7 @@ import { createTestDatabase, TEST_DATABASE, type TestDatabase } from "../test/da
 import { platform } from "../test/platform-support.ts";
 import { TestPeer } from "../test/sync-support.ts";
 import {
+  lfsUploads,
   projectCovers,
   projectRepos,
   projects,
@@ -308,12 +309,64 @@ describe.skipIf(!TEST_DATABASE)("people letting go of working copies", () => {
     w.github.transfer((await linkOf(moved.id)).repoId, stranger);
     await repository(moved.id, "gone");
 
+    // Its history written over (a forced push): the last archive is a commit nothing reaches any
+    // more, which GitHub lets go of some day.
+    const forced = await archived();
+    const forcedRepo = (await linkOf(forced.id)).repoId;
+    const orphan = w.github.commitAs(forcedRepo, w.person, { "x.txt": "new" }, "Anew", {
+      parent: null,
+    });
+    w.github.forcePush(forcedRepo, w.person, orphan);
+    await repository(forced.id, "rewritten");
+    // ...but a branch that goes on from it, as people pushing on GitHub, is no reason.
+    const ahead = await archived();
+    w.github.commitAs((await linkOf(ahead.id)).repoId, w.person, { "notes.txt": "hi" });
+    expect(await release(open, ahead.id)).toMatchObject({ status: 200 });
+
     // GitHub cannot be reached: nothing goes on a guess.
     const away = await archived();
     w.github.faults.unreachable = true;
     await repository(away.id, "unreachable");
     w.github.faults.unreachable = false;
     expect(await release(open, away.id)).toMatchObject({ status: 200 });
+  });
+
+  test("never while files of its assets are on their way into the large file storage", async () => {
+    const hub = hubOf();
+    const open = await platform(w, { hub });
+    const project = await archived();
+    const { repoId } = await linkOf(project.id);
+    const [upload] = await t.db
+      .insert(lfsUploads)
+      .values({
+        userId: w.userId,
+        projectId: project.id,
+        repoId,
+        oid: "a".repeat(64),
+        size: 1000,
+        state: "receiving",
+      })
+      .returning({ id: lfsUploads.id });
+    expect(await release(open, project.id)).toMatchObject({
+      status: 409,
+      json: { error: "notReleasable", why: { code: "uploading", count: 1 } },
+    });
+    const listed = (await open.send("GET", "/api/me/storage")).json.platform.projects;
+    expect(listed).toEqual([
+      expect.objectContaining({ id: project.id, why: { code: "uploading", count: 1 } }),
+    ]);
+    // Not even where an admin says to let go of what the repository does not have.
+    expect(await hub.release(project.id, { unarchived: true })).toEqual({
+      kind: "uploading",
+      uploads: 1,
+    });
+    expect(await rowOf(project.id)).toMatchObject({ copyState: "live" });
+    expect(
+      await t.db.select().from(projectUpdates).where(eq(projectUpdates.projectId, project.id)),
+    ).not.toEqual([]);
+    // Once it is in: let go of as any.
+    await t.db.update(lfsUploads).set({ state: "done" }).where(eq(lfsUploads.id, upload!.id));
+    expect(await release(open, project.id)).toMatchObject({ status: 200 });
   });
 
   test("the hub lets go of a copy for people only against the archive that was looked at", async () => {

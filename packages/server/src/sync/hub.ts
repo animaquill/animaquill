@@ -1963,6 +1963,8 @@ export class SyncHub {
    * - changes do not wait that only GitHub or the platform keep from being archived, or that are
    *   not tried yet (`transient`: those are never let go of);
    * - no conflict with GitHub waits for people (`conflicts`): what they chose would be lost;
+   * - no file of its assets is on its way into the large file storage (`uploading`): the
+   *   repository has no pointer of it yet, also with `unarchived`;
    * - and the repository has everything of it: archiving goes as it should, up to the head, no
    *   change waits, nothing people asked for waits (`notArchived`). With `unarchived`, people (an
    *   admin) said to let go of what it does not have: the devices that made those changes still
@@ -2037,6 +2039,13 @@ export class SyncHub {
             .select({ count: count() })
             .from(repoConflicts)
             .where(and(eq(repoConflicts.projectId, id), eq(repoConflicts.state, "open")));
+          // Uploads begin only for a project whose row they hold, which this holds now.
+          const [uploading] = await tx
+            .select({ count: count() })
+            .from(lfsUploads)
+            .where(
+              and(eq(lfsUploads.projectId, id), inArray(lfsUploads.state, [...OPEN_LFS_STATES])),
+            );
           const refusal = whyNotReleasable(
             {
               copyState: row.copyState,
@@ -2046,6 +2055,7 @@ export class SyncHub {
               link,
               mergesReady: merging?.count ?? 0,
               conflictsOpen: conflicting?.count ?? 0,
+              uploading: uploading?.count ?? 0,
               // Something else that may change it yet, as an AI task of it that has not ended.
               held: link !== undefined && (await this.#holds.busy(tx, id)),
             },

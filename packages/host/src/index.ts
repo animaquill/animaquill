@@ -903,11 +903,12 @@ export type CloudRename =
  * platform says it (`ReleaseBlock` of the server's sync/releasable.ts): it has no repository
  * ("noRepository"), or none with an archive of it ("neverArchived"); changes are not in the
  * repository yet and go there by themselves ("pending"); an archive, a merge or a task goes on with
- * it ("busy"); a window has it open ("connected"); the repository cannot be used ("unusable",
+ * it ("busy"); a window has it open ("connected"); files of its assets are still on their way into
+ * the large file storage ("uploading", `count`); the repository cannot be used ("unusable",
  * `reason` the pause); conflicts with GitHub wait for people ("conflicts", `count`); archiving
  * paused ("paused", `reason`, `detail`) or fails ("failing", `failures`, `detail`); or the
  * repository, looked at just now, could not give it back ("repository", `reason`: gone,
- * unauthorized, transferred, missing, unreachable). A code the editor does not know is one of a
+ * unauthorized, transferred, missing, rewritten, unreachable). A code the editor does not know is one of a
  * newer platform.
  */
 export interface ReleaseBlock {
@@ -917,6 +918,7 @@ export interface ReleaseBlock {
     | "pending"
     | "busy"
     | "connected"
+    | "uploading"
     | "unusable"
     | "conflicts"
     | "paused"

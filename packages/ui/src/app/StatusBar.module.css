@@ -243,3 +243,13 @@
   margin-right: 4px;
   color: var(--aq-recording);
 }
+
+/* More is kept on the platform than may be, as the side bar of the start page says it. */
+.overDot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-left: 4px;
+  background: var(--aq-danger);
+  border-radius: 50%;
+}

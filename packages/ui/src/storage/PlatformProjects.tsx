@@ -4,7 +4,13 @@ import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import { Tip } from "../app/Tip.tsx";
 import { placedT } from "../i18n/i18n.ts";
-import { NEARLY_FULL, formatPlatformBytes, partOf, releaseBlockText } from "./platform-space.ts";
+import {
+  NEARLY_FULL,
+  formatPlatformBytes,
+  partOf,
+  releaseBlockShort,
+  releaseBlockText,
+} from "./platform-space.ts";
 import own from "./PlatformSpace.module.css";
 import styles from "./StorageSpace.module.css";
 
@@ -198,11 +204,17 @@ function Row({
         {row.state === "released" && (
           <span className={own.state}>{t("storage.platform.released")}</span>
         )}
+        {live && row.why && (
+          <span className={own.state} data-release-why={row.why.code}>
+            {releaseBlockShort(row.why, t)}
+          </span>
+        )}
         {row.state === "restoring" && (
           <span className={own.state}>{t("storage.platform.restoring")}</span>
         )}
       </td>
-      <td className={own.number}>{formatPlatformBytes(row.bytes)}</td>
+      {/* One let go of keeps only its cover: nothing to count against it. */}
+      <td className={own.number}>{live ? formatPlatformBytes(row.bytes) : "—"}</td>
       <td className={own.cell}>
         {live &&
           (why ? (

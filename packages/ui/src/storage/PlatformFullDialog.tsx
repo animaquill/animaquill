@@ -5,6 +5,7 @@ import { useWorkbench } from "../app/context.ts";
 import host from "../app/DialogHost.module.css";
 import { placedT } from "../i18n/i18n.ts";
 import type { DialogRequest } from "../workbench/dialogs.ts";
+import { agoText } from "../app/start-view.ts";
 import { formatPlatformBytes, partOf, releaseBlockText } from "./platform-space.ts";
 import styles from "./PlatformSpace.module.css";
 
@@ -38,6 +39,7 @@ export function PlatformFullDialog({ request }: { request: FullRequest }) {
   );
   const { space } = useSyncExternalStore(platformSpace.subscribe, platformSpace.getSnapshot);
   const [releasing, setReleasing] = useState<string>();
+  const [now] = useState(() => Date.now());
   const dialog = useRef<HTMLDialogElement>(null);
   const close = useRef<HTMLButtonElement>(null);
 
@@ -112,11 +114,17 @@ export function PlatformFullDialog({ request }: { request: FullRequest }) {
             <h3 className={styles.listTitle}>
               {t(byCount ? "storage.platform.full.oldest" : "storage.platform.full.largest")}
             </h3>
+            {!byCount && (
+              <p className={styles.note} data-release-note="">
+                {t("storage.platform.full.releaseNote")}
+              </p>
+            )}
             <ul className={styles.rows}>
               {rows.map((row) => {
                 const why = row.why && releaseBlockText(row.why, t);
                 const busy = releasing !== undefined;
                 const live = row.state === "live";
+                const changed = changedAt?.get(row.id);
                 return (
                   <li key={row.id} className={styles.row} data-platform-project={row.id}>
                     <span className={styles.what}>
@@ -129,8 +137,19 @@ export function PlatformFullDialog({ request }: { request: FullRequest }) {
                           {why.text}
                         </span>
                       )}
-                      {byCount && !live && (
-                        <span className={styles.why}>{t("storage.platform.released")}</span>
+                      {byCount && (
+                        <span className={styles.why}>
+                          {[
+                            changed === undefined
+                              ? undefined
+                              : t("storage.platform.full.changed", {
+                                  when: agoText(changed, now, baseT),
+                                }),
+                            live ? undefined : t("storage.platform.released"),
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
+                        </span>
                       )}
                     </span>
                     <span className={styles.actions}>
@@ -144,6 +163,15 @@ export function PlatformFullDialog({ request }: { request: FullRequest }) {
                           {releasing === row.id
                             ? t("storage.platform.releasing")
                             : t("storage.platform.release")}
+                        </button>
+                      )}
+                      {!byCount && why?.fix === "open" && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => answer({ kind: "open", project: row.id, name: row.name })}
+                        >
+                          {t("storage.platform.fix")}
                         </button>
                       )}
                       {live && (
@@ -160,7 +188,7 @@ export function PlatformFullDialog({ request }: { request: FullRequest }) {
                       {(byCount || row.releasable !== true) && (
                         <button
                           type="button"
-                          className={styles.danger}
+                          className={byCount ? styles.danger : styles.quiet}
                           disabled={busy}
                           onClick={() =>
                             answer({ kind: "delete", project: row.id, name: row.name })

@@ -2809,6 +2809,11 @@ export class Workbench {
       });
       if (!answer) return false;
       if (answer.kind === "freed") return true;
+      if (answer.kind === "open") {
+        // What was asked is given up, and the project opens once that is over.
+        this.#openAfterFull = { project: answer.project, name: answer.name };
+        return false;
+      }
       if (answer.kind === "saveToFolder") await this.saveToFolder(answer.project, answer.name);
       else if (await this.deleteFromCloud(answer.project, answer.name)) {
         await this.platformSpace.refresh();
@@ -2816,6 +2821,16 @@ export class Workbench {
       }
       by = fullBy(this.platformSpace.getSnapshot().space);
     }
+  }
+
+  /** A project people chose to see to from the dialog that says the platform is full. */
+  #openAfterFull: { readonly project: string; readonly name: string } | undefined;
+
+  /** Opens what people chose to see to in that dialog, once what it held up is over. */
+  async #openChosenAfterFull(): Promise<void> {
+    const chosen = this.#openAfterFull;
+    this.#openAfterFull = undefined;
+    if (chosen) await this.cloud?.openCloudProject(chosen.project, { name: chosen.name });
   }
 
   /**
@@ -3084,6 +3099,13 @@ export class Workbench {
         // Until the steps are over, or want the dialog again while they go on, as once people
         // made room on the platform (`whenFull`).
         await create.whenBack();
+        // People went to see to a project from the dialog that said the platform is full: what
+        // this made is given up (nothing of it is on the platform), and that project opens after.
+        if (this.#openAfterFull) {
+          await create.whenIdle();
+          await create.cancel({ force: true });
+          break;
+        }
         const { phase } = create.getSnapshot();
         // Something else asks people now, or there is nothing left to say.
         if (this.dialogs.getSnapshot() !== undefined) break;
@@ -3095,6 +3117,7 @@ export class Workbench {
       // What it takes on the platform, as the side bar and the next one say it.
       if (create.getSnapshot().kind === "cloud") void this.platformSpace.refresh();
     }
+    await this.#openChosenAfterFull();
     const { key } = create.getSnapshot();
     if (imported && key !== undefined && this.session.key === key) {
       const report: ImportReport = {
@@ -4145,6 +4168,8 @@ export class Workbench {
     } else {
       await this.#showCreate(this.#newCreate({ repository: row.choice }));
     }
+    // A restore held up for room, where people went to see to a project instead.
+    await this.#openChosenAfterFull();
   }
 
   async importProject(): Promise<void> {
