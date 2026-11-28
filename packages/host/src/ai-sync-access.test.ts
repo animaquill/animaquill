@@ -80,6 +80,31 @@ describe("the AI settings of an account, over HTTP", () => {
     });
   });
 
+  it("names the services whose key the platform cannot open any more, and nothing else", async () => {
+    const access = browserAiSyncAccess({
+      api: (path) => path,
+      fetch: async () =>
+        json(200, {
+          now: 1,
+          account: "u",
+          revision: 1,
+          format: 1,
+          entries: {},
+          keys: { s2: { at: 1, key: "sk" } },
+          unreadable: ["s1", "s2", "Bad Name", 7],
+        }),
+    });
+    const read = await access.read();
+    // One that opened is no unreadable one, whatever the platform says.
+    expect("keys" in read && read.unreadable).toEqual(["s1"]);
+    const none = browserAiSyncAccess({
+      api: (path) => path,
+      fetch: async () =>
+        json(200, { now: 1, account: "u", revision: 1, format: 1, entries: {}, keys: {} }),
+    });
+    expect("keys" in (await none.read()) && (await none.read())).not.toHaveProperty("unreadable");
+  });
+
   it("says what the platform said, as errors to tell apart", async () => {
     const answering = (status: number, body: unknown, headers?: Record<string, string>) =>
       browserAiSyncAccess({ api: (path) => path, fetch: async () => json(status, body, headers) });

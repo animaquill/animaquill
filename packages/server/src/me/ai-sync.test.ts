@@ -390,6 +390,8 @@ describe.skipIf(!TEST_DATABASE)("AI settings that go with an account, on a datab
       sealed: lost.seal("old-key", "ai-key", keyContext(w.userId, "s1")),
     });
     expect((await read()).keys).toEqual({});
+    // Named, so that people are told to give it again; nothing of it opened.
+    expect((await read()).unreadable).toEqual(["s1"]);
     // The browser gives it again, with the time it had.
     expect(
       (
@@ -406,6 +408,7 @@ describe.skipIf(!TEST_DATABASE)("AI settings that go with an account, on a datab
         key: "KEY-FROM-BROWSER",
       },
     });
+    expect((await read()).unreadable).toBeUndefined();
   });
 
   test("a device away a long time does not bring back what was taken away", async () => {

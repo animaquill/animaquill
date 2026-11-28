@@ -7,6 +7,7 @@ import type {
   CoverStore,
   DiagnosticsSink,
   ChatImageStore,
+  LocalServerAccess,
   ChatStore,
   Host,
   LocalFolder,
@@ -550,6 +551,8 @@ export class Workbench {
   readonly chatStore: ChatStore | undefined;
   /** Where the pictures of conversations are kept, for what they take and clearing them. */
   readonly chatImages: ChatImageStore | undefined;
+  /** The server on this computer, for "设置 › 服务器": only with `npx animaquill`'s backend. */
+  readonly localServer: LocalServerAccess | undefined;
   #changingProject = false;
 
   constructor(options: WorkbenchOptions) {
@@ -910,6 +913,7 @@ export class Workbench {
     this.chatStore = host.chats;
     this.leftOver = host.leftOver;
     this.chatImages = host.chatImages;
+    this.localServer = host.localServer;
     this.chat = new ChatSession({
       chats: this.chatSync ?? host.chats,
       ai: this.ai,
@@ -5314,6 +5318,7 @@ export class Workbench {
         this.account !== undefined || (this.mode === "offline" && this.#host.goOnline !== undefined)
       );
     }
+    if (group === "server") return this.localServer !== undefined;
     return true;
   }
 

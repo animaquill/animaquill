@@ -34,7 +34,7 @@ export interface SiteBackend {
   /** The account on it. Asked once the page knows it is not offline. */
   readonly account: () => AccountAccess;
   /** What the online host gets of the backend besides the account, made once it is known whose. */
-  readonly parts: () => Pick<Host, "cloud" | "aiRelay" | "diagnostics">;
+  readonly parts: () => Pick<Host, "cloud" | "aiRelay" | "diagnostics" | "localServer">;
 }
 
 export interface AppOptions extends Omit<EditorOptions, "host"> {

@@ -17,7 +17,7 @@ export interface EditorSite {
    */
   readonly online?: {
     readonly account: () => AccountAccess;
-    readonly parts: () => Pick<Host, "diagnostics" | "cloud" | "aiRelay">;
+    readonly parts: () => Pick<Host, "diagnostics" | "cloud" | "aiRelay" | "localServer">;
   };
 }
 

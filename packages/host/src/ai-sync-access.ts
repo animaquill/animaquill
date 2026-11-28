@@ -27,6 +27,7 @@ import {
   AI_SYNC_BATCH,
   AI_SYNC_KEYS,
   isEntryName,
+  SERVICE_ID,
   readSecretTimes,
   readServiceSecret,
   type AiEntry,
@@ -117,7 +118,21 @@ const stateOf = (value: unknown, clock: Clock): AccountAiSettings | undefined =>
     if (!key) return undefined;
     keys[service] = key;
   }
-  return { account, revision, format, entries, keys };
+  // What does not open on the platform any more: only ids of services, anything else is left out.
+  const unreadable = Array.isArray(value.unreadable)
+    ? value.unreadable.filter(
+        (service): service is string =>
+          typeof service === "string" && SERVICE_ID.test(service) && keys[service] === undefined,
+      )
+    : [];
+  return {
+    account,
+    revision,
+    format,
+    entries,
+    keys,
+    ...(unreadable.length > 0 && { unreadable }),
+  };
 };
 
 /** Asks the platform, and has its times agree with this computer's clock. */

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { and, eq, inArray, lt, or, sql } from "drizzle-orm";
-import { S3Error, type S3SignedRequest } from "@animaquill/host/s3";
+import type { S3SignedRequest } from "@animaquill/host/s3";
 import {
   describeError,
   retryOnDeadlock,
@@ -10,9 +10,7 @@ import {
   type Tx,
 } from "../database.ts";
 import type { Jobs } from "../jobs.ts";
-import { diskRoom, type DiskRoom } from "../library/disk.ts";
-import type { LibraryMode } from "../library/config.ts";
-import type { LibraryStorage } from "../library/storage.ts";
+import type { ChatImageStore } from "./chat-image-store.ts";
 import { projects, userChatImageRefs, userChatImages, userChats, users } from "../schema.ts";
 import { NO_LIMITS, type PersonLimits } from "../limits.ts";
 import type { Setting } from "../settings.ts";
@@ -21,12 +19,16 @@ import { lockPrefs } from "./cloud.ts";
 /**
  * The pictures of people's conversations about projects of the platform: in the object storage of
  * the cloud space, the same bucket, at `chat-images/u/<user id>/<SHA-256>`, one copy of each
- * picture of a person; the conversations (`user_chats.body`) only say which, see `imagesOf`.
+ * picture of a person, or under the same names in a folder of the server's own (the data folder of
+ * `npx animaquill`), see chat-image-store.ts; the conversations (`user_chats.body`) only say which,
+ * see `imagesOf`.
  *
  * - A picture goes up straight to the storage, at an address signed for its size and hash for ten
- *   minutes (`start`); the platform then reads it back and checks both (`done`): what is not what
- *   was said goes at once. Only then can a conversation refer to it, see `saveChat`.
- * - Only its person reads it: at an address signed for five minutes (`read`), never for another.
+ *   minutes (`start`), or to the server for a folder (`putContent`); the platform then reads it back
+ *   and checks both (`done`): what is not what was said goes at once. Only then can a conversation
+ *   refer to it, see `saveChat`.
+ * - Only its person reads it: at an address signed for five minutes (`read`), never for another;
+ *   from a folder through the server (`content`), for the person who is signed in only.
  * - At most `CHAT_IMAGE_BYTES` each, `IMAGES_PER_CHAT` a conversation, and `chat.images` of
  *   limits.ts a person (on the platform, `CHAT_IMAGES_SETTING`, which admins change: admin.ts
  *   `chat-images`; on a server of its own, AQ_LIMITS).
@@ -158,20 +160,12 @@ export interface ChatImageUsage {
 
 export interface ChatImagesOptions {
   readonly db: Db;
-  /** The storage of the cloud space; undefined where there is none, and no picture goes up. */
-  readonly storage: LibraryStorage | undefined;
-  /** Whether the cloud space keeps files now, see library/config.ts. */
-  readonly mode: () => LibraryMode;
-  /** Whether each picture goes up with its SHA-256 signed in, which the storage checks. */
-  readonly checksum: "sha256" | "none";
-  /** With less free on the disk, nothing new goes up, as for the cloud space (library/disk.ts). */
-  readonly minFreeBytes: number;
+  /** Where the pictures are kept (chat-image-store.ts); undefined where nowhere, and none go up. */
+  readonly storage: ChatImageStore | undefined;
   /** How much each person may have, see limits.ts (`chat.images`): nothing unless said. */
   readonly limits?: PersonLimits | undefined;
   readonly now?: () => number;
   readonly log?: Logger;
-  /** Only tests: how full the disk is. */
-  readonly disk?: () => Promise<DiskRoom>;
   /**
    * Has `settle` run for these once every address signed to put a picture until now expired
    * (`UPLOAD_SECONDS`), see `scheduleChatImagesCleanup`: what is put there meanwhile goes too.
@@ -208,10 +202,7 @@ export class ChatImages {
   }
 
   async #canPut(): Promise<boolean> {
-    const { storage, mode, minFreeBytes } = this.#options;
-    if (!storage || mode() !== "on") return false;
-    const room = await (this.#options.disk?.() ?? diskRoom(minFreeBytes));
-    return room.enough;
+    return (await this.#options.storage?.canPut()) ?? false;
   }
 
   /**
@@ -271,13 +262,7 @@ export class ChatImages {
       }),
     );
     if (outcome !== "sign") return outcome;
-    const upload = await storage.public.presign("PUT", imageKey(userId, image.hash), {
-      expiresSeconds: UPLOAD_SECONDS,
-      size: image.bytes,
-      ...(this.#options.checksum === "sha256" && {
-        checksumSha256: Buffer.from(image.hash, "hex").toString("base64"),
-      }),
-    });
+    const upload = await storage.putAddress(imageKey(userId, image.hash), image, UPLOAD_SECONDS);
     return { upload };
   }
 
@@ -323,7 +308,7 @@ export class ChatImages {
     const key = imageKey(userId, hash);
     const [person] = await db.select({ id: users.id }).from(users).where(eq(users.id, userId));
     if (!person) {
-      await storage.internal.deleteObject(key);
+      await storage.remove(key);
       return 1;
     }
     return retryOnDeadlock(() =>
@@ -334,7 +319,7 @@ export class ChatImages {
           .from(userChatImages)
           .where(and(eq(userChatImages.userId, userId), eq(userChatImages.hash, hash)));
         if (row) return 0;
-        await storage.internal.deleteObject(key);
+        await storage.remove(key);
         return 1;
       }),
     );
@@ -342,7 +327,7 @@ export class ChatImages {
 
   async #done(userId: string, hash: string): Promise<DoneOutcome> {
     const { storage } = this.#options;
-    if (!storage || this.#options.mode() === "off") return "unavailable";
+    if (!storage || !storage.canRead()) return "unavailable";
     const key = imageKey(userId, hash);
     return retryOnDeadlock(() =>
       this.#options.db.transaction(async (tx): Promise<DoneOutcome> => {
@@ -354,18 +339,8 @@ export class ChatImages {
           .for("update");
         if (!row) return "missing";
         if (row.state === "ready") return "ready";
-        let content: Buffer;
-        try {
-          const response = await storage.internal.getObject(key);
-          const length = Number(response.headers.get("content-length"));
-          if (Number.isFinite(length) && length > CHAT_IMAGE_BYTES) {
-            await response.body?.cancel().catch(() => {});
-            content = Buffer.alloc(0);
-          } else content = Buffer.from(await response.arrayBuffer());
-        } catch (error) {
-          if (error instanceof S3Error && error.status === 404) return "notUploaded";
-          throw error;
-        }
+        const content = await storage.read(key, CHAT_IMAGE_BYTES);
+        if (content === undefined) return "notUploaded";
         const right =
           content.length === row.bytes &&
           createHash("sha256").update(content).digest("hex") === hash;
@@ -391,7 +366,7 @@ export class ChatImages {
     hash: string,
   ): Promise<{ readonly url: string; readonly type: string } | undefined | "unavailable"> {
     const { storage } = this.#options;
-    if (!storage || this.#options.mode() === "off") return "unavailable";
+    if (!storage || !storage.canRead()) return "unavailable";
     const [row] = await this.#options.db
       .select({ type: userChatImages.type })
       .from(userChatImages)
@@ -403,10 +378,62 @@ export class ChatImages {
         ),
       );
     if (!row) return undefined;
-    const signed = await storage.public.presign("GET", imageKey(userId, hash), {
-      expiresSeconds: READ_SECONDS,
-    });
-    return { url: signed.url, type: row.type };
+    return { url: await storage.readAddress(imageKey(userId, hash), READ_SECONDS), type: row.type };
+  }
+
+  /**
+   * What a page sent of a picture it began to put (`start`), for a store that is put into through
+   * the server (a folder): kept where its row says it is on its way, is that large, and is what its
+   * name says, holding the person as `done` does, so that nothing takes its row away meanwhile.
+   */
+  async putContent(
+    userId: string,
+    hash: string,
+    bytes: Buffer,
+  ): Promise<"kept" | "missing" | "mismatch" | "unavailable"> {
+    const { storage } = this.#options;
+    if (!storage?.write || !(await this.#canPut())) return "unavailable";
+    const write = storage.write.bind(storage);
+    return retryOnDeadlock(() =>
+      this.#options.db.transaction(async (tx) => {
+        await lockPrefs(tx, userId, "share");
+        const [row] = await tx
+          .select({ bytes: userChatImages.bytes, state: userChatImages.state })
+          .from(userChatImages)
+          .where(and(eq(userChatImages.userId, userId), eq(userChatImages.hash, hash)))
+          .for("share");
+        if (!row) return "missing" as const;
+        // Kept already, and checked: it stays as it is.
+        if (row.state === "ready") return "kept" as const;
+        if (bytes.length !== row.bytes || createHash("sha256").update(bytes).digest("hex") !== hash)
+          return "mismatch" as const;
+        await write(imageKey(userId, hash), bytes);
+        return "kept" as const;
+      }),
+    );
+  }
+
+  /** A picture of the person, from a store that is read through the server; nothing of another's. */
+  async content(
+    userId: string,
+    hash: string,
+  ): Promise<{ readonly bytes: Buffer; readonly type: string } | undefined | "unavailable"> {
+    const { storage } = this.#options;
+    if (!storage?.write || !storage.canRead()) return "unavailable";
+    const [row] = await this.#options.db
+      .select({ type: userChatImages.type, bytes: userChatImages.bytes })
+      .from(userChatImages)
+      .where(
+        and(
+          eq(userChatImages.userId, userId),
+          eq(userChatImages.hash, hash),
+          eq(userChatImages.state, "ready"),
+        ),
+      );
+    if (!row) return undefined;
+    const bytes = await storage.read(imageKey(userId, hash), CHAT_IMAGE_BYTES);
+    if (bytes === undefined || bytes.length !== row.bytes) return undefined;
+    return { bytes, type: row.type };
   }
 
   /** How much of their room a person's pictures take, and which conversations have them. */
@@ -497,16 +524,16 @@ export class ChatImages {
     let removed = 0;
     let next: string | undefined;
     do {
-      const page = await storage.internal.listObjects({ prefix, next });
+      const page = await storage.list(prefix, next);
       next = page.next;
-      const hashes = page.objects
-        .map((object) => object.key.slice(prefix.length))
+      const hashes = page.keys
+        .map((key) => key.slice(prefix.length))
         .filter((hash) => HASH.test(hash));
       const have = hashes.length > 0 ? await known(hashes) : new Set<string>();
-      for (const object of page.objects) {
-        const hash = object.key.slice(prefix.length);
+      for (const key of page.keys) {
+        const hash = key.slice(prefix.length);
         if (HASH.test(hash) && have.has(hash)) continue;
-        await storage.internal.deleteObject(object.key);
+        await storage.remove(key);
         removed += 1;
       }
     } while (next !== undefined);
@@ -577,15 +604,10 @@ export class ChatImages {
     const found = new Map<string, Set<string>>();
     let next: string | undefined;
     do {
-      const page = await storage.internal.listObjects({
-        prefix: CHAT_IMAGES_PREFIX,
-        next,
-      });
+      const page = await storage.list(CHAT_IMAGES_PREFIX, next);
       next = page.next;
-      for (const object of page.objects) {
-        const [owner = "", hash = "", ...rest] = object.key
-          .slice(CHAT_IMAGES_PREFIX.length)
-          .split("/");
+      for (const key of page.keys) {
+        const [owner = "", hash = "", ...rest] = key.slice(CHAT_IMAGES_PREFIX.length).split("/");
         if (!USER.test(owner)) continue;
         const each = found.get(owner) ?? new Set<string>();
         // Anything else under a person's prefix is not of the platform's: it goes too.

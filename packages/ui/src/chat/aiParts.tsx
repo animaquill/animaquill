@@ -1,8 +1,9 @@
 import { kindOf, type ServiceConfig } from "@animaquill/agent";
 import { Check, LoaderCircle, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { TFunction } from "i18next";
 import { useTranslation } from "react-i18next";
+import { useWorkbench } from "../app/context.ts";
 import styles from "./AiSettings.module.css";
 import { failureText } from "./failure.ts";
 import { colorOf, initialOf } from "./modelText.ts";
@@ -25,14 +26,36 @@ export function ServiceAvatar(props: {
   );
 }
 
-/** How a service is, for the dot beside it: nothing to say, or what is wrong. */
-export type ServiceState = "ok" | "failed" | "noKey";
+/**
+ * How a service is, for the dot beside it: nothing to say, or what is wrong. `unreadable`: its key
+ * is on the backend, which cannot open it any more (its master key changed), to be filled in again.
+ */
+export type ServiceState = "ok" | "failed" | "noKey" | "unreadable";
 
-export function stateOf(snapshot: AiSettingsSnapshot, service: ServiceConfig): ServiceState {
+export function stateOf(
+  snapshot: AiSettingsSnapshot,
+  service: ServiceConfig,
+  unreadable: readonly string[] = [],
+): ServiceState {
+  if (!snapshot.keyed.has(service.id) && unreadable.includes(service.id)) return "unreadable";
   // Servers of one's own may need no key.
   if (!snapshot.keyed.has(service.id) && !kindOf(service.kind)?.custom) return "noKey";
   if (snapshot.failing.has(service.id)) return "failed";
   return "ok";
+}
+
+const NONE: readonly string[] = [];
+const noSubscribe = () => () => {};
+const noSnapshot = () => undefined;
+
+/** The services whose key the backend cannot open any more, see `AccountAiSnapshot.unreadable`. */
+export function useUnreadableKeys(): readonly string[] {
+  const { accountAi } = useWorkbench();
+  const snapshot = useSyncExternalStore(
+    accountAi?.subscribe ?? noSubscribe,
+    accountAi?.getSnapshot ?? noSnapshot,
+  );
+  return snapshot?.unreadable ?? NONE;
 }
 
 /**

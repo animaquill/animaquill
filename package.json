@@ -13,6 +13,13 @@
     "typescript": "7.0.2",
     "vitest": "5.1.0"
   },
+  "optionalDependencies": {
+    "@embedded-postgres/darwin-arm64-pg17": "npm:@embedded-postgres/darwin-arm64@17.9.0-beta.17",
+    "@embedded-postgres/darwin-x64-pg17": "npm:@embedded-postgres/darwin-x64@17.9.0-beta.17",
+    "@embedded-postgres/linux-arm64-pg17": "npm:@embedded-postgres/linux-arm64@17.9.0-beta.17",
+    "@embedded-postgres/linux-x64-pg17": "npm:@embedded-postgres/linux-x64@17.9.0-beta.17",
+    "@embedded-postgres/windows-x64-pg17": "npm:@embedded-postgres/windows-x64@17.9.0-beta.17"
+  },
   "scripts": {
     "dev": "pnpm --filter @animaquill/ui dev",
     "start": "pnpm --filter animaquill start",

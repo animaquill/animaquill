@@ -121,6 +121,13 @@ export interface AiSyncState {
   readonly format: number;
   readonly entries: Readonly<Record<string, AiEntry>>;
   readonly keys: Readonly<Record<string, KeyState>>;
+  /**
+   * The services whose secret is kept but does not open with the master keys there are (as after
+   * `master.key` of `npx animaquill` was lost): left out of `keys`, as if there were none, so that
+   * a device gives it again, and named here, so that people are told to. Missing where there are
+   * none; pages of before ignore it.
+   */
+  readonly unreadable?: readonly string[];
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -236,9 +243,10 @@ const readKeys = async (
   sealer: Sealer,
   userId: string,
   log: (what: string) => void,
-): Promise<AiSyncState["keys"]> => {
+): Promise<{ keys: AiSyncState["keys"]; unreadable: string[] }> => {
   const rows = await db.select().from(userAiKeys).where(eq(userAiKeys.userId, userId));
   const keys: Record<string, KeyState> = {};
+  const unreadable: string[] = [];
   for (const row of rows) {
     if (!row.sealed) {
       keys[row.service] = { at: row.at.getTime(), deleted: true };
@@ -261,9 +269,10 @@ const readKeys = async (
       // Sealed with a master key that is gone: as if there were none, so the device gives it again.
       if (!(error instanceof SealError)) throw error;
       log(error.message);
+      unreadable.push(row.service);
     }
   }
-  return keys;
+  return { keys, unreadable: unreadable.toSorted() };
 };
 
 const stateOf = async (
@@ -272,15 +281,19 @@ const stateOf = async (
   userId: string,
   row: SettingsRow | undefined,
   log: (what: string) => void,
-): Promise<AiSyncState> => ({
-  ...OLD_PAGES,
-  account: userId,
-  revision: row?.revision ?? 0,
-  // Nothing kept yet is of the first format: any editor can begin it.
-  format: row?.format ?? 1,
-  entries: entriesIn(row?.entries),
-  keys: await readKeys(db, sealer, userId, log),
-});
+): Promise<AiSyncState> => {
+  const { keys, unreadable } = await readKeys(db, sealer, userId, log);
+  return {
+    ...OLD_PAGES,
+    account: userId,
+    revision: row?.revision ?? 0,
+    // Nothing kept yet is of the first format: any editor can begin it.
+    format: row?.format ?? 1,
+    entries: entriesIn(row?.entries),
+    keys,
+    ...(unreadable.length > 0 && { unreadable }),
+  };
+};
 
 /** Everything `userId` has, or only its revision where that is still `since`. */
 export const readAiSync = async (

@@ -320,7 +320,8 @@
   border-radius: 50%;
 }
 
-.dot[data-state="noKey"] {
+.dot[data-state="noKey"],
+.dot[data-state="unreadable"] {
   background: var(--aq-warning);
 }
 

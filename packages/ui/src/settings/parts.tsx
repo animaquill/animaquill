@@ -212,6 +212,7 @@ export function useGroups(): readonly SettingsGroup[] {
   const { account, mode } = workbench;
   return visibleGroups({
     account: account !== undefined || (mode === "offline" && workbench.canGoOnline),
+    server: workbench.localServer !== undefined,
   });
 }
 

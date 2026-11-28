@@ -2,9 +2,12 @@
  * `npx animaquill` with its backend, in Chrome and Firefox (design O4 of AnimaQuill Cloud, sections
  * 2 and 7): the terminal's address signs in once and leaves the address bar and the history at
  * once, a reload stays signed in, a browser without the address gets no online mode but the
- * offline one, a project made online is there after a restart, and the sites of scenes reach none
- * of the API. Each browser has a backend of its own, see backend-support.ts.
+ * offline one, a project made online is there after a restart, the sites of scenes reach none
+ * of the API, and "设置 › 服务器" saves a copy of the master key once and says where the data is.
+ * Each browser has a backend of its own, see backend-support.ts.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { Backend } from "./backend-support.ts";
 
@@ -189,4 +192,54 @@ test("the sites of scenes reach nothing of the API", async ({ page }) => {
   expect(
     (await backend.call("GET", "/api/auth/session", {}, `evil.example:${backend.port}`)).status,
   ).toBe(421);
+});
+
+test("the settings of the server: a copy of the master key saved once, where the data is, and what a backup takes", async ({
+  page,
+}, info) => {
+  const problems = watch(page);
+  await page.goto(await backend.addressToOpen());
+  await signedIn(page);
+  await page.locator("header").getByRole("button", { name: "设置", exact: true }).click();
+  const settings = page.getByTestId("settings");
+  await settings
+    .getByRole("navigation", { name: "设置分组" })
+    .getByRole("button", { name: "服务器", exact: true })
+    .click();
+  await expect(settings.getByTestId("server-database")).toHaveText(
+    "PostgreSQL 18（随 AnimaQuill 带的）",
+  );
+  await expect(settings.getByTestId("server-data-dir")).toHaveText(backend.dataDir);
+  await expect(settings.getByTestId("server-key-path")).toHaveText(
+    join(backend.dataDir, "master.key"),
+  );
+  await expect(settings.getByTestId("server-key-unsaved")).toBeVisible();
+  await expect(settings.getByText("npx animaquill server export <文件夹>")).toBeVisible();
+  // As people see it, in both themes: kept with the results of the test.
+  if (info.project.name === "backend-chromium")
+    for (const colorScheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme });
+      await expect(page.locator("html")).toHaveAttribute("data-theme", colorScheme);
+      await settings.screenshot({ path: info.outputPath(`server-${colorScheme}.png`) });
+    }
+
+  const download = page.waitForEvent("download");
+  await settings.getByTestId("server-key-save").click();
+  const saved = await download;
+  expect(saved.suggestedFilename()).toMatch(/^animaquill-master-[0-9a-f]{8}\.key$/);
+  expect(readFileSync(await saved.path(), "utf8")).toBe(
+    readFileSync(join(backend.dataDir, "master.key"), "utf8"),
+  );
+  // Asked once: from then on, how it stands, and another copy if wanted.
+  await expect(settings.getByTestId("server-key-unsaved")).toHaveCount(0);
+  await expect(settings.getByTestId("server-key-save")).toHaveText("再存一份…");
+  await page.reload();
+  await signedIn(page);
+  await page.locator("header").getByRole("button", { name: "设置", exact: true }).click();
+  await settings
+    .getByRole("navigation", { name: "设置分组" })
+    .getByRole("button", { name: "服务器", exact: true })
+    .click();
+  await expect(settings.getByTestId("server-key-save")).toHaveText("再存一份…");
+  expect(problems).toEqual([]);
 });

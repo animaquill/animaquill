@@ -286,9 +286,11 @@ export const readBackend = (dir: string) => readJson<BackendNote>(join(dir, BACK
 export function adminRequest(
   backend: BackendNote,
   method: "GET" | "POST",
-  path: "ping" | "open",
+  path: "ping" | "open" | "export",
   timeoutMs = 3000,
+  json?: unknown,
 ): Promise<{ status: number; body: unknown } | "refused"> {
+  const payload = json === undefined ? undefined : Buffer.from(JSON.stringify(json));
   return new Promise((done) => {
     const sent = request(
       {
@@ -299,7 +301,8 @@ export function adminRequest(
         headers: {
           host: new URL(backend.origin).host,
           authorization: `Bearer ${backend.adminKey}`,
-          ...(method === "POST" && { "content-length": "0" }),
+          ...(method === "POST" && { "content-length": String(payload?.length ?? 0) }),
+          ...(payload && { "content-type": "application/json" }),
         },
         timeout: timeoutMs,
       },
@@ -323,7 +326,7 @@ export function adminRequest(
     sent.on("error", (error: NodeJS.ErrnoException) =>
       done(error.code === "ECONNREFUSED" ? "refused" : { status: 0, body: undefined }),
     );
-    sent.end();
+    sent.end(payload);
   });
 }
 

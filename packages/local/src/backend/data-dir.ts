@@ -4,6 +4,7 @@ import { chmod, lstat, mkdir, open, readdir, readFile, rename, rm } from "node:f
 import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { dirname, join, resolve, win32 } from "node:path";
+import { MAJOR } from "./postgres.ts";
 
 /**
  * The data folder of the backend of `npx animaquill` (design O4 of AnimaQuill Cloud, section 1):
@@ -220,9 +221,12 @@ export async function masterKeyOf(
   return { path, made, lost: made && databaseThere };
 }
 
-/** The password of the database here, made the first time; only for its own PostgreSQL. */
-export async function passwordOf(dir: string): Promise<string> {
-  const path = join(dir, "pg18.password");
+/**
+ * The password of the database here of a major version of PostgreSQL (`pg18.password`), made the
+ * first time; only for its own PostgreSQL.
+ */
+export async function passwordOf(dir: string, major = MAJOR): Promise<string> {
+  const path = join(dir, `pg${major}.password`);
   await writeNew(path, `${randomBytes(24).toString("base64url")}\n`);
   return (await readFile(path, "utf8")).trim();
 }

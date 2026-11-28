@@ -80,6 +80,11 @@ export interface AccountAiSnapshot {
   readonly keysRead: boolean;
   /** Changes made here that the backend does not have yet. */
   readonly pending: number;
+  /**
+   * The services whose key the backend keeps but cannot open any more (its master key changed), and
+   * that were not given again here: to be filled in again. Missing: none.
+   */
+  readonly unreadable?: readonly string[];
 }
 
 export interface AccountAiOptions {
@@ -166,6 +171,8 @@ export class AccountAi {
   #entries = new Map<string, AiEntry>();
   #keyTimes = new Map<string, KeyTime>();
   readonly #secrets = new Map<string, ServiceSecret>();
+  /** What the backend last said it cannot open, see `AccountAiSnapshot.unreadable`. */
+  #unreadable: ReadonlySet<string> = new Set();
   readonly #pending = new Set<string>();
   readonly #pendingKeys = new Set<string>();
   #format = 1;
@@ -219,15 +226,18 @@ export class AccountAi {
   }
 
   #set(changes: Partial<AccountAiSnapshot>): void {
-    const next = {
-      ...this.#snapshot,
-      ...changes,
+    const unreadable = [...this.#unreadable].filter((service) => !this.#secrets.has(service));
+    const { unreadable: _before, ...rest } = { ...this.#snapshot, ...changes };
+    const next: AccountAiSnapshot = {
+      ...rest,
       pending: this.#pending.size + this.#pendingKeys.size,
+      ...(unreadable.length > 0 && { unreadable }),
     };
     if (
       next.status === this.#snapshot.status &&
       next.keysRead === this.#snapshot.keysRead &&
-      next.pending === this.#snapshot.pending
+      next.pending === this.#snapshot.pending &&
+      (next.unreadable ?? []).join(" ") === (this.#snapshot.unreadable ?? []).join(" ")
     )
       return;
     this.#snapshot = next;
@@ -423,6 +433,7 @@ export class AccountAi {
       }
     }
     this.#keyTimes = times;
+    this.#unreadable = new Set(remote.unreadable ?? []);
     this.#format = Math.max(this.#format, remote.format);
     this.#revision = remote.revision;
 

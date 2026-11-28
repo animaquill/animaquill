@@ -4,7 +4,7 @@ import { useEffect, useState, useSyncExternalStore, type DragEvent } from "react
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
 import { AddServicePicker } from "./AddService.tsx";
-import { ServiceAvatar, isServiceOn, stateOf } from "./aiParts.tsx";
+import { ServiceAvatar, isServiceOn, stateOf, useUnreadableKeys } from "./aiParts.tsx";
 import styles from "./AiSettings.module.css";
 import { CapabilityIcon, capabilityOf } from "./CapabilityIcon.tsx";
 import { failureText } from "./failure.ts";
@@ -171,6 +171,7 @@ function Tree(props: {
   const { ai } = useWorkbench();
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
+  const unreadable = useUnreadableKeys();
   const [dragged, setDragged] = useState<string | undefined>();
   const held = snapshot.held !== undefined;
   // Services of the catalog above, those of one's own below the line; each kept in its order.
@@ -204,7 +205,7 @@ function Tree(props: {
   };
 
   const node = (service: ServiceConfig, index: number, group: readonly ServiceConfig[]) => {
-    const state = stateOf(snapshot, service);
+    const state = stateOf(snapshot, service, unreadable);
     const failure = snapshot.failing.get(service.id);
     const custom = isCustom(service);
     const off = !isServiceOn(service);

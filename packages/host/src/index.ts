@@ -282,6 +282,11 @@ export interface Host {
    */
   readonly covers?: CoverStore;
   /**
+   * The server on this computer the online mode is of (`npx animaquill`), for "设置 › 服务器":
+   * only there, and only for the person of this computer.
+   */
+  readonly localServer?: LocalServerAccess;
+  /**
    * The files of assets this browser sends somewhere for projects, and how far each got, see
    * `UploadStore`. Without it nothing is sent.
    */
@@ -1058,6 +1063,44 @@ export interface CloudAccess {
   readonly modelCatalog?: () => Promise<ModelCatalog>;
 }
 
+/** How the server on this computer stands, as its settings show it, see `LocalServerAccess`. */
+export interface LocalServerState {
+  readonly version: string;
+  /** The data folder of the server. */
+  readonly dataDir: string;
+  /** Its own PostgreSQL and its major version, or one people gave it. */
+  readonly database: { readonly kind: "own"; readonly major: number } | { readonly kind: "given" };
+  /** The master key, which seals the keys of AI services; missing where there is none. */
+  readonly masterKey?: {
+    readonly path: string;
+    /** Which key it is, as a short digest: never the key. */
+    readonly fingerprint: string;
+    /** People said they saved a copy of this key. */
+    readonly saved: boolean;
+    /** It was made again as the server started (the one before was gone): what it sealed is lost. */
+    readonly madeAgain: boolean;
+  };
+  /** Folders of versions of PostgreSQL before, which an upgrade left. */
+  readonly old: readonly {
+    readonly name: string;
+    readonly major: number;
+    readonly bytes: number;
+  }[];
+  /** The upgrade to a new PostgreSQL did not go as the server started: it runs on the one before. */
+  readonly upgradeFailed?: { readonly from: number; readonly to: number; readonly reason: string };
+}
+
+/** The server on this computer, for its settings. Rejects where it cannot be reached. */
+export interface LocalServerAccess {
+  read(): Promise<LocalServerState>;
+  /** The master key as its file has it, to save a copy. */
+  masterKey(): Promise<string>;
+  /** People saved a copy of the key of this digest. */
+  keySaved(fingerprint: string): Promise<void>;
+  /** Takes away a folder of `old`. */
+  removeOld(name: string): Promise<void>;
+}
+
 /**
  * Everything of the AI settings an account keeps, see ai-sync-rules.ts: by this computer's clock,
  * as the host has the platform's times agree with it.
@@ -1072,6 +1115,11 @@ export interface AccountAiSettings {
   readonly entries: Readonly<Record<string, AiEntry>>;
   /** What is secret of each service, by the id of the service. */
   readonly keys: Readonly<Record<string, AiSyncKey>>;
+  /**
+   * The services whose secret the platform keeps but cannot open any more (its master key changed):
+   * not in `keys`, and to be given again. Missing where there are none.
+   */
+  readonly unreadable?: readonly string[];
 }
 
 /** What changed of the AI settings on this device, see `AiSyncAccess.change`. */

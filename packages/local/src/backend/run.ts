@@ -11,11 +11,29 @@ import { startServer } from "@animaquill/server/server.ts";
 import { upgradeOf } from "@animaquill/server/sync/socket.ts";
 import { startWorker } from "@animaquill/server/worker.ts";
 import { startLocalServer, type LocalApi, type LocalServer } from "../server.ts";
+import { ADMIN_PREFIX, type LocalServerState } from "@animaquill/server/local/routes.ts";
 import { masterKeyOf, passwordOf, prepareDataDir } from "./data-dir.ts";
+import { exportServer, type Connection } from "./data.ts";
 import { adminRequest, newAdminKey, takeLock, type HeldLock } from "./lock.ts";
 import { fileLogger, openLogs, type LogFiles } from "./logs.ts";
 import { checkedOpening, OpenPages, type Opening } from "./open-page.ts";
-import { findPrograms, MAJOR, Postgres, PostgresFailed } from "./postgres.ts";
+import {
+  findPrograms,
+  folderOf,
+  MAJOR,
+  NoPostgres,
+  Postgres,
+  PostgresFailed,
+  type Programs,
+} from "./postgres.ts";
+import { serverState } from "./server-state.ts";
+import {
+  madeFolders,
+  settleFolders,
+  upgradePostgres,
+  upgradingOf,
+  type UpgradeFault,
+} from "./upgrade.ts";
 
 /**
  * The backend of `npx animaquill` (design O4 of AnimaQuill Cloud): in one process the server of
@@ -36,6 +54,31 @@ export interface BackendOptions {
   /** A PostgreSQL of people's own, as `postgres://user:password@host:port/database`. */
   readonly database?: string | undefined;
   readonly say: (line: string) => void;
+  /** Only tests: the step after which an upgrade of PostgreSQL fails, see upgrade.ts. */
+  readonly upgradeFault?: UpgradeFault | undefined;
+}
+
+/** The data folder has the database of a newer PostgreSQL than this version brings. */
+export class NewerPostgres extends Error {
+  override name = "NewerPostgres";
+  readonly major: number;
+  constructor(major: number) {
+    super(`the data folder has PostgreSQL ${major}, this version brings ${MAJOR}`);
+    this.major = major;
+  }
+}
+
+/**
+ * The data folder has only the database of a PostgreSQL before this version's, and this version has
+ * not that one's programs to upgrade it with.
+ */
+export class OlderPostgres extends Error {
+  override name = "OlderPostgres";
+  readonly major: number;
+  constructor(major: number) {
+    super(`the data folder has PostgreSQL ${major}, which this version cannot upgrade`);
+    this.major = major;
+  }
 }
 
 export interface StartedBackend {
@@ -52,6 +95,8 @@ export interface StartedBackend {
   stop(): Promise<void>;
   /** Stops PostgreSQL at once, as after a second Ctrl+C: it recovers as it starts again. */
   stopNow(): Promise<void>;
+  /** The data of the server into `dir`, as `server export` asks through the admin routes. */
+  exportData(dir: string): Promise<Readonly<Record<string, unknown>> | string>;
 }
 
 /** Another start of the same data folder answers: what to open of it, signed in, where it said. */
@@ -148,23 +193,21 @@ async function start(
   // The database: ours, or the one people gave.
   let postgres: Postgres | undefined;
   let database: Record<string, string>;
+  let upgradeFailed: LocalServerState["upgradeFailed"];
   if (options.database === undefined) {
-    postgres = new Postgres({
-      programs: await findPrograms(),
-      dataDir,
-      password: await passwordOf(dataDir),
-      logFile: logs.postgres,
-    });
+    const ours = await ownPostgres(options, logs.postgres, log);
+    postgres = ours.postgres;
+    upgradeFailed = ours.upgradeFailed;
     const left = await postgres.stopLeftOver();
     if (left !== "none") log.warn({ found: left }, "a PostgreSQL of a start before");
     if (!(await postgres.isMade())) {
       say("第一次准备数据库（几秒）…");
       await postgres.init();
-    } else if ((await postgres.version()) !== MAJOR) {
+    } else if ((await postgres.version()) !== postgres.major) {
       throw new PostgresFailed(
         "PG_VERSION",
         null,
-        `pg${MAJOR}/ has PostgreSQL ${await postgres.version()}`,
+        `${folderOf(postgres.major)}/ has PostgreSQL ${await postgres.version()}`,
       );
     }
     say("启动数据库…");
@@ -197,9 +240,11 @@ async function start(
     "animaquill-local",
   );
   let due: number;
+  let madeAgain = false;
   try {
     due = await migrationsDue(check.db);
     const key = await masterKeyOf(dataDir, due < MIGRATION_COUNT());
+    madeAgain = key.lost;
     if (key.lost) {
       say("主密钥 master.key 不见了，已生成新的：之前存的 AI key 解不开了，之后要在设置里重新填。");
       log.warn(
@@ -257,8 +302,39 @@ async function start(
   };
   const adminKey = newAdminKey();
 
+  /** While the data is exported: no requests but the admin's, and no syncing. */
+  let paused = false;
+  let exporting = false;
+  const connection: Connection = {
+    host: database["DATABASE_HOST"]!,
+    port: Number(database["DATABASE_PORT"]),
+    user: database["DATABASE_USER"]!,
+    password: database["DATABASE_PASSWORD"],
+    database: database["DATABASE_NAME"]!,
+  };
+  const exportWhileRunning = async (dir: string) => {
+    if (exporting) return "an export runs already";
+    exporting = true;
+    paused = true;
+    try {
+      backend.closeSyncing();
+      // What was on its way as it began lands first; the export is of one moment anyway.
+      await new Promise((done) => setTimeout(done, 500));
+      const summary = await exportServer(connection, dir, { dataDir, version });
+      log.info({ tables: summary.tables, rows: summary.rows }, "the data was exported");
+      return { ...summary };
+    } catch (error) {
+      log.warn({ err: (error as Error).message }, "the data was not exported");
+      return (error as Error).message;
+    } finally {
+      paused = false;
+      exporting = false;
+    }
+  };
+
   const backend = startServer(config, {
     withoutGitHub: true,
+    chatImagesIn: dataDir,
     build: (settings, platform) =>
       buildApp(
         settings,
@@ -273,6 +349,16 @@ async function start(
             instance: lock.note.instance,
             version,
             open: issue,
+            server: serverState({
+              dataDir,
+              version,
+              major: postgres?.major,
+              madeAgain,
+              ...(upgradeFailed && { upgradeFailed }),
+              // The folder it runs on is never one of those before; this keeps it so.
+              running: (name) => postgres !== undefined && name === folderOf(postgres.major),
+            }),
+            exportData: (dir) => exportWhileRunning(dir),
           }),
         },
         { level: "info", stream: logs.stream },
@@ -281,9 +367,20 @@ async function start(
       await app.ready();
       const upgrade = upgradeOf(app);
       api = {
-        request: (request, response) => app.routing(request, response),
+        request: (request, response) => {
+          if (paused && !request.url?.startsWith(`${ADMIN_PREFIX}/`)) {
+            response.writeHead(503, {
+              "content-type": "application/json; charset=utf-8",
+              "retry-after": "2",
+              "cache-control": "no-store",
+            });
+            response.end(JSON.stringify({ error: "unavailable" }));
+            return;
+          }
+          app.routing(request, response);
+        },
         upgrade: (request, socket, head) => {
-          if (upgrade) upgrade(request, socket, head);
+          if (upgrade && !paused) upgrade(request, socket, head);
           else socket.destroy();
         },
       };
@@ -332,5 +429,74 @@ async function start(
       await pages.removeAll().catch(() => {});
       await lock.release().catch(() => {});
     },
+    exportData: exportWhileRunning,
+  };
+}
+
+/**
+ * The PostgreSQL of the data folder: this version's, where its folder is there or none is yet;
+ * else an upgrade from the one before (upgrade.ts), and where that does not go, the one before, as
+ * it was, and why.
+ */
+async function ownPostgres(
+  options: BackendOptions,
+  logFile: string,
+  log: ReturnType<typeof fileLogger>,
+): Promise<{ postgres: Postgres; upgradeFailed?: LocalServerState["upgradeFailed"] }> {
+  const { dataDir, say } = options;
+  const programs = await findPrograms();
+  const ours = async (major = MAJOR, at?: Programs) =>
+    new Postgres({
+      programs: at ?? programs,
+      dataDir,
+      major,
+      password: await passwordOf(dataDir, major),
+      logFile,
+    });
+  const made = await madeFolders(dataDir);
+  if (made.includes(MAJOR)) {
+    const staging = new Postgres({
+      programs,
+      dataDir,
+      folderName: upgradingOf(MAJOR),
+      password: await passwordOf(dataDir),
+      logFile,
+    });
+    const named = await settleFolders(dataDir, staging, log);
+    if (named)
+      say(`旧版本的数据库留在数据目录的 ${named} 里，确认一切正常后可以在“设置 › 服务器”里删掉。`);
+    return { postgres: await ours() };
+  }
+  const newer = made.filter((major) => major > MAJOR);
+  if (newer.length > 0) throw new NewerPostgres(newer.at(-1)!);
+  const from = made.filter((major) => major < MAJOR).at(-1);
+  if (from === undefined) return { postgres: await ours() };
+  const before = await findPrograms(undefined, undefined, from).catch((error: unknown) => {
+    if (error instanceof NoPostgres) return undefined;
+    throw error;
+  });
+  if (!before) throw new OlderPostgres(from);
+  say(`数据库要从 PostgreSQL ${from} 升级到 ${MAJOR}（只做这一次，数据多时要几分钟）…`);
+  const outcome = await upgradePostgres({
+    dataDir,
+    from: { major: from, programs: before },
+    to: { programs },
+    logFile,
+    version: options.version,
+    log,
+    ...(options.upgradeFault && { fault: options.upgradeFault }),
+  });
+  if (outcome.kind === "upgraded") {
+    say(
+      `数据库已升级到 PostgreSQL ${MAJOR}（${outcome.tables} 张表、${outcome.rows} 行，逐表核对过）。原来的留在数据目录的 ${outcome.old} 里，确认一切正常后可以在“设置 › 服务器”里删掉。`,
+    );
+    return { postgres: await ours() };
+  }
+  say(
+    `数据库没能升级到 PostgreSQL ${MAJOR}，这次照旧用 ${from}，数据没有动；下次启动会再试。原因：${outcome.reason}`,
+  );
+  return {
+    postgres: await ours(from, before),
+    upgradeFailed: { from, to: MAJOR, reason: outcome.reason },
   };
 }

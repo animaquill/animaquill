@@ -178,6 +178,22 @@ importers:
       vitest:
         specifier: 5.1.0
         version: 5.1.0(@opentelemetry/api@1.10.0)(@types/node@26.0.0)(vite@8.3.6(@types/node@26.0.0)(esbuild@0.28.2)(tsx@4.23.15))
+    optionalDependencies:
+      '@embedded-postgres/darwin-arm64-pg17':
+        specifier: npm:@embedded-postgres/darwin-arm64@17.9.0-beta.17
+        version: '@embedded-postgres/darwin-arm64@17.9.0-beta.17'
+      '@embedded-postgres/darwin-x64-pg17':
+        specifier: npm:@embedded-postgres/darwin-x64@17.9.0-beta.17
+        version: '@embedded-postgres/darwin-x64@17.9.0-beta.17'
+      '@embedded-postgres/linux-arm64-pg17':
+        specifier: npm:@embedded-postgres/linux-arm64@17.9.0-beta.17
+        version: '@embedded-postgres/linux-arm64@17.9.0-beta.17'
+      '@embedded-postgres/linux-x64-pg17':
+        specifier: npm:@embedded-postgres/linux-x64@17.9.0-beta.17
+        version: '@embedded-postgres/linux-x64@17.9.0-beta.17'
+      '@embedded-postgres/windows-x64-pg17':
+        specifier: npm:@embedded-postgres/windows-x64@17.9.0-beta.17
+        version: '@embedded-postgres/windows-x64@17.9.0-beta.17'
 
   packages/agent:
     dependencies:
@@ -731,10 +747,22 @@ packages:
     resolution: {integrity: sha512-VW3tcVdnNfl/Vk8wHPTzZdKkxcsCOM12ppiO4DXnd9wMxUCmOfLt/wvUnWeKWbTVlVSRg0uqKtnnhE2UCsG2Bw==}
     engines: {node: '>=22.19.0'}
 
+  '@embedded-postgres/darwin-arm64@17.9.0-beta.17':
+    resolution: {integrity: sha512-Plsp3Tulr4HV8BFM+rPvAJ08Lo4Zytt1UA4CcgYIBPvdZY/Kn22G+RcmgZ2vKS6YBU8AspKh6cuaTv/PYxYw+A==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [darwin]
+
   '@embedded-postgres/darwin-arm64@18.6.0-beta.19':
     resolution: {integrity: sha512-FHuiAR1sQUw8J6M+UVFlzd1D8oP4rlL+16Zgd1STqCCzWmO6dFjXBCEQ2I1JaGVQKOE85NlCjNNKuy8RiIrsqw==}
     engines: {node: '>=16'}
     cpu: [arm64]
+    os: [darwin]
+
+  '@embedded-postgres/darwin-x64@17.9.0-beta.17':
+    resolution: {integrity: sha512-M8+NTrnM1+IawnmhEGWCNFBXCC1k+lJPXvljUmZvWakmluVy8w1xEm1G5ARRvNvR2D0zfaZYJJfTz7zSNGpSYw==}
+    engines: {node: '>=16'}
+    cpu: [x64]
     os: [darwin]
 
   '@embedded-postgres/darwin-x64@18.6.0-beta.19':
@@ -743,10 +771,22 @@ packages:
     cpu: [x64]
     os: [darwin]
 
+  '@embedded-postgres/linux-arm64@17.9.0-beta.17':
+    resolution: {integrity: sha512-rUIX6X3BZeUl99vQUZUkymbUqQWXtcGaLlCaW81xiesAd94MaF74slkz+hWrs9oPF8T60STPm/qJ8DYabSSR8w==}
+    engines: {node: '>=16'}
+    cpu: [arm64]
+    os: [linux]
+
   '@embedded-postgres/linux-arm64@18.6.0-beta.19':
     resolution: {integrity: sha512-mDNZiZkT+Wyxh+BD8HH1n603ircuVLSbQT2bVQeC0D7vk7zPO+54RNRUuC7H0RyTlU6l4FxOxjE6D1Yun1JgMg==}
     engines: {node: '>=16'}
     cpu: [arm64]
+    os: [linux]
+
+  '@embedded-postgres/linux-x64@17.9.0-beta.17':
+    resolution: {integrity: sha512-RNVlYUDROBfSPJM9kGwurr56tJ+xA58mMsZmUJWcURqPBCifyvBJuOEeIbhXatpPeqvG3Qo886l2wsYr2qK+Mw==}
+    engines: {node: '>=16'}
+    cpu: [x64]
     os: [linux]
 
   '@embedded-postgres/linux-x64@18.6.0-beta.19':
@@ -754,6 +794,12 @@ packages:
     engines: {node: '>=16'}
     cpu: [x64]
     os: [linux]
+
+  '@embedded-postgres/windows-x64@17.9.0-beta.17':
+    resolution: {integrity: sha512-JmxIOn9mR19Ml3zqMzG0UCiJ9grEnVpINPo+/Tufkw4Hrhp5RHSHjxP7Vy2JRSA0OrX6ICEMUJZmdu0Th0xixQ==}
+    engines: {node: '>=16'}
+    cpu: [x64]
+    os: [win32]
 
   '@embedded-postgres/windows-x64@18.6.0-beta.19':
     resolution: {integrity: sha512-fp8d8f+6WfJQftX0D+l1vUTLPwCN5hlhV/g/KI5zDBwHURmta6ph3/kJeEOVirtbczO/pKQlqM4cELB2c7Sp7Q==}
@@ -3478,16 +3524,31 @@ snapshots:
 
   '@earendil-works/pi-telemetry@1.5.0': {}
 
+  '@embedded-postgres/darwin-arm64@17.9.0-beta.17':
+    optional: true
+
   '@embedded-postgres/darwin-arm64@18.6.0-beta.19':
+    optional: true
+
+  '@embedded-postgres/darwin-x64@17.9.0-beta.17':
     optional: true
 
   '@embedded-postgres/darwin-x64@18.6.0-beta.19':
     optional: true
 
+  '@embedded-postgres/linux-arm64@17.9.0-beta.17':
+    optional: true
+
   '@embedded-postgres/linux-arm64@18.6.0-beta.19':
     optional: true
 
+  '@embedded-postgres/linux-x64@17.9.0-beta.17':
+    optional: true
+
   '@embedded-postgres/linux-x64@18.6.0-beta.19':
+    optional: true
+
+  '@embedded-postgres/windows-x64@17.9.0-beta.17':
     optional: true
 
   '@embedded-postgres/windows-x64@18.6.0-beta.19':

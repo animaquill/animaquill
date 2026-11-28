@@ -29,7 +29,7 @@ AnimaQuill 0.4.0
 
 ## 数据目录
 
-默认 Windows 是 `%LOCALAPPDATA%\AnimaQuill\server\`，macOS 和 Linux 是 `~/.animaquill/server/`，可以用 `--data-dir` 或环境变量 `AQ_DATA_DIR` 换。里面有数据库（`pg18/`）、项目的仓库（`repos/`）、大文件、日志（`logs/`）和主密钥 `master.key`。主密钥加密存着的 AI key：**请另存一份**，丢了以后要重新填 key。
+默认 Windows 是 `%LOCALAPPDATA%\AnimaQuill\server\`，macOS 和 Linux 是 `~/.animaquill/server/`，可以用 `--data-dir` 或环境变量 `AQ_DATA_DIR` 换。里面有数据库（`pg18/`）、项目的仓库（`repos/`）、大文件、对话里的图片（`chat-images/`）、日志（`logs/`）和主密钥 `master.key`。主密钥加密存着的 AI key：**请另存一份**（编辑器的“设置 › 服务器”里可以另存），丢了以后 AI 模型的设置里会标“要重新填”。
 
 在 macOS 和 Linux 上，这个目录只有你能访问（700，文件 600）；别的用户能改它时 AnimaQuill 不启动，并告诉你怎么改回来。在 Windows 上，每次启动都把它设成只有你能访问（去掉继承的权限）；数据目录不在你的用户目录里、或者设不成时会提醒。
 
@@ -54,6 +54,8 @@ AnimaQuill 0.4.0
 ```
 animaquill [--offline] [--data-dir <目录>] [--database <网址>] [--port <端口>] [--no-open]
 animaquill open
+animaquill server export <文件夹>
+animaquill server import <文件夹> [--master-key <主密钥文件>]
 animaquill mcp|check|describe|guide [--project <项目文件夹>]
 ```
 
@@ -61,12 +63,16 @@ animaquill mcp|check|describe|guide [--project <项目文件夹>]
 - `--data-dir <目录>`：数据目录，见上。
 - `--database <网址>`：用自己的 PostgreSQL，比如 `postgres://用户@主机:5432/库名`，不起随包的数据库。带密码的网址请放在环境变量 `AQ_DATABASE_URL` 里（比如 `AQ_DATABASE_URL=postgres://用户:密码@主机:5432/库名 npx animaquill`）：命令行里的密码，同一台电脑上的其他用户能在进程列表里看到。
 - `open`：在浏览器里打开已经在运行的 AnimaQuill。再运行一次 `npx animaquill` 也一样。
+- `server export <文件夹>`：把在线模式的数据（账号、AI 设置和加密的 key、对话和对话里的图片、项目清单和项目的实时副本、本机仓库）导出到一个新文件夹，只有你能读。AnimaQuill 开着时也可以，同步会停几秒，编辑器自己接上。导出里没有主密钥。
+- `server import <文件夹>`：把导出的数据导入到一个空的数据目录（换电脑、恢复备份），导完逐表核对。`--master-key` 给原来的 `master.key`，存的 AI key 才打得开；不给的话，key 之后要重新填。
 - `--port <端口>`：默认 7651。浏览器把项目、设置和 AI 的 key 按地址（包括端口）分开存，换了端口就看不到原来端口下存在浏览器里的项目（文件夹项目还在文件夹里，重新打开即可）。平时不要改。
 - `--no-open`：不自动打开浏览器。
 
 端口被占用时服务器不会自动换一个，而是报错退出。
 
 数据目录被更新版本的 AnimaQuill 用过时，旧版本不会打开它，会提示运行 `npx animaquill@latest`。
+
+以后 AnimaQuill 换随包的 PostgreSQL 大版本时，第一次启动会自动升级数据库：先导出、在旁边建新的数据库导入、逐表核对，都对上才换过去；旧的留在数据目录里（比如 `pg18.old/`），确认没问题后在“设置 › 服务器”里删。中途出了问题就照旧用原来的数据库，数据不动，下次启动再试。
 
 ## 让电脑上的 AI 工具改项目（MCP）
 

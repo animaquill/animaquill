@@ -12,6 +12,7 @@ import {
   Pencil,
   Play,
   Search,
+  Server,
   Settings,
   UserRound,
   X,
@@ -31,6 +32,7 @@ import {
 import {
   AboutGroup,
   AccountGroup,
+  ServerGroup,
   ChatGroup,
   EditingGroup,
   ExportGroup,
@@ -56,6 +58,7 @@ const ICONS: Readonly<Record<SettingsGroup, ComponentType<{ size?: number }>>> =
   chat: MessageSquareText,
   localAi: Laptop,
   account: UserRound,
+  server: Server,
   storage: HardDrive,
   about: Info,
 };
@@ -372,6 +375,8 @@ function GroupPage({ group }: { readonly group: SettingsGroup }) {
       return <LocalAiGroup />;
     case "account":
       return <AccountGroup />;
+    case "server":
+      return <ServerGroup />;
     case "storage":
       return <StorageGroup />;
     case "about":

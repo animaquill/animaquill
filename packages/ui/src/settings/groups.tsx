@@ -1,15 +1,21 @@
-import type { AccountSpace, ChatImageUsage, LeftOverContents, UndoUsage } from "@animaquill/host";
+import type {
+  AccountSpace,
+  ChatImageUsage,
+  LeftOverContents,
+  LocalServerState,
+  UndoUsage,
+} from "@animaquill/host";
 import { TOOL_CALL_LIMITS } from "@animaquill/agent";
 import type { VideoCodecName } from "@animaquill/media";
 import type { TFunction } from "i18next";
-import { ExternalLink } from "lucide-react";
+import { Copy, ExternalLink, TriangleAlert } from "lucide-react";
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useSession, useWorkbench } from "../app/context.ts";
 import { GitHubRow, useAccount } from "../cloud/CloudParts.tsx";
 import { FONT_SIZES, THEME_CHOICES } from "../workbench/appearance.ts";
 
-import { Button, Choice, GroupPage, Segmented, SettingRow, Toggle } from "./parts.tsx";
+import { Button, Choice, GroupPage, RowsHeading, Segmented, SettingRow, Toggle } from "./parts.tsx";
 import { usageOfChats, clearLocalChats, type ChatsUsage } from "./storage.ts";
 import { bytesText } from "../chat/shots.ts";
 import cloudStyles from "../cloud/CloudSync.module.css";
@@ -542,6 +548,223 @@ function ChatImagesRow() {
         </Button>
       )}
     </SettingRow>
+  );
+}
+
+// ---- 服务器
+
+/** The commands of a backup, as people type them in the terminal. */
+const EXPORT_COMMAND = "npx animaquill server export <文件夹>";
+const IMPORT_COMMAND = "npx animaquill server import <文件夹> --master-key <主密钥文件>";
+
+/**
+ * The server on this computer (`npx animaquill`, design O4 of AnimaQuill Cloud, 3): the master key
+ * first, as long as no copy of it was saved (once saved, a line of how it stands); the database;
+ * where the data is, with what a backup and a move take; and what an upgrade of the database left
+ * behind, to take away.
+ */
+export function ServerGroup() {
+  const { localServer, notifications } = useWorkbench();
+  const { t } = useTranslation();
+  const [state, setState] = useState<LocalServerState | "failed">();
+  const read = useCallback(() => {
+    localServer?.read().then(setState, (error: unknown) => {
+      console.warn("The server on this computer could not be read", error);
+      setState("failed");
+    });
+  }, [localServer]);
+  useEffect(read, [read]);
+  if (!localServer) return null;
+  const copy = (text: string) =>
+    void navigator.clipboard?.writeText(text).then(
+      () => notifications.push(t("settings.localServer.copied")),
+      () => notifications.push(t("settings.localServer.copyFailed")),
+    );
+  if (state === undefined) return <GroupPage title={t("settings.groups.server")}>{null}</GroupPage>;
+  if (state === "failed")
+    return (
+      <GroupPage title={t("settings.groups.server")}>
+        <div className={styles.signIn} data-testid="server-unreadable">
+          <p>{t("settings.localServer.failed")}</p>
+          <Button onClick={read}>{t("cloudSync.retry")}</Button>
+        </div>
+      </GroupPage>
+    );
+  return (
+    <GroupPage title={t("settings.groups.server")}>
+      <MasterKeyRow state={state} onChange={read} />
+      <RowsHeading>{t("settings.localServer.data")}</RowsHeading>
+      <SettingRow
+        id="server.dataDir"
+        below={
+          <code className={styles.path} data-testid="server-data-dir">
+            {state.dataDir}
+          </code>
+        }
+      >
+        <Button onClick={() => copy(state.dataDir)}>
+          <Copy size={13} aria-hidden /> {t("settings.localServer.copyPath")}
+        </Button>
+      </SettingRow>
+      <SettingRow
+        id="server.database"
+        below={
+          <>
+            <span className={styles.value} data-testid="server-database">
+              {state.database.kind === "own"
+                ? t("settings.localServer.databaseOwn", { major: state.database.major })
+                : t("settings.localServer.databaseGiven")}
+            </span>
+            {state.upgradeFailed && (
+              <span className={styles.warning} data-testid="server-upgrade-failed">
+                <TriangleAlert size={13} aria-hidden />
+                {t("settings.localServer.upgradeFailed", state.upgradeFailed)}
+              </span>
+            )}
+          </>
+        }
+      />
+      <OldDatabasesRow state={state} onChange={read} />
+      <SettingRow
+        id="server.backup"
+        wide
+        below={
+          <span className={styles.commands}>
+            {[EXPORT_COMMAND, IMPORT_COMMAND].map((command) => (
+              <span key={command} className={styles.command}>
+                <code>{command}</code>
+                <button
+                  type="button"
+                  className={styles.iconButton}
+                  aria-label={t("settings.localServer.copyCommand")}
+                  title={t("settings.localServer.copyCommand")}
+                  onClick={() => copy(command)}
+                >
+                  <Copy size={13} aria-hidden />
+                </button>
+              </span>
+            ))}
+          </span>
+        }
+      />
+    </GroupPage>
+  );
+}
+
+/**
+ * The master key, which seals the keys of AI services kept on the server: until a copy was saved,
+ * what it is for and a way to save one; then how it stands, and another copy if wanted. Where it
+ * was made again as the server started, the keys sealed before are lost, and that is said.
+ */
+function MasterKeyRow(props: { readonly state: LocalServerState; readonly onChange: () => void }) {
+  const { localServer, notifications } = useWorkbench();
+  const { t } = useTranslation();
+  const [busy, setBusy] = useState(false);
+  const key = props.state.masterKey;
+  if (!localServer || !key) return null;
+  const save = async () => {
+    setBusy(true);
+    try {
+      const text = await localServer.masterKey();
+      const url = URL.createObjectURL(new Blob([text], { type: "application/octet-stream" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `animaquill-master-${key.fingerprint.slice(0, 8)}.key`;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      await localServer.keySaved(key.fingerprint);
+      props.onChange();
+    } catch (error) {
+      console.warn("The master key could not be saved", error);
+      notifications.push(t("settings.localServer.keySaveFailed"));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const already = async () => {
+    await localServer.keySaved(key.fingerprint).then(props.onChange, (error: unknown) => {
+      console.warn("The master key could not be noted as saved", error);
+      notifications.push(t("settings.localServer.keySaveFailed"));
+    });
+  };
+  return (
+    <SettingRow
+      id="server.masterKey"
+      help={key.saved ? t("settings.localServer.keySavedHelp") : undefined}
+      below={
+        <>
+          {key.madeAgain && (
+            <span className={styles.warning} data-testid="server-key-made-again">
+              <TriangleAlert size={13} aria-hidden />
+              {t("settings.localServer.keyMadeAgain")}
+            </span>
+          )}
+          {!key.saved && (
+            <span className={styles.attention} data-testid="server-key-unsaved">
+              {t("settings.localServer.keyUnsaved")}
+            </span>
+          )}
+          <code className={styles.path} data-testid="server-key-path">
+            {key.path}
+          </code>
+        </>
+      }
+    >
+      <span className={styles.buttons}>
+        {!key.saved && (
+          <button type="button" className={styles.link} onClick={() => void already()}>
+            {t("settings.localServer.keyAlready")}
+          </button>
+        )}
+        <Button testId="server-key-save" disabled={busy} onClick={() => void save()}>
+          {t(key.saved ? "settings.localServer.keySaveAgain" : "settings.localServer.keySave")}
+        </Button>
+      </span>
+    </SettingRow>
+  );
+}
+
+/** What an upgrade of the database left of the version before, each with a way to take it away. */
+function OldDatabasesRow(props: {
+  readonly state: LocalServerState;
+  readonly onChange: () => void;
+}) {
+  const { localServer, dialogs, notifications } = useWorkbench();
+  const { t } = useTranslation();
+  if (!localServer || props.state.old.length === 0) return null;
+  const remove = async (name: string, major: number) => {
+    const sure = await dialogs.confirm({
+      title: t("settings.localServer.oldDeleteTitle", { major }),
+      message: t("settings.localServer.oldDeleteMessage", { name }),
+      confirm: t("settings.localServer.oldDelete"),
+      danger: true,
+    });
+    if (!sure) return;
+    await localServer.removeOld(name).then(props.onChange, (error: unknown) => {
+      console.warn("The database of the version before could not be taken away", error);
+      notifications.push(t("settings.localServer.oldDeleteFailed"));
+    });
+  };
+  return (
+    <>
+      {props.state.old.map((each) => (
+        <SettingRow
+          key={each.name}
+          id="server.old"
+          name={t("settings.localServer.oldName", { major: each.major })}
+          below={
+            <span className={styles.status} data-testid="server-old">
+              <code className={styles.path}>{each.name}</code>
+              {bytesText(each.bytes)}
+            </span>
+          }
+        >
+          <Button danger onClick={() => void remove(each.name, each.major)}>
+            {t("settings.localServer.oldDelete")}
+          </Button>
+        </SettingRow>
+      ))}
+    </>
   );
 }
 

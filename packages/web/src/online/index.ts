@@ -5,6 +5,7 @@ import { serverAccount, type ServerAccountOptions } from "./account.ts";
 import { serverCloud } from "./cloud.ts";
 import { REQUEST_HEADER } from "./headers.ts";
 import { BINDING_HEADER, bindingFetch } from "./local.ts";
+import { serverLocal } from "./local-server.ts";
 
 /**
  * The online mode against the backend of the editor's own site (`@animaquill/server`, under /api of
@@ -20,6 +21,7 @@ export {
   type ServerAccountOptions,
 } from "./account.ts";
 export { serverCloud, type ServerCloudOptions } from "./cloud.ts";
+export { serverLocal } from "./local-server.ts";
 export { EDITOR_HEADER, REQUEST_HEADER } from "./headers.ts";
 export {
   BINDING_HEADER,
@@ -74,6 +76,12 @@ export function serverOnline(options: ServerOnlineOptions): NonNullable<EditorSi
       ...(diagnostics && { diagnostics }),
       cloud: serverCloud({ editor, version, binding }),
       aiRelay: serverRelay(binding),
+      // The server of this computer, for its settings.
+      ...(local && {
+        localServer: serverLocal(
+          binding === undefined ? fetch.bind(globalThis) : bindingFetch(binding),
+        ),
+      }),
     }),
   };
 }

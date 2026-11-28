@@ -17,6 +17,7 @@ import {
   imageKey,
   UNREFERENCED_KEEP_MS,
 } from "./chat-images.ts";
+import { objectImageStore } from "./chat-image-store.ts";
 
 /**
  * The pictures of conversations on the platform (me/chat-images.ts): straight into a real object
@@ -41,10 +42,7 @@ describe.skipIf(!TEST_DATABASE || !TEST_S3)(
     const imagesWith = (checksum: "sha256" | "none") =>
       new ChatImages({
         db: t.db,
-        storage,
-        mode: () => "on",
-        checksum,
-        minFreeBytes: 0,
+        storage: objectImageStore({ storage, mode: () => "on", checksum, minFreeBytes: 0 }),
         limits,
         now: () => time,
         log: quiet,

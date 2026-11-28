@@ -1458,7 +1458,7 @@ export interface OnlineHostOptions {
   readonly backend: string;
   /** Whose the scope is: the id of the account on the backend, see `AccountSnapshot.id`. */
   readonly account: string;
-  readonly parts: Pick<Host, "account" | "cloud" | "aiRelay" | "diagnostics">;
+  readonly parts: Pick<Host, "account" | "cloud" | "aiRelay" | "diagnostics" | "localServer">;
   /**
    * The offline mode of the same site, to go to and open folders in, see `Host.openOffline`.
    * Missing where this browser gets no offline mode, as Safari.

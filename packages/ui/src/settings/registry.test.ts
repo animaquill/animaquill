@@ -131,4 +131,13 @@ describe("searching", () => {
     expect(found("额度", noPlatform)).toEqual([]);
     expect(found("额度", visibleGroups({ account: true }))).toContain("account.space");
   });
+
+  it("the server's only where it is the server on this computer", () => {
+    expect(visibleGroups({ account: true })).not.toContain("server");
+    const local = visibleGroups({ account: true, server: true });
+    expect(local).toContain("server");
+    expect(found("主密钥", local)[0]).toBe("server.masterKey");
+    expect(found("备份", local)).toContain("server.backup");
+    expect(found("主密钥", visibleGroups({ account: true }))).toEqual([]);
+  });
 });

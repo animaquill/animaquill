@@ -13,7 +13,13 @@ import { platformKept } from "./platform.ts";
 import type { Sealer } from "../seal.ts";
 import { changeLfs, lfsChangesOf, readLfs } from "./lfs.ts";
 import type { LocalLfsSummary } from "../lfs/uploads.ts";
-import { imageStartOf, isImageHash, type ChatImages } from "./chat-images.ts";
+import {
+  CHAT_IMAGE_BYTES,
+  CHAT_IMAGE_TYPES,
+  imageStartOf,
+  isImageHash,
+  type ChatImages,
+} from "./chat-images.ts";
 import { PLATFORM_ID } from "../sync/hub.ts";
 import { aiChangesOf, applyAiSync, readAiSync } from "./ai-sync.ts";
 import {
@@ -73,6 +79,11 @@ import type { SessionCredentials } from "../auth/credentials.ts";
  *   five minutes; 404 `notFound` for one the person does not have. `GET /api/me/chat-images`:
  *   `{used, limit, chats: [{project, projectName, chat, title, images, bytes}]}`, the room their
  *   pictures take and which conversations have them.
+ * - Where the server keeps the pictures in a folder of its own (me/chat-image-store.ts), the
+ *   address to put one at and to read it at is `/api/me/chat-images/:hash/content`: `PUT` with
+ *   the bytes (of a type a picture may be, `CHAT_IMAGE_TYPES`), only from pages of this site: 204
+ *   once kept, 422 `mismatch` where they are not what was begun, 404 where it was not begun; `GET`:
+ *   the picture itself, of the person only, 404 otherwise.
  * - Writing a conversation that names pictures the platform does not have (and that do not say
  *   they stayed on their device, `held`) is 409 `{error: "missingImages", images: [hash]}`; one with
  *   more than 100 is 413 `tooManyImages`.
@@ -466,6 +477,58 @@ export const meRoutes = async (app: FastifyInstance, options: MeRoutesOptions) =
       if (!found) return reply.code(404).send({ error: "notFound" });
       reply.header("cache-control", "no-store");
       return found;
+    },
+  );
+
+  // The bytes of a picture, where the server keeps them itself: read only by this route.
+  app.addContentTypeParser(
+    [...CHAT_IMAGE_TYPES],
+    { parseAs: "buffer", bodyLimit: CHAT_IMAGE_BYTES },
+    (_request, body, done) => done(null, body),
+  );
+
+  app.put<{ Params: ImageParams; Body: unknown }>(
+    "/api/me/chat-images/:hash/content",
+    {
+      config: { access: { none: "what is the person's own, of no project" } },
+      preHandler: guard,
+      bodyLimit: CHAT_IMAGE_BYTES,
+    },
+    async (request, reply) => {
+      const user = await signedIn(request, reply, limits.images);
+      const database = db();
+      if (!user || !database) return reply;
+      if (!isImageHash(request.params.hash)) return reply.code(404).send({ error: "notFound" });
+      if (!Buffer.isBuffer(request.body)) return reply.code(415).send({ error: "unsupported" });
+      const images = options.chatImages?.();
+      if (!images) return reply.code(503).send({ error: "unavailable" });
+      const outcome = await images.putContent(user.userId, request.params.hash, request.body);
+      if (outcome === "kept") return reply.code(204).send();
+      if (outcome === "mismatch") return reply.code(422).send({ error: "mismatch" });
+      if (outcome === "unavailable") return reply.code(503).send({ error: "unavailable" });
+      return reply.code(404).send({ error: "notFound" });
+    },
+  );
+
+  app.get<{ Params: ImageParams }>(
+    "/api/me/chat-images/:hash/content",
+    { config: { access: { none: "what is the person's own, of no project" } } },
+    async (request, reply) => {
+      const user = await signedIn(request, reply, limits.images);
+      const database = db();
+      if (!user || !database) return reply;
+      if (!isImageHash(request.params.hash)) return reply.code(404).send({ error: "notFound" });
+      const images = options.chatImages?.();
+      if (!images) return reply.code(503).send({ error: "unavailable" });
+      const found = await images.content(user.userId, request.params.hash);
+      if (found === "unavailable") return reply.code(503).send({ error: "unavailable" });
+      if (!found) return reply.code(404).send({ error: "notFound" });
+      return reply
+        .header("cache-control", "private, no-store")
+        .header("content-type", found.type)
+        .header("x-content-type-options", "nosniff")
+        .header("content-security-policy", "default-src 'none'; sandbox")
+        .send(found.bytes);
     },
   );
 

@@ -11,7 +11,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../../app/context.ts";
-import { stateOf } from "../aiParts.tsx";
+import { stateOf, useUnreadableKeys } from "../aiParts.tsx";
 import { CapabilityIcon, capabilityOf } from "../CapabilityIcon.tsx";
 import { contextLabel, priceLabel } from "../modelText.ts";
 import { PackLabel } from "../PackLabel.tsx";
@@ -41,6 +41,7 @@ export function ModelBubble(props: {
   const { ai, chat, packs } = workbench;
   const { t } = useTranslation();
   const settings = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
+  const unreadable = useUnreadableKeys();
   useSyncExternalStore(packs.subscribe, packs.getSnapshot);
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState<string | undefined>();
@@ -62,18 +63,23 @@ export function ModelBubble(props: {
   const searchable = useMemo(
     () =>
       settings.services.map((service): Group => {
-        const state = stateOf(settings, service);
+        const state = stateOf(settings, service, unreadable);
         return {
           service: service.id,
           name: service.name,
-          dim: state === "noKey" || state === "failed" ? state : undefined,
+          dim:
+            state === "noKey" || state === "unreadable"
+              ? "noKey"
+              : state === "failed"
+                ? state
+                : undefined,
           rows: ai
             .modelsFor(service.id)
             .filter((model) => model.enabled)
             .map((model) => ({ service: service.id, model })),
         };
       }),
-    [ai, settings],
+    [ai, settings, unreadable],
   );
   const groups = useMemo((): readonly Group[] => {
     const services = searchable;

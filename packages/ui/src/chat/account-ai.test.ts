@@ -25,12 +25,14 @@ function backendOf(account = "u1") {
   const keys: Record<string, AiSyncKey> = {};
   const state = { revision: 0, down: false, tooLarge: false };
   const changes: AccountAiChanges[] = [];
+  const unreadable = new Set<string>();
   const now = (): AccountAiSettings => ({
     account,
     revision: state.revision,
     format: 3,
     entries: structuredClone(entries),
     keys: structuredClone(keys),
+    ...(unreadable.size > 0 && { unreadable: [...unreadable] }),
   });
   const reach = () => {
     if (state.down) throw new TypeError("Failed to fetch");
@@ -49,6 +51,7 @@ function backendOf(account = "u1") {
         if (isLaterEntry(entries[name], entry)) entries[name] = entry as AiEntry;
       }
       for (const { service, ...key } of given.keys) {
+        unreadable.delete(service);
         const before = keys[service];
         if (key.deleted || !before || before.deleted) {
           if (isLaterEntry(before, key)) keys[service] = key as AiSyncKey;
@@ -61,7 +64,7 @@ function backendOf(account = "u1") {
       return { state: now(), refused: [], tooLarge: [] };
     },
   };
-  return { access, state, changes, entries, keys };
+  return { access, state, changes, entries, keys, unreadable };
 }
 
 function memorySettings(): SettingsStore & { readonly kept: Map<string, unknown> } {
@@ -123,6 +126,21 @@ describe("the AI settings of the online mode", () => {
     expect(await other.ai.settings.load("ai")).toMatchObject({
       services: [{ id: "s1", name: "甲" }],
     });
+  });
+
+  test("say which keys the backend cannot open any more, until one is given again", async () => {
+    const backend = backendOf();
+    backend.unreadable.add("s1");
+    const one = pageOf(backend);
+    await one.ai.start();
+    expect(one.ai.getSnapshot().unreadable).toEqual(["s1"]);
+    // Typed again: here at once, and on the backend once it went.
+    await one.ai.keys.write("s1", { key: "sk-again" });
+    expect(one.ai.getSnapshot().unreadable).toBeUndefined();
+    await one.ai.flush();
+    expect(backend.unreadable.size).toBe(0);
+    await one.ai.pull();
+    expect(one.ai.getSnapshot().unreadable).toBeUndefined();
   });
 
   test("keep the keys out of the browser: what it keeps for while offline has none", async () => {

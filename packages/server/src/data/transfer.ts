@@ -45,7 +45,8 @@ import type pg from "pg";
  * Left out: the job queue (`pgboss`, made again as the server starts), the record of migrations
  * (`drizzle`, which the target has of its own, and has to have the same), and what is not in the
  * database at all, such as the pictures of conversations in the object storage, which stays where it
- * is.
+ * is. Those a server keeps in its data folder (`chat-images/`, as `npx animaquill` does) go along
+ * with the repositories of its own, see `exportChatImages`.
  *
  * Which tables: those of the schemas of its scope (`DataScope`): the server's are in `public`; a
  * deployment adds the schemas of its own (the platform's `cloud`), with the record of their
@@ -103,6 +104,16 @@ export interface Manifest {
    * none, or the export was told to leave them out.
    */
   readonly repos?: { readonly files: number; readonly bytes: number; readonly sha256: string };
+  /**
+   * The pictures of conversations the server keeps in its data folder (`chat-images/`), copied into
+   * `chat-images/` here, each named by its SHA-256, listed in `chat-images.json`: missing where
+   * there were none there.
+   */
+  readonly chatImages?: {
+    readonly files: number;
+    readonly bytes: number;
+    readonly sha256: string;
+  };
 }
 
 /** For each record of migrations (a table of the schema `drizzle`): how many ran, and the last. */
@@ -451,7 +462,7 @@ export class TableWriter {
 export const finishExport = (
   dir: string,
   of: Pick<Manifest, "server" | "exportedAt" | "scope" | "migrations" | "tables"> &
-    Pick<Partial<Manifest>, "sequences" | "repos">,
+    Pick<Partial<Manifest>, "sequences" | "repos" | "chatImages">,
 ): Manifest => {
   const manifest: Manifest = {
     format: FORMAT,
@@ -471,6 +482,7 @@ export const finishExport = (
     tables: of.tables,
     ...(of.sequences && Object.keys(of.sequences).length > 0 && { sequences: of.sequences }),
     ...(of.repos && { repos: of.repos }),
+    ...(of.chatImages && { chatImages: of.chatImages }),
   };
   writePrivate(join(dir, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
@@ -491,8 +503,9 @@ export const exportData = async (
     /** The migrations of the code, which the database has to have: see `sameMigrations`. */
     readonly migrations?: Migrations;
     /**
-     * The data folder of the server, whose repositories of its own (`repos/`) go along, after the
-     * tables: none where it has none, or unless said.
+     * The data folder of the server, whose repositories of its own (`repos/`) and pictures of
+     * conversations (`chat-images/`) go along, after the tables: none where it has none, or unless
+     * said.
      */
     readonly dataDir?: string | undefined;
   },
@@ -526,7 +539,104 @@ export const exportData = async (
   // After the snapshot of the tables: a repository newer than the database that comes back with
   // it is merged as changes in the repository, never one older that misses what it has.
   const repos = options.dataDir === undefined ? undefined : await exportRepos(options.dataDir, dir);
-  return finishExport(dir, { ...of, ...(repos && { repos }) });
+  const chatImages =
+    options.dataDir === undefined ? undefined : exportChatImages(options.dataDir, dir);
+  return finishExport(dir, { ...of, ...(repos && { repos }), ...(chatImages && { chatImages }) });
+};
+
+/** What `chat-images.json` of an export says: each picture, by its path under `chat-images/`. */
+interface ChatImagesList {
+  readonly files: readonly { readonly path: string; readonly size: number }[];
+}
+
+/** A picture's path under `chat-images/`: `u/<user id>/<SHA-256>`, and nothing else. */
+const IMAGE_PATH = /^u\/[0-9a-f-]{36}\/([0-9a-f]{64})$/;
+
+/**
+ * Copies the pictures of conversations of the data folder (`chat-images/u/<user>/<SHA-256>`, see
+ * me/chat-image-store.ts) into `chat-images/` of an export, each checked against its name as it is
+ * copied: one that is not what its name says is not copied (it is no picture of the server's; it
+ * would be refused as it is read anyway). Undefined where there are none.
+ */
+export const exportChatImages = (
+  dataDir: string,
+  dir: string,
+): { files: number; bytes: number; sha256: string } | undefined => {
+  const from = join(dataDir, "chat-images", "u");
+  if (!existsSync(from)) return undefined;
+  const files: { path: string; size: number }[] = [];
+  let bytes = 0;
+  for (const person of readdirSync(from, { withFileTypes: true }).toSorted((a, b) =>
+    a.name < b.name ? -1 : 1,
+  )) {
+    if (!person.isDirectory()) continue;
+    for (const image of readdirSync(join(from, person.name), { withFileTypes: true }).toSorted(
+      (a, b) => (a.name < b.name ? -1 : 1),
+    )) {
+      const path = `u/${person.name}/${image.name}`;
+      const hash = IMAGE_PATH.exec(path)?.[1];
+      if (!image.isFile() || hash === undefined) continue;
+      const target = join(dir, "chat-images", path);
+      mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+      let copied: { size: number; sha256: string };
+      try {
+        copied = copyHashing(join(from, person.name, image.name), target, 0o600);
+      } catch (error) {
+        // Taken away meanwhile, as nothing referred to it.
+        if ((error as { code?: unknown }).code === "ENOENT") continue;
+        throw error;
+      }
+      if (copied.sha256 !== hash) {
+        rmSync(target, { force: true });
+        continue;
+      }
+      files.push({ path, size: copied.size });
+      bytes += copied.size;
+    }
+  }
+  if (files.length === 0) return undefined;
+  const list = `${JSON.stringify({ files } satisfies ChatImagesList)}\n`;
+  writePrivate(join(dir, "chat-images.json"), list);
+  return { files: files.length, bytes, sha256: createHash("sha256").update(list).digest("hex") };
+};
+
+/**
+ * Puts the pictures of an export into the data folder of this server, each checked against its
+ * name: only where it has none yet. All or nothing: into a folder of their own first, which becomes
+ * `chat-images/` once whole. Resolves to the folder made, or undefined where there were none.
+ */
+export const importChatImages = (
+  dir: string,
+  dataDir: string,
+  manifest: Manifest,
+): string | undefined => {
+  if (!manifest.chatImages) return undefined;
+  const listText = readFileSync(join(dir, "chat-images.json"), "utf8");
+  if (createHash("sha256").update(listText).digest("hex") !== manifest.chatImages.sha256)
+    throw new DataRefused("chat-images.json is not what was exported");
+  const list = JSON.parse(listText) as ChatImagesList;
+  const to = join(dataDir, "chat-images");
+  if (existsSync(to) && readdirSync(to).some((name) => name !== ".writing"))
+    throw new DataRefused(`${to} has pictures already: import only into a server without any`);
+  const building = join(dataDir, `.chat-images-importing-${process.pid}-${Date.now()}`);
+  mkdirSync(building, { recursive: true, mode: 0o700 });
+  try {
+    for (const file of list.files) {
+      const hash = IMAGE_PATH.exec(file.path)?.[1];
+      if (hash === undefined) throw new DataRefused(`${file.path} is no picture of a conversation`);
+      const target = join(building, ...file.path.split("/"));
+      mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+      const copied = copyHashing(join(dir, "chat-images", ...file.path.split("/")), target, 0o600);
+      if (copied.sha256 !== hash || copied.size !== file.size)
+        throw new DataRefused(`chat-images/${file.path} is not what was exported`);
+    }
+    rmSync(to, { recursive: true, force: true });
+    renameSync(building, to);
+  } catch (error) {
+    rmSync(building, { recursive: true, force: true });
+    throw error;
+  }
+  return to;
 };
 
 /** Where the sequences of the schemas are: the last value each gave, or null for none yet. */
@@ -813,17 +923,24 @@ export const importData = async (
   options: {
     readonly scope?: DataScope;
     /**
-     * The data folder of this server, where the repositories of the export go (`importRepos`):
-     * once everything about the database is checked, before the rows go in, and away again where
-     * they do not. Left where they are unless said.
+     * The data folder of this server, where the repositories of the export go (`importRepos`), and
+     * its pictures of conversations (`importChatImages`): once everything about the database is
+     * checked, before the rows go in, and away again where they do not. The repositories are left
+     * where they are unless said; an export with pictures is refused without it, as they would be
+     * lost.
      */
     readonly dataDir?: string | undefined;
   } = {},
 ): Promise<Manifest> => {
   const manifest = readManifest(dir);
   const scope = options.scope ?? SERVER_SCOPE;
-  /** The repositories this put into the data folder, which go again where the rest does not. */
+  if (manifest.chatImages && options.dataDir === undefined)
+    throw new DataRefused(
+      "the export has pictures of conversations, and this server has no data folder for them",
+    );
+  /** What this put into the data folder, which goes again where the rest does not. */
   let repos: string | undefined;
+  let chatImages: string | undefined;
   if (!sameScope(scope, manifest.scope))
     throw new DataRefused(
       `the export is of other schemas (${manifest.scope.schemas.join(", ")}) than this server (${scope.schemas.join(", ")})`,
@@ -860,6 +977,8 @@ export const importData = async (
       importRepos(dir, options.dataDir, manifest);
       repos = join(options.dataDir, "repos");
     }
+    if (options.dataDir !== undefined)
+      chatImages = importChatImages(dir, options.dataDir, manifest);
     const byName = new Map(manifest.tables.map((table) => [nameOf(table), table]));
     for (const name of await orderOf(client, [...here.keys()])) {
       const table = byName.get(name)!;
@@ -919,6 +1038,7 @@ export const importData = async (
     await client.query("rollback").catch(() => {});
     // What this put in goes again: nothing of the export is left half in.
     if (repos !== undefined) rmSync(repos, { recursive: true, force: true });
+    if (chatImages !== undefined) rmSync(chatImages, { recursive: true, force: true });
     throw error;
   }
 };

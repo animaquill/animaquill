@@ -37,7 +37,9 @@ import { Client } from "pg";
 
 /** The version of PostgreSQL, the name of its folder in the data folder. */
 export const MAJOR = 18;
-export const FOLDER = `pg${MAJOR}`;
+/** The folder of a major version of PostgreSQL in the data folder. */
+export const folderOf = (major: number) => `pg${major}`;
+export const FOLDER = folderOf(MAJOR);
 export const USER = "animaquill";
 export const DATABASE = "animaquill";
 
@@ -76,15 +78,25 @@ export const unsafePath = (path: string, platform: NodeJS.Platform = process.pla
 const exe = (name: string) => (process.platform === "win32" ? `${name}.exe` : name);
 
 /**
+ * The package of a major version: this version's by its name; one before by an alias of npm,
+ * `<name>-pg<major>`, as the version that changes the major version depends on both (design O4 of
+ * AnimaQuill Cloud, 3.4): `"@embedded-postgres/linux-x64-pg18": "npm:@embedded-postgres/linux-x64@18…"`.
+ */
+export const packageOf = (name: string, major: number) =>
+  major === MAJOR ? name : `${name}-pg${major}`;
+
+/**
  * The programs, with the links between the libraries made where they are not (the package makes
  * them as it is installed, which `ignore-scripts` and pnpm do not let it).
  */
 export async function findPrograms(
   from: string = import.meta.url,
   platform: string = `${process.platform}-${process.arch}`,
+  major: number = MAJOR,
 ): Promise<Programs> {
-  const name = PACKAGES[platform];
-  if (!name) throw new NoPostgres("platform", platform);
+  const base = PACKAGES[platform];
+  if (!base) throw new NoPostgres("platform", platform);
+  const name = packageOf(base, major);
   if (platform.startsWith("linux-") && !isGlibc())
     throw new NoPostgres("musl", "PostgreSQL here needs glibc");
   let root: string;
@@ -231,6 +243,10 @@ export interface PostgresOptions {
   readonly programs: Programs;
   /** The data folder of the backend: `pg18/` is in it. */
   readonly dataDir: string;
+  /** Its major version, that of the programs: this version's unless said. */
+  readonly major?: number;
+  /** Its folder, by its name in the data folder: that of its major version unless said. */
+  readonly folderName?: string;
   readonly password: string;
   /** The log of PostgreSQL; what `initdb` and `pg_ctl` say goes next to it (`.ctl`). */
   readonly logFile: string;
@@ -278,7 +294,15 @@ export class Postgres {
   }
 
   get folder(): string {
-    return join(this.#options.dataDir, FOLDER);
+    return join(
+      this.#options.dataDir,
+      this.#options.folderName ?? folderOf(this.#options.major ?? MAJOR),
+    );
+  }
+
+  /** The major version its programs are of. */
+  get major(): number {
+    return this.#options.major ?? MAJOR;
   }
 
   /** The port it listens on, once started. */
@@ -296,15 +320,15 @@ export class Postgres {
     return (await lstat(join(this.folder, "PG_VERSION")).catch(() => undefined)) !== undefined;
   }
 
-  /** The version of what is in `pg18/`, which has to be this one's, see `MAJOR`. */
+  /** The version of what is in its folder, which has to be that of its programs, see `major`. */
   async version(): Promise<number> {
     return Number((await readFile(join(this.folder, "PG_VERSION"), "utf8")).trim());
   }
 
-  /** Makes `pg18/`, the first time. */
+  /** Makes its folder (`pg18/`), the first time: whole, or not at all. */
   async init(): Promise<void> {
     await mkdir(dirname(this.#options.logFile), { recursive: true });
-    const making = join(this.#options.dataDir, `${FOLDER}.making`);
+    const making = `${this.folder}.making`;
     await rm(making, { recursive: true, force: true });
     // initdb reads the password from a file, of its own for the moment.
     const passwordFile = `${making}.pw`;

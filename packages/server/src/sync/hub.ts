@@ -1043,6 +1043,13 @@ export class SyncHub {
     }
   }
 
+  /** A moment of upkeep: everyone comes back later, as after a restart; the hub goes on. */
+  closeEveryone(): void {
+    for (const connection of Array.from(this.#connections)) {
+      connection.close(SYNC_CLOSE.unavailable, "a moment of upkeep");
+    }
+  }
+
   /** The platform stops: everyone comes back later, to whichever runs then. */
   stop(): void {
     this.#stopped = true;

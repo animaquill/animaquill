@@ -810,6 +810,7 @@
       "packs": "模型适配包",
       "chat": "AI 聊天",
       "account": "账号",
+      "server": "服务器",
       "storage": "存储和数据",
       "about": "关于",
       "localAi": "电脑上的 AI 工具"
@@ -977,6 +978,31 @@
           "keywords": "chat image picture 图片 对话 空间 占用 删除"
         }
       },
+      "server": {
+        "masterKey": {
+          "name": "主密钥",
+          "help": "加密服务器上存的 AI key。数据目录丢了、换电脑搬数据时要用它，它不在备份里。",
+          "keywords": "master key 主密钥 密钥 加密 备份 另存 master.key"
+        },
+        "database": {
+          "name": "数据库",
+          "keywords": "database postgresql postgres 数据库 版本 升级"
+        },
+        "dataDir": {
+          "name": "数据目录",
+          "help": "在线模式的项目、设置、对话和本机仓库都在这里。",
+          "keywords": "data folder directory 数据目录 文件夹 路径 位置"
+        },
+        "old": {
+          "name": "旧版本的数据库",
+          "keywords": "old database upgrade 旧 数据库 升级 删除 空间"
+        },
+        "backup": {
+          "name": "备份和搬家",
+          "help": "在终端里运行，导出时 AnimaQuill 可以开着。导出不含主密钥，导入要用 --master-key 给它。",
+          "keywords": "backup export import move 备份 导出 导入 搬家 换电脑"
+        }
+      },
       "storage": {
         "persist": {
           "name": "浏览器会不会清掉数据",
@@ -1142,6 +1168,29 @@
     "server": {
       "offline": "连不上服务器，现在只能看，连上以后才能改。",
       "pending": "有改动正在存到服务器。"
+    },
+    "localServer": {
+      "failed": "读不到这台电脑上的服务器。",
+      "databaseOwn": "PostgreSQL {{major}}（随 AnimaQuill 带的）",
+      "databaseGiven": "自己的 PostgreSQL（--database）",
+      "upgradeFailed": "升级到 PostgreSQL {{to}} 没成功，还在用 {{from}}，数据没有动，下次启动会再试。原因：{{reason}}",
+      "data": "数据",
+      "copyPath": "复制路径",
+      "copyCommand": "复制命令",
+      "copied": "已复制。",
+      "copyFailed": "没能复制，请手动选中复制。",
+      "keyUnsaved": "还没有另存过：把它存到这台电脑以外的地方（U 盘、密码管理器）。",
+      "keySavedHelp": "已另存过一份。加密服务器上存的 AI key，备份里没有它。",
+      "keySave": "另存一份…",
+      "keySaveAgain": "再存一份…",
+      "keyAlready": "我已经另存过",
+      "keySaveFailed": "主密钥没能另存。",
+      "keyMadeAgain": "这次启动时主密钥不见了，已经生成新的：原来存的 AI key 解不开了，要在 AI 模型里重新填。",
+      "oldName": "PostgreSQL {{major}} 的旧数据库",
+      "oldDelete": "删除",
+      "oldDeleteTitle": "删除 PostgreSQL {{major}} 的旧数据库？",
+      "oldDeleteMessage": "升级时留下的 {{name}} 会从数据目录里删掉，删了不能恢复。数据已经在新的数据库里，确认在线模式一切正常再删。",
+      "oldDeleteFailed": "旧数据库没能删除。"
     },
     "clear": {
       "button": "清掉这台电脑上的数据…",
@@ -3105,6 +3154,7 @@
     "addService": "添加服务",
     "status": {
       "noKey": "缺 key",
+      "unreadable": "要重新填 key",
       "failed": "上次失败"
     },
     "name": "名称",
@@ -3113,6 +3163,8 @@
     "key": "API key",
     "keysWhere": "只在这台设备 · 存在这个浏览器里（IndexedDB {{where}}），不进项目文件夹，不出现在错误报告和运行情况报告里；清除这个网站的数据会一起删掉。",
     "keysNowhere": "这个环境不保存 key，关闭页面后要重新填写。",
+    "keyUnreadable": "要重新填",
+    "keyUnreadableHelp": "原来存的 key 解不开了（服务器的主密钥换过），重新填一次。",
     "noSubscription": "不支持用订阅账号登录（比如 Claude 订阅），也不能粘贴订阅的令牌：请用服务商的 API key。",
     "test": "测试",
     "testing": "正在测…",
@@ -4169,6 +4221,7 @@
       "enable": "去启用",
       "off": "这个对话用的 {{model}} 已经停用了。",
       "noKey": "{{service}} 还没有填 key。",
+      "unreadable": "{{service}} 的 key 要重新填。",
       "fillKey": "去填 key",
       "otherModel": "换个模型"
     },

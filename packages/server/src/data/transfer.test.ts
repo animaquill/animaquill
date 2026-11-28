@@ -489,4 +489,72 @@ describe.skipIf(!TEST_DATABASE)("the data of the server, out and in again", () =
       await inClient.end();
     }
   });
+
+  test("the pictures of conversations of the data folder go along, each checked by its name", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "aq-data-dir-"));
+    const person = "00000000-0000-4000-8000-0000000000aa";
+    const pictures = [randomBytes(3000), randomBytes(10)].map((bytes) => ({
+      bytes,
+      hash: createHash("sha256").update(bytes).digest("hex"),
+    }));
+    mkdirSync(join(dataDir, "chat-images", "u", person), { recursive: true });
+    mkdirSync(join(dataDir, "chat-images", ".writing"), { recursive: true });
+    for (const { bytes, hash } of pictures)
+      writeFileSync(join(dataDir, "chat-images", "u", person, hash), bytes);
+    // Half written, and a file that is not what its name says: neither goes.
+    writeFileSync(join(dataDir, "chat-images", ".writing", "x.tmp"), "half");
+    const wrong = "f".repeat(64);
+    writeFileSync(join(dataDir, "chat-images", "u", person, wrong), "not it");
+    const dir = tempDir();
+    const client = await connection(from);
+    let manifest;
+    try {
+      manifest = await exportData(client, dir, { server: "test", dataDir });
+    } finally {
+      await client.end();
+    }
+    expect(manifest.chatImages).toMatchObject({ files: 2, bytes: 3010 });
+    expect(existsSync(join(dir, "chat-images", "u", person, wrong))).toBe(false);
+    expect(existsSync(join(dir, "chat-images", ".writing"))).toBe(false);
+    if (process.platform !== "win32")
+      expect(statSync(join(dir, "chat-images", "u", person, pictures[0]!.hash)).mode & 0o777).toBe(
+        0o600,
+      );
+
+    // Not without a data folder for them: they would be lost.
+    const into = await fresh();
+    const inClient = await connection(into);
+    try {
+      await expect(importData(inClient, dir)).rejects.toThrow(/pictures/);
+      // A picture changed in the export: nothing goes in, neither rows nor pictures.
+      const target = mkdtempSync(join(tmpdir(), "aq-data-dir-"));
+      const changed = join(dir, "chat-images", "u", person, pictures[1]!.hash);
+      const kept = readFileSync(changed);
+      writeFileSync(changed, "other");
+      await expect(importData(inClient, dir, { dataDir: target })).rejects.toBeInstanceOf(
+        DataRefused,
+      );
+      expect(existsSync(join(target, "chat-images"))).toBe(false);
+      expect((await into.query("select count(*)::int as n from users")).rows[0].n).toBe(0);
+      writeFileSync(changed, kept);
+      // Into a data folder without pictures: each as it was.
+      await importData(inClient, dir, { dataDir: target });
+      for (const { bytes, hash } of pictures)
+        expect(readFileSync(join(target, "chat-images", "u", person, hash)).equals(bytes)).toBe(
+          true,
+        );
+      // Never over pictures that are there.
+      const again = await fresh();
+      const againClient = await connection(again);
+      try {
+        await expect(importData(againClient, dir, { dataDir: target })).rejects.toThrow(
+          /has pictures already/,
+        );
+      } finally {
+        await againClient.end();
+      }
+    } finally {
+      await inClient.end();
+    }
+  });
 });

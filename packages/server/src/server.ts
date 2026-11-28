@@ -37,6 +37,7 @@ import { libraryMode } from "./library/config.ts";
 import { LibraryStorage } from "./library/storage.ts";
 import { fixedLimits, type PersonLimits } from "./limits.ts";
 import { ChatImages, scheduleChatImagesCleanup, settleLater } from "./me/chat-images.ts";
+import { folderImageStore, objectImageStore } from "./me/chat-image-store.ts";
 import { listenForAgents, scheduleAgentsCleanup } from "./me/agents.ts";
 import { listenForPeople, PersonEvents } from "./me/events.ts";
 import { Settings } from "./settings.ts";
@@ -103,6 +104,12 @@ export interface ServerParts {
    */
   readonly withoutGitHub?: boolean | undefined;
   /**
+   * A folder to keep the pictures of conversations in (`<folder>/chat-images/`, see
+   * me/chat-image-store.ts), in place of the object storage of the cloud space: the data folder of
+   * the backend of `npx animaquill`, which has no object storage.
+   */
+  readonly chatImagesIn?: string | undefined;
+  /**
    * Where the app takes requests: `app.listen` on the host and port of the settings unless said.
    * The backend of `npx animaquill` has servers of its own, which hand the app what is for it.
    */
@@ -120,6 +127,11 @@ export interface Server {
   whenReady(): Promise<void>;
   /** Stops answering, and what runs behind. */
   stop(): Promise<void>;
+  /**
+   * Closes every connection of syncing, as for a moment of upkeep: windows come back by themselves
+   * once they can, as after a restart, with what they changed meanwhile.
+   */
+  closeSyncing(): void;
 }
 
 export const startServer = (config: Config, parts: ServerParts = {}): Server => {
@@ -335,15 +347,28 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
           log.warn({ err: describeError(error) }, "uploads that wait for their check stay for now");
         });
         settings = new Settings({ db: database.db, log });
-        // The pictures of conversations, in the storage of the cloud space, and their hourly round.
-        const storage = LibraryStorage.of(config.library);
+        // The pictures of conversations, in the storage of the cloud space (or a folder of the
+        // server's own), and their hourly round.
+        const objects = LibraryStorage.of(config.library);
+        const storage =
+          parts.chatImagesIn !== undefined
+            ? folderImageStore({
+                folder: parts.chatImagesIn,
+                origin: config.publicOrigin,
+                // A computer of people's own, as for its files of assets (LFS_MIN_FREE_GB).
+                minFreeBytes: (config.stagingFloorGb ?? 2) * 1024 ** 3,
+              })
+            : objects &&
+              objectImageStore({
+                storage: objects,
+                mode: () => libraryMode(config.library),
+                checksum: config.library.checksum,
+                minFreeBytes: config.library.minFreeBytes,
+              });
         const queue = jobs;
         const images = new ChatImages({
           db: database.db,
           storage,
-          mode: () => libraryMode(config.library),
-          checksum: config.library.checksum,
-          minFreeBytes: config.library.minFreeBytes,
           limits,
           log,
           ...(storage && jobs && { later: (job) => settleLater(queue, job) }),
@@ -429,6 +454,7 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
       void prepare();
     },
     whenReady: () => readyNow,
+    closeSyncing: () => sync?.closeEveryone(),
     async stop() {
       if (stopping) return;
       stopping = true;

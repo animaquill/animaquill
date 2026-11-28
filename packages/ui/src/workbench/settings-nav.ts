@@ -18,6 +18,7 @@ export type SettingsGroup =
   | "chat"
   | "localAi"
   | "account"
+  | "server"
   | "storage"
   | "about";
 
@@ -28,7 +29,7 @@ export const SETTINGS_SECTIONS: readonly (readonly [
 ])[] = [
   ["editor", ["general", "editing", "playback", "export", "keys"]],
   ["ai", ["models", "packs", "chat", "localAi"]],
-  ["account", ["account"]],
+  ["account", ["account", "server"]],
   ["other", ["storage", "about"]],
 ];
 
@@ -39,14 +40,19 @@ export const SETTINGS_GROUPS: readonly SettingsGroup[] = SETTINGS_SECTIONS.flatM
 export const isSettingsGroup = (value: unknown): value is SettingsGroup =>
   SETTINGS_GROUPS.includes(value as SettingsGroup);
 
-/** What there is of the backend, which decides whether "account" is there. */
+/** What there is of the backend, which decides whether "account" and "server" are there. */
 export interface GroupsShown {
   /** The host has accounts, or an online mode to go to: the group of the account. */
   readonly account: boolean;
+  /** The online mode is of the server on this computer (`npx animaquill`): its group. */
+  readonly server?: boolean;
 }
 
 export const visibleGroups = (shown: GroupsShown): readonly SettingsGroup[] =>
-  SETTINGS_GROUPS.filter((group) => group !== "account" || shown.account);
+  SETTINGS_GROUPS.filter(
+    (group) =>
+      (group !== "account" || shown.account) && (group !== "server" || shown.server === true),
+  );
 
 /**
  * Where the settings of a window are: which group, and in the group of AI models which service, or

@@ -17,7 +17,9 @@ import {
   NoPostgres,
   PostgresFailed,
 } from "./backend/postgres.ts";
-import { startBackend } from "./backend/run.ts";
+import { NewerPostgres, OlderPostgres, startBackend } from "./backend/run.ts";
+import { serverExport, serverImport } from "./backend/commands.ts";
+import { DataRefused } from "@animaquill/server/data/transfer.ts";
 import { check, describe, guide } from "./mcp/commands.ts";
 import { findProject } from "./mcp/find.ts";
 import { animaquillHome } from "./mcp/home.ts";
@@ -43,6 +45,8 @@ const { version } = JSON.parse(
 
 const HELP = `用法：animaquill [选项]
       animaquill open
+      animaquill server export <文件夹>
+      animaquill server import <文件夹> [--master-key <主密钥文件>]
       animaquill <命令> [--project <项目文件夹>]
 
 在这台电脑上启动 AnimaQuill 编辑器和它的后端，用 Chrome 或 Edge 打开显示的地址。
@@ -51,6 +55,11 @@ const HELP = `用法：animaquill [选项]
 
 命令（项目默认是当前文件夹，或者往上最近的有 animaquill.json 的文件夹）：
   open             在浏览器里打开已经在运行的 AnimaQuill（带一次性的登录）
+  server export <文件夹>
+                   把在线模式的数据（账号、设置和 key、对话和图片、项目清单和本机仓库）导出到一个文件夹，
+                   正在运行时也可以（同步会停几秒）。主密钥 master.key 不在里面，要另存
+  server import <文件夹>
+                   把导出的数据导入到一个空的数据目录；--master-key 给原来的 master.key，存的 AI key 才打得开
   mcp              给电脑上的 AI 工具（Claude Code、Codex 等）用的 MCP 服务器（stdio）：
                    工具在浏览器里打开的编辑器里执行，编辑器要开着这个项目、连着电脑上的 AI 工具。
                    --project 也可以是在线项目的地址；--allow-origin <网址> 让那个网站上的编辑器连接
@@ -188,7 +197,7 @@ function portsFromEnvironment(): { ports?: { first: number; count: number } } {
 }
 
 /** What the backend could not start for, as people are told, with the way out. */
-function sayRefused(error: unknown, logFile: string | undefined): void {
+function sayRefused(error: unknown, logFile: string | undefined, offerOffline = true): void {
   const offline = "先用离线模式（项目存在浏览器里或文件夹里）：npx animaquill --offline";
   if (error instanceof DataDirRefused) {
     const mode =
@@ -217,6 +226,15 @@ function sayRefused(error: unknown, logFile: string | undefined): void {
       `这个数据目录被更新版本的 AnimaQuill 用过，这个版本（${version}）打不开它。请运行 npx animaquill@latest。`,
     );
     return;
+  } else if (error instanceof NewerPostgres) {
+    console.error(
+      `这个数据目录的数据库是 PostgreSQL ${error.major} 的，被更新版本的 AnimaQuill 用过，这个版本（${version}）打不开它。请运行 npx animaquill@latest。`,
+    );
+    return;
+  } else if (error instanceof OlderPostgres) {
+    console.error(
+      `这个数据目录的数据库是 PostgreSQL ${error.major} 的，这个版本没法直接升级它。先用能升级它的版本启动一次（它会升级），或者把数据目录里的 pg${error.major} 文件夹挪走再启动（会是一个空的在线模式）。`,
+    );
   } else if (error instanceof LeftOverRunning) {
     console.error(
       `数据目录里记着一个数据库进程（进程 ${error.pid}），它还活着，但是没有回应：可能正在恢复，或者被暂停了，或者 pg18.password 被改过，也可能这个进程号已经是别的程序的了。` +
@@ -233,7 +251,7 @@ function sayRefused(error: unknown, logFile: string | undefined): void {
   } else {
     console.error(`后端没能启动：${(error as Error)?.message ?? String(error)}`);
   }
-  console.error(offline);
+  if (offerOffline) console.error(offline);
 }
 
 /** Why there is no backend here at all, so that only the offline mode starts: undefined if there is. */
@@ -335,6 +353,69 @@ async function openRunning(argv: readonly string[]): Promise<number> {
   return 0;
 }
 
+/** `animaquill server export|import <folder>`. */
+async function serverCommand(argv: readonly string[]): Promise<number> {
+  let parsed;
+  try {
+    parsed = parseArgs({
+      args: [...argv],
+      options: {
+        "data-dir": { type: "string" },
+        database: { type: "string" },
+        "master-key": { type: "string" },
+        help: { type: "boolean", short: "h" },
+      },
+      allowPositionals: true,
+      strict: true,
+    });
+  } catch (error) {
+    console.error(`${(error as Error).message}\n\n${HELP}`);
+    return 2;
+  }
+  const { values, positionals } = parsed;
+  const [what, dir] = positionals;
+  if (values.help) {
+    console.log(HELP);
+    return 0;
+  }
+  if ((what !== "export" && what !== "import") || dir === undefined || positionals.length !== 2) {
+    console.error(HELP);
+    return 2;
+  }
+  if (what === "export" && values["master-key"] !== undefined) {
+    console.error("--master-key 只用于 server import。");
+    return 2;
+  }
+  const { database, warning } = databaseFrom(values.database);
+  if (warning) console.error(warning);
+  if (process.platform !== "win32" && process.getuid?.() === 0 && database === undefined) {
+    console.error(
+      "随包的数据库不能用 root 运行：请换普通用户，或者用 --database 接自己的 PostgreSQL。",
+    );
+    return 1;
+  }
+  const options = {
+    dataDir: dataDirFrom(values["data-dir"]),
+    dir,
+    version,
+    database,
+    masterKey: values["master-key"],
+    say: (line: string) => console.log(line),
+  };
+  try {
+    return what === "export" ? await serverExport(options) : await serverImport(options);
+  } catch (error) {
+    if (error instanceof DataRefused) {
+      console.error(`没${what === "export" ? "导出" : "导入"}：${error.message}`);
+      return 1;
+    }
+    const known = [DataDirRefused, LockHeld, LeftOverRunning, PostgresFailed, NewerDatabase];
+    if (known.some((kind) => error instanceof kind)) sayRefused(error, undefined, false);
+    else console.error(`没做完：${(error as Error)?.message ?? String(error)}`);
+    return 1;
+  }
+}
+
 const dataDirFrom = (given: string | undefined): string =>
   resolve(given ?? (process.env["AQ_DATA_DIR"] || defaultDataDir()));
 
@@ -342,6 +423,7 @@ async function main(argv: readonly string[]): Promise<number> {
   const [first, ...rest] = argv;
   if (first !== undefined && COMMANDS.has(first)) return runCommand(first, rest);
   if (first === "open") return openRunning(rest);
+  if (first === "server") return serverCommand(rest);
   let options;
   try {
     ({ values: options } = parseArgs({

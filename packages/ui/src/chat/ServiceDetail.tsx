@@ -16,7 +16,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkbench } from "../app/context.ts";
-import { TestPill, isServiceOn, useDraft } from "./aiParts.tsx";
+import { TestPill, isServiceOn, useDraft, useUnreadableKeys } from "./aiParts.tsx";
 import styles from "./AiSettings.module.css";
 import { CapabilityIcon, capabilityOf } from "./CapabilityIcon.tsx";
 import { failureText } from "./failure.ts";
@@ -220,6 +220,9 @@ function KeyField({ service }: { readonly service: ServiceConfig }) {
   const { t } = useTranslation();
   const snapshot = useSyncExternalStore(ai.subscribe, ai.getSnapshot);
   const keyed = snapshot.keyed.has(service.id);
+  // Kept on the backend, which cannot open it any more: typed again, it goes as any other.
+  const unreadableKeys = useUnreadableKeys();
+  const unreadable = !keyed && unreadableKeys.includes(service.id);
   const mask = keyed ? maskOf(snapshot.hints.get(service.id)) : "";
   const field = useRef<HTMLInputElement>(null);
   const [shown, setShown] = useState(false);
@@ -260,9 +263,12 @@ function KeyField({ service }: { readonly service: ServiceConfig }) {
           autoComplete="off"
           spellCheck={false}
           defaultValue={mask}
+          placeholder={unreadable ? t("ai.keyUnreadable") : undefined}
+          aria-invalid={unreadable || undefined}
           disabled={snapshot.held !== undefined}
           title={snapshot.keysWhere ? undefined : t("ai.keysNowhere")}
           data-testid="ai-key"
+          data-unreadable={unreadable ? "" : undefined}
           onFocus={(event) => {
             if (event.target.value === mask) event.target.select();
           }}
@@ -281,6 +287,11 @@ function KeyField({ service }: { readonly service: ServiceConfig }) {
           {shown ? <EyeOff size={14} aria-hidden /> : <Eye size={14} aria-hidden />}
         </button>
       </span>
+      {unreadable && (
+        <span className={styles.warning} data-testid="ai-key-unreadable">
+          {t("ai.keyUnreadableHelp")}
+        </span>
+      )}
     </label>
   );
 }
