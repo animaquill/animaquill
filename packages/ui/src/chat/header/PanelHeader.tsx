@@ -101,7 +101,11 @@ export function PanelHeader(props: {
       {infoOpen && (
         <ConversationInfo
           entries={props.entries}
-          onCompact={snapshot.conversation?.compactable ? () => void chat.compact() : undefined}
+          onCompact={
+            snapshot.conversation?.compactable && !snapshot.elsewhere
+              ? () => void chat.compact()
+              : undefined
+          }
           onClose={closeInfo}
         />
       )}
@@ -203,7 +207,10 @@ function MoreMenu(props: {
           aria-label={t("chat.more.title")}
           onKeyDown={menu.onMenuKeyDown}
         >
-          {item("chat-more-rename", t("chat.more.rename"), props.onRename, { disabled: !saved })}
+          {item("chat-more-rename", t("chat.more.rename"), props.onRename, {
+            // Another tab has it: that one names it.
+            disabled: !saved || snapshot.elsewhere,
+          })}
           <div className={styles.menuLabel} aria-hidden>
             {t("chat.more.export")}
           </div>

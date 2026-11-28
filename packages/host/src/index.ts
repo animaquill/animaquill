@@ -2433,6 +2433,11 @@ export interface AgentRoomEvents {
   readonly wanted?: (id: string, take: boolean) => void;
   /** Another window deleted one: this one lets go of it, and keeps nothing more of it. */
   readonly gone?: (id: string) => void;
+  /**
+   * The page came back from the browser's cache after it went (`pageshow`): what it had taken it
+   * gave back as it went.
+   */
+  readonly resumed?: () => void;
 }
 
 /** One a window of the project has, as all windows see it, see `AgentRoom.roster`. */
@@ -2675,6 +2680,11 @@ export interface SavedChat extends SavedChatSummary {
    * whether it did, so that this is only the switch as it is now.
    */
   readonly planFirst?: true;
+  /**
+   * What people sent in a tab that was handing the conversation to another one, for that one to
+   * send (the editor's to read back). Only while it goes from one tab to another.
+   */
+  readonly queued?: readonly unknown[];
   /**
    * For a conversation of a project of the platform kept in this browser: the revision the account
    * has of it, as last written or read here, see `ChatSyncAccess`. Missing where the account never

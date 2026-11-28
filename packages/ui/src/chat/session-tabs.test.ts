@@ -536,4 +536,96 @@ describe("conversations in several tabs of a browser (chat6 technical design, 6.
     await two.chat.flush();
     expect((await chats.list("p1")).map((each) => each.id)).not.toContain(b);
   });
+
+  it("hands one over only once its turn is over: nothing else starts there, and what came meanwhile goes along", async () => {
+    const { browser, one, two, b } = await twoTabs();
+    two.ai.setAskBeforeEdit(true);
+    two.fake({
+      fake: [
+        {
+          calls: [
+            {
+              name: "aq_edit",
+              args: { operations: [{ op: "marker.add", timeline: "main", time: "1" }] },
+            },
+          ],
+        },
+        { text: "加好了" },
+        // Nothing more answers here: a turn that started would fail.
+      ],
+    });
+    void two.chat.send("加一个标记");
+    await vi.waitFor(() => expect(two.chat.getSnapshot().allApprovals).toHaveLength(1));
+    // The first tab opens it, and people there take it.
+    await one.chat.open(b);
+    await vi.waitFor(() => expect(one.chat.getSnapshot().elsewhere).toBe(true));
+    one.chat.takeHere();
+    await settle();
+    // Meanwhile a message comes, and people in the second tab say something.
+    const tool = one.chat.agentsFor("mcp:s", () => "Claude Code");
+    expect(await tool.send(b, "顺便看看配乐")).toMatchObject({ sent: "read" });
+    two.chat.queue("还有一句");
+    expect(browser.holders.get(b)).toBe(2);
+    // The turn ends as people there allow the change: it goes to the first tab then.
+    one.fake({ fake: [{ text: "这边接着那句" }] });
+    two.chat.answerApproval(two.chat.getSnapshot().allApprovals[0]?.id ?? "", "once");
+    await vi.waitFor(() => expect(browser.holders.get(b)).toBe(1));
+    await vi.waitFor(() =>
+      expect(entriesOf(one.chat, b).at(-1)).toMatchObject({ text: "这边接着那句" }),
+    );
+    const users = (chat: ChatSession) =>
+      entriesOf(chat, b).flatMap((entry) => (entry.role === "user" ? [entry.text] : []));
+    expect(users(one.chat)).toEqual(["配乐", "加一个标记", "还有一句"]);
+    // The message waits in the first tab, for people (an AI tool's, left as it went along).
+    await vi.waitFor(() =>
+      expect(one.chat.getSnapshot().mail).toEqual([
+        expect.objectContaining({ text: "顺便看看配乐" }),
+      ]),
+    );
+    // The second tab started nothing more, and keeps nothing of it to send.
+    expect(users(two.chat)).toEqual(["配乐", "加一个标记"]);
+    expect(two.chat.getSnapshot().elsewhere).toBe(true);
+    expect(two.chat.getSnapshot().queued).toEqual([]);
+  });
+
+  it("takes none of the settings of a conversation another tab has: it says so rather than drop them", async () => {
+    const { one, b } = await twoTabs();
+    await one.chat.open(b);
+    await vi.waitFor(() => expect(one.chat.getSnapshot().elsewhere).toBe(true));
+    one.chat.setPlanFirst(true);
+    one.chat.chooseReasoning("high");
+    await one.chat.rename(b, "别的名字");
+    expect(one.chat.getSnapshot()).toMatchObject({ planFirst: false, reasoning: undefined });
+    expect(one.chat.getSnapshot().title).not.toBe("别的名字");
+  });
+
+  it("keeps what it has of one it gets while something of it waits to be written here", async () => {
+    const { browser, one, b } = await twoTabs();
+    // This tab has it, and changed something of it that waits to be written.
+    browser.crash(2);
+    await one.chat.open(b);
+    await vi.waitFor(() => expect(browser.holders.get(b)).toBe(1));
+    const before = one.chat.conversationOf(b);
+    one.chat.setPlanFirst(true);
+    // Told it waited for it after all: nothing is read again over that, nor written first.
+    browser.rooms.get(1)?.events.owned(b, true);
+    await settle();
+    expect(one.chat.conversationOf(b)).toBe(before);
+    expect(one.chat.getSnapshot().planFirst).toBe(true);
+  });
+
+  it("gives back what it took as the page goes, and takes it again once, once the page comes back", async () => {
+    const { browser, one, two, b } = await twoTabs();
+    two.ai.setFromAgents("ask");
+    await one.chat.agentsFor("mcp:s", () => "工具").send(b, "进缓存前");
+    await vi.waitFor(() => expect(two.chat.getSnapshot().mail).toHaveLength(1));
+    // The page goes into the browser's cache: what it took goes back, as `pagehide` does.
+    browser.mail = browser.mail.map((each) => ({ ...each, claimedBy: undefined, left: true }));
+    // It comes back: it drops what it gave back, and takes it again, once.
+    browser.rooms.get(2)?.events.resumed?.();
+    await vi.waitFor(() => expect(browser.mail.every((each) => each.claimedBy === 2)).toBe(true));
+    await settle();
+    expect(two.chat.getSnapshot().mail).toEqual([expect.objectContaining({ text: "进缓存前" })]);
+    expect(browser.mail).toHaveLength(1);
+  });
 });

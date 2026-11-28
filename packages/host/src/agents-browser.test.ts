@@ -127,6 +127,7 @@ function browser() {
   const channels = new Channels();
   const storage = new Storage();
   const hides = new Map<number, () => void>();
+  const shows = new Map<number, () => void>();
   const window = (number: number, store: { storage?: () => globalThis.Storage | undefined } = {}) =>
     browserAgents({
       database: () => factory,
@@ -138,10 +139,14 @@ function browser() {
         hides.set(number, listener);
         return () => hides.delete(number);
       },
+      listenPageShow: (listener) => {
+        shows.set(number, listener);
+        return () => shows.delete(number);
+      },
     });
   /** The page of a window goes away, as people close it: it gets to say so first. */
   const hide = (number: number) => hides.get(number)?.();
-  return { locks, window, hide, storage };
+  return { locks, window, hide, shows, storage };
 }
 
 function events() {
@@ -152,7 +157,9 @@ function events() {
   const wanted: string[] = [];
   const gone: string[] = [];
   let budget = 0;
+  let resumed = 0;
   const said: AgentRoomEvents = {
+    resumed: () => void (resumed += 1),
     owned: (id, after) => void (after ? waited : owned).push(id),
     mail: (to) => void mail.push(to),
     budget: () => void (budget += 1),
@@ -160,7 +167,17 @@ function events() {
     wanted: (id, take) => void wanted.push(`${id}${take ? ":take" : ""}`),
     gone: (id) => void gone.push(id),
   };
-  return { said, owned, waited, mail, queued, wanted, gone, budget: () => budget };
+  return {
+    said,
+    owned,
+    waited,
+    mail,
+    queued,
+    wanted,
+    gone,
+    budget: () => budget,
+    resumed: () => resumed,
+  };
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 10));
@@ -457,5 +474,23 @@ describe("the conversations of a project in the windows of a browser", () => {
     await a.watch("chat-y", "chat-x", now + 1000);
     await a.forget("chat-x");
     expect(await a.watchers("chat-y")).toEqual([]);
+  });
+
+  it("gives back what a window took as its page goes, and says when the page comes back", async () => {
+    const { window, hide, shows } = browser();
+    const first = events();
+    const a = window(1).enter("p", first.said);
+    const b = window(2).enter("p", events().said);
+    await settle();
+    await b.post(mailTo("chat-x", "taken"), LIMITS);
+    expect((await a.claim("chat-x")).map((each) => each.left)).toEqual([false]);
+    hide(1);
+    await settle();
+    // Free again, as left for whoever opens it, while the window is still there.
+    expect((await b.claim("chat-x")).map((each) => [each.text, each.left])).toEqual([
+      ["taken", true],
+    ]);
+    shows.get(1)?.();
+    expect(first.resumed()).toBe(1);
   });
 });

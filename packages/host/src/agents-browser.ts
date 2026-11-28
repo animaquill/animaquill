@@ -117,6 +117,8 @@ export interface BrowserAgentsOptions {
   readonly listenStorage?: (listener: (event: StorageEvent) => void) => () => void;
   /** Where the page goes away, see `pagehide`. */
   readonly listenPageHide?: (listener: () => void) => () => void;
+  /** Where the page comes back from the browser's cache, see `pageshow` and `persisted`. */
+  readonly listenPageShow?: (listener: () => void) => () => void;
 }
 
 export function browserAgents({
@@ -134,6 +136,14 @@ export function browserAgents({
     if (typeof addEventListener === "undefined") return () => {};
     addEventListener("pagehide", listener);
     return () => removeEventListener("pagehide", listener);
+  },
+  listenPageShow = (listener) => {
+    if (typeof addEventListener === "undefined") return () => {};
+    const shown = (event: PageTransitionEvent) => {
+      if (event.persisted) listener();
+    };
+    addEventListener("pageshow", shown);
+    return () => removeEventListener("pageshow", shown);
   },
 }: BrowserAgentsOptions = {}): AgentPost {
   const database = connector(() => {
@@ -244,6 +254,9 @@ export function browserAgents({
       // goes with it and the others take them all the same.
       const unhide = listenPageHide(() => {
         void giveBack([...taken]).catch(() => {});
+      });
+      const unshow = listenPageShow(() => {
+        if (!isOver) events.resumed?.();
       });
 
       /** Asks for the lock of one; `now` only where no window has it, and says whether it got it. */
@@ -597,6 +610,7 @@ export function browserAgents({
           wire?.close();
           unlisten();
           unhide();
+          unshow();
           void giveBack(keeping)
             .catch(() => {})
             .finally(() => leave());

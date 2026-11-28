@@ -33,6 +33,8 @@ export function FailureCard({
   const ui = useChatUi();
   const { t } = useTranslation();
   useSyncExternalStore(ai.subscribe, ai.getSnapshot);
+  // Another tab has the conversation: here it is only to read.
+  const elsewhere = useSyncExternalStore(chat.subscribe, () => chat.getSnapshot().elsewhere);
   // Trying again after the task changed something asks first: take that back, or keep it. With
   // the relay, the service goes through it only once people chose.
   const [asking, setAsking] = useState<"retry" | "relay">();
@@ -177,6 +179,7 @@ export function FailureCard({
         <span>{advice}</span>
       </p>
       {latest &&
+        !elsewhere &&
         (asking ? (
           <div className={styles.failureActions} role="group" data-testid="chat-retry-confirm">
             <button

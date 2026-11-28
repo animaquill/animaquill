@@ -415,6 +415,25 @@ export const titlePrompt = (text: string): string =>
 const newChatId = () =>
   `chat-${Date.now().toString(36)}-${crypto.getRandomValues(new Uint32Array(1))[0]?.toString(36)}`;
 
+/** What people queued in a tab that handed a conversation to this one, see `SavedChat.queued`. */
+function queuedOf(kept: unknown): Queued[] {
+  if (!Array.isArray(kept)) return [];
+  return kept.flatMap((each): Queued[] => {
+    if (typeof each !== "object" || each === null) return [];
+    const { text, images, selection, plan } = each as Record<string, unknown>;
+    if (typeof text !== "string" || text.trim() === "") return [];
+    return [
+      {
+        text,
+        ...(Array.isArray(images) && { images: images as AttachedImage[] }),
+        ...(typeof selection === "object" &&
+          selection !== null && { selection: selection as SelectionFacts }),
+        ...(plan === true && { plan: true as const }),
+      },
+    ];
+  });
+}
+
 /** How many conversations that have nothing going on a window keeps besides the one shown. */
 export const KEPT_IDLE = 8;
 
@@ -483,8 +502,16 @@ interface Run {
    * of it is written, until that tab lets go of it (see `AgentRoom.want`).
    */
   elsewhere: boolean;
-  /** It goes to the tab that wants it, once its turn is over. */
+  /**
+   * It goes to the tab that wants it, once its turn is over: no other turn starts here meanwhile,
+   * and what people send waits to go along.
+   */
   handing: boolean;
+  /**
+   * Messages taken from the other tabs that its task read, by their id: done with once what the
+   * task wrote is written, so that a tab that goes before loses none of them.
+   */
+  toSettle: string[];
   /** Whoever takes its messages as they come: the task that runs. */
   readonly mailListeners: Set<() => void>;
   /** What the task that runs reads messages from. */
@@ -861,7 +888,13 @@ export class ChatSession {
       // A task that ended has its last answer on the screen: people may leave right after reading
       // it, before a write that waits would come. Where it is not shown, people did not see it.
       if (was && !running) {
-        void this.#flushRun(run);
+        // What it read of the other tabs is done with once what it wrote is written.
+        const read = run.toSettle.splice(0);
+        void this.#flushRun(run).then(() => {
+          if (read.length === 0) return;
+          if (run.unsaved) run.toSettle.push(...read);
+          else void this.#room?.done(read).catch(() => {});
+        });
         if (run !== this.#shown && this.#runs.get(run.id) === run) run.unseen = true;
       }
       if (this.#runs.get(run.id) === run) this.#refresh();
@@ -906,6 +939,7 @@ export class ChatSession {
       approvals: undefined,
       elsewhere: false,
       handing: false,
+      toSettle: [],
       mailListeners: new Set(),
       mailbox: { take: () => [], subscribe: () => () => {}, putBack: () => {} },
       used: ++this.#clock,
@@ -1135,6 +1169,8 @@ export class ChatSession {
     const modelName =
       now && (this.#options.ai.modelOf(now.ref.service, now.ref.model)?.name ?? now.ref.model);
     const caller = run.caller;
+    const handing = run.handing;
+    const queued = run.fields.queued;
     run.pending = async () => {
       const chat: SavedChat = {
         id,
@@ -1152,6 +1188,8 @@ export class ChatSession {
         ...(modelName && { modelName }),
         ...(repick.length > 0 && { repick }),
         ...(planFirst && { planFirst: true as const }),
+        // Going to another tab: what people queued goes along, for that tab to send.
+        ...(handing && queued.length > 0 && { queued }),
       };
       try {
         await this.#chats.save(chat);
@@ -1415,7 +1453,8 @@ export class ChatSession {
    */
   chooseModel(ref: ModelRef | undefined): void {
     const run = this.#shown;
-    if (!run) return;
+    // Another tab has it: that one's settings go.
+    if (!run || run.elsewhere) return;
     this.#update(run, { model: ref, hold: undefined });
     this.#keep(run);
   }
@@ -1426,7 +1465,7 @@ export class ChatSession {
    */
   setPlanFirst(on: boolean): void {
     const run = this.#shown;
-    if (!run || run.fields.planFirst === on) return;
+    if (!run || run.elsewhere || run.fields.planFirst === on) return;
     this.#update(run, { planFirst: on });
     this.#keep(run);
   }
@@ -1467,7 +1506,7 @@ export class ChatSession {
   /** How hard the model of the conversation shown reasons; nothing leaves it to the settings. */
   chooseReasoning(level: ReasoningLevel | undefined): void {
     const run = this.#shown;
-    if (!run) return;
+    if (!run || run.elsewhere) return;
     this.#update(run, { reasoning: level });
     this.#keep(run);
   }
@@ -1518,6 +1557,8 @@ export class ChatSession {
     const project = this.#project?.key;
     if (!name || project === undefined) return;
     const run = this.#runs.get(id);
+    // Another tab has it: that one names it.
+    if (run?.elsewhere) return;
     if (run) {
       this.#update(run, { title: name, titleBy: "user" });
       this.#keep(run);
@@ -1633,6 +1674,8 @@ export class ChatSession {
       this.#options.ai.noteRequest(service.id, undefined);
     if (this.#runs.get(run.id) !== run || !outcome) return;
     void this.#title(run);
+    // It goes to another tab: what people queued and what others sent go along.
+    if (run.handing) return;
     const [next, ...rest] = run.fields.queued;
     if (next !== undefined && outcome.end === "done") {
       this.#update(run, { queued: rest });
@@ -1686,10 +1729,16 @@ export class ChatSession {
     const room = this.#room;
     if (room) {
       room.gone(id);
+      let free = false;
       for (let at = 0; at < GONE_TRIES; at += 1) {
-        if (room.owns(id) || !(await room.held(id).catch(() => false))) break;
+        if (room.owns(id) || !(await room.held(id).catch(() => false))) {
+          free = true;
+          break;
+        }
         await new Promise((resolve) => setTimeout(resolve, GONE_WAIT_MS));
       }
+      // One that did not hear, as it was asleep: once more, for when it wakes.
+      if (!free) room.gone(id);
     }
     if (this.#project?.key !== project) return;
     const run = this.#runs.get(id);
@@ -1892,6 +1941,24 @@ export class ChatSession {
       putBack();
       return undefined;
     }
+    // It goes to another tab once its turn is over: what people say waits, and goes along.
+    if (run.handing) {
+      if (marked.from) putBack();
+      else {
+        this.#update(run, {
+          queued: [
+            ...run.fields.queued,
+            {
+              text,
+              ...(images.length > 0 && { images }),
+              selection: shown,
+              ...(marked.plan && { plan: true as const }),
+            },
+          ],
+        });
+      }
+      return undefined;
+    }
     // Pictures do not go to a model said not to take them: people choose another, or go without.
     if (images.length > 0 && this.#seesPictures(run) === false) {
       this.#update(run, { hold: "noPictures" });
@@ -2021,7 +2088,13 @@ export class ChatSession {
   async retry(): Promise<TaskOutcome | undefined> {
     const run = this.#shown;
     const conversation = run?.conversation;
-    if (!run || !conversation || conversation.running || !conversation.failedTask())
+    if (
+      !run ||
+      run.elsewhere ||
+      !conversation ||
+      conversation.running ||
+      !conversation.failedTask()
+    )
       return undefined;
     const target = await this.#taskTarget(run);
     if (!target) return undefined;
@@ -2084,7 +2157,7 @@ export class ChatSession {
    */
   async compact(): Promise<RoomMade | undefined> {
     const run = this.#shown;
-    if (!run?.conversation.compactable) return undefined;
+    if (!run?.conversation.compactable || run.elsewhere) return undefined;
     const target = await this.#taskTarget(run);
     if (!target || this.#runs.get(run.id) !== run) return undefined;
     const made = await run.conversation.compact(target);
@@ -2135,7 +2208,7 @@ export class ChatSession {
       take: () => {
         // Stopped after too many turns with others, or all of them while nobody said anything:
         // nothing goes in until people speak.
-        if (run.fields.paused !== undefined || run.gone) return [];
+        if (run.fields.paused !== undefined || run.gone || run.handing) return [];
         // Those taken before and not read yet count too.
         const { rounds } = roundsOf(run.conversation.getSnapshot().entries);
         let left = MAX_ROUNDS - (rounds - run.goOn) - run.steered;
@@ -2153,7 +2226,7 @@ export class ChatSession {
           this.#budget.add(1);
         }
         if (taken.length > 0) {
-          this.#settle(taken);
+          this.#settle(taken, run);
           this.#refresh();
         }
         return taken;
@@ -2164,6 +2237,13 @@ export class ChatSession {
       },
       putBack: (mails) => {
         run.inbox = [...mails, ...run.inbox];
+        // Not read after all: kept as taken, not done with.
+        for (const mail of mails) {
+          const at = run.toSettle.indexOf(mail.id);
+          if (at < 0) continue;
+          run.toSettle.splice(at, 1);
+          this.#claimed.add(mail.id);
+        }
         // Taken and not read: they did not count.
         this.#budget.add(-mails.length);
         run.steered = 0;
@@ -2208,6 +2288,8 @@ export class ChatSession {
   /** Whether nothing keeps a conversation from a turn that a message of another starts. */
   #readyForMail(run: Run): boolean {
     const talk = run.conversation.getSnapshot();
+    // It goes to another tab: what waits goes along.
+    if (run.handing) return false;
     if (talk.running || run.starting > 0 || run.fields.queued.length > 0) return false;
     if (this.#approvals.some((each) => each.chat === run.id)) return false;
     // It asked people something, or stopped, failed or ran out of calls: people come first.
@@ -2230,7 +2312,7 @@ export class ChatSession {
     if (!first) return;
     run.inbox = rest;
     this.#budget.add(1);
-    this.#settle([first]);
+    this.#settle([first], run);
     void this.#send(run, first.text, [], WITHHELD, {
       from: first.from,
       seal: first.seal,
@@ -2538,6 +2620,7 @@ export class ChatSession {
       queued: (id) => this.#queued(room, id),
       wanted: (id, take) => void this.#wanted(room, id, take),
       gone: (id) => this.#goneElsewhere(room, id),
+      resumed: () => this.#resumed(room),
     });
     this.#room = room;
     // What a conversation does changes with each step, and AI tools come and go: said again as
@@ -2638,7 +2721,13 @@ export class ChatSession {
         !this.#busy(run) &&
         run.pending === undefined
       ) {
-        this.#startSaved(id, saved, run === this.#shown);
+        const made = this.#startSaved(id, saved, run === this.#shown);
+        // What people said in the tab that had it, while it came here, goes now.
+        const [next, ...rest] = queuedOf(saved.queued);
+        if (next) {
+          this.#update(made, { queued: rest });
+          void this.#sendQueued(made, next);
+        }
       }
     }
     await this.#claimFor(room, id);
@@ -2696,14 +2785,17 @@ export class ChatSession {
     });
     // Read already, or not taken: done with. One that waits in the conversation stays kept until
     // it is read or answered.
-    if (!run.inbox.includes(mail) && !run.fields.mail.includes(mail)) this.#settle([mail]);
+    if (!run.inbox.includes(mail) && !run.fields.mail.includes(mail)) this.#settle([mail], run);
     return outcome;
   }
 
   /** Messages taken from the other tabs that a conversation is done with now: read, or answered. */
-  #settle(mails: readonly Mail[]): void {
+  #settle(mails: readonly Mail[], read?: Run): void {
     const ids = mails.map((mail) => mail.id).filter((id) => this.#claimed.delete(id));
-    if (ids.length > 0) void this.#room?.done(ids).catch(() => {});
+    if (ids.length === 0) return;
+    // Read into a conversation: done with once that is written, see `toSettle`.
+    if (read) read.toSettle.push(...ids);
+    else void this.#room?.done(ids).catch(() => {});
   }
 
   /**
@@ -2767,23 +2859,37 @@ export class ChatSession {
     }
     if ((run === this.#shown && !take) || run.handing || run.elsewhere) return;
     run.handing = true;
-    const settled = () =>
-      !run.conversation.running && run.starting === 0 && run.fields.queued.length === 0;
-    if (!settled()) {
-      await new Promise<void>((resolve) => {
-        const stop = run.conversation.subscribe(() => {
-          if (!settled()) return;
-          stop();
-          resolve();
+    // No turn starts here meanwhile (`#readyForMail`, `#after`, `#send`): once the one that runs is
+    // over, and what it wrote is written, nothing goes on in it.
+    const settled = () => !run.conversation.running && run.starting === 0;
+    const gone = () => this.#room !== room || this.#runs.get(id) !== run || run.gone;
+    for (;;) {
+      if (!settled()) {
+        await new Promise<void>((resolve) => {
+          const stop = run.conversation.subscribe(() => {
+            if (!settled()) return;
+            stop();
+            resolve();
+          });
         });
-      });
+      }
+      if (gone()) {
+        run.handing = false;
+        return;
+      }
+      // What people queued meanwhile goes along, written with it.
+      this.#saveSoon(run);
+      await this.#flushRun(run);
+      if (gone()) {
+        run.handing = false;
+        return;
+      }
+      if (settled()) break;
     }
     run.handing = false;
-    if (this.#room !== room || this.#runs.get(id) !== run || run.gone) return;
-    await this.#flushRun(run);
-    if (this.#room !== room || this.#runs.get(id) !== run || run.gone) return;
     if (run === this.#shown) {
       this.#handBack(run);
+      if (run.fields.queued.length > 0) this.#update(run, { queued: [] });
       run.elsewhere = true;
       room.yieldTo(id);
       this.#refresh();
@@ -2791,6 +2897,35 @@ export class ChatSession {
       this.#retire(run);
       this.#refresh();
     }
+  }
+
+  /**
+   * The page came back from the browser's cache after it went: what it had taken of the other tabs
+   * went back as it went, and may be another tab's now. It keeps none of it, and takes again what
+   * still waits.
+   */
+  #resumed(room: AgentRoom): void {
+    if (this.#room !== room) return;
+    const read: string[] = [];
+    for (const run of this.#runs.values()) {
+      const given = (mail: Mail) => this.#claimed.has(mail.id);
+      // Taken again in a moment: not as the same words again.
+      const recent = this.#recent.get(run.id);
+      for (const mail of [...run.inbox, ...run.fields.mail]) {
+        if (given(mail)) recent?.delete(`${mail.from.id}\n${mail.text}`);
+      }
+      run.inbox = run.inbox.filter((mail) => !given(mail));
+      if (run.fields.mail.some(given)) {
+        this.#update(run, { mail: run.fields.mail.filter((mail) => !given(mail)) });
+      }
+      // Read here already: nobody gets them again.
+      read.push(...run.toSettle.splice(0));
+    }
+    this.#claimed.clear();
+    if (read.length > 0) void room.done(read).catch(() => {});
+    this.#serveSoon();
+    for (const id of this.#runs.keys()) void this.#claimFor(room, id);
+    this.#refresh();
   }
 
   /** Another tab deleted one this tab has: it stops, and nothing more of it is written or read. */
