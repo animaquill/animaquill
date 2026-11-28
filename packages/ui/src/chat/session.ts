@@ -2442,6 +2442,14 @@ export class ChatSession {
   }
 
   /**
+   * Whose windows the conversations of a project see and send to, as well as this one's: those of
+   * this browser, or the person's on any computer (see `AgentPost.reach`); none without either.
+   */
+  get reach(): AgentPost["reach"] | undefined {
+    return this.#options.post?.reach;
+  }
+
+  /**
    * What one of the project sees of the others and how it sends to them: an AI tool on this
    * computer by its id (`mcp:` and its session) and name.
    */
@@ -2464,11 +2472,12 @@ export class ChatSession {
   #directory(me: () => string, from: () => MessageFrom, sender: Run | undefined): AgentDirectory {
     const accepts = () => this.#options.ai.getSnapshot().fromAgents ?? "yes";
     const inRoom = () => this.#room !== undefined;
+    const online = this.reach === "account";
     return {
       // Offline, a project is of this browser only: another browser that has the folder open is
-      // not seen.
+      // not seen. Online, the person's windows anywhere are.
       get only() {
-        return inRoom() ? ("browser" as const) : undefined;
+        return inRoom() && !online ? ("browser" as const) : undefined;
       },
       list: async () => {
         const self = me();
@@ -2484,10 +2493,11 @@ export class ChatSession {
         const room = this.#room;
         const project = this.#project?.key;
         if (room && project !== undefined) {
-          const roster = await room.roster().catch(() => []);
+          // What they do now, as they said it last.
+          const roster = await room.roster(true).catch(() => []);
           for (const entry of roster) {
             if (listed.has(entry.id)) continue;
-            const card = cardOf(entry.id, entry.card, entry.live);
+            const card = cardOf(entry.id, entry.card, entry.live, online ? "elsewhere" : "tab");
             if (!card) continue;
             cards.push(card);
             listed.add(entry.id);

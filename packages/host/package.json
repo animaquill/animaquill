@@ -13,7 +13,8 @@
     "./sync": "./src/sync-protocol.ts",
     "./relay": "./src/relay.ts",
     "./model-catalog": "./src/model-catalog.ts",
-    "./s3": "./src/s3.ts"
+    "./s3": "./src/s3.ts",
+    "./agents-account": "./src/agents-account.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"

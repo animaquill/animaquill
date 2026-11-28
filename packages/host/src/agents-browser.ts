@@ -146,6 +146,7 @@ export function browserAgents({
     return () => removeEventListener("pageshow", shown);
   },
 }: BrowserAgentsOptions = {}): AgentPost {
+  const reach = "browser" as const;
   const database = connector(() => {
     const request = factory().open(scoped(DATABASE), VERSION);
     request.addEventListener("upgradeneeded", (event) => {
@@ -180,6 +181,7 @@ export function browserAgents({
   };
 
   return {
+    reach,
     enter(project, events: AgentRoomEvents): AgentRoom {
       const window = newWindowId();
       const held = new Map<string, Held>();

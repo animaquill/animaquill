@@ -37,6 +37,7 @@ import { libraryMode } from "./library/config.ts";
 import { LibraryStorage } from "./library/storage.ts";
 import type { PersonLimits } from "./limits.ts";
 import { ChatImages, scheduleChatImagesCleanup, settleLater } from "./me/chat-images.ts";
+import { listenForAgents, scheduleAgentsCleanup } from "./me/agents.ts";
 import { listenForPeople, PersonEvents } from "./me/events.ts";
 import { Settings } from "./settings.ts";
 import type { ReleaseSwitches } from "./switches.ts";
@@ -141,6 +142,7 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
   let settings: Settings | undefined;
   let links: ReturnType<typeof listenForLinks> | undefined;
   let people: ReturnType<typeof listenForPeople> | undefined;
+  let agents: ReturnType<typeof listenForAgents> | undefined;
 
   /** Archives that webhooks or people ask for: the worker runs them, see worker.ts. */
   const enqueue = async (job: ArchiveJob) => {
@@ -311,6 +313,9 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
         // ...and of people's lists, whichever process changed them.
         await people?.stop().catch(() => {});
         people = listenForPeople(database.db, events, log);
+        // ...and what the conversations of a person's project say to each other.
+        await agents?.stop().catch(() => {});
+        agents = listenForAgents(database.db, events, log);
         const hosts = new RepoHosts({ github, local });
         repositories = repositoryService(github, githubApp, local);
         lfs = await lfsUploads(hosts);
@@ -351,6 +356,13 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
               "pictures of conversations will not be tidied up",
             );
           });
+        // Messages of conversations past their week, and the rest of what lasts a while only.
+        await scheduleAgentsCleanup(jobs, database.db, log).catch((error: unknown) => {
+          log.warn(
+            { err: describeError(error) },
+            "messages of conversations will not be tidied up",
+          );
+        });
         // Signed out everywhere, as after taking the App's authorization back: syncing stops too.
         whenSignedOutEverywhere((userId) => sync?.closeUser(userId));
         // What the deployment has besides: neither holds up the rest, what fails waits.
@@ -422,6 +434,7 @@ export const startServer = (config: Config, parts: ServerParts = {}): Server => 
       stopping = true;
       await app.close().catch(() => {});
       await people?.stop().catch(() => {});
+      await agents?.stop().catch(() => {});
       await links?.stop().catch(() => {});
       await jobs?.stop({ graceful: true, timeout: 10_000 }).catch(() => {});
       await database.close().catch(() => {});

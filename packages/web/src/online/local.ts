@@ -48,9 +48,10 @@ const CLOSED = 2;
  * wait the server said; an answer that is not a stream closes it for good, as `EventSource` does.
  */
 export function fetchEventSource(url: string, request: typeof fetch): EventSourceLike {
-  const listeners = new Map<string, Set<() => void>>();
-  const emit = (type: string) => {
-    for (const listener of listeners.get(type) ?? []) listener();
+  const listeners = new Map<string, Set<(event?: { readonly data?: unknown }) => void>>();
+  const emit = (type: string, data?: string) => {
+    for (const listener of listeners.get(type) ?? [])
+      listener(data === undefined ? undefined : { data });
   };
   let readyState = CONNECTING;
   let wait = 3000;
@@ -84,6 +85,7 @@ export function fetchEventSource(url: string, request: typeof fetch): EventSourc
     let buffer = "";
     let type = "message";
     let hasData = false;
+    let data: string[] = [];
     try {
       for (;;) {
         const { value, done } = await reader.read();
@@ -94,17 +96,20 @@ export function fetchEventSource(url: string, request: typeof fetch): EventSourc
           const line = buffer.slice(0, end);
           buffer = buffer.slice(end + (buffer.startsWith("\r\n", end) ? 2 : 1));
           if (line === "") {
-            if (hasData) emit(type);
+            if (hasData) emit(type, data.join("\n"));
             type = "message";
             hasData = false;
+            data = [];
             continue;
           }
           const colon = line.indexOf(":");
           const field = colon < 0 ? line : line.slice(0, colon);
-          const data = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /, "");
-          if (field === "event") type = data;
-          else if (field === "data") hasData = true;
-          else if (field === "retry" && /^\d+$/.test(data)) wait = Number(data);
+          const said = colon < 0 ? "" : line.slice(colon + 1).replace(/^ /, "");
+          if (field === "event") type = said;
+          else if (field === "data") {
+            hasData = true;
+            data.push(said);
+          } else if (field === "retry" && /^\d+$/.test(said)) wait = Number(said);
         }
       }
     } catch {

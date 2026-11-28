@@ -35,6 +35,14 @@ const STATE: Readonly<Record<AgentCard["state"], string>> = {
   tool: "an AI tool on this computer; it cannot be woken and reads messages with its next call",
 };
 
+/** Away, online: the window it was open in, on this computer or another, went. */
+const AWAY_ELSEWHERE =
+  "the window it was open in was closed; a message waits until the user opens it again";
+
+/** An AI tool online, of the computer of another window: maybe not this one. */
+const TOOL_ELSEWHERE =
+  "an AI tool connected to that window; it cannot be woken and reads messages with its next call";
+
 const ACCEPTS: Readonly<Record<AgentCard["accepts"], string>> = {
   yes: "",
   ask: "; the user is asked before it reads a message",
@@ -71,8 +79,21 @@ export const agentsList: ToolDefinition<z.output<typeof AgentsListParams>> = {
       const doing = card.doing ? `: ${card.doing}` : "";
       const changed =
         card.changed.length > 0 ? `; last changed ${card.changed.slice(0, 10).join(", ")}` : "";
-      const where = card.kind === "chat" && card.where === "tab" ? ", in another tab" : "";
-      return `${JSON.stringify(card.name)} (${card.kind === "chat" ? "conversation" : "tool"}${where}) ${STATE[card.state]}${doing}${changed}${ACCEPTS[card.accepts]}`;
+      const where =
+        card.where === undefined || (card.kind !== "chat" && card.where === "tab")
+          ? ""
+          : card.where === "tab"
+            ? ", in another tab"
+            : ", in another window or on another device";
+      const state =
+        card.where !== "elsewhere"
+          ? STATE[card.state]
+          : card.state === "away"
+            ? AWAY_ELSEWHERE
+            : card.state === "tool"
+              ? TOOL_ELSEWHERE
+              : STATE[card.state];
+      return `${JSON.stringify(card.name)} (${card.kind === "chat" ? "conversation" : "tool"}${where}) ${state}${doing}${changed}${ACCEPTS[card.accepts]}`;
     });
     return answer(
       call,

@@ -18,7 +18,8 @@ import type { SessionCredentials } from "../auth/credentials.ts";
  * process missed some, as its connection to the database broke for a while, it tells everyone.
  *
  * - `GET /api/me/events`: `text/event-stream`. First `event: ready`, then `data: {"t":"projects"}`
- *   for each change, and a comment every `HEARTBEAT_MS`, which keeps gateways and browsers from
+ *   for each change; `event: agents` with what the person's conversations of a project said to each
+ *   other (`AgentsSaid` of me/agents.ts, with `p` the project, or `{"k":"missed"}`); and a comment every `HEARTBEAT_MS`, which keeps gateways and browsers from
  *   taking it for gone; the session is looked at again each time, and the stream ends where it is
  *   not signed in any more, and after `STREAM_MS` in any case: the browser comes again by itself
  *   (`retry`). `PER_PERSON` at most of a person at once: 429 `busy` for one more. 401 `signedOut`;
@@ -42,9 +43,15 @@ export const notifyPerson = async (db: Executor, userIds: readonly string[]): Pr
     await db.execute(sql`select pg_notify(${PERSON_CHANNEL}, ${id})`);
 };
 
+/** A stream of a person: what it says as their list changes, and as their agents say something. */
+interface Stream {
+  readonly tell: () => void;
+  readonly agents: ((data: string) => void) | undefined;
+}
+
 /** The streams this process has open, by person. */
 export class PersonEvents {
-  readonly #streams = new Map<string, Set<() => void>>();
+  readonly #streams = new Map<string, Set<Stream>>();
   readonly #ends = new Set<() => void>();
   readonly #perPerson: number;
   /** How often a stream says something, and how long it lasts: `HEARTBEAT_MS` and `STREAM_MS`. */
@@ -64,18 +71,25 @@ export class PersonEvents {
   }
 
   /**
-   * Adds a stream of `userId`, which `tell` tells and `end` ends; undefined where they have as many
-   * as they may already. Returns how to take it away.
+   * Adds a stream of `userId`, which `tell` tells and `end` ends, and `agents` tells what their
+   * conversations say to each other (me/agents.ts, `AgentsSaid` as JSON); undefined where they have
+   * as many as they may already. Returns how to take it away.
    */
-  add(userId: string, tell: () => void, end: () => void): (() => void) | undefined {
+  add(
+    userId: string,
+    tell: () => void,
+    end: () => void,
+    agents?: (data: string) => void,
+  ): (() => void) | undefined {
     const streams = this.#streams.get(userId) ?? new Set();
     if (streams.size >= this.#perPerson) return undefined;
-    streams.add(tell);
+    const stream: Stream = { tell, agents };
+    streams.add(stream);
     this.#streams.set(userId, streams);
     this.#ends.add(end);
     return () => {
       this.#ends.delete(end);
-      streams.delete(tell);
+      streams.delete(stream);
       if (streams.size === 0 && this.#streams.get(userId) === streams) this.#streams.delete(userId);
     };
   }
@@ -87,12 +101,23 @@ export class PersonEvents {
 
   /** The list of `userId` changed. */
   heard(userId: string): void {
-    for (const tell of this.#streams.get(userId) ?? []) tell();
+    for (const stream of this.#streams.get(userId) ?? []) stream.tell();
   }
 
   /** Something may have changed for anyone: everyone reads their list again. */
   missed(): void {
-    for (const streams of this.#streams.values()) for (const tell of streams) tell();
+    for (const streams of this.#streams.values()) for (const stream of streams) stream.tell();
+  }
+
+  /** The conversations of `userId` said something to each other, see me/agents.ts. */
+  agents(userId: string, data: string): void {
+    for (const stream of this.#streams.get(userId) ?? []) stream.agents?.(data);
+  }
+
+  /** Something may have been said for anyone: every page asks again what there is for it. */
+  agentsMissed(): void {
+    for (const streams of this.#streams.values())
+      for (const stream of streams) stream.agents?.(MISSED);
   }
 
   /** How many streams are open, of everyone. */
@@ -102,6 +127,9 @@ export class PersonEvents {
     return size;
   }
 }
+
+/** What a stream says of agents where something may have been missed: `{"k":"missed"}`. */
+const MISSED = JSON.stringify({ k: "missed" });
 
 /** Hears what any process says on `PERSON_CHANNEL`, see `listenToChannel`. Resolves to what stops it. */
 export const listenForPeople = (
@@ -166,6 +194,8 @@ export async function personEventsRoutes(
         user.userId,
         () => send(`data: {"t":"projects"}\n\n`),
         () => end(),
+        // Named, so that pages from before, which hear only what is not, hear none of it.
+        (data) => send(`event: agents\ndata: ${data}\n\n`),
       );
       if (!stop) return reply.code(429).header("retry-after", "60").send({ error: "busy" });
       reply.hijack();

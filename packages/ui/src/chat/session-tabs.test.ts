@@ -68,8 +68,9 @@ class Browser {
       );
   }
 
-  tab(tab: number): AgentPost {
+  tab(tab: number, reach: AgentPost["reach"] = "browser"): AgentPost {
     return {
+      reach,
       enter: (_project, events): AgentRoom => {
         const room = { events, open: true };
         this.rooms.set(tab, room);
@@ -237,7 +238,12 @@ class Browser {
 }
 
 /** A tab of the browser, with the project open and the conversations of the browser. */
-function openTab(browser: Browser, number: number, chats: ChatStore) {
+function openTab(
+  browser: Browser,
+  number: number,
+  chats: ChatStore,
+  reach: AgentPost["reach"] = "browser",
+) {
   const values = new Map<string, unknown>();
   const settings: SettingsStore = {
     load: async (key) => values.get(key),
@@ -262,7 +268,7 @@ function openTab(browser: Browser, number: number, chats: ChatStore) {
     problems: () => problems,
     undone: () => {},
     fake: () => fake,
-    post: browser.tab(number),
+    post: browser.tab(number, reach),
     ask: async () => ({ ok: false }),
   });
   return { ai, chat, fake: (endpoint: FakeEndpoint) => (fake = endpoint) };
@@ -705,5 +711,38 @@ describe("conversations in several tabs of a browser (chat6 technical design, 6.
         (entry) => entry.role === "user" && entry.text === "写的时候说的",
       ),
     ).toEqual([]);
+  });
+});
+
+describe("conversations in the person's windows anywhere, online (chat6 technical design, 6.3)", () => {
+  it("says the other is in another window or on another device, and that it went so; not that only this browser is seen", async () => {
+    const browser = new Browser();
+    const chats = memoryChats();
+    const one = openTab(browser, 1, chats, "account");
+    const two = openTab(browser, 2, chats, "account");
+    expect(one.chat.reach).toBe("account");
+    await settle();
+    two.fake({ fake: [{ text: "我管配乐" }] });
+    await two.chat.send("配乐");
+    const b = two.chat.getSnapshot().id as string;
+    await vi.waitFor(async () => {
+      expect(await one.chat.agentsFor("mcp:s", () => "工具").list()).toContainEqual(
+        expect.objectContaining({ id: b, where: "elsewhere", state: "idle" }),
+      );
+    });
+    one.fake({ fake: [{ calls: [{ name: "aq_agents_list", args: {} }] }, { text: "看过了" }] });
+    await one.chat.send("剪开场");
+    const a = one.chat.getSnapshot().id as string;
+    const listed = (resultOf(one.chat, a, "aq_agents_list") as { text?: string } | undefined)?.text;
+    expect(listed).toContain('"配乐" (conversation, in another window or on another device) idle');
+    expect(listed).not.toContain("only this browser is seen");
+    browser.crash(2);
+    one.fake({ fake: [{ calls: [{ name: "aq_agents_list", args: {} }] }, { text: "又看了" }] });
+    await one.chat.send("再看看");
+    expect(
+      (resultOf(one.chat, a, "aq_agents_list") as { text?: string } | undefined)?.text,
+    ).toContain(
+      "the window it was open in was closed; a message waits until the user opens it again",
+    );
   });
 });

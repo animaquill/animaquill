@@ -1148,6 +1148,7 @@ export type { BrowserLfsOptions } from "./lfs.ts";
 export { browserCloudProjects, projectSummaryOf } from "./cloud-projects.ts";
 export type { BrowserCloudProjectsOptions } from "./cloud-projects.ts";
 export { browserPersonEvents } from "./person-events.ts";
+export { accountAgents, type AccountAgentsOptions } from "./agents-account.ts";
 
 /**
  * For tests: the browser cannot write folders, as Firefox and Safari, and projects of the offline

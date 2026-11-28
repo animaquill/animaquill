@@ -3632,6 +3632,7 @@
     "markedBy": "「{{title}}」刚改过",
     "elsewhere": {
       "text": "这个对话在另一个标签页里开着",
+      "textOnline": "这个对话在别的窗口或设备上开着",
       "take": "在这里接着"
     },
     "agents": {

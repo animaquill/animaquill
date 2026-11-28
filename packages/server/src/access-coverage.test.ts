@@ -16,6 +16,11 @@ import { LfsDownloads } from "./lfs/downloads.ts";
 import { LfsUploads } from "./lfs/uploads.ts";
 import { changeLfs } from "./me/lfs.ts";
 import {
+  agentBudgets,
+  agentCards,
+  agentMail,
+  agentWatches,
+  agentWindows,
   deletedProjects,
   lfsObjects,
   lfsUploads,
@@ -251,6 +256,48 @@ const PROJECT_ROUTES: readonly ProjectRoute[] = [
     url: (f) => `/api/me/chats/${f.id}/c1`,
     body: () => ({ base: null, chat: { id: "c1", title: "别人的", updatedAt: 2, entries: [] } }),
   },
+  // What the conversations of a person's project say to each other (me/agents.ts).
+  ...(
+    [
+      ["PUT", "/windows/:window", "/windows/w-1", { serve: ["chat-b"] }],
+      ["POST", "/windows/:window/leave", "/windows/w-1/leave", {}],
+      ["POST", "/windows/:window/hold", "/windows/w-1/hold", { agent: "chat-b" }],
+      ["POST", "/windows/:window/yield", "/windows/w-1/yield", { agent: "chat-b" }],
+      ["POST", "/windows/:window/claim", "/windows/w-1/claim", { agent: "chat-b" }],
+      ["POST", "/windows/:window/done", "/windows/w-1/done", { ids: ["m-1"] }],
+      ["POST", "/windows/:window/back", "/windows/w-1/back", { ids: ["m-1"] }],
+      ["GET", "", "", undefined],
+      [
+        "POST",
+        "/mail",
+        "/mail",
+        {
+          mail: {
+            id: "m-1",
+            to: "chat-b",
+            from: "chat-a",
+            text: "别人的",
+            at: 1,
+            left: false,
+            body: {},
+          },
+          most: 50,
+          repeatMs: 0,
+        },
+      ],
+      ["POST", "/signal", "/signal", { window: "w-1", kind: "gone", id: "chat-b" }],
+      ["POST", "/watch", "/watch", { target: "chat-b", watcher: "chat-a", until: 1 }],
+      ["POST", "/watchers", "/watchers", { target: "chat-b" }],
+      ["POST", "/forget", "/forget", { agent: "chat-b" }],
+      ["POST", "/budget", "/budget", { add: 1 }],
+    ] as const
+  ).map(([method, route, url, body]): ProjectRoute => ({
+    method,
+    route: `/api/me/projects/:project/agents${route}`,
+    action: "read",
+    url: (f) => `/api/me/projects/${f.id}/agents${url}`,
+    ...(body !== undefined && { body: () => body }),
+  })),
 ];
 
 /** Routes whose projects come otherwise, each tested below by name. */
@@ -413,7 +460,12 @@ describe.skipIf(!TEST_DATABASE)("access to projects, route by route, on a databa
         | typeof userChats
         | typeof lfsUploads
         | typeof projectMarks
-        | typeof repoMerges,
+        | typeof repoMerges
+        | typeof agentWindows
+        | typeof agentMail
+        | typeof agentCards
+        | typeof agentWatches
+        | typeof agentBudgets,
     ) => t.db.select().from(table).where(eq(table.projectId, id));
     return JSON.stringify({
       project: await t.db.select().from(projects).where(eq(projects.id, id)),
@@ -427,6 +479,13 @@ describe.skipIf(!TEST_DATABASE)("access to projects, route by route, on a databa
       uploads: await of(lfsUploads),
       marks: await of(projectMarks),
       merges: await of(repoMerges),
+      agents: [
+        await of(agentWindows),
+        await of(agentMail),
+        await of(agentCards),
+        await of(agentWatches),
+        await of(agentBudgets),
+      ],
     });
   };
 

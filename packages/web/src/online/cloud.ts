@@ -4,6 +4,7 @@ import {
   browserChatSyncAccess,
   browserCloud,
   browserCloudProjects,
+  accountAgents,
   browserPersonEvents,
   browserCoverAccess,
   browserLfs,
@@ -23,7 +24,8 @@ import { bindingFetch, fetchEventSource, syncProtocols } from "./local.ts";
  * and so is sending files of assets into Git LFS of their repositories (lfs/routes.ts), and the
  * covers of projects for the start page (sync/covers.ts), and how people organise their projects
  * on the start page (sync/organize.ts), and the AI settings, keys and conversations that go with
- * the account, and which of those go with it at all (me/routes.ts), and the open catalog of models
+ * the account, and which of those go with it at all (me/routes.ts), what the conversations of a
+ * project say to each other in the person's windows (me/agents.ts), and the open catalog of models
  * for the settings (ai/catalog.ts). The browser brings what shows its session along.
  */
 
@@ -46,7 +48,13 @@ export function serverCloud({ editor, version, binding }: ServerCloudOptions): C
   /** What every access is given besides: how requests go, where they need the key. */
   const shared = request ? { fetch: request } : {};
   const projects = browserCloudProjects({ api, changeHeaders, ...shared });
-  return browserCloud({
+  // What changed of the person's list on any computer, at once (me/events.ts), and what their
+  // conversations of a project say to each other, on the same stream.
+  const events = browserPersonEvents({
+    url: "/api/me/events",
+    ...(request && { open: (url: string) => fetchEventSource(url, request) }),
+  });
+  const cloud = browserCloud({
     platform: editor,
     syncUrl: () => {
       const url = new URL("/api/sync", location.href);
@@ -58,11 +66,7 @@ export function serverCloud({ editor, version, binding }: ServerCloudOptions): C
     remove: projects.remove,
     wake: projects.wake,
     rename: projects.rename,
-    // What changed of the person's list on any computer, at once (me/events.ts).
-    events: browserPersonEvents({
-      url: "/api/me/events",
-      ...(request && { open: (url: string) => fetchEventSource(url, request) }),
-    }),
+    events,
     repository: browserRepository({ api, changeHeaders, ...shared }),
     lfs: browserLfs({ api, changeHeaders, ...shared }),
     lfsAccount: browserLfsAccount({ api, changeHeaders, ...shared }),
@@ -77,4 +81,21 @@ export function serverCloud({ editor, version, binding }: ServerCloudOptions): C
     }),
     modelCatalog: browserModelCatalogAccess({ api, ...shared }),
   });
+  return {
+    ...cloud,
+    // The conversations of a project, in the person's windows on any computer (me/agents.ts):
+    // of the project on the backend that one of this browser is connected to.
+    agentPost: accountAgents({
+      api,
+      changeHeaders,
+      events,
+      projectOf: async (key) => {
+        const link = await cloud.links.get(key).catch(() => undefined);
+        return link && link.platform === cloud.platform && !link.creating
+          ? link.project
+          : undefined;
+      },
+      ...shared,
+    }),
+  };
 }

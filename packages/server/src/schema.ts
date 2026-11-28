@@ -1359,3 +1359,163 @@ export const userPrefs = pgTable("user_prefs", {
   lfsAcknowledgedAt: moment("lfs_acknowledged_at"),
   updatedAt: moment("updated_at").notNull().defaultNow(),
 });
+
+/**
+ * What the conversations and AI tools of a person's project, in their windows anywhere, say to each
+ * other (docs/design/ai-teamwork.md of AnimaQuill Cloud, 3; chat6 technical design, 6.3), see
+ * me/agents.ts: each row of one person, about one project of theirs, and nobody else's ever. All of
+ * it lasts a while only: messages a week, what a window said of what it has 12 hours, and a window
+ * as long as it says it is there. Not in an export of the data (data/transfer.ts).
+ */
+
+/** A window (a page of the editor) that takes part, for as long as it says so again in time. */
+export const agentWindows = pgTable(
+  "agent_windows",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    windowId: text("window_id").notNull(),
+    /** Gone after this, and what it held with it, unless it says it is there before. */
+    liveUntil: moment("live_until").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.projectId, table.windowId] }),
+    index("agent_windows_live").on(table.liveUntil),
+    check("agent_windows_id", sql`${table.windowId} ~ '^[A-Za-z0-9_-]{1,64}$'`),
+  ],
+);
+
+/**
+ * Which window has which conversation or AI tool (`holds`), one at a time, and which windows wait to
+ * have it after that one, in the order they asked (`since`): as a lock of the browser that others
+ * wait for, see `AgentRoom.serve` of the editor's host. Goes with its window.
+ */
+export const agentHolds = pgTable(
+  "agent_holds",
+  {
+    userId: uuid("user_id").notNull(),
+    projectId: text("project_id").notNull(),
+    agentId: text("agent_id").notNull(),
+    windowId: text("window_id").notNull(),
+    holds: boolean("holds").notNull(),
+    since: moment("since").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.projectId, table.agentId, table.windowId] }),
+    uniqueIndex("agent_holds_one")
+      .on(table.userId, table.projectId, table.agentId)
+      .where(sql`${table.holds}`),
+    foreignKey({
+      columns: [table.userId, table.projectId, table.windowId],
+      foreignColumns: [agentWindows.userId, agentWindows.projectId, agentWindows.windowId],
+      name: "agent_holds_window_fk",
+    }).onDelete("cascade"),
+    index("agent_holds_window").on(table.userId, table.projectId, table.windowId),
+  ],
+);
+
+/**
+ * What the window that has one, or had it last, said of it (its card, as the editor writes it): as
+ * the others list it, also for 12 hours after that window went.
+ */
+export const agentCards = pgTable(
+  "agent_cards",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").notNull(),
+    windowId: text("window_id").notNull(),
+    card: jsonb("card").notNull(),
+    updatedAt: moment("updated_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.projectId, table.agentId] }),
+    index("agent_cards_updated").on(table.updatedAt),
+  ],
+);
+
+/**
+ * Messages for one of the project, until the window that has it is done with them: taken by one
+ * window at a time (`claimed_by`), which has them until it says it is done or gives them back, or
+ * until it is gone. A week at most.
+ */
+export const agentMail = pgTable(
+  "agent_mail",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    /** As the editor that sent it named it. */
+    mailId: text("mail_id").notNull(),
+    toAgent: text("to_agent").notNull(),
+    fromAgent: text("from_agent").notNull(),
+    text: text("text").notNull(),
+    /** All of it, as the editor reads it. */
+    body: jsonb("body").notNull(),
+    /** Nobody had the one it is for as it was sent: it waits to be opened. */
+    left: boolean("left").notNull(),
+    /** When it was sent, by the clock of the editor that sent it, in milliseconds. */
+    sentAt: bigint("sent_at", { mode: "number" }).notNull(),
+    createdAt: moment("created_at").notNull(),
+    claimedBy: text("claimed_by"),
+    claimedAt: moment("claimed_at"),
+    expiresAt: moment("expires_at").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.projectId, table.mailId] }),
+    index("agent_mail_to").on(table.userId, table.projectId, table.toAgent),
+    index("agent_mail_expires").on(table.expiresAt),
+    check("agent_mail_text", sql`char_length(${table.text}) <= 4000`),
+  ],
+);
+
+/** Who asked to be told once another is next idle, until when (12 hours at most). */
+export const agentWatches = pgTable(
+  "agent_watches",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    target: text("target").notNull(),
+    watcher: text("watcher").notNull(),
+    until: moment("until").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.projectId, table.target, table.watcher] }),
+    index("agent_watches_until").on(table.until),
+  ],
+);
+
+/**
+ * How many turns, and messages read on the way, went on in the person's conversations of a project
+ * since they last said something in any, on any device (`AgentRoom.budget`): nothing after 12 hours
+ * of no turn.
+ */
+export const agentBudgets = pgTable(
+  "agent_budgets",
+  {
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    count: integer("count").notNull(),
+    at: moment("at").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.projectId] })],
+);

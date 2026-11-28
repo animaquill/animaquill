@@ -30,6 +30,7 @@ import type { SyncHub } from "./sync/hub.ts";
 import { projectRoutes } from "./sync/routes.ts";
 import { libraryMode } from "./library/config.ts";
 import { meRoutes } from "./me/routes.ts";
+import { agentsRoutes } from "./me/agents.ts";
 import { personEventsRoutes, type PersonEvents } from "./me/events.ts";
 import { ModelCatalogCache, catalogRoutes } from "./ai/catalog.ts";
 import { createSealer } from "./seal.ts";
@@ -290,6 +291,15 @@ export const buildApp = (
     access,
     gate,
     localLfs: async () => (platform.ready() ? platform.lfs?.()?.localSummary() : undefined),
+  });
+  // What the conversations of a person's project, in their windows anywhere, say to each other.
+  app.register(agentsRoutes, {
+    origin: config.publicOrigin,
+    accounts,
+    credentials,
+    db,
+    now: platform.now,
+    gate,
   });
   // What changed of people's lists, at once.
   if (platform.events)

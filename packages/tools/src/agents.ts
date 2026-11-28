@@ -26,8 +26,11 @@ export interface AgentCard {
    * can tell.
    */
   readonly state: "running" | "waiting" | "idle" | "closed" | "away" | "tool";
-  /** It is open in another window of this browser, or was until that went away. */
-  readonly where?: "tab";
+  /**
+   * It is open in another window of this browser, or was until that went away ("tab"); online, in
+   * another window of the person's on this computer or another ("elsewhere").
+   */
+  readonly where?: "tab" | "elsewhere";
   /** What it does now, in the words of the chat, while a task runs. */
   readonly doing?: string;
   /** What it changed last, as results name objects. */

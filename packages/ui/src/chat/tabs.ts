@@ -60,7 +60,12 @@ const ACCEPTS = new Set<AgentCard["accepts"]>(["yes", "ask", "no"]);
  * A card another window said of one it has, as the list shows it: only what a card has; one whose
  * window went away is away. Its id is the one it was kept by, whatever the card says.
  */
-export function cardOf(id: string, card: unknown, live: boolean): AgentCard | undefined {
+export function cardOf(
+  id: string,
+  card: unknown,
+  live: boolean,
+  where: "tab" | "elsewhere" = "tab",
+): AgentCard | undefined {
   if (!isRecord(card)) return undefined;
   const { kind, name, state, doing, changed, accepts } = card;
   if (kind !== "chat" && kind !== "tool") return undefined;
@@ -82,7 +87,8 @@ export function cardOf(id: string, card: unknown, live: boolean): AgentCard | un
     ...(live && typeof doing === "string" && doing && { doing: cleanName(doing, 200) }),
     changed: lines.map((line) => cleanName(line, 200)),
     accepts: accepts as AgentCard["accepts"],
-    ...(kind === "chat" && { where: "tab" as const }),
+    // An AI tool of another window online is of the computer of that window, maybe not this one.
+    ...((kind === "chat" || where === "elsewhere") && { where }),
   };
 }
 

@@ -381,13 +381,16 @@ export const InputArea = forwardRef<
   });
   const menu = completion.view;
 
-  // Another tab of this browser has the conversation: here it is to read, until people take it.
+  // Another tab of this browser has the conversation, or online another window of the person's
+  // anywhere: here it is to read, until people take it.
   if (shown.elsewhere) {
     return (
       <div className={styles.area}>
         <div className={styles.elsewhere} role="status" data-testid="chat-elsewhere">
           <AppWindow size={14} aria-hidden className={styles.elsewhereIcon} />
-          <span className={styles.elsewhereText}>{t("chat.elsewhere.text")}</span>
+          <span className={styles.elsewhereText}>
+            {t(chat.reach === "account" ? "chat.elsewhere.textOnline" : "chat.elsewhere.text")}
+          </span>
           <button
             type="button"
             className={styles.elsewhereTake}

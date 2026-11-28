@@ -157,6 +157,20 @@ export class Digest {
   }
 }
 
+/**
+ * Tables of the server's that last a while only, and go in neither direction: what the windows of
+ * people's conversations say to each other (me/agents.ts), which a server made again from an export
+ * is without, as when it starts.
+ */
+export const TRANSIENT_TABLES: readonly string[] = [
+  "agent_budgets",
+  "agent_cards",
+  "agent_holds",
+  "agent_mail",
+  "agent_watches",
+  "agent_windows",
+];
+
 /** The tables of the scope, with their columns in order, as the database has them. */
 const tablesOf = async (client: pg.ClientBase, scope: DataScope) => {
   const { rows } = await client.query<{
@@ -172,9 +186,10 @@ const tablesOf = async (client: pg.ClientBase, scope: DataScope) => {
      join pg_namespace n on n.oid = c.relnamespace
      join pg_attribute a on a.attrelid = c.oid and a.attnum > 0 and not a.attisdropped
      where n.nspname = any($1) and c.relkind in ('r', 'p')
+       and not (n.nspname = 'public' and c.relname = any($2))
      group by n.nspname, c.relname
      order by array_position($1, n.nspname::text), c.relname`,
-    [scope.schemas],
+    [scope.schemas, TRANSIENT_TABLES],
   );
   return rows;
 };
@@ -449,6 +464,7 @@ export const finishExport = (
       "Keys of AI services and GitHub's tokens are in here sealed, as the database has them. The master key that opens them is not in here: the server this goes into needs the same one.",
     leftOut: [
       "the job queue (pgboss)",
+      "what lasts a while only: what the windows of conversations say to each other (agent_*)",
       "the record of migrations (drizzle)",
       "what is not in the database, such as the pictures of conversations in the object storage",
     ],
