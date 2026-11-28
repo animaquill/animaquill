@@ -1478,6 +1478,8 @@ export class ChatSession {
     const run = this.#shown;
     const project = this.#project?.key;
     if (!run || run.conversation.running || !text.trim() || project === undefined) return undefined;
+    // Another tab has it, or is about to: the plan goes there.
+    if (run.elsewhere || run.handing) return undefined;
     const { conversation } = run;
     const went = () =>
       conversation
@@ -2091,6 +2093,7 @@ export class ChatSession {
     if (
       !run ||
       run.elsewhere ||
+      run.handing ||
       !conversation ||
       conversation.running ||
       !conversation.failedTask()
@@ -2157,7 +2160,7 @@ export class ChatSession {
    */
   async compact(): Promise<RoomMade | undefined> {
     const run = this.#shown;
-    if (!run?.conversation.compactable || run.elsewhere) return undefined;
+    if (!run?.conversation.compactable || run.elsewhere || run.handing) return undefined;
     const target = await this.#taskTarget(run);
     if (!target || this.#runs.get(run.id) !== run) return undefined;
     const made = await run.conversation.compact(target);
@@ -2243,6 +2246,7 @@ export class ChatSession {
           if (at < 0) continue;
           run.toSettle.splice(at, 1);
           this.#claimed.add(mail.id);
+          this.#room?.unread([mail.id]);
         }
         // Taken and not read: they did not count.
         this.#budget.add(-mails.length);
@@ -2794,8 +2798,10 @@ export class ChatSession {
     const ids = mails.map((mail) => mail.id).filter((id) => this.#claimed.delete(id));
     if (ids.length === 0) return;
     // Read into a conversation: done with once that is written, see `toSettle`.
-    if (read) read.toSettle.push(...ids);
-    else void this.#room?.done(ids).catch(() => {});
+    if (read) {
+      read.toSettle.push(...ids);
+      this.#room?.read(ids);
+    } else void this.#room?.done(ids).catch(() => {});
   }
 
   /**
@@ -2877,14 +2883,16 @@ export class ChatSession {
         run.handing = false;
         return;
       }
-      // What people queued meanwhile goes along, written with it.
+      // What people queued meanwhile goes along, written with it: also what they queue while it is
+      // written, written again then.
+      const written = run.fields.queued;
       this.#saveSoon(run);
       await this.#flushRun(run);
       if (gone()) {
         run.handing = false;
         return;
       }
-      if (settled()) break;
+      if (settled() && run.fields.queued === written) break;
     }
     run.handing = false;
     if (run === this.#shown) {

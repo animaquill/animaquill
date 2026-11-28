@@ -234,6 +234,21 @@ export function browserAgents({
           });
         })
         .catch(() => {});
+      /** Of those taken, the ones a conversation read: they go as the page goes, see `read`. */
+      const readHere = new Set<string>();
+      const dropAll = async (ids: readonly string[]) => {
+        if (ids.length === 0) return;
+        const transaction = (await database()).transaction(MAIL, "readwrite");
+        const store = transaction.objectStore(MAIL);
+        const index = store.index(BY_ID);
+        for (const id of ids) {
+          taken.delete(id);
+          readHere.delete(id);
+          const key = await resultOf(index.getKey([project, id]));
+          if (key !== undefined) store.delete(key);
+        }
+        await committed(transaction);
+      };
       const giveBack = async (ids: readonly string[]) => {
         if (ids.length === 0) return;
         const transaction = (await database()).transaction(MAIL, "readwrite");
@@ -252,8 +267,14 @@ export function browserAgents({
       };
       // A page that goes gives back what it took, where it gets to; where it does not, its lock
       // goes with it and the others take them all the same.
+      /** As the page or the room goes: what a conversation read goes, the rest goes back. */
+      const leaving = async () => {
+        const read = [...taken].filter((id) => readHere.has(id));
+        const rest = [...taken].filter((id) => !readHere.has(id));
+        await Promise.all([dropAll(read), giveBack(rest)]);
+      };
       const unhide = listenPageHide(() => {
-        void giveBack([...taken]).catch(() => {});
+        void leaving().catch(() => {});
       });
       const unshow = listenPageShow(() => {
         if (!isOver) events.resumed?.();
@@ -497,17 +518,12 @@ export function browserAgents({
           for (const mail of found) taken.add(mail.id);
           return found.toSorted((a, b) => a.at - b.at);
         },
-        async done(ids) {
-          if (ids.length === 0) return;
-          const transaction = (await database()).transaction(MAIL, "readwrite");
-          const store = transaction.objectStore(MAIL);
-          const index = store.index(BY_ID);
-          for (const id of ids) {
-            taken.delete(id);
-            const key = await resultOf(index.getKey([project, id]));
-            if (key !== undefined) store.delete(key);
-          }
-          await committed(transaction);
+        done: dropAll,
+        read(ids) {
+          for (const id of ids) if (taken.has(id)) readHere.add(id);
+        },
+        unread(ids) {
+          for (const id of ids) readHere.delete(id);
         },
         back: giveBack,
         want(id, take) {
@@ -602,8 +618,7 @@ export function browserAgents({
         close() {
           if (isOver) return;
           for (const id of Array.from(held.keys())) letGo(id);
-          // What this window took and kept waits for whoever has those next.
-          const keeping = [...taken];
+          // What this window took and kept waits for whoever has those next; what was read goes.
           isOver = true;
           for (const done of waiting.values()) done(undefined);
           wire?.removeEventListener("message", onSignal as EventListener);
@@ -611,7 +626,7 @@ export function browserAgents({
           unlisten();
           unhide();
           unshow();
-          void giveBack(keeping)
+          void leaving()
             .catch(() => {})
             .finally(() => leave());
         },

@@ -493,4 +493,18 @@ describe("the conversations of a project in the windows of a browser", () => {
     shows.get(1)?.();
     expect(first.resumed()).toBe(1);
   });
+
+  it("lets what a conversation read go as the page goes, rather than back: nobody gets it again", async () => {
+    const { window, hide } = browser();
+    const a = window(1).enter("p", events().said);
+    const b = window(2).enter("p", events().said);
+    await settle();
+    await b.post(mailTo("chat-x", "read"), LIMITS);
+    await b.post(mailTo("chat-x", "unread"), LIMITS);
+    const taken = await a.claim("chat-x");
+    a.read([taken[0]?.id ?? ""]);
+    hide(1);
+    await settle();
+    expect((await b.claim("chat-x")).map((each) => each.text)).toEqual(["unread"]);
+  });
 });

@@ -86,6 +86,7 @@ class Browser {
             queueMicrotask(() => room.open && events.queued?.(id));
           }
         };
+        const readHere = new Set<string>();
         const giveBack = async (ids: readonly string[]) => {
           this.mail = this.mail.map((each) =>
             ids.includes(each.id) && each.claimedBy === tab
@@ -154,6 +155,12 @@ class Browser {
             this.mail = this.mail.filter((each) => !ids.includes(each.id));
           },
           back: giveBack,
+          read: (ids) => {
+            for (const id of ids) readHere.add(id);
+          },
+          unread: (ids) => {
+            for (const id of ids) readHere.delete(id);
+          },
           want: (id, asked) => {
             const holder = this.rooms.get(this.holders.get(id) ?? -1);
             if (holder?.open && this.holders.get(id) !== tab) {
@@ -208,6 +215,10 @@ class Browser {
           },
           close: () => {
             for (const id of Array.from(mine)) this.#release(id, tab);
+            // What a conversation read goes; the rest waits again.
+            this.mail = this.mail.filter(
+              (each) => !(each.claimedBy === tab && readHere.has(each.id)),
+            );
             void giveBack(
               this.mail.filter((each) => each.claimedBy === tab).map((each) => each.id),
             );
@@ -627,5 +638,72 @@ describe("conversations in several tabs of a browser (chat6 technical design, 6.
     await settle();
     expect(two.chat.getSnapshot().mail).toEqual([expect.objectContaining({ text: "进缓存前" })]);
     expect(browser.mail).toHaveLength(1);
+  });
+
+  it("hands over what people say while it is being written as well: the tab that takes it has it, the other not", async () => {
+    const browser = new Browser();
+    const kept = memoryChats();
+    // Writes wait while `held` says so.
+    let gate: Promise<void> | undefined;
+    let open = () => {};
+    const chats: ChatStore = {
+      ...kept,
+      save: async (chat) => {
+        if (gate) await gate;
+        return kept.save(chat);
+      },
+    };
+    const one = openTab(browser, 1, chats);
+    const two = openTab(browser, 2, chats);
+    await settle();
+    two.fake({ fake: [{ text: "我管配乐" }] });
+    await two.chat.send("配乐");
+    const b = two.chat.getSnapshot().id as string;
+    await settle();
+    two.ai.setAskBeforeEdit(true);
+    two.fake({
+      fake: [
+        {
+          calls: [
+            {
+              name: "aq_edit",
+              args: { operations: [{ op: "marker.add", timeline: "main", time: "1" }] },
+            },
+          ],
+        },
+        { text: "加好了" },
+      ],
+    });
+    void two.chat.send("加一个标记");
+    await vi.waitFor(() => expect(two.chat.getSnapshot().allApprovals).toHaveLength(1));
+    await one.chat.open(b);
+    await vi.waitFor(() => expect(one.chat.getSnapshot().elsewhere).toBe(true));
+    one.chat.takeHere();
+    await settle();
+    // Writing waits from now on.
+    gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    two.chat.answerApproval(two.chat.getSnapshot().allApprovals[0]?.id ?? "", "once");
+    await vi.waitFor(() => expect(two.chat.conversationOf(b)?.running).toBe(false));
+    await settle();
+    // People say something while it is being written.
+    two.chat.queue("写的时候说的");
+    one.fake({ fake: [{ text: "收到写的时候那句" }] });
+    gate = undefined;
+    open();
+    await vi.waitFor(() => expect(browser.holders.get(b)).toBe(1));
+    await vi.waitFor(() =>
+      expect(entriesOf(one.chat, b).at(-1)).toMatchObject({ text: "收到写的时候那句" }),
+    );
+    expect(
+      entriesOf(one.chat, b).flatMap((entry) => (entry.role === "user" ? [entry.text] : [])),
+    ).toEqual(["配乐", "加一个标记", "写的时候说的"]);
+    expect(two.chat.getSnapshot().queued).toEqual([]);
+    expect(
+      entriesOf(two.chat, b).filter(
+        (entry) => entry.role === "user" && entry.text === "写的时候说的",
+      ),
+    ).toEqual([]);
   });
 });

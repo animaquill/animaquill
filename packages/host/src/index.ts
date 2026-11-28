@@ -2501,6 +2501,13 @@ export interface AgentRoom {
   /** Messages this window took and does not keep after all: they wait again, for whoever opens it. */
   back(ids: readonly string[]): Promise<void>;
   /**
+   * Messages this window took that a conversation read, before that is written: as the page goes
+   * they go, rather than back, so that nobody gets them again (see `done`).
+   */
+  read(ids: readonly string[]): void;
+  /** Messages `read` that the conversation did not get to read after all. */
+  unread(ids: readonly string[]): void;
+  /**
    * Asks the window that holds one to let go of it: the window that keeps it for messages only
    * does, and the one that shows it only where people here asked (`take`).
    */
