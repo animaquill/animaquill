@@ -31,10 +31,12 @@ import {
   type CloudWake,
   type CloudLine,
   type CloudProjectSummary,
+  type CloudRelease,
   type CloudRemoval,
   type CloudRemoveOptions,
   type PlatformBatchState,
   type PlatformBatchTaken,
+  type PlatformSpace,
   RepositoryRefused,
   type RepositoryStatus,
   type RepositoryUnusable,
@@ -182,6 +184,16 @@ export class MemoryPlatform {
   knowsDeleted = true;
   /** The update of each project its repository has all up to, see `remove`. */
   readonly archivedSeq = new Map<string, number>();
+  /**
+   * What each person may keep, as `storage.platform` and `projects.count` say it: null for no
+   * limit. Only making a project is kept from going beyond, as on the platform.
+   */
+  readonly limits: { storage: number | null; count: number | null } = {
+    storage: null,
+    count: null,
+  };
+  /** Bytes a test adds to what a project takes, as one with large documents would. */
+  readonly padding = new Map<string, number>();
   /** Projects with files still on their way into the large file storage, and how many. */
   readonly uploads = new Map<string, number>();
   /** How each project was asked to go, in order. */
@@ -502,6 +514,75 @@ export class MemoryPlatform {
     project.updates = [];
     project.snapshot = undefined;
     this.#working.delete(id);
+  }
+
+  /** Bytes of a project as the platform counts them: its snapshot and the updates after it. */
+  bytesOf(id: string): number {
+    const project = this.projects.get(id);
+    if (!project || (project.copy ?? "live") !== "live") return 0;
+    return (
+      (project.snapshot?.state.length ?? 0) +
+      project.updates.reduce((all, update) => all + update.data.length, 0) +
+      (this.padding.get(id) ?? 0)
+    );
+  }
+
+  /** What a person keeps on the platform, as `PlatformSpace` says it, the largest first. */
+  space(user: string): PlatformSpace {
+    const own = [...this.projects.values()].filter((project) => project.owner === user);
+    const projects = own
+      .map((project) => {
+        const state = project.copy ?? "live";
+        const why = state === "live" ? this.#whyKept(project) : undefined;
+        return {
+          id: project.id,
+          name: this.#working.has(project.id)
+            ? this.workingCopy(project.id).getState().manifest.name
+            : project.name,
+          bytes: this.bytesOf(project.id),
+          state,
+          ...(state === "live" && (why ? { why } : { releasable: true as const })),
+        };
+      })
+      .toSorted((a, b) => b.bytes - a.bytes);
+    return {
+      limit: this.limits.storage,
+      used: projects.reduce((all, each) => all + each.bytes, 0),
+      count: { limit: this.limits.count, used: own.length },
+      projects,
+    };
+  }
+
+  /** Why the copy of a project is not let go of, as the platform says it: undefined where it is. */
+  #whyKept(
+    project: PlatformProject,
+  ): NonNullable<PlatformSpace["projects"][number]["why"]> | undefined {
+    const repository = this.repositories.get(project.id);
+    if (!repository) return { code: "noRepository" };
+    if (repository.unusable) return { code: "unusable", reason: repository.unusable.reason };
+    if ((repository.state ?? "ready") === "paused")
+      return {
+        code: "paused",
+        ...(repository.reason !== undefined && { reason: repository.reason }),
+      };
+    if ((this.archivedSeq.get(project.id) ?? 0) < project.head) return { code: "pending" };
+    if ([...this.#sides].some((side) => side.project === project)) return { code: "connected" };
+    return undefined;
+  }
+
+  /** Lets go of the working copy of a project, as people ask: see `CloudAccess.release`. */
+  releaseFor(user: string, id: string): CloudRelease {
+    if (this.faults.unreachable) throw new Error("The platform is not there");
+    if (this.signedOut.has(user)) throw new CloudSignedOut("Nobody is signed in");
+    const project = this.projects.get(id);
+    if (!project || project.owner !== user) return { kind: "missing" };
+    if ((project.copy ?? "live") !== "live") return { kind: "notLive" };
+    const why = this.#whyKept(project);
+    if (why) return { kind: "refused", why };
+    // The repository has all of it, as the archive said: what the next copy is made from.
+    if (!this.archives.has(id)) this.archive(id);
+    this.release(id);
+    return { kind: "released" };
   }
 
   /**
@@ -988,6 +1069,16 @@ export class MemoryPlatform {
     if (!project && message.create) {
       if (message.payload.length > SYNC_LIMITS.state) {
         side.close(SYNC_CLOSE.tooLarge);
+        return;
+      }
+      // One more project than the person may keep, or more bytes: nothing is made.
+      const kept = this.space(side.user);
+      if (kept.count.limit !== null && kept.count.used >= kept.count.limit) {
+        side.close(SYNC_CLOSE.quota, "count");
+        return;
+      }
+      if (kept.limit !== null && kept.used + message.payload.length > kept.limit) {
+        side.close(SYNC_CLOSE.quota, "quota");
         return;
       }
       const fault = checkUpdate(message.payload, { most: SYNC_LIMITS.structs });

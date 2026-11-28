@@ -53,6 +53,7 @@ import { wakeCopy } from "./wake.ts";
 import { NO_HOLDS, type ProjectHolds } from "../holds.ts";
 import { NO_LIMITS, type PersonLimits } from "../limits.ts";
 import { roomFor } from "./room.ts";
+import { whyNotReleasable, type NotReleasable } from "./releasable.ts";
 import { OWNER_ONLY, type AccessPolicy, type ProjectAction } from "../access.ts";
 import {
   deletedProjects,
@@ -281,6 +282,8 @@ export interface RemoveCondition {
 export type RemoveOutcome =
   | "removed"
   | "missing"
+  /** The person may see it, not take it away (`AccessPolicy`, "read" but not "manage"). */
+  | "forbidden"
   | "hasRepository"
   /**
    * It stays: the repository does not have everything of it, or may not be there any more, as far
@@ -666,15 +669,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
  */
 export type ReleaseOutcome =
   | { readonly kind: "released"; readonly from: ReleasedFrom }
-  | { readonly kind: "missing" | "notLive" | "connected" | "noRepository" | "unusable" | "busy" }
-  | { readonly kind: "transient" }
-  | {
-      readonly kind: "notArchived";
-      readonly head: number;
-      readonly archivedSeq: number;
-      readonly state: string;
-      readonly reason?: string;
-    };
+  | { readonly kind: "missing" }
+  | { readonly kind: "connected" }
+  /** Only with `userId`: the person may see it, not let go of it. */
+  | { readonly kind: "forbidden" }
+  | NotReleasable;
 
 /** The project ids of the editor, see `Id` in the project format. */
 export const PROJECT_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
@@ -1845,8 +1844,9 @@ export class SyncHub {
             else await this.#note(tx, id, userId);
             return "missing";
           }
-          if (!(await this.#access.may(tx, userId, { id, ownerId: row.ownerId }, "manage")))
-            return "missing";
+          const project = { id, ownerId: row.ownerId };
+          if (!(await this.#access.may(tx, userId, project, "manage")))
+            return (await this.#access.may(tx, userId, project, "read")) ? "forbidden" : "missing";
           // Again, now that nothing changes the project: a repository linked while this waited for
           // its row is there to see now, and is held as well.
           const [link] = await tx
@@ -1962,10 +1962,12 @@ export class SyncHub {
    *   (`busy`);
    * - changes do not wait that only GitHub or the platform keep from being archived, or that are
    *   not tried yet (`transient`: those are never let go of);
+   * - no conflict with GitHub waits for people (`conflicts`): what they chose would be lost;
    * - and the repository has everything of it: archiving goes as it should, up to the head, no
    *   change waits, nothing people asked for waits (`notArchived`). With `unarchived`, people (an
    *   admin) said to let go of what it does not have: the devices that made those changes still
-   *   have them.
+   *   have them, and conflicts go stale. Whether it can go is `whyNotReleasable`
+   *   (sync/releasable.ts), as the list of what people keep says it too.
    *
    * It takes the project's turn, so no window says hello for it meanwhile, and holds the project's
    * id and the lock of its archives until it is done: an archive that would land, a link that
@@ -1985,14 +1987,23 @@ export class SyncHub {
     id: string,
     options: {
       readonly unarchived?: boolean;
+      /**
+       * Who asks, for people: only who may manage it (`AccessPolicy`), else "forbidden", or
+       * "missing" for who may not even see it. Without it, an admin asks.
+       */
+      readonly userId?: string;
+      /**
+       * The last archive the repository was found to have just now (`head_sha`), which people's
+       * asking needs (`userId`): where another one landed since, or none is said, it is "busy", to
+       * be looked at again.
+       */
+      readonly checked?: string;
       /** Runs in the transaction that lets go of it, as noting who did it: one is never without the other. */
       readonly onReleased?: (tx: Tx, from: ReleasedFrom) => Promise<void>;
     } = {},
   ): Promise<ReleaseOutcome> {
     if (!PLATFORM_ID.test(id)) return Promise.resolve({ kind: "missing" });
     return this.#run(id, async (): Promise<ReleaseOutcome> => {
-      const held = this.#projects.get(id);
-      if (held && held.connections.size > 0) return { kind: "connected" };
       const outcome = await retryOnDeadlock(() =>
         this.#db.transaction(async (tx): Promise<ReleaseOutcome> => {
           await lockProject(tx, id);
@@ -2009,54 +2020,47 @@ export class SyncHub {
             .for("update");
           const [row] = await tx.select().from(projects).where(eq(projects.id, id)).for("update");
           if (!row) return { kind: "missing" };
-          if (row.copyState !== "live") return { kind: "notLive" };
-          if (!link) return { kind: "noRepository" };
-          if (link.unusableSince !== null) return { kind: "unusable" };
-          // What it is cannot be told now: in a few minutes, or once the merge or the files went.
-          if (link.unusableSeenAt !== null || link.dropping !== null || link.droppingMerge !== null)
-            return { kind: "busy" };
+          if (options.userId !== undefined) {
+            const project = { id, ownerId: row.ownerId };
+            if (!(await this.#access.may(tx, options.userId, project, "read")))
+              return { kind: "missing" };
+            if (!(await this.#access.may(tx, options.userId, project, "manage")))
+              return { kind: "forbidden" };
+          }
+          // No window says hello meanwhile: this is the project's turn.
+          if ((this.#projects.get(id)?.connections.size ?? 0) > 0) return { kind: "connected" };
           const [merging] = await tx
             .select({ count: count() })
             .from(repoMerges)
             .where(and(eq(repoMerges.projectId, id), eq(repoMerges.state, "ready")));
-          if ((merging?.count ?? 0) > 0) return { kind: "busy" };
+          const [conflicting] = await tx
+            .select({ count: count() })
+            .from(repoConflicts)
+            .where(and(eq(repoConflicts.projectId, id), eq(repoConflicts.state, "open")));
+          const refusal = whyNotReleasable(
+            {
+              copyState: row.copyState,
+              head: row.head,
+              dirtySince: row.dirtySince,
+              linkingUntil: row.linkingUntil,
+              link,
+              mergesReady: merging?.count ?? 0,
+              conflictsOpen: conflicting?.count ?? 0,
+              // Something else that may change it yet, as an AI task of it that has not ended.
+              held: link !== undefined && (await this.#holds.busy(tx, id)),
+            },
+            this.#now(),
+            { unarchived: options.unarchived === true },
+          );
+          if (refusal) return refusal;
+          if (!link || link.headSha === null) return { kind: "noRepository" };
+          // For people, only against the archive the repository was found to have just now: where
+          // another came since, or nobody looked, it is looked at again first.
           if (
-            (row.linkingUntil !== null && row.linkingUntil > this.#now()) ||
-            link.pendingSha !== null
+            (options.userId !== undefined || options.checked !== undefined) &&
+            options.checked !== link.headSha
           )
             return { kind: "busy" };
-          // Something else that may change it yet, as an AI task of it that has not ended.
-          if (await this.#holds.busy(tx, id)) return { kind: "busy" };
-          const waiting = row.dirtySince !== null || link.archivedSeq < row.head;
-          // Changes that wait for GitHub or the platform, or for their first try: never let go of.
-          if (
-            waiting &&
-            link.state === "ready" &&
-            (link.transientSince !== null || link.failures === 0)
-          )
-            return { kind: "transient" };
-          const archived =
-            link.state === "ready" &&
-            !waiting &&
-            link.requestedAt === null &&
-            link.failures === 0 &&
-            link.headSha !== null;
-          if (!archived && options.unarchived !== true)
-            return {
-              kind: "notArchived",
-              head: row.head,
-              archivedSeq: link.archivedSeq,
-              state: link.state,
-              ...(link.pauseReason !== null && { reason: link.pauseReason }),
-            };
-          // Never archived at all: there is nothing to make it again from.
-          if (link.headSha === null)
-            return {
-              kind: "notArchived",
-              head: row.head,
-              archivedSeq: link.archivedSeq,
-              state: link.state,
-            };
           const from: ReleasedFrom = {
             generation: row.generation,
             head: row.head,

@@ -13,10 +13,14 @@ import {
   CloudSignedOut,
   type CloudAccess,
   type CloudProjectSummary,
+  type CloudRelease,
   type CloudRemoveOptions,
   type CloudRemoveRefusal,
   type CloudRename,
   type CloudWake,
+  type PlatformProjectUse,
+  type PlatformSpace,
+  type ReleaseBlock,
 } from "./index.ts";
 
 /**
@@ -28,6 +32,9 @@ import {
  * - `DELETE <api>/projects/<project>[?archived=<seq>|?discard=1]` answers 204, or `{ error }` with
  *   404 "notFound", or 409 "hasRepository", "notArchived" (with `head`, `archivedSeq`, `state`,
  *   `reason`, `archiving`, `failures`) or "uploading" (with `uploads`)
+ * - `POST   <api>/projects/<project>/release` answers 200 `{copy: "released"}`, or `{ error }` with
+ *   409 "notReleasable" (with `why`, see `ReleaseBlock`) or "notLive", 403 "forbidden", 404
+ *   "notFound"
  *
  * What comes back is read field by field: a platform of another version can say more, or less.
  * But only what the platform said in these words counts as an answer: whether a project is still
@@ -188,10 +195,76 @@ export const wakeOf = (
   };
 };
 
+/** Why a copy is not let go of, as the platform said it: only with a code. */
+export const releaseBlockOf = (value: unknown): ReleaseBlock | undefined => {
+  if (!isObject(value)) return undefined;
+  const code = text(value.code);
+  if (code === undefined) return undefined;
+  return {
+    code,
+    ...optional("reason", text(value.reason)),
+    ...optional("count", count(value.count)),
+    ...optional("failures", count(value.failures)),
+    ...optional("detail", text(value.detail)),
+  };
+};
+
+/** What letting go of a copy came to, see `CloudAccess.release`: only in the platform's words. */
+export const releaseOf = (status: number, answer: unknown): CloudRelease | undefined => {
+  const said = isObject(answer) ? answer : {};
+  if (status === 200 && said.copy === "released") return { kind: "released" };
+  if (status === 404 && said.error === "notFound") return { kind: "missing" };
+  if (status === 403 && said.error === "forbidden") return { kind: "forbidden" };
+  if (status === 409 && said.error === "notLive") return { kind: "notLive" };
+  const why =
+    status === 409 && said.error === "notReleasable" ? releaseBlockOf(said.why) : undefined;
+  return why && { kind: "refused", why };
+};
+
+const limitOf = (value: unknown): number | null | undefined =>
+  value === null ? null : count(value);
+
+/**
+ * What a person keeps on the platform, as `GET <api>/me/storage` says it (`platform`), see
+ * `PlatformSpace`; undefined where it says nothing of it, or something else. A project said
+ * otherwise than it should be is left out.
+ */
+export const platformSpaceOf = (value: unknown): PlatformSpace | undefined => {
+  if (!isObject(value) || !isObject(value.count) || !Array.isArray(value.projects))
+    return undefined;
+  const limit = limitOf(value.limit);
+  const used = count(value.used);
+  const most = limitOf(value.count.limit);
+  const counted = count(value.count.used);
+  if (limit === undefined || used === undefined || most === undefined || counted === undefined)
+    return undefined;
+  const projects: PlatformProjectUse[] = [];
+  for (const each of value.projects) {
+    if (!isObject(each)) continue;
+    const id = text(each.id);
+    const name = typeof each.name === "string" ? each.name : undefined;
+    const bytes = count(each.bytes);
+    const state = text(each.state);
+    if (id === undefined || name === undefined || bytes === undefined || state === undefined)
+      continue;
+    const why = releaseBlockOf(each.why);
+    projects.push({
+      id,
+      name,
+      bytes,
+      state,
+      ...(each.releasable === true && why === undefined && { releasable: true as const }),
+      ...optional("why", why),
+    });
+  }
+  return { limit, used, count: { limit: most, used: counted }, projects };
+};
+
 export function browserCloudProjects(options: BrowserCloudProjectsOptions): Pick<
   CloudAccess,
   "list"
 > & {
+  readonly release: NonNullable<CloudAccess["release"]>;
   readonly remove: NonNullable<CloudAccess["remove"]>;
   readonly wake: NonNullable<CloudAccess["wake"]>;
   readonly rename: NonNullable<CloudAccess["rename"]>;
@@ -262,6 +335,24 @@ export function browserCloudProjects(options: BrowserCloudProjectsOptions): Pick
           throw new CloudSignedOut("Nobody is signed in");
         // Only in the platform's own words: a gateway says 404 and 409 too.
         const said = wakeOf(response.status, answer, Number(response.headers.get("retry-after")));
+        if (!said) throw new Error(`The platform answered ${response.status}`);
+        return said;
+      }),
+    release: (project) =>
+      withinTime(timeoutMs, async (signal) => {
+        const response = await request(
+          options.api(`/projects/${encodeURIComponent(project)}/release`),
+          {
+            method: "POST",
+            cache: "no-store",
+            headers: { ...options.changeHeaders },
+            signal,
+          },
+        );
+        const answer: unknown = await response.json().catch(() => undefined);
+        if (response.status === 401 || (isObject(answer) && answer.error === "signedOut"))
+          throw new CloudSignedOut("Nobody is signed in");
+        const said = releaseOf(response.status, answer);
         if (!said) throw new Error(`The platform answered ${response.status}`);
         return said;
       }),

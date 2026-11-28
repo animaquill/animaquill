@@ -9,6 +9,7 @@ import { describeError, type Db } from "../database.ts";
 import type { LibraryMode } from "../library/config.ts";
 import { usageOf, NO_USAGE } from "../library/usage.ts";
 import { NO_LIMITS, type PersonLimits } from "../limits.ts";
+import { platformKept } from "./platform.ts";
 import type { Sealer } from "../seal.ts";
 import { changeLfs, lfsChangesOf, readLfs } from "./lfs.ts";
 import type { LocalLfsSummary } from "../lfs/uploads.ts";
@@ -80,7 +81,12 @@ import type { SessionCredentials } from "../auth/credentials.ts";
  * - `GET /api/me/storage`: `{mode, limit, used}`, the person's cloud space for the settings: `mode`
  *   whether the platform keeps files at all now (`on`, `readonly`, `off`, see library/config.ts),
  *   `limit` the bytes they may keep there (`storage.cloud` of limits.ts; null for no limit), `used`
- *   the bytes kept and on their way.
+ *   the bytes kept and on their way; and `platform`, what they keep on the platform itself
+ *   (me/platform.ts): `{limit, used, count: {limit, used}, projects: [{id, name, bytes, state,
+ *   releasable?: true, why?}]}`, the bytes of `storage.platform` and the projects of
+ *   `projects.count` (null: no limit), and their own projects, the largest first, with whether the
+ *   working copy of each "live" one can be let go of now, or why not (`ReleaseBlock` of
+ *   sync/releasable.ts; `POST /api/projects/:id/release` lets go of one).
  * - `GET /api/me/lfs`: `{account, acknowledgedAt?, repositories}`, what the person has in the large
  *   file storage of GitHub through the platform (me/lfs.ts): `repositories` `[{repo, fullName, url,
  *   project: {id, name}, files, bytes}]`, the largest first; `acknowledgedAt` when they first said
@@ -242,14 +248,17 @@ export const meRoutes = async (app: FastifyInstance, options: MeRoutesOptions) =
       const user = await signedInHere(request, reply, limits.cloud);
       const database = db();
       if (!user || !database) return reply;
-      const limit = await (options.limits ?? NO_LIMITS).of(database, user.userId, "storage.cloud");
+      const personLimits = options.limits ?? NO_LIMITS;
+      const limit = await personLimits.of(database, user.userId, "storage.cloud");
       const usage = (await usageOf(database, [user.userId])).get(user.userId) ?? NO_USAGE;
+      const platform = await platformKept(database, user.userId, personLimits, new Date(now()));
       reply.header("cache-control", "no-store");
       return {
         mode: options.libraryMode?.() ?? "off",
         // Null: no limit.
         limit,
         used: usage.used + usage.uploading,
+        platform,
       };
     },
   );

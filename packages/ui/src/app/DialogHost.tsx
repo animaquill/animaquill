@@ -9,6 +9,7 @@ import { ReconcileDialog } from "./ReconcileDialog.tsx";
 import styles from "./DialogHost.module.css";
 import { RepositoryDialog } from "./RepositoryDialog.tsx";
 import { PlacesDialog } from "../storage/PlacesDialog.tsx";
+import { PlatformFullDialog } from "../storage/PlatformFullDialog.tsx";
 
 /** Something that takes a while. It stays until that is over, whatever people press. */
 function Progress({ request }: { request: ProgressRequest }) {
@@ -59,6 +60,7 @@ type QuestionRequest = Exclude<
   DialogRequest,
   | Extract<DialogRequest, { kind: "places" }>
   | Extract<DialogRequest, { kind: "conflicts" }>
+  | Extract<DialogRequest, { kind: "platformFull" }>
   | Extract<DialogRequest, { kind: "openRepository" }>
   | ProgressRequest
   | FormRequest
@@ -325,5 +327,7 @@ export function DialogHost() {
   if (request.kind === "reconcile") return <ReconcileDialog key={request.id} request={request} />;
   if (request.kind === "places") return <PlacesDialog key={request.id} request={request} />;
   if (request.kind === "conflicts") return <ConflictsDialog key={request.id} request={request} />;
+  if (request.kind === "platformFull")
+    return <PlatformFullDialog key={request.id} request={request} />;
   return <Dialog key={request.id} request={request} />;
 }

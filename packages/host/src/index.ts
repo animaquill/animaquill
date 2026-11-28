@@ -899,6 +899,47 @@ export type CloudRename =
   | { readonly kind: "missing" };
 
 /**
+ * Why the working copy of a project is not let go of now, see `CloudAccess.release`, as the
+ * platform says it (`ReleaseBlock` of the server's sync/releasable.ts): it has no repository
+ * ("noRepository"), or none with an archive of it ("neverArchived"); changes are not in the
+ * repository yet and go there by themselves ("pending"); an archive, a merge or a task goes on with
+ * it ("busy"); a window has it open ("connected"); the repository cannot be used ("unusable",
+ * `reason` the pause); conflicts with GitHub wait for people ("conflicts", `count`); archiving
+ * paused ("paused", `reason`, `detail`) or fails ("failing", `failures`, `detail`); or the
+ * repository, looked at just now, could not give it back ("repository", `reason`: gone,
+ * unauthorized, transferred, missing, unreachable). A code the editor does not know is one of a
+ * newer platform.
+ */
+export interface ReleaseBlock {
+  readonly code:
+    | "noRepository"
+    | "neverArchived"
+    | "pending"
+    | "busy"
+    | "connected"
+    | "unusable"
+    | "conflicts"
+    | "paused"
+    | "failing"
+    | "repository"
+    | (string & {});
+  readonly reason?: string;
+  readonly count?: number;
+  readonly failures?: number;
+  readonly detail?: string;
+}
+
+/**
+ * What letting go of a working copy came to, see `CloudAccess.release`: done; not, and why; there
+ * is no copy to let go of (let go of already, or being made again); not there, or not the
+ * person's; or the person may see it and not manage it, as a member.
+ */
+export type CloudRelease =
+  | { readonly kind: "released" }
+  | { readonly kind: "refused"; readonly why: ReleaseBlock }
+  | { readonly kind: "notLive" | "missing" | "forbidden" };
+
+/**
  * Where projects sync to: a platform, as the host reaches it. The editor runs the protocol over the
  * connections, see `SyncClientMessage`, and keeps its records here.
  */
@@ -956,6 +997,14 @@ export interface CloudAccess {
    * say, with a `CloudSignedOut` when nobody is signed in. Missing where the platform does not.
    */
   rename?(project: string, name: string): Promise<CloudRename>;
+  /**
+   * Lets go of the working copy of a project of the person's on the platform, to have room there
+   * (`storage.platform`): it stays in the list, and is made again from its repository as it is
+   * opened, slower by a few seconds. Only where the repository has all of it and gives it back right
+   * now, see `CloudRelease`. Rejects where the platform could not say, with a `CloudSignedOut` when
+   * nobody is signed in. Missing where the platform does not.
+   */
+  release?(project: string): Promise<CloudRelease>;
   /**
    * What changed of the person's list, as the platform says it at once, see `PersonEventsAccess`.
    * Without it, the list is read again now and then only.
@@ -1848,6 +1897,8 @@ export class RepositoryRefused extends Error {
   readonly retryAfter: number | undefined;
   /** For "notUndoable": why, see `PlatformBatchState.why`. */
   readonly why: string | undefined;
+  /** For "quota": what is full, the number of projects ("count") or the bytes ("storage"). */
+  readonly detail: "count" | "storage" | undefined;
   constructor(
     code: RepositoryRefusal,
     more: {
@@ -1856,6 +1907,7 @@ export class RepositoryRefused extends Error {
       readonly diverged?: RepositoryStatus["diverged"];
       readonly retryAfter?: number;
       readonly why?: string;
+      readonly detail?: "count" | "storage";
     } = {},
   ) {
     super(`The platform refused: ${code}`);
@@ -1865,6 +1917,7 @@ export class RepositoryRefused extends Error {
     this.diverged = more.diverged;
     this.retryAfter = more.retryAfter;
     this.why = more.why;
+    this.detail = more.detail;
   }
 }
 
@@ -2408,10 +2461,42 @@ export interface AccountAccess {
 export interface AccountSpace {
   /** Whether it takes files now: "readonly" keeps what is there and takes no more, "off" has none. */
   readonly mode: "on" | "readonly" | "off";
-  /** What the account may keep; 0 where it was given no room. */
-  readonly limit: number;
+  /** What the account may keep; 0 where it was given no room, null where there is no limit. */
+  readonly limit: number | null;
   /** What it keeps, with what is on its way. */
   readonly used: number;
+  /** What the account keeps on the platform itself, see `PlatformSpace`; missing where not said. */
+  readonly platform?: PlatformSpace;
+}
+
+/**
+ * What a person keeps on the platform itself (docs/design/online-offline.md of AnimaQuill Cloud,
+ * 3.6): the working copies of their projects and their covers, against what they may keep
+ * (`limit`, bytes) and how many projects (`count`), null where there is no limit; and each of their
+ * own projects, the largest first. Only a new project, an import and a restore are kept from going
+ * beyond: editing never is.
+ */
+export interface PlatformSpace {
+  readonly limit: number | null;
+  readonly used: number;
+  readonly count: { readonly limit: number | null; readonly used: number };
+  readonly projects: readonly PlatformProjectUse[];
+}
+
+/** A project of the person's on the platform, as `PlatformSpace` lists it. */
+export interface PlatformProjectUse {
+  readonly id: string;
+  readonly name: string;
+  /** Its working copy and its cover; 0 and the cover for one let go of. */
+  readonly bytes: number;
+  /** Whether the platform has its working copy, as `CloudProjectSummary.copy` says it. */
+  readonly state: "live" | "released" | "restoring" | (string & {});
+  /**
+   * For a "live" one: whether its copy can be let go of now (`CloudAccess.release`), as far as the
+   * platform could tell, or why not.
+   */
+  readonly releasable?: true;
+  readonly why?: ReleaseBlock;
 }
 
 /**

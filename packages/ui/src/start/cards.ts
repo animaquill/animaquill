@@ -413,7 +413,9 @@ export type CardAction =
   /** People choose a picture as the cover, see start/cover-choice.ts. */
   | "setCover"
   /** Back to the cover the editor makes. */
-  | "autoCover";
+  | "autoCover"
+  /** Lets go of its working copy on the platform, to have room there, see `Workbench.releasePlatform`. */
+  | "releasePlatform";
 
 export interface CardContext {
   /** How its folder is, where it has one and that is known. */
@@ -429,6 +431,11 @@ export interface CardContext {
    * nothing of.
    */
   readonly renamesOnline?: boolean;
+  /**
+   * Its working copy on the platform is one people may let go of to have room there: of their own,
+   * where what they keep there is limited, and the copy is there (`PlatformSpace`).
+   */
+  readonly releasable?: boolean;
 }
 
 /** Where "在 GitHub 上打开" goes: only an https address. */
@@ -451,7 +458,13 @@ export function cardActions(card: ProjectCard, context: CardContext): CardAction
     isThere ? actions : [];
   const github = when(gitHubAddress(card) !== undefined, "openOnGitHub");
   const platform = platformOf(card);
-  const deletable = when(platform?.deletable === true, "deleteCloud");
+  const deletable = [
+    ...when(
+      context.releasable === true && platform?.copy === "live" && platform.unusable === undefined,
+      "releasePlatform",
+    ),
+    ...when(platform?.deletable === true, "deleteCloud"),
+  ];
   const unusable = platform?.unusable;
   // What the platform has of it to copy, or what this browser has: not once both are gone.
   const hasContent = platform?.copy === "live" || card.key !== undefined;

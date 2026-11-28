@@ -451,6 +451,25 @@ describe("what the menu of a card offers", () => {
     ]);
   });
 
+  it("offers to let go of the copy on the platform only where people may, before deleting", () => {
+    expect(actions("产品发布", { releasable: true })).toEqual([
+      ["open", "rename", "star", "moveToGroup"],
+      ["saveToFolder", "openOnGitHub"],
+      ["releasePlatform", "deleteCloud"],
+    ]);
+    // Not of a folder, nor of what is only in this browser.
+    expect(actions("课程片头", { releasable: true }).flat()).not.toContain("releasePlatform");
+    expect(actions("旧项目", { releasable: true }).flat()).not.toContain("releasePlatform");
+    // Not let go of already.
+    const released = composeCards(
+      listsOf({ listed: [listed("p-r", "放掉的", { copy: "released" })] }),
+      NOTHING_ORGANIZED,
+    );
+    expect(
+      cardActions(byName(released, "放掉的"), { ...CONTEXT, releasable: true }).flat(),
+    ).not.toContain("releasePlatform");
+  });
+
   it("offers to find a folder again, or to save it elsewhere, where it is gone", () => {
     expect(actions("课程片头", { folder: "gone" })).toEqual([
       ["open", "rename", "star", "moveToGroup"],

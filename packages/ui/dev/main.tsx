@@ -104,6 +104,8 @@ const fake =
     ? (await import("./cloud.ts")).fakeCloud(account)
     : undefined;
 if (fake) Object.assign(window, { aqCloud: fake.lab });
+// What the person keeps on the pretend platform, as the account says it.
+if (fake && account) Object.assign(account, { space: fake.space });
 
 /** The host the page got, for the hooks of the tests. */
 let host: Host | undefined;

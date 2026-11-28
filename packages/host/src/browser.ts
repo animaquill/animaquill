@@ -1145,7 +1145,12 @@ export { browserLfs, browserLfsAccount, lfsAccountOf, uploadOf } from "./lfs.ts"
 export { browserUploads, uploadRecordOf } from "./uploads.ts";
 export { browserDownloads } from "./downloads.ts";
 export type { BrowserLfsOptions } from "./lfs.ts";
-export { browserCloudProjects, projectSummaryOf } from "./cloud-projects.ts";
+export {
+  browserCloudProjects,
+  platformSpaceOf,
+  projectSummaryOf,
+  releaseOf,
+} from "./cloud-projects.ts";
 export type { BrowserCloudProjectsOptions } from "./cloud-projects.ts";
 export { browserPersonEvents } from "./person-events.ts";
 export { accountAgents, type AccountAgentsOptions } from "./agents-account.ts";

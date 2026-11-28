@@ -2,6 +2,7 @@ import type {
   AccountAccess,
   AccountSnapshot,
   CloudAccess,
+  CloudRelease,
   CoverAccess,
   CoverStore,
   DiagnosticsSink,
@@ -57,6 +58,7 @@ import {
   toSeconds,
 } from "@animaquill/schema";
 import {
+  CloudSignedOut,
   memoryChatImages,
   memoryKeys,
   newSyncId,
@@ -179,6 +181,14 @@ import { ProjectFolders, type PlacedFiles } from "./project-folders.ts";
 import { ProjectSession, projectKeyOf } from "./session.ts";
 import type { RepositoryWatch } from "../cloud/repository-watch.ts";
 import { LfsAccountState } from "../storage/lfs-account.ts";
+import {
+  PlatformSpaceState,
+  formatPlatformBytes,
+  fullBy,
+  fullTitle,
+  hasRoom,
+  releaseBlockText,
+} from "../storage/platform-space.ts";
 import {
   defaultPlaceOf,
   defaultToWrite,
@@ -334,6 +344,8 @@ export class Workbench {
   #downloading: ReadonlySet<string> = new Set();
   /** What people have in the large file storage of GitHub, and how they go about it. */
   readonly lfsAccount: LfsAccountState;
+  /** What the person keeps on the platform itself, against what they may, see `PlatformSpaceState`. */
+  readonly platformSpace: PlatformSpaceState;
   /** What was said about the files of the open project, which goes with it as it closes. */
   readonly #uploadNotices: number[] = [];
   /** Assets just imported, into the default storage of the project, and those that wait to. */
@@ -1138,10 +1150,13 @@ export class Workbench {
     this.session.subscribe(tidy);
     this.emptyTracks.subscribe(tidy);
     tidy();
+    this.platformSpace = new PlatformSpaceState(host.account);
     this.cloud =
       cloud &&
       new CloudProjects({
         cloud,
+        // A restore that finds no room on the platform: what makes room, and on at once.
+        whenFull: (said) => this.whenPlatformFull(said),
         session: this.session,
         projects: host.projects,
         account: host.account,
@@ -2685,6 +2700,125 @@ export class Workbench {
   }
 
   /**
+   * "释放" (docs/design/online-offline.md of AnimaQuill Cloud, 3.6): lets go of the working copy of
+   * a project of the person's on the platform, to have room there. It stays in the list, and comes
+   * back from its repository as it is opened. People say yes first, unless they did where they
+   * pressed it (`asked`), and hear how it went. Resolves to whether it went.
+   */
+  async releasePlatform(
+    project: string,
+    name: string,
+    {
+      asked = false,
+      onGo,
+    }: {
+      readonly asked?: boolean;
+      /** Once people said yes, as it goes to the platform. */
+      readonly onGo?: () => void;
+    } = {},
+  ): Promise<boolean> {
+    const platform = this.#platform;
+    if (!platform?.release) return false;
+    const local = this.account?.getSnapshot();
+    const t = placedT(
+      this.t,
+      local?.status === "signedIn" && local.repositories === "local" ? "local" : undefined,
+    );
+    const words = { name, interpolation: { escapeValue: false } };
+    if (
+      !asked &&
+      !(await this.dialogs.confirm({
+        title: t("storage.platform.confirmTitle", words),
+        message: t("storage.platform.confirmMessage", words),
+        confirm: t("storage.platform.confirm"),
+      }))
+    )
+      return false;
+    onGo?.();
+    const before = this.platformSpace.project(project)?.bytes;
+    let said: CloudRelease;
+    try {
+      said = await platform.release(project);
+    } catch (error) {
+      console.warn("A working copy could not be let go of", error);
+      this.notifications.push(
+        t(
+          error instanceof CloudSignedOut
+            ? "cloud.delete.signedOut"
+            : "storage.platform.unavailable",
+        ),
+      );
+      return false;
+    }
+    await this.platformSpace.refresh();
+    const after = this.platformSpace.project(project)?.bytes;
+    switch (said.kind) {
+      case "released":
+        this.notifications.push(
+          before !== undefined && after !== undefined && before > after
+            ? t("storage.platform.done", { ...words, size: formatPlatformBytes(before - after) })
+            : t("storage.platform.doneNoSize", words),
+        );
+        return true;
+      case "refused":
+        this.notifications.push(
+          t("storage.platform.failed", {
+            ...words,
+            why: releaseBlockText(said.why, t).text,
+          }),
+        );
+        return false;
+      case "notLive":
+        this.notifications.push(t("storage.platform.notLive", words));
+        return false;
+      case "forbidden":
+        this.notifications.push(t("storage.platform.forbidden"));
+        return false;
+      case "missing":
+        this.notifications.push(t("cloud.delete.notListed", words));
+        return false;
+    }
+  }
+
+  /**
+   * A new project, an import or a restore found no room on the platform (`said`: what is full):
+   * the dialog that says so, with what makes room, until people made some or closed it. Saving a
+   * project to a folder, or deleting one, goes in a dialog of its own, and this one comes back
+   * after. Resolves to true once room was made, for whoever asked to go on at once.
+   */
+  async whenPlatformFull(said: "count" | "storage"): Promise<boolean> {
+    let by = said;
+    let changedAt: ReadonlyMap<string, number> | undefined;
+    for (;;) {
+      await this.platformSpace.refresh();
+      // Where the number is full, what was changed longest ago goes first: as the list says it.
+      if (by === "count" && !changedAt)
+        changedAt = await this.#platform
+          ?.list()
+          .then(
+            (list) =>
+              new Map(list.map((each) => [each.id, each.openedAt ?? each.updatedAt] as const)),
+          )
+          .catch(() => undefined);
+      const space = this.platformSpace.getSnapshot().space;
+      const answer = await this.dialogs.platformFull({
+        title: fullTitle(by, space, this.t),
+        by,
+        release: (project, name) => this.releasePlatform(project, name, { asked: true }),
+        ...(changedAt && { changedAt }),
+      });
+      if (!answer) return false;
+      if (answer.kind === "freed") return true;
+      if (answer.kind === "saveToFolder") await this.saveToFolder(answer.project, answer.name);
+      else if (await this.deleteFromCloud(answer.project, answer.name)) {
+        await this.platformSpace.refresh();
+        if (hasRoom(this.platformSpace.getSnapshot().space)) return true;
+      }
+      by = fullBy(this.platformSpace.getSnapshot().space);
+    }
+  }
+
+  /**
    * "删除在线项目…": takes a project of the platform away there, the open one where none is said,
    * see `CloudProjects.deleteFromCloud`.
    */
@@ -2700,7 +2834,10 @@ export class Workbench {
         ? this.session.store?.getState().manifest.name
         : undefined) ??
       "";
-    return cloud.deleteFromCloud(id, shown);
+    const gone = await cloud.deleteFromCloud(id, shown);
+    // What it took on the platform is free now.
+    if (gone) void this.platformSpace.refresh();
+    return gone;
   }
 
   /** "在线面板…": how the open project stands with the platform, in the panel of the status bar. */
@@ -2911,6 +3048,8 @@ export class Workbench {
       ...(repository && { repository }),
       window: this.windowId,
       editor: this.version,
+      // No room on the platform for it: what makes room, and on at once.
+      ...(cloud && { whenFull: (said: "count" | "storage") => this.whenPlatformFull(said) }),
     });
   }
 
@@ -2942,15 +3081,19 @@ export class Workbench {
           ...(imported && { imported: true }),
         });
         if (!create.isWorking) break;
-        await create.whenIdle();
+        // Until the steps are over, or want the dialog again while they go on, as once people
+        // made room on the platform (`whenFull`).
+        await create.whenBack();
         const { phase } = create.getSnapshot();
         // Something else asks people now, or there is nothing left to say.
         if (this.dialogs.getSnapshot() !== undefined) break;
-        if (phase !== "archiving" && phase !== "done" && phase !== "choosing") break;
+        if (!["archiving", "done", "choosing", "working"].includes(phase)) break;
       }
     } finally {
       stop();
       create.close();
+      // What it takes on the platform, as the side bar and the next one say it.
+      if (create.getSnapshot().kind === "cloud") void this.platformSpace.refresh();
     }
     const { key } = create.getSnapshot();
     if (imported && key !== undefined && this.session.key === key) {

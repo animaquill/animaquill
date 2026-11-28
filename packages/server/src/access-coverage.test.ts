@@ -303,6 +303,7 @@ const PROJECT_ROUTES: readonly ProjectRoute[] = [
 /** Routes whose projects come otherwise, each tested below by name. */
 const INSIDE_ROUTES = [
   "DELETE /api/projects/:id",
+  "POST /api/projects/:id/release",
   "GET /api/projects",
   "GET /api/organizer",
   "POST /api/organizer",
@@ -686,6 +687,21 @@ describe.skipIf(!TEST_DATABASE)("access to projects, route by route, on a databa
       expect((await open.p.send("DELETE", `/api/projects/${f.id}?discard=1`)).status).toBe(204);
     });
 
+    test("POST /api/projects/:id/release: someone else's copy is not there, as one that is not; with anyone let in it gets past that", async () => {
+      const f = await fixture();
+      const before = await stateOf(f.id);
+      const denied = await serverOf(b, OWNER_ONLY);
+      const refused = said(await denied.p.send("POST", `/api/projects/${f.id}/release`));
+      expect(refused).toEqual(NOT_FOUND);
+      expect(said(await denied.p.send("POST", `/api/projects/nope${f.id}/release`))).toEqual(
+        refused,
+      );
+      await denied.hub.idle();
+      expect(await stateOf(f.id)).toBe(before);
+      const open = await serverOf(b, ANYONE);
+      expect((await open.p.send("POST", `/api/projects/${f.id}/release`)).status).not.toBe(404);
+    });
+
     test("batches, taking one back, taking the project away and making its copy again: someone else's are missing, without the routes", async () => {
       const f = await fixture();
       const owner = new SyncHub({ db: t.db, log: quiet });
@@ -695,6 +711,7 @@ describe.skipIf(!TEST_DATABASE)("access to projects, route by route, on a databa
       expect(await owner.batchState(f.id, b.userId, f.batch)).toEqual({ kind: "missing" });
       expect(await owner.takeBack(f.id, b.userId, f.batch)).toEqual({ kind: "missing" });
       expect(await owner.remove(f.id, b.userId, { discard: true })).toBe("missing");
+      expect(await owner.release(f.id, { userId: b.userId })).toEqual({ kind: "missing" });
       expect(
         await wakeCopy(t.db, f.id, { userId: b.userId, access: OWNER_ONLY }, a.time.now),
       ).toEqual({

@@ -57,5 +57,13 @@ describe("the cloud space", () => {
     });
     for (const body of [null, { mode: "on", limit: -1, used: 0 }, { mode: "x", limit: 1, used: 0 }])
       expect(() => describeSpace(body)).toThrow();
+    // No limit, as a server of one's own says it; with what is kept on the platform itself.
+    const platform = { limit: null, used: 7, count: { limit: null, used: 1 }, projects: [] };
+    expect(describeSpace({ mode: "off", limit: null, used: 0, platform })).toEqual({
+      mode: "off",
+      limit: null,
+      used: 0,
+      platform,
+    });
   });
 });

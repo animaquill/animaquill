@@ -5,6 +5,7 @@ import {
   type AccountSpace,
   type SignInOutcome,
 } from "@animaquill/host";
+import { platformSpaceOf } from "@animaquill/host/browser";
 import { REQUEST_HEADER } from "./headers.ts";
 
 /**
@@ -85,13 +86,23 @@ const SPACE_MODES: readonly AccountSpace["mode"][] = ["on", "readonly", "off"];
 const isSize = (value: unknown): value is number =>
   typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 
-/** The cloud space as GET /api/me/storage says it, see me/routes.ts of the server. */
+/**
+ * The cloud space as GET /api/me/storage says it, see me/routes.ts of the server: with what the
+ * person keeps on the platform itself, where it says that (`platform`).
+ */
 export const describeSpace = (body: unknown): AccountSpace => {
-  const answer = body as { mode?: unknown; limit?: unknown; used?: unknown } | null;
+  const answer = body as {
+    mode?: unknown;
+    limit?: unknown;
+    used?: unknown;
+    platform?: unknown;
+  } | null;
   const mode = SPACE_MODES.find((each) => each === answer?.mode);
-  if (!mode || !isSize(answer?.limit) || !isSize(answer.used))
+  // Null: no limit, as on a server of one's own.
+  if (!mode || !(answer?.limit === null || isSize(answer?.limit)) || !isSize(answer.used))
     throw new Error("The platform said something else than a cloud space");
-  return { mode, limit: answer.limit, used: answer.used };
+  const platform = platformSpaceOf(answer.platform);
+  return { mode, limit: answer.limit, used: answer.used, ...(platform && { platform }) };
 };
 
 export interface ServerAccountOptions {

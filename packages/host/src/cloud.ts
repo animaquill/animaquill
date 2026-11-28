@@ -385,6 +385,8 @@ export interface BrowserCloudOptions {
   readonly wake?: NonNullable<CloudAccess["wake"]>;
   /** Renames a project without opening it, see `CloudAccess.rename`. */
   readonly rename?: NonNullable<CloudAccess["rename"]>;
+  /** Lets go of the working copy of a project, see `CloudAccess.release`. */
+  readonly release?: NonNullable<CloudAccess["release"]>;
   /** What changed of the person's list, at once, see `CloudAccess.events`. */
   readonly events?: CloudAccess["events"];
   /** Saving its projects to repositories, where the platform does, see `browserRepository`. */
@@ -417,6 +419,7 @@ export function browserCloud(options: BrowserCloudOptions): CloudAccess {
     ...(options.remove && { remove: options.remove }),
     ...(options.wake && { wake: options.wake }),
     ...(options.rename && { rename: options.rename }),
+    ...(options.release && { release: options.release }),
     ...(options.events && { events: options.events }),
     ...(options.repository && { repository: options.repository }),
     ...(options.lfs && { lfs: options.lfs }),

@@ -316,7 +316,12 @@ export interface CloudLab {
   ): string;
 }
 
-export function fakeCloud(account: AccountAccess): { cloud: CloudAccess; lab: CloudLab } {
+export function fakeCloud(account: AccountAccess): {
+  cloud: CloudAccess;
+  lab: CloudLab;
+  /** The account's storage as the platform says it, see `AccountAccess.space`. */
+  space: NonNullable<AccountAccess["space"]>;
+} {
   const platform = new MemoryPlatform();
   const repositories = new LabRepositories(platform);
   const links = new MemoryCloudLinks();
@@ -348,6 +353,8 @@ export function fakeCloud(account: AccountAccess): { cloud: CloudAccess; lab: Cl
       list: async () =>
         signedIn(() =>
           platform.list(USER).map((summary) => {
+            // One let go of has no copy to read: the list keeps what it was called.
+            if ((summary.copy ?? "live") !== "live") return summary;
             const { manifest } = platform.workingCopy(summary.id).getState();
             const description = shortDescription(manifest.description);
             return {
@@ -358,6 +365,7 @@ export function fakeCloud(account: AccountAccess): { cloud: CloudAccess; lab: Cl
           }),
         ),
       remove: async (project, options) => signedIn(() => platform.remove(USER, project, options)),
+      release: async (project) => signedIn(() => platform.releaseFor(USER, project)),
       wake: async (project, options) => signedIn(() => platform.wake(USER, project, options)),
       links,
       syncer: (key) => writers.writer(`cloud.${key}`, PAGE),
@@ -366,6 +374,8 @@ export function fakeCloud(account: AccountAccess): { cloud: CloudAccess; lab: Cl
       lfs,
       lfsAccount,
     },
+    space: async () =>
+      signedIn(() => ({ mode: "off" as const, limit: 0, used: 0, platform: platform.space(USER) })),
     lab: {
       platform,
       repositories,

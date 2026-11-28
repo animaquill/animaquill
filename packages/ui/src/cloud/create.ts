@@ -300,6 +300,13 @@ export interface CloudCreateOptions {
   readonly editor: string;
   readonly checkMs?: number;
   readonly environment?: ConnectEnvironment;
+  /**
+   * The platform has no room for the project (what is full, as it said): the dialog that says so,
+   * which takes the place of this one (docs/design/online-offline.md of AnimaQuill Cloud, 3.6).
+   * Resolves to true once people made room, and it goes on by itself then; to false where they did
+   * not, and it stops at the step as before. Without it, it stops there at once.
+   */
+  readonly whenFull?: (said: "count" | "storage") => Promise<boolean>;
 }
 
 const WAITING: CreateSnapshot["steps"] = {
@@ -366,6 +373,8 @@ export class CloudCreate {
   #release: (() => void) | undefined;
   /** The copy in this browser of an imported project, with its files, on its way in. */
   #received: Received | undefined;
+  /** Whoever waits for the steps to want the dialog again, see `whenBack`. */
+  readonly #back = new Set<() => void>();
 
   constructor(options: CloudCreateOptions) {
     this.#options = options;
@@ -591,6 +600,26 @@ export class CloudCreate {
     await this.#working;
   }
 
+  /**
+   * Resolves once the steps want the dialog again after another one took its place, as the one
+   * that says the platform is full (`whenFull`), while they go on; or once they stopped running.
+   */
+  whenBack(): Promise<void> {
+    if (!this.#working) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => {
+        this.#back.delete(done);
+        resolve();
+      };
+      this.#back.add(done);
+      void this.#working?.finally(done);
+    });
+  }
+
+  #comeBack(): void {
+    for (const done of Array.from(this.#back)) done();
+  }
+
   // ---- leaving the page, and coming back
 
   #noteIntent(): void {
@@ -702,23 +731,37 @@ export class CloudCreate {
     this.#step("upload", "running");
     await this.#note(project);
     const made = content(name, format);
-    const stop = new AbortController();
-    const sending = upload(cloud, {
-      project,
-      state: made.state,
-      create: { name, projectId: made.projectId },
-      window: this.#options.window,
-      editor: this.#options.editor,
-      signal: stop.signal,
-    });
-    this.#upload = { upload: sending, stop };
-    const outcome = sending.done.then(
-      (downloaded) => ({ downloaded }),
-      (error: unknown) => ({ error }),
-    );
-    this.#uploading = outcome;
-    const result: { downloaded?: Downloaded; error?: unknown } = await outcome;
-    this.#uploading = undefined;
+    let result: { downloaded?: Downloaded; error?: unknown };
+    for (;;) {
+      const stop = new AbortController();
+      const sending = upload(cloud, {
+        project,
+        state: made.state,
+        create: { name, projectId: made.projectId },
+        window: this.#options.window,
+        editor: this.#options.editor,
+        signal: stop.signal,
+      });
+      this.#upload = { upload: sending, stop };
+      const outcome = sending.done.then(
+        (downloaded) => ({ downloaded }),
+        (error: unknown) => ({ error }),
+      );
+      this.#uploading = outcome;
+      result = await outcome;
+      this.#uploading = undefined;
+      if (this.#closed || this.#snapshot.cancelling) return false;
+      const full = result.error instanceof UploadFailed && result.error.code === "quota";
+      const { whenFull } = this.#options;
+      if (result.downloaded || !full || !whenFull) break;
+      // No room on the platform: nothing was made there. Once people made room, again, at once.
+      this.#step("upload", "failed");
+      const freed = await whenFull((result.error as UploadFailed).detail ?? "storage");
+      this.#comeBack();
+      if (!freed || this.#closed || this.#snapshot.cancelling) break;
+      this.#set({ problem: undefined });
+      this.#step("upload", "running");
+    }
     if (this.#closed || this.#snapshot.cancelling) return false;
     if (!result.downloaded) {
       const problem = uploadProblemOf(result.error);

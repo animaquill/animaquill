@@ -177,6 +177,61 @@ describe("making a project of the platform", () => {
     await expectNothingOnlyHere(world);
   });
 
+  it("where the platform has no room, asks what makes room, and goes on by itself once there is", async () => {
+    const world = await setUp();
+    const { time, platform, createOf } = world;
+    platform.limits.count = 0;
+    const asked: string[] = [];
+    let answer = false;
+    const create = createOf({
+      whenFull: async (said) => {
+        asked.push(said);
+        // People made room meanwhile, the second time.
+        if (answer) platform.limits.count = null;
+        return answer;
+      },
+    });
+    // They close what said so: it stops where it was, and nothing is made.
+    await submit(create, time);
+    expect(asked).toEqual(["count"]);
+    expect(onPlatform(world)).toEqual([]);
+    expect(create.getSnapshot()).toMatchObject({
+      phase: "choosing",
+      problem: { step: "upload", code: "quota" },
+    });
+    // They make room this time: on at once, without pressing anything again.
+    answer = true;
+    platform.limits.count = 0;
+    let back = false;
+    const done = create.submit();
+    void create.whenBack().then(() => {
+      back = true;
+    });
+    await time.advance(500);
+    await done;
+    expect(asked).toEqual(["count", "count"]);
+    expect(back).toBe(true);
+    expect(onPlatform(world)).toHaveLength(1);
+    expect(create.getSnapshot()).toMatchObject({ phase: "archiving", problem: undefined });
+    expect(stepsOf(create)).toBe("done done done running");
+  });
+
+  it("says what is full of the bytes, as the platform does", async () => {
+    const world = await setUp();
+    const { time, platform, createOf } = world;
+    platform.limits.storage = 10;
+    const asked: string[] = [];
+    const create = createOf({
+      whenFull: async (said) => {
+        asked.push(said);
+        return false;
+      },
+    });
+    await submit(create, time);
+    expect(asked).toEqual(["storage"]);
+    expect(onPlatform(world)).toEqual([]);
+  });
+
   it("on a server that saves projects to repositories of its own, asks nothing of one", async () => {
     const world = await setUp();
     const { time, repository, here, createOf } = world;

@@ -112,6 +112,19 @@
   white-space: nowrap;
 }
 
+/* What needs a look, quietly: what is kept on the platform is nearly as much as may be. */
+.navDot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  background: var(--aq-warning);
+  border-radius: 50%;
+}
+
+.navDot[data-storage-dot="over"] {
+  background: var(--aq-danger);
+}
+
 .count {
   color: var(--aq-text-muted);
   font-size: var(--aq-font-12);

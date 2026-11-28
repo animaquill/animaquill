@@ -221,6 +221,30 @@ export interface PlacesDialogOptions {
   readonly chosen?: readonly string[];
 }
 
+/**
+ * "平台存储满了" / "在线项目数满了" (docs/design/online-offline.md of AnimaQuill Cloud, 3.6): a new
+ * project, an import or a restore found no room on the platform. It lists what takes the most, or
+ * what was changed longest ago where the number is full, from the person's `PlatformSpaceState`,
+ * with what makes room. Letting go of a copy goes on in the dialog (`release`), which then answers
+ * "freed"; what takes another dialog is answered for whoever showed it to do, see
+ * `PlatformFullAnswer`.
+ */
+export interface PlatformFullOptions {
+  /** "平台存储满了（5.0 GB / 5 GB）", as it was as the dialog came up. */
+  readonly title: string;
+  /** What is full: the number of projects, or the bytes. */
+  readonly by: "count" | "storage";
+  /** Lets go of the copy of a project, people having said so here: whether it went. */
+  readonly release: (project: string, name: string) => Promise<boolean>;
+  /** When each project last changed, for "count": milliseconds since 1970, by its id. */
+  readonly changedAt?: ReadonlyMap<string, number>;
+}
+
+/** What people chose in `PlatformFullOptions`: room was made, or what to do with a project. */
+export type PlatformFullAnswer =
+  | { readonly kind: "freed" }
+  | { readonly kind: "saveToFolder" | "delete"; readonly project: string; readonly name: string };
+
 export type DialogRequest =
   | ({ readonly kind: "prompt"; readonly id: number } & PromptOptions)
   | ({ readonly kind: "confirm"; readonly id: number } & ConfirmOptions)
@@ -232,9 +256,11 @@ export type DialogRequest =
   | ({ readonly kind: "reconcile"; readonly id: number } & ReconcileDialogOptions)
   | ({ readonly kind: "places"; readonly id: number } & PlacesDialogOptions)
   | ({ readonly kind: "conflicts"; readonly id: number } & ConflictsDialogOptions)
+  | ({ readonly kind: "platformFull"; readonly id: number } & PlatformFullOptions)
   | ProgressRequest;
 
-type DialogValue = string | boolean | FormAnswer | OpenRepositoryChoice | undefined;
+type DialogValue =
+  string | boolean | FormAnswer | OpenRepositoryChoice | PlatformFullAnswer | undefined;
 
 /** Asks one thing at a time and answers with a promise. */
 export class Dialogs {
@@ -311,6 +337,14 @@ export class Dialogs {
     const answer = await this.#ask({ kind: "openRepository", id: this.#nextId++, ...options });
     return typeof answer === "object" && "action" in answer
       ? (answer as OpenRepositoryChoice)
+      : undefined;
+  }
+
+  /** Resolves to what people chose, or undefined where they closed it, see `PlatformFullOptions`. */
+  async platformFull(options: PlatformFullOptions): Promise<PlatformFullAnswer | undefined> {
+    const answer = await this.#ask({ kind: "platformFull", id: this.#nextId++, ...options });
+    return typeof answer === "object" && answer !== null && "kind" in answer
+      ? (answer as PlatformFullAnswer)
       : undefined;
   }
 

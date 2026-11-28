@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { NoAnswer } from "./answers.ts";
-import { browserCloudProjects, projectSummaryOf } from "./cloud-projects.ts";
+import { browserCloudProjects, platformSpaceOf, projectSummaryOf } from "./cloud-projects.ts";
 import { CloudSignedOut } from "./index.ts";
 
 /** The projects of a platform over its HTTP API, as a browser reaches it. */
@@ -402,5 +402,92 @@ describe("renaming a project of the platform", () => {
     expect(await projects.rename("p", "x")).toEqual({ kind: "refused", why: "quota" });
     await expect(projects.rename("p", "x")).rejects.toThrow(/answered 200/);
     await expect(projects.rename("p", "x")).rejects.toBeInstanceOf(CloudSignedOut);
+  });
+});
+
+describe("letting go of the working copy of a project of the platform", () => {
+  const json = (status: number, body: unknown) =>
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": "application/json" },
+    });
+
+  test("asks with the headers of a change, and takes only the platform's own words", async () => {
+    const { projects, sent } = platform(() => json(200, { copy: "released" }));
+    expect(await projects.release("p 1")).toEqual({ kind: "released" });
+    expect(sent).toEqual([
+      {
+        url: "https://platform.example/api/projects/p%201/release",
+        method: "POST",
+        headers: { "x-animaquill": "1" },
+      },
+    ]);
+    const answers: [number, unknown, unknown][] = [
+      [
+        409,
+        { error: "notReleasable", why: { code: "conflicts", count: 2, extra: true } },
+        { kind: "refused", why: { code: "conflicts", count: 2 } },
+      ],
+      [
+        409,
+        { error: "notReleasable", why: { code: "repository", reason: "gone" } },
+        { kind: "refused", why: { code: "repository", reason: "gone" } },
+      ],
+      [409, { error: "notLive" }, { kind: "notLive" }],
+      [403, { error: "forbidden" }, { kind: "forbidden" }],
+      [404, { error: "notFound" }, { kind: "missing" }],
+    ];
+    for (const [status, body, expected] of answers) {
+      const { projects: other } = platform(() => json(status, body));
+      expect(await other.release("p1")).toEqual(expected);
+    }
+    // A gateway's 404, a reason without a code, a 200 of something else: no answer.
+    for (const [status, body] of [
+      [404, { message: "Not Found" }],
+      [409, { error: "notReleasable" }],
+      [409, { error: "notReleasable", why: { reason: "gone" } }],
+      [200, { ok: true }],
+      [502, undefined],
+    ] as const) {
+      const { projects: other } = platform(() => json(status, body));
+      await expect(other.release("p1")).rejects.toThrow(/answered/);
+    }
+    const { projects: signedOut } = platform(() => json(401, { error: "signedOut" }));
+    await expect(signedOut.release("p1")).rejects.toBeInstanceOf(CloudSignedOut);
+  });
+
+  test("reads what a person keeps there, field by field", () => {
+    expect(
+      platformSpaceOf({
+        limit: 5368709120,
+        used: 3,
+        count: { limit: 500, used: 2 },
+        projects: [
+          { id: "a", name: "宣传片", bytes: 2, state: "live", releasable: true },
+          { id: "b", name: "旧的", bytes: 1, state: "live", why: { code: "pending" } },
+          // Says both: why counts.
+          { id: "c", name: "x", bytes: 0, state: "live", releasable: true, why: { code: "busy" } },
+          { id: "d", name: "已释放", bytes: 0, state: "released" },
+          { id: "e", bytes: 0, state: "live" },
+          "nothing",
+        ],
+      }),
+    ).toEqual({
+      limit: 5368709120,
+      used: 3,
+      count: { limit: 500, used: 2 },
+      projects: [
+        { id: "a", name: "宣传片", bytes: 2, state: "live", releasable: true },
+        { id: "b", name: "旧的", bytes: 1, state: "live", why: { code: "pending" } },
+        { id: "c", name: "x", bytes: 0, state: "live", why: { code: "busy" } },
+        { id: "d", name: "已释放", bytes: 0, state: "released" },
+      ],
+    });
+    // No limit: null, as on a server of one's own.
+    expect(
+      platformSpaceOf({ limit: null, used: 0, count: { limit: null, used: 0 }, projects: [] }),
+    ).toEqual({ limit: null, used: 0, count: { limit: null, used: 0 }, projects: [] });
+    expect(platformSpaceOf(undefined)).toBeUndefined();
+    expect(platformSpaceOf({ limit: "5GB", used: 0, count: {}, projects: [] })).toBeUndefined();
   });
 });

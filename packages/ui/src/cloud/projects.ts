@@ -142,6 +142,12 @@ const isAllThere = (found: OnlyHere | undefined): found is OnlyHere =>
 
 export interface CloudProjectsOptions {
   readonly cloud: CloudAccess;
+  /**
+   * The platform has no room for a project restored from a repository (what is full, as it said):
+   * the dialog that says so. Resolves to true once people made room, and restoring goes on by
+   * itself; to false where they did not. Without it, people only hear why it did not.
+   */
+  readonly whenFull?: (said: "count" | "storage") => Promise<boolean>;
   readonly session: ProjectSession;
   readonly projects: ProjectLibrary;
   readonly account: AccountAccess | undefined;
@@ -1805,7 +1811,7 @@ export class CloudProjects {
       readonly asked?: boolean;
     } = {},
   ): Promise<boolean> {
-    const { cloud, dialogs, notifications, t } = this.#options;
+    const { cloud, dialogs, t } = this.#options;
     const access = cloud.repository;
     const local = "dir" in repository;
     const restore = local
@@ -1828,6 +1834,53 @@ export class CloudProjects {
     if (!go) return false;
     if (!(await this.#signedIn(t("cloud.openTitle")))) return false;
     const environment = this.#options.environment ?? pageEnvironment();
+    let made: { readonly id: string; readonly name: string } | undefined;
+    let failure: string | undefined;
+    for (;;) {
+      const full = await this.#restoreOnce(repository, environment);
+      if (full === "stopped") return false;
+      if ("detail" in full) {
+        // No room on the platform: nothing was made. Once people made room, again, at once; where
+        // they closed what said so, they know why already.
+        const { whenFull } = this.#options;
+        if (whenFull) {
+          if (await whenFull(full.detail)) continue;
+          return false;
+        }
+        failure = full.failure;
+        break;
+      }
+      ({ made, failure } = full);
+      break;
+    }
+    if (failure !== undefined || !made) {
+      await dialogs.confirm({
+        title: t("cloud.restore.failedTitle", words),
+        message: failure ?? t("cloud.restore.gone"),
+        confirm: t("dialog.close"),
+        noticeOnly: true,
+      });
+      return false;
+    }
+    return this.openCloudProject(made.id, { name: made.name, copy: "live" });
+  }
+
+  /**
+   * One try of `restoreFromRepository`, with people watching: what was made, or why not; what is
+   * full where the platform had no room; "stopped" where people stopped waiting, and were told.
+   */
+  async #restoreOnce(
+    repository:
+      | { readonly id: number; readonly fullName: string; readonly public?: boolean }
+      | { readonly dir: string; readonly fullName: string; readonly public?: undefined },
+    environment: CloudEnvironment,
+  ): Promise<
+    | "stopped"
+    | { readonly made?: { readonly id: string; readonly name: string }; readonly failure?: string }
+    | { readonly detail: "count" | "storage"; readonly failure: string }
+  > {
+    const { cloud, dialogs, notifications, t } = this.#options;
+    const access = cloud.repository!;
     const progress = dialogs.progress({
       title: t("cloud.restore.running"),
       cancel: t("dialog.cancel"),
@@ -1851,7 +1904,7 @@ export class CloudProjects {
           await this.#pause(RESTORE_POLL_MS, progress.signal).catch(() => {});
           if (progress.signal.aborted) {
             notifications.push(t("cloud.restore.long"));
-            return false;
+            return "stopped";
           }
           const found = await cloud.list().then(
             (list) => list.find((each) => each.id === restored.project.id) ?? "gone",
@@ -1871,30 +1924,23 @@ export class CloudProjects {
           }
           if (environment.now() >= until) {
             notifications.push(t("cloud.restore.long"));
-            return false;
+            return "stopped";
           }
         }
       }
     } catch (error) {
       if (error instanceof CloudSignedOut) failure = t("cloud.restore.failure.signedOut");
-      else if (error instanceof RepositoryRefused) failure = restoreRefusalText(error, t);
-      else {
+      else if (error instanceof RepositoryRefused) {
+        failure = restoreRefusalText(error, t);
+        if (error.code === "quota") return { detail: error.detail ?? "storage", failure };
+      } else {
         console.warn("A repository could not be restored as a project of the platform", error);
         failure = t("cloud.restore.failure.unavailable");
       }
     } finally {
       progress.close();
     }
-    if (failure !== undefined || !made) {
-      await dialogs.confirm({
-        title: t("cloud.restore.failedTitle", words),
-        message: failure ?? t("cloud.restore.gone"),
-        confirm: t("dialog.close"),
-        noticeOnly: true,
-      });
-      return false;
-    }
-    return this.openCloudProject(made.id, { name: made.name, copy: "live" });
+    return { ...(made && { made }), ...(failure !== undefined && { failure }) };
   }
 
   /** The repositories of the server's own that people can restore: none where it has none. */

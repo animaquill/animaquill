@@ -414,6 +414,14 @@ export function browserRepository(options: BrowserRepositoryOptions): Repository
       ...optional("diverged", divergedOf(answer.diverged)),
       ...optional("why", text(answer.why)),
       ...optional(
+        "detail",
+        answer.error === "quota"
+          ? answer.detail === "count"
+            ? ("count" as const)
+            : ("storage" as const)
+          : undefined,
+      ),
+      ...optional(
         "retryAfter",
         Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : undefined,
       ),

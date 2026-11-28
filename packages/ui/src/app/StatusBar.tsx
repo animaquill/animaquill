@@ -43,6 +43,7 @@ import { useProject, useSession, useWorkbench } from "./context.ts";
 import { Bubble } from "./Bubble.tsx";
 import { ChatRunsStatus } from "./ChatRunsStatus.tsx";
 import { CloudPanelBody } from "./CloudPanel.tsx";
+import { isOver } from "../storage/platform-space.ts";
 import { UploadsSection, uploadTotals } from "../storage/UploadsSection.tsx";
 import { downloadTotals } from "../storage/downloads.ts";
 import panelStyles from "./CloudPanel.module.css";
@@ -635,6 +636,14 @@ function SaveStatuses({
     workbench.downloads.getSnapshot,
   );
   const downloading = downloadTotals(downloadsNow);
+  // More kept on the platform than may be: editing goes on, but a new project waits (3.6).
+  const { platformSpace } = workbench;
+  const kept = useSyncExternalStore(platformSpace.subscribe, platformSpace.getSnapshot).space;
+  const linkedNow = outer.kind === "linked";
+  useEffect(() => {
+    if (linkedNow) void platformSpace.refresh({ fresh: true });
+  }, [platformSpace, linkedNow]);
+  const overLine = isOver(kept) ? t("storage.platform.over") : undefined;
   // Failing for long is looked at again every minute, and whenever the platform says something.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -729,7 +738,10 @@ function SaveStatuses({
       )}
       {panel && outer.kind === "linked" && (
         <>
-          <Tip name={label("sync", panel.bar)} usage={panel.barAbout}>
+          <Tip
+            name={label("sync", panel.bar)}
+            usage={overLine ? [panel.barAbout, overLine].filter(Boolean).join("") : panel.barAbout}
+          >
             <button
               type="button"
               className={`${styles.name} ${styles.save} ${panel.level === "attention" ? styles.failed : ""}`}

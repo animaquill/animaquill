@@ -6,6 +6,7 @@ import { httpsLink } from "../app/links.ts";
 import { formatLimit, formatSize } from "../transfer/transfer.ts";
 import type { LocalLfsUse } from "@animaquill/host";
 import { GITHUB_BILLING } from "./links.ts";
+import { PlatformProjects } from "./PlatformProjects.tsx";
 import styles from "./StorageSpace.module.css";
 
 const noSubscription = () => () => {};
@@ -55,7 +56,7 @@ function LocalUse({ use, failed }: { use: LocalLfsUse | undefined; failed: boole
  * large file storage of GitHub, by repository, as the platform knows it; the room and the traffic
  * only GitHub says, which a link goes to. The cloud space comes later.
  */
-export function StorageSpace() {
+export function StorageSpace({ onChanged }: { readonly onChanged?: () => void } = {}) {
   const workbench = useWorkbench();
   const { lfsAccount, account } = workbench;
   const { t } = useTranslation();
@@ -77,6 +78,7 @@ export function StorageSpace() {
   return (
     <div className={styles.page} data-storage-space="">
       <p className={styles.about}>{t("storage.uploads.space.about")}</p>
+      <PlatformProjects {...(onChanged && { onChanged })} />
       <section className={styles.part} aria-labelledby="storage-lfs" data-storage="lfs">
         <div className={styles.head}>
           <h2 id="storage-lfs">{t("storage.uploads.space.lfsTitle")}</h2>
@@ -175,9 +177,9 @@ export function StorageSpace() {
         )}
         <p className={styles.muted}>{t("storage.uploads.space.noDelete")}</p>
       </section>
-      <section className={`${styles.part} ${styles.later}`} aria-labelledby="storage-platform">
+      <section className={`${styles.part} ${styles.later}`} aria-labelledby="storage-cloud">
         <div className={styles.head}>
-          <h2 id="storage-platform">
+          <h2 id="storage-cloud">
             {t("storage.uploads.space.platformTitle")}{" "}
             <span className={styles.tag}>{t("storage.uploads.comingSoon")}</span>
           </h2>

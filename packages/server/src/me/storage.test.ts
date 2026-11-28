@@ -33,6 +33,8 @@ describe.skipIf(!TEST_DATABASE)("the cloud space of an account, as the limits sa
       mode: "off",
       limit: null,
       used: 0,
+      // What they keep on the platform itself, see me/platform.ts and sync/release.test.ts.
+      platform: { limit: null, used: 0, count: { limit: null, used: 0 }, projects: [] },
     });
     const limited = await platform(w, {
       hub,
@@ -49,7 +51,12 @@ describe.skipIf(!TEST_DATABASE)("the cloud space of an account, as the limits sa
       mode: "off",
       limit: 5,
       used: 0,
+      platform: { limit: 5, used: 0, count: { limit: 5, used: 0 }, projects: [] },
     });
-    expect(asked).toEqual([[w.userId, "storage.cloud"]]);
+    expect(asked).toEqual([
+      [w.userId, "storage.cloud"],
+      [w.userId, "storage.platform"],
+      [w.userId, "projects.count"],
+    ]);
   });
 });

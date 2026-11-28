@@ -66,6 +66,7 @@ export function serverCloud({ editor, version, binding }: ServerCloudOptions): C
     remove: projects.remove,
     wake: projects.wake,
     rename: projects.rename,
+    release: projects.release,
     events,
     repository: browserRepository({ api, changeHeaders, ...shared }),
     lfs: browserLfs({ api, changeHeaders, ...shared }),

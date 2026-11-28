@@ -1,4 +1,5 @@
 import { StorageSpace } from "../storage/StorageSpace.tsx";
+import * as platformUse from "../storage/platform-space.ts";
 import { OFFLINE_HINT_KEY, type FolderStatus } from "@animaquill/host";
 import {
   ChevronDown,
@@ -75,6 +76,7 @@ import { useWorkbench } from "./context.ts";
 import { Menu, PopupMenu, type MenuItem } from "./Menu.tsx";
 import { OnlineOnly } from "./OnlineOnly.tsx";
 import { PlaceIcon } from "./PlaceIcon.tsx";
+import { Tip } from "./Tip.tsx";
 import styles from "./StartPage.module.css";
 import { agoText, durationText } from "./start-view.ts";
 import { unusableFix, unusableLine } from "../cloud/unusable.ts";
@@ -573,16 +575,7 @@ function Sidebar({
       </div>
       <div className={styles.foot}>
         {situation.mode === "online" ? (
-          <button
-            type="button"
-            className={styles.navButton}
-            aria-current={view === "storage" ? "page" : undefined}
-            data-view="storage"
-            onClick={() => onView("storage")}
-          >
-            <HardDrive size={15} className={styles.navIcon} aria-hidden="true" />
-            <span className={styles.navName}>{t("storage.uploads.space.nav")}</span>
-          </button>
+          <StorageNav current={view === "storage"} onView={() => onView("storage")} />
         ) : (
           situation.canGoOnline && (
             <OnlineOnly className={styles.navButton} what={t("storage.uploads.space.nav")}>
@@ -595,6 +588,47 @@ function Sidebar({
         <SettingsButton />
       </div>
     </nav>
+  );
+}
+
+/**
+ * "存储空间" of the side bar, with a dot once what the person keeps on the platform is nearly as
+ * much as they may (docs/design/online-offline.md of AnimaQuill Cloud, 1.2): otherwise nothing.
+ */
+function StorageNav({ current, onView }: { current: boolean; onView: () => void }) {
+  const { platformSpace } = useWorkbench();
+  const { t } = useTranslation();
+  const { space } = useSyncExternalStore(platformSpace.subscribe, platformSpace.getSnapshot);
+  const near = platformUse.isNearlyFull(space);
+  const over = near && platformUse.isOver(space);
+  const label = t("storage.uploads.space.nav");
+  const said = over ? t("storage.platform.over") : t("storage.platform.nearlyFull");
+  const button = (
+    <button
+      type="button"
+      className={styles.navButton}
+      aria-current={current ? "page" : undefined}
+      data-view="storage"
+      {...(near && { "aria-description": said })}
+      onClick={onView}
+    >
+      <HardDrive size={15} className={styles.navIcon} aria-hidden="true" />
+      <span className={styles.navName}>{label}</span>
+      {near && (
+        <span
+          className={styles.navDot}
+          data-storage-dot={over ? "over" : "near"}
+          aria-hidden="true"
+        />
+      )}
+    </button>
+  );
+  return near ? (
+    <Tip name={label} usage={said}>
+      {button}
+    </Tip>
+  ) : (
+    button
   );
 }
 
@@ -864,12 +898,23 @@ function CardItem({
   const words = { name: shown, ...plain };
   const href = card.key === undefined ? undefined : workbench.linkTo(card.key);
   const isRenaming = actions.renaming === card.id;
+  // Of the person's own, where what they keep on the platform is limited (3.6 of the design).
+  const kept = useSyncExternalStore(
+    workbench.platformSpace.subscribe,
+    workbench.platformSpace.getSnapshot,
+  ).space;
+  const use =
+    card.project === undefined
+      ? undefined
+      : kept?.projects.find((each) => each.id === card.project);
+  const releaseWhy = use?.why && platformUse.releaseBlockShort(use.why, t);
   const groups = cardActions(card, {
     folder,
     copies: card.key === undefined ? 0 : (copies.get(card.key) ?? 0),
     covers: workbench.canChooseCovers,
     coverChosen: covers.get(card.id)?.chosen === true,
     renamesOnline,
+    releasable: kept?.limit != null && use?.state === "live",
   });
   const menu = (): MenuItem[][] =>
     groups.map((group) =>
@@ -884,6 +929,9 @@ function CardItem({
         ...(action === "rename" &&
           renamesOnline &&
           backendAway && { disabled: true, note: t("start.menu.renameOffline") }),
+        // What keeps its copy, said where people look for it.
+        ...(action === "releasePlatform" &&
+          releaseWhy !== undefined && { disabled: true, note: releaseWhy }),
         run: () => actions.run(card, action, more.current),
       })),
     );
@@ -1286,6 +1334,10 @@ function useCardActions(
           if (card.project !== undefined)
             run(() => workbench.deleteFromCloud(card.project, card.name));
           return;
+        case "releasePlatform":
+          if (card.project !== undefined)
+            run(() => workbench.releasePlatform(card.project as string, card.name));
+          return;
         case "findAgain":
           if (record && projectFolders) run(() => projectFolders.findAgain(record));
           return;
@@ -1346,6 +1398,13 @@ export function StartPage() {
 
   // A folder that people let the editor at again is listed as it is now.
   useEffect(refresh, [refresh, folders.waiting]);
+  // ...and what the person keeps on the platform, for the side bar and the menus of the cards.
+  const { platformSpace } = workbench;
+  const online = workbench.mode === "online";
+  const cloudRows = lists.cloud;
+  useEffect(() => {
+    if (online && cloudRows) void platformSpace.refresh({ fresh: true });
+  }, [platformSpace, online, cloudRows]);
   useEffect(readExports, [readExports]);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), TICK_MS);
@@ -1354,11 +1413,14 @@ export function StartPage() {
   // People come back to the window: what another window or another computer did meanwhile shows.
   useEffect(() => {
     const onVisible = () => {
-      if (document.visibilityState === "visible") refresh();
+      if (document.visibilityState !== "visible") return;
+      refresh();
+      // ...and what is kept on the platform, which another window may have changed.
+      if (workbench.mode === "online") void workbench.platformSpace.refresh();
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
-  }, [refresh]);
+  }, [refresh, workbench]);
   // Looking at a folder can take a while, as on a network: the page does not wait for it.
   useEffect(() => {
     if (!projectFolders) return;
@@ -1677,7 +1739,7 @@ export function StartPage() {
         {cloudNote()}
 
         {current === "storage" ? (
-          <StorageSpace />
+          <StorageSpace onChanged={refresh} />
         ) : current === "exports" ? (
           <UnfinishedExports found={exports} nameOf={nameOf} refresh={readExports} />
         ) : welcome ? (

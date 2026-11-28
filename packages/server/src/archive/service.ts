@@ -52,7 +52,9 @@ import { recheckLink } from "./recheck.ts";
 import type { LocalGitRepoHost } from "./local/host.ts";
 import { linkLocal } from "./local/links.ts";
 import {
+  RepoHosts,
   RepoPaused,
+  placeOf,
   type GitHubPlace,
   type LocalPlace,
   type RepoHost,
@@ -60,6 +62,7 @@ import {
 } from "./repo-host.ts";
 import { dueAt, type ArchiveJob } from "./schedule.ts";
 import { notifyPerson } from "../me/events.ts";
+import type { RepositoryLook } from "../sync/releasable.ts";
 
 /**
  * Saving a project to a repository, as people ask for it: which repositories they can choose,
@@ -392,6 +395,9 @@ const withinTime = <T>(work: Promise<T>, ms: number): Promise<T> => {
     }),
   ]).finally(() => clearTimeout(timer));
 };
+
+/** How long looking at a repository right before letting go of a copy may take, see `lookBeforeRelease`. */
+const RELEASE_LOOK_MS = 20_000;
 
 /** A repository nobody looked at for this long is looked at as an editor asks, see `#lookSoon`. */
 export const LOOK_SOON_MS = 5 * 60_000;
@@ -1973,6 +1979,58 @@ export class RepositoryService {
     if (found.kind === "usable")
       await this.#options.enqueue({ project: link.projectId, kind: "check" });
     return found.kind;
+  }
+
+  /**
+   * Looks at the repository of a project right before its working copy is let go of, as people ask
+   * for it (`POST /api/projects/:id/release`): whether it is there to the platform, on the account
+   * it was linked on, and gives back what the copy would be made again from, the commit of the last
+   * archive (`head_sha`), and its branch. `sha`: that commit, which the hub lets go of the copy
+   * against, see `SyncHub.release`; `refused`: why not, see `RepositoryLook`, where an archive
+   * that only looks is queued too, so that the platform notes what it is. Undefined for a project
+   * that has no repository or no archive yet: the hub says why then. Nothing else changes.
+   */
+  async lookBeforeRelease(
+    projectId: string,
+  ): Promise<{ readonly sha: string } | { readonly refused: RepositoryLook } | undefined> {
+    const link = await linkOf(this.#options.db, projectId);
+    if (!link || link.headSha === null) return undefined;
+    const sha = link.headSha;
+    const hosts = new RepoHosts({ github: this.#options.host, local: this.#options.local });
+    if (!hosts.has(link.provider)) return { refused: "unreachable" };
+    const signal = AbortSignal.timeout(RELEASE_LOOK_MS);
+    let found: RepositoryLook | undefined;
+    let session: ReturnType<RepoHosts["open"]> | undefined;
+    try {
+      session = hosts.open(placeOf(link), { signal });
+      const info = await session.info();
+      if (link.provider === "github" && info.ownerId !== link.ownerId) found = "transferred";
+      else if ((await session.tip(info.branch)) === undefined) found = "missing";
+      else if ((await session.commit(sha)) === undefined) found = "missing";
+    } catch (error) {
+      found =
+        error instanceof RepoPaused
+          ? error.reason === "gone"
+            ? "gone"
+            : error.reason === "broken"
+              ? "missing"
+              : "unauthorized"
+          : error instanceof GitHubUnauthorized
+            ? "unauthorized"
+            : "unreachable";
+      if (found === "unreachable")
+        this.#options.log?.warn(
+          { err: describeError(error), project: projectId },
+          "the repository could not be looked at before letting go of the copy",
+        );
+    } finally {
+      await session?.close().catch(() => {});
+    }
+    if (found === undefined) return { sha };
+    // What the platform knows of the repository follows: an archive that only looks notes it.
+    if (found !== "unreachable")
+      await this.#options.enqueue({ project: projectId, kind: "check" }).catch(() => {});
+    return { refused: found };
   }
 
   /**

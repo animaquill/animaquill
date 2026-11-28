@@ -47,9 +47,13 @@ export class UploadFailed extends Error {
     | "offline"
     | "rejected";
 
-  constructor(message: string, code: UploadFailed["code"]) {
+  /** For "quota": what is full, as the platform said it, the number of projects or the bytes. */
+  readonly detail: "count" | "storage" | undefined;
+
+  constructor(message: string, code: UploadFailed["code"], detail?: "count" | "storage") {
     super(message);
     this.code = code;
+    this.detail = detail;
   }
 }
 
@@ -133,8 +137,14 @@ export function upload(cloud: CloudAccess, request: UploadRequest): Upload {
       connection.close(1000, "");
       resolve(result);
     };
-    void connection.closed.then(({ code }) =>
-      fail(new UploadFailed(`The platform closed the connection (${code})`, codeOf(code))),
+    void connection.closed.then(({ code, reason }) =>
+      fail(
+        new UploadFailed(
+          `The platform closed the connection (${code})`,
+          codeOf(code),
+          code === SYNC_CLOSE.quota ? (reason === "count" ? "count" : "storage") : undefined,
+        ),
+      ),
     );
     const stop = () => fail(new UploadFailed("Stopped", "stopped"));
     if (request.signal?.aborted) {

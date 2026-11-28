@@ -271,6 +271,9 @@ export const buildApp = (
     ...(platform.switches && { deletesFrom: platform.switches.deletesFrom }),
     // Repositories nobody looked at for a day, where projects are saved to GitHub at all.
     lookAgain: async (projects) => repositories()?.lookAgain(projects),
+    // The repository right before people let go of a copy: where there is no service of
+    // repositories (yet), nothing is looked at, and the hub lets go of nothing that has one.
+    lookBeforeRelease: async (project) => repositories()?.lookBeforeRelease(project),
     rebuild: platform.rebuild,
     now: platform.now,
     access,

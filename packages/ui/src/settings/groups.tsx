@@ -570,10 +570,12 @@ function SpaceRow() {
           ? t("settings.space.off")
           : space.limit === 0
             ? t("settings.space.none")
-            : t(space.mode === "readonly" ? "settings.space.readonly" : "settings.space.used", {
-                used: formatBytes(t, space.used),
-                limit: formatBytes(t, space.limit),
-              });
+            : space.limit === null
+              ? t("settings.space.usedOnly", { used: formatBytes(t, space.used) })
+              : t(space.mode === "readonly" ? "settings.space.readonly" : "settings.space.used", {
+                  used: formatBytes(t, space.used),
+                  limit: formatBytes(t, space.limit),
+                });
   return (
     <SettingRow
       id="account.space"

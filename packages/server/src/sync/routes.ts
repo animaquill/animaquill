@@ -3,7 +3,7 @@ import type { Accounts, SignedIn } from "../auth/accounts.ts";
 import { fromThisSite } from "../auth/guard.ts";
 import { clientOf, Limits, RateLimit } from "../auth/limits.ts";
 import { describeError, type Db } from "../database.ts";
-import type { CoverType } from "../schema.ts";
+import { projects as projectRows, type CoverType } from "../schema.ts";
 import { hashOf } from "../seal.ts";
 import {
   COVER_BYTES,
@@ -16,6 +16,8 @@ import {
   removeCover,
 } from "./covers.ts";
 import { PLATFORM_ID, type RemoveCondition, type SyncHub } from "./hub.ts";
+import { blockOf, type ReleaseBlock, type RepositoryLook } from "./releasable.ts";
+import { eq } from "drizzle-orm";
 import { OWNER_ONLY, type AccessGate, type AccessPolicy } from "../access.ts";
 import { recheckSoon } from "../archive/links.ts";
 import { listProjects } from "./list.ts";
@@ -48,7 +50,8 @@ import type { SessionCredentials } from "../auth/credentials.ts";
  *   large file storage
  *   keep any project, without `discard`: 409 `{error: "uploading", uploads}`, how many. 404
  *   `{error: "notFound"}` for one that is not there (also one that was taken away before), or not
- *   the person's own; 400 `{error: "invalid"}` for an `archived` that is no number, or a `discard`
+ *   the person's own; 403 `{error: "forbidden"}` for one the person may see and not manage (a
+ *   member's, see access.ts); 400 `{error: "invalid"}` for an `archived` that is no number, or a `discard`
  *   that is not 1. Its windows close with `SYNC_CLOSE.deleted`, or `missing` for an editor that
  *   does not know that. Its id is kept: no project is made under it again, whoever asks. So is the
  *   id of one that is not there, which the editor asks to take away when it gives up connecting a
@@ -69,6 +72,15 @@ import type { SessionCredentials } from "../auth/credentials.ts";
  * - `DELETE /api/projects/:id/cover`: takes the cover away, as people go back to the one the
  *   editor makes. 204, also where there was none; 404 `notFound`; 429 `busy` as for chosen ones.
  *   Only from pages of this site.
+ * - `POST /api/projects/:id/release`: lets go of the working copy of the project on the platform,
+ *   as people do to have room there (docs/design/online-offline.md of AnimaQuill Cloud, 3.6): it
+ *   stays in the list, and is made again from its repository as it is opened, see
+ *   `SyncHub.release`. Its repository is looked at first (`lookBeforeRelease`): it has to give back
+ *   the last archive. Never what the repository does not have. 200 `{copy: "released"}`; 409
+ *   `{error: "notReleasable", why}`, why not, as `ReleaseBlock` of sync/releasable.ts says it (as
+ *   the list of `GET /api/me/storage` does); 409 `{error: "notLive"}` for one let go of already, or
+ *   being made again; 403 `{error: "forbidden"}` for who may see it and not manage it; 404
+ *   `notFound`. Only from pages of this site.
  * - `POST /api/projects/:id/wake`: the working copy of a project that the platform let go of
  *   (`copy: "released"` in the list) is made again from its repository, by the worker (see
  *   archive/rebuild.ts), as a window that says hello for it does too. 200 `{copy: "live"}` for one
@@ -161,6 +173,17 @@ export interface ProjectRoutesOptions {
    * where nothing does: waking a project is unavailable.
    */
   readonly rebuild?: ((projectId: string) => Promise<void>) | undefined;
+  /**
+   * Looks at the repository of a project right before its copy is let go of, see
+   * `RepositoryService.lookBeforeRelease`: the commit the copy would be made again from, or why the
+   * repository cannot give it back; undefined for a project that has no repository or archive
+   * yet, which the hub refuses then. Undefined where projects are saved to no repository here.
+   */
+  readonly lookBeforeRelease?:
+    | ((
+        projectId: string,
+      ) => Promise<{ readonly sha: string } | { readonly refused: RepositoryLook } | undefined>)
+    | undefined;
   /** Only tests: the time of the limits and of what counts as looked at lately. */
   readonly now?: (() => number) | undefined;
   /** Since when such projects are taken away, see `deleteAtOf`: none unless said. */
@@ -363,6 +386,7 @@ export const projectRoutes = async (app: FastifyInstance, options: ProjectRoutes
         return reply.code(503).send({ error: "unavailable" });
       }
       if (outcome === "missing") return reply.code(404).send({ error: "notFound" });
+      if (outcome === "forbidden") return reply.code(403).send({ error: "forbidden" });
       if (outcome === "hasRepository") return reply.code(409).send({ error: "hasRepository" });
       if (outcome === "removed") return reply.code(204).send();
       const { kind, ...said } = outcome;
@@ -465,6 +489,70 @@ export const projectRoutes = async (app: FastifyInstance, options: ProjectRoutes
             copy: "released",
             ...(woke.problem && { copyProblem: woke.problem }),
           });
+      }
+    },
+  );
+
+  app.post<{ Params: Params }>(
+    "/api/projects/:id/release",
+    {
+      config: {
+        access: {
+          inside: "manage",
+          why: "who may see it but not manage it hears forbidden, not notFound",
+        },
+      },
+      preHandler: guard,
+    },
+    async (request, reply) => {
+      const user = await signedIn(request, reply, limits.change);
+      if (!user) return reply;
+      const sync = hub();
+      const database = db();
+      if (!sync || !database) return reply.code(503).send({ error: "unavailable" });
+      const { id } = request.params;
+      if (!PLATFORM_ID.test(id)) return reply.code(404).send({ error: "notFound" });
+      // Who may, before the repository is asked anything; the hub asks again in its lock.
+      const [row] = await database
+        .select({ ownerId: projectRows.ownerId })
+        .from(projectRows)
+        .where(eq(projectRows.id, id));
+      const project = row && { id, ownerId: row.ownerId };
+      if (!project || !(await access.may(database, user.userId, project, "read")))
+        return reply.code(404).send({ error: "notFound" });
+      if (!(await access.may(database, user.userId, project, "manage")))
+        return reply.code(403).send({ error: "forbidden" });
+      let outcome: Awaited<ReturnType<SyncHub["release"]>>;
+      try {
+        // The repository right now: what the copy would be made again from has to be there.
+        const look = await options.lookBeforeRelease?.(id);
+        if (look && "refused" in look)
+          return reply.code(409).send({
+            error: "notReleasable",
+            why: { code: "repository", reason: look.refused } satisfies ReleaseBlock,
+          });
+        outcome = await sync.release(id, {
+          userId: user.userId,
+          ...(look && { checked: look.sha }),
+        });
+      } catch (error) {
+        request.log.error({ err: describeError(error), project: id }, "a copy was not let go of");
+        return reply.code(503).send({ error: "unavailable" });
+      }
+      switch (outcome.kind) {
+        case "released":
+          request.log.info({ project: id, user: user.userId }, "people let go of a working copy");
+          return { copy: "released" };
+        case "missing":
+          return reply.code(404).send({ error: "notFound" });
+        case "forbidden":
+          return reply.code(403).send({ error: "forbidden" });
+        case "notLive":
+          return reply.code(409).send({ error: "notLive" });
+        default: {
+          const why = blockOf(outcome);
+          return reply.code(409).send(why ? { error: "notReleasable", why } : { error: "notLive" });
+        }
       }
     },
   );
